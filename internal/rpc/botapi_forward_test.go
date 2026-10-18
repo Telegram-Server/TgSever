@@ -181,6 +181,43 @@ func TestBotAPICopyMessagesRemoveCaptionKeepsMediaAndText(t *testing.T) {
 	}
 }
 
+// remove_caption 走 drop_author+drop_media_captions 转发：相册不被拆开，共享新的 grouped_id。
+func TestBotAPICopyMessagesRemoveCaptionKeepsAlbumGrouped(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	ids := make([]int, 0, 2)
+	for i, caption := range []string{"first caption", ""} {
+		res, err := f.channels.SendMessage(f.ctx, f.member.ID, domain.SendChannelMessageRequest{
+			UserID:    f.member.ID,
+			ChannelID: f.channel.ID,
+			RandomID:  int64(9220 + i),
+			Message:   caption,
+			Media:     &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &domain.Photo{ID: int64(7710 + i), AccessHash: 1}},
+			GroupedID: 5501,
+			Date:      32,
+		})
+		if err != nil {
+			t.Fatalf("member album item: %v", err)
+		}
+		ids = append(ids, res.Message.ID)
+	}
+
+	msgs, err := f.router.BotAPICopyMessages(f.ctx, f.bot.ID, f.member.ID, f.chatID, ids, true, false, false)
+	if err != nil {
+		t.Fatalf("BotAPICopyMessages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("messages = %+v", msgs)
+	}
+	if msgs[0].GroupedID == 0 || msgs[0].GroupedID != msgs[1].GroupedID {
+		t.Fatalf("grouped ids = %d/%d, want one shared album id", msgs[0].GroupedID, msgs[1].GroupedID)
+	}
+	for _, msg := range msgs {
+		if msg.Body != "" || msg.Forward != nil || msg.Media == nil || msg.Media.Photo == nil {
+			t.Fatalf("copy = %+v, want captionless photo without header", msg)
+		}
+	}
+}
+
 func TestBotAPICopyMessageReplacesCaptionAndAddsButtons(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 	photo := f.memberPostsPhoto(t, "old caption", 9209)
