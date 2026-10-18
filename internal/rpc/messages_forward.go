@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"strings"
 
@@ -163,7 +165,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 		absentIDs[i] = req.ID[originalIndex]
 		absentRandomIDs[i] = req.RandomID[originalIndex]
 	}
-	fromPeer, preloadedSources, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
+	fromPeer, preloaded, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -191,17 +193,22 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			}
 		}
 	}
-	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
-		return r.scheduleForwardMessages(ctx, userID, fromPeer, toPeer, req, replyTo, sendAs, preloadedSources)
-	}
-	absentSources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, absentIDs, preloadedSources)
+	absent, err := r.forwardBatchForRequest(ctx, userID, fromPeer, absentIDs, preloaded)
 	if err != nil {
 		return nil, messageForwardErr(err)
 	}
-	sources := make([]forwardSource, len(req.ID))
-	for i, originalIndex := range absentIndexes {
-		sources[originalIndex] = absentSources[i]
+	dropForwardMediaCaptions(req, absent.sources)
+	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
+		// 定时转发不查重放，absentIDs 即 req.ID。
+		return r.scheduleForwardMessages(ctx, userID, fromPeer, toPeer, req, replyTo, sendAs, absent.sources)
 	}
+	sources := make([]forwardSource, len(req.ID))
+	sourceGroupedIDs := make([]int64, len(req.ID))
+	for i, originalIndex := range absentIndexes {
+		sources[originalIndex] = absent.sources[i]
+		sourceGroupedIDs[originalIndex] = absent.groupedIDs[i]
+	}
+	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sourceGroupedIDs)
 	if toPeer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
@@ -235,6 +242,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				NoForwards:             req.Noforwards,
 				ReplyTo:                replyTo,
 				Forward:                forward,
+				GroupedID:              groupedIDs[i],
 				SendAs:                 sendAs,
 				Date:                   int(r.clock.Now().Unix()),
 			})
@@ -321,6 +329,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				NoForwards:             req.Noforwards,
 				ReplyTo:                replyTo,
 				Forward:                forward,
+				GroupedID:              groupedIDs[i],
 				Date:                   int(r.clock.Now().Unix()),
 				OriginAuthKeyID:        authKeyID,
 				OriginSessionID:        sessionID,
@@ -423,7 +432,7 @@ func (r *Router) forwardMessagesToMonoforum(
 		absentIDs[i] = req.ID[originalIndex]
 		absentRandomIDs[i] = req.RandomID[originalIndex]
 	}
-	fromPeer, preloadedSources, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
+	fromPeer, preloaded, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -434,13 +443,14 @@ func (r *Router) forwardMessagesToMonoforum(
 			return nil, peerIDInvalidErr()
 		}
 	}
-	absentSources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, absentIDs, preloadedSources)
+	absent, err := r.forwardBatchForRequest(ctx, userID, fromPeer, absentIDs, preloaded)
 	if err != nil {
 		return nil, messageForwardErr(err)
 	}
+	dropForwardMediaCaptions(req, absent.sources)
 	sources := make([]forwardSource, len(req.ID))
 	for i, originalIndex := range absentIndexes {
-		sources[originalIndex] = absentSources[i]
+		sources[originalIndex] = absent.sources[i]
 	}
 
 	results := make([]tg.UpdatesClass, 0, len(req.ID))
@@ -480,6 +490,31 @@ func (r *Router) forwardMessagesToMonoforum(
 	return combineSendUpdates(results), nil
 }
 
+// dropForwardMediaCaptions 实现 drop_media_captions：只在 drop_author 同时为 true 时生效，
+// 去掉带媒体消息的说明文字（正文与 entities）；纯文本消息不受影响。
+func dropForwardMediaCaptions(req *tg.MessagesForwardMessagesRequest, sources []forwardSource) {
+	if !req.DropAuthor || !req.DropMediaCaptions {
+		return
+	}
+	for i := range sources {
+		if forwardMediaHasCaption(sources[i].media) {
+			sources[i].body, sources[i].entities = "", nil
+		}
+	}
+}
+
+// forwardMediaHasCaption 对应官方带 caption 的消息类型（图片、视频、文件、音频等）。
+func forwardMediaHasCaption(media *domain.MessageMedia) bool {
+	if media == nil {
+		return false
+	}
+	switch media.Kind {
+	case domain.MessageMediaKindPhoto, domain.MessageMediaKindDocument:
+		return true
+	}
+	return false
+}
+
 func normalizeForwardMessageVectors(ids []int, randomIDs []int64) ([]int, []int64, bool) {
 	if len(ids) == 0 || len(randomIDs) == 0 {
 		return nil, nil, false
@@ -509,16 +544,49 @@ func normalizeForwardMessageVectors(ids []int, randomIDs []int64) ([]int, []int6
 	return compact, randomIDs, true
 }
 
-func (r *Router) forwardFromPeerAndSources(ctx context.Context, userID int64, input tg.InputPeerClass, ids []int, randomIDs []int64) (domain.Peer, []forwardSource, error) {
+// forwardBatch 是按 ids 顺序取到的转发源，groupedIDs 与 sources 一一对应，记录源消息的
+// 相册分组 id（非相册为 0）。
+type forwardBatch struct {
+	sources    []forwardSource
+	groupedIDs []int64
+}
+
+// forwardGroupedIDs 为本次转发分配新的相册分组 id：同一源相册的各条共享一个新值，不同源相册
+// 互不相同，非相册为 0。新值由该组在请求里第一条的 random_id 派生，同一请求重试得到相同结果。
+func forwardGroupedIDs(userID int64, randomIDs []int64, sourceGroupedIDs []int64) []int64 {
+	out := make([]int64, len(sourceGroupedIDs))
+	fresh := make(map[int64]int64)
+	for i, source := range sourceGroupedIDs {
+		if source == 0 {
+			continue
+		}
+		id, ok := fresh[source]
+		if !ok {
+			var buf [16]byte
+			binary.BigEndian.PutUint64(buf[:8], uint64(userID))
+			binary.BigEndian.PutUint64(buf[8:], uint64(randomIDs[i]))
+			sum := sha256.Sum256(buf[:])
+			id = int64(binary.BigEndian.Uint64(sum[:8]) &^ (1 << 63))
+			if id == 0 {
+				id = 1
+			}
+			fresh[source] = id
+		}
+		out[i] = id
+	}
+	return out
+}
+
+func (r *Router) forwardFromPeerAndSources(ctx context.Context, userID int64, input tg.InputPeerClass, ids []int, randomIDs []int64) (domain.Peer, *forwardBatch, error) {
 	if forwardFromPeerIsEmpty(input) {
 		if !forwardMessageIDsValid(ids, randomIDs) {
 			return domain.Peer{}, nil, messageIDInvalidErr()
 		}
-		fromPeer, sources, err := r.forwardSourcesFromEmptyPeer(ctx, userID, ids)
+		fromPeer, batch, err := r.forwardSourcesFromEmptyPeer(ctx, userID, ids)
 		if err != nil {
 			return domain.Peer{}, nil, messageForwardErr(err)
 		}
-		return fromPeer, sources, nil
+		return fromPeer, batch, nil
 	}
 	fromPeer, err := r.checkedMessageReadPeer(ctx, userID, input, false)
 	return fromPeer, nil, err
@@ -544,7 +612,7 @@ func forwardFromPeerIsEmpty(peer tg.InputPeerClass) bool {
 	return ok
 }
 
-func (r *Router) forwardSourcesFromEmptyPeer(ctx context.Context, userID int64, ids []int) (domain.Peer, []forwardSource, error) {
+func (r *Router) forwardSourcesFromEmptyPeer(ctx context.Context, userID int64, ids []int) (domain.Peer, *forwardBatch, error) {
 	if r.deps.Messages == nil {
 		return domain.Peer{}, nil, domain.ErrMessageIDInvalid
 	}
@@ -570,11 +638,11 @@ func (r *Router) forwardSourcesFromEmptyPeer(ctx context.Context, userID int64, 
 			return domain.Peer{}, nil, domain.ErrMessageIDInvalid
 		}
 	}
-	sources, err := r.forwardSourcesFromPrivateMessages(ctx, userID, fromPeer, ids, list.Messages)
+	batch, err := r.forwardSourcesFromPrivateMessages(ctx, userID, fromPeer, ids, list.Messages)
 	if err != nil {
 		return domain.Peer{}, nil, err
 	}
-	return fromPeer, sources, nil
+	return fromPeer, batch, nil
 }
 
 func (r *Router) forwardSourcesForRequest(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int, preloaded []forwardSource) ([]forwardSource, error) {
@@ -582,6 +650,13 @@ func (r *Router) forwardSourcesForRequest(ctx context.Context, userID int64, fro
 		return preloaded, nil
 	}
 	return r.forwardSources(ctx, userID, fromPeer, ids)
+}
+
+func (r *Router) forwardBatchForRequest(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int, preloaded *forwardBatch) (forwardBatch, error) {
+	if preloaded != nil {
+		return *preloaded, nil
+	}
+	return r.forwardSourceBatch(ctx, userID, fromPeer, ids)
 }
 
 func mergeForwardTopMsgID(toPeer domain.Peer, replyTo *domain.MessageReply, topMsgID int, topMsgIDSet bool) (*domain.MessageReply, error) {
@@ -615,43 +690,54 @@ func mergeForwardTopMsgID(toPeer domain.Peer, replyTo *domain.MessageReply, topM
 }
 
 func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int) ([]forwardSource, error) {
-	out := make([]forwardSource, 0, len(ids))
+	batch, err := r.forwardSourceBatch(ctx, userID, fromPeer, ids)
+	if err != nil {
+		return nil, err
+	}
+	return batch.sources, nil
+}
+
+func (r *Router) forwardSourceBatch(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int) (forwardBatch, error) {
 	switch fromPeer.Type {
 	case domain.PeerTypeUser:
 		if r.deps.Messages == nil {
-			return nil, domain.ErrMessageIDInvalid
+			return forwardBatch{}, domain.ErrMessageIDInvalid
 		}
 		list, err := r.deps.Messages.GetMessages(ctx, userID, ids)
 		if err != nil {
-			return nil, domain.ErrMessageIDInvalid
+			return forwardBatch{}, domain.ErrMessageIDInvalid
 		}
-		sources, err := r.forwardSourcesFromPrivateMessages(ctx, userID, fromPeer, ids, list.Messages)
+		batch, err := r.forwardSourcesFromPrivateMessages(ctx, userID, fromPeer, ids, list.Messages)
 		if err != nil {
-			return nil, err
+			return forwardBatch{}, err
 		}
-		out = append(out, sources...)
+		return *batch, nil
 	case domain.PeerTypeChannel:
 		if r.deps.Channels == nil {
-			return nil, domain.ErrMessageIDInvalid
+			return forwardBatch{}, domain.ErrMessageIDInvalid
 		}
 		history, err := r.deps.Channels.GetMessages(ctx, userID, fromPeer.ID, ids)
 		if err != nil {
-			return nil, domain.ErrMessageIDInvalid
+			return forwardBatch{}, domain.ErrMessageIDInvalid
 		}
 		byID := make(map[int]domain.ChannelMessage, len(history.Messages))
 		for _, msg := range history.Messages {
 			byID[msg.ID] = msg
 		}
+		out := forwardBatch{
+			sources:    make([]forwardSource, 0, len(ids)),
+			groupedIDs: make([]int64, 0, len(ids)),
+		}
 		for _, id := range ids {
 			msg, ok := byID[id]
 			if !ok {
-				return nil, domain.ErrMessageIDInvalid
+				return forwardBatch{}, domain.ErrMessageIDInvalid
 			}
 			if msg.NoForwards || history.Channel.NoForwards {
-				return nil, domain.ErrChatForwardsRestricted
+				return forwardBatch{}, domain.ErrChatForwardsRestricted
 			}
 			if msg.Action != nil || (msg.Body == "" && msg.Media.IsZero()) {
-				return nil, domain.ErrMessageIDInvalid
+				return forwardBatch{}, domain.ErrMessageIDInvalid
 			}
 			forward := cloneDomainMessageForward(msg.Forward)
 			from := msg.From
@@ -668,7 +754,7 @@ func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer doma
 				}
 				r.applyForwardAuthorPrivacy(ctx, userID, forward)
 			}
-			out = append(out, forwardSource{
+			out.sources = append(out.sources, forwardSource{
 				body: msg.Body,
 				entities: append([]domain.MessageEntity(nil),
 					msg.Entities...),
@@ -677,14 +763,15 @@ func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer doma
 				from:    from,
 				date:    msg.Date,
 			})
+			out.groupedIDs = append(out.groupedIDs, msg.GroupedID)
 		}
+		return out, nil
 	default:
-		return nil, domain.ErrMessageIDInvalid
+		return forwardBatch{}, domain.ErrMessageIDInvalid
 	}
-	return out, nil
 }
 
-func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int, messages []domain.Message) ([]forwardSource, error) {
+func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int, messages []domain.Message) (*forwardBatch, error) {
 	if fromPeer.Type != domain.PeerTypeUser || fromPeer.ID == 0 {
 		return nil, domain.ErrMessageIDInvalid
 	}
@@ -703,7 +790,10 @@ func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID i
 	for _, msg := range messages {
 		byID[msg.ID] = msg
 	}
-	out := make([]forwardSource, 0, len(ids))
+	out := &forwardBatch{
+		sources:    make([]forwardSource, 0, len(ids)),
+		groupedIDs: make([]int64, 0, len(ids)),
+	}
 	for _, id := range ids {
 		msg, ok := byID[id]
 		if !ok {
@@ -720,7 +810,7 @@ func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID i
 			forward = &domain.MessageForward{From: msg.From, Date: msg.Date}
 			r.applyForwardAuthorPrivacy(ctx, userID, forward)
 		}
-		out = append(out, forwardSource{
+		out.sources = append(out.sources, forwardSource{
 			body: msg.Body,
 			entities: append([]domain.MessageEntity(nil),
 				msg.Entities...),
@@ -729,6 +819,7 @@ func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID i
 			from:    msg.From,
 			date:    msg.Date,
 		})
+		out.groupedIDs = append(out.groupedIDs, msg.GroupedID)
 	}
 	return out, nil
 }

@@ -63,16 +63,17 @@ type botAPIForwardOptions struct {
 	silent, protectContent bool
 	copyMode               bool
 	replyToMessageID       int
-	// 以下任一生效时 forwardMessages 做不到，改为以机器人身份重新发送源内容。
+	// removeCaption 即 drop_media_captions，仍走 forwardMessages，相册分组得以保留。
 	removeCaption bool
-	setCaption    bool
-	caption       string
-	entities      []domain.MessageEntity
-	replyMarkup   *domain.MessageReplyMarkup
+	// 以下任一生效时 forwardMessages 做不到，改为以机器人身份重新发送源内容。
+	setCaption  bool
+	caption     string
+	entities    []domain.MessageEntity
+	replyMarkup *domain.MessageReplyMarkup
 }
 
 func (o botAPIForwardOptions) resend() bool {
-	return o.copyMode && (o.removeCaption || o.setCaption || o.replyMarkup != nil)
+	return o.copyMode && (o.setCaption || o.replyMarkup != nil)
 }
 
 // botAPIForward 组装 messages.forwardMessages 请求并取回目标会话里的新消息。
@@ -127,6 +128,8 @@ func (r *Router) botAPIForward(ctx context.Context, botID, chatID, fromChatID in
 		Silent:     opts.silent,
 		Noforwards: opts.protectContent,
 		DropAuthor: opts.copyMode,
+		// 官方语义：drop_media_captions 只在 drop_author 时生效。
+		DropMediaCaptions: opts.copyMode && opts.removeCaption,
 	}
 	if opts.replyToMessageID > 0 {
 		req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: opts.replyToMessageID})
@@ -138,7 +141,7 @@ func (r *Router) botAPIForward(ctx context.Context, botID, chatID, fromChatID in
 	return r.botAPIMessagesFromUpdates(ctx, botID, toPeer, updates)
 }
 
-// botAPIResendCopies 按 ids 顺序把源内容以机器人身份重新发送：用于去掉/替换说明文字
+// botAPIResendCopies 按 ids 顺序把源内容以机器人身份重新发送：用于替换说明文字
 // 或附加按钮。转发处理器里的 no-forwards 校验在这里要自己做。
 func (r *Router) botAPIResendCopies(ctx context.Context, botID int64, fromPeer, toPeer domain.Peer, sources []botAPISource, ids []int, opts botAPIForwardOptions) ([]domain.Message, error) {
 	if err := r.botAPICheckPrivateNoForwards(ctx, botID, fromPeer); err != nil {
@@ -158,13 +161,8 @@ func (r *Router) botAPIResendCopies(ctx context.Context, botID int64, fromPeer, 
 		src := byID[id]
 		body, entities := src.body, src.entities
 		// 说明文字只属于媒体消息；纯文本消息保留正文。
-		if botAPIMediaHasCaption(src.media) {
-			switch {
-			case opts.setCaption:
-				body, entities = opts.caption, opts.entities
-			case opts.removeCaption:
-				body, entities = "", nil
-			}
+		if opts.setCaption && forwardMediaHasCaption(src.media) {
+			body, entities = opts.caption, opts.entities
 		}
 		msg, err := r.botAPISendCopy(ctx, botID, toPeer, body, entities, src.media, opts)
 		if err != nil {
@@ -231,18 +229,6 @@ func (r *Router) botAPISendCopy(ctx context.Context, botID int64, toPeer domain.
 		return domain.Message{}, err
 	}
 	return res.SenderMessage, nil
-}
-
-// botAPIMediaHasCaption 对应官方带 caption 的消息类型（图片、视频、文件、音频等）。
-func botAPIMediaHasCaption(media *domain.MessageMedia) bool {
-	if media == nil {
-		return false
-	}
-	switch media.Kind {
-	case domain.MessageMediaKindPhoto, domain.MessageMediaKindDocument:
-		return true
-	}
-	return false
 }
 
 // botAPISource 是机器人视角下的一条源消息。
