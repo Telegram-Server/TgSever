@@ -236,6 +236,12 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 		if _, ok := allowed[req.Kind]; !ok {
 			return domain.BotAPIUpdate{}, false, nil
 		}
+	} else if domain.BotAPIUpdateKindNeedsOptIn(req.Kind) {
+		return domain.BotAPIUpdate{}, false, nil
+	}
+	if req.ChatMember != nil {
+		// 成员变化没有消息去重键，每次变化都是独立的一条。
+		key = fmt.Sprintf("%d:%s:member:%d", req.BotUserID, req.Kind, s.nextID)
 	}
 	if existingID, ok := s.byKey[key]; ok {
 		for _, row := range s.rows {
@@ -255,6 +261,7 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 		Callback:    cloneBotAPICallback(req.Callback),
 		PreCheckout: cloneBotAPIPreCheckout(req.PreCheckout),
 		Ephemeral:   cloneBotAPIEphemeral(req.Ephemeral),
+		ChatMember:  cloneBotAPIChatMember(req.ChatMember),
 	}
 	s.nextID++
 	s.rows = append(s.rows, row)
@@ -423,8 +430,15 @@ func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	// A pre-checkout query is message-less by design: the bot is asked before any
 	// payment exists, so it carries no peer and no message id.
 	if req.Kind != domain.BotAPIUpdateMessage && req.Kind != domain.BotAPIUpdateEditedMessage &&
-		req.Kind != domain.BotAPIUpdateCallbackQuery && req.Kind != domain.BotAPIUpdatePreCheckoutQuery {
+		req.Kind != domain.BotAPIUpdateCallbackQuery && req.Kind != domain.BotAPIUpdatePreCheckoutQuery &&
+		req.Kind != domain.BotAPIUpdateMyChatMember && req.Kind != domain.BotAPIUpdateChatMember {
 		return fmt.Errorf("invalid bot api update kind %q", req.Kind)
+	}
+	if err := domain.ValidateBotAPIChatMemberRequest(req); err != nil {
+		return err
+	}
+	if req.ChatMember != nil {
+		return nil
 	}
 	switch req.Peer.Type {
 	case domain.PeerTypeUser, domain.PeerTypeChannel:
@@ -489,7 +503,16 @@ func cloneBotAPIUpdate(row domain.BotAPIUpdate) domain.BotAPIUpdate {
 	row.Callback = cloneBotAPICallback(row.Callback)
 	row.PreCheckout = cloneBotAPIPreCheckout(row.PreCheckout)
 	row.Ephemeral = cloneBotAPIEphemeral(row.Ephemeral)
+	row.ChatMember = cloneBotAPIChatMember(row.ChatMember)
 	return row
+}
+
+func cloneBotAPIChatMember(in *domain.BotChatMemberUpdated) *domain.BotChatMemberUpdated {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 func cloneBotAPIEphemeral(in *domain.BotAPIEphemeralPayload) *domain.BotAPIEphemeralPayload {

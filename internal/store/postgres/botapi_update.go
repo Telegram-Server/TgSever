@@ -325,14 +325,22 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(ctx context.Context, req domain.
 			return domain.BotAPIUpdate{}, false, fmt.Errorf("marshal bot api ephemeral payload: %w", err)
 		}
 	}
+	var memberPayload []byte
+	if req.ChatMember != nil {
+		var err error
+		memberPayload, err = json.Marshal(req.ChatMember)
+		if err != nil {
+			return domain.BotAPIUpdate{}, false, fmt.Errorf("marshal bot api chat member payload: %w", err)
+		}
+	}
 	row, err := s.scanBotAPIUpdate(s.db.QueryRow(ctx, `
 WITH inserted AS (
  INSERT INTO bot_api_updates (
   bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
   callback_query_id, callback_user_id, callback_chat_instance, callback_data,
   callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-  ephemeral_payload, pre_checkout_payload
-) SELECT $1, $2::varchar(32), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb
+  ephemeral_payload, pre_checkout_payload, member_payload
+) SELECT $1, $2::varchar(32), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18::jsonb
 WHERE NOT EXISTS (
   SELECT 1
   FROM bot_api_update_states
@@ -340,11 +348,19 @@ WHERE NOT EXISTS (
     AND allowed_updates IS NOT NULL
     AND NOT ($2::text = ANY(allowed_updates))
 )
+  -- chat_member 只在 allowed_updates 显式列出时投递，默认（NULL）不包含。
+  AND ($2::text <> 'chat_member' OR EXISTS (
+    SELECT 1
+    FROM bot_api_update_states
+    WHERE bot_user_id = $1
+      AND allowed_updates IS NOT NULL
+      AND $2::text = ANY(allowed_updates)
+  ))
  ON CONFLICT DO NOTHING
  RETURNING id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
            callback_query_id, callback_user_id, callback_chat_instance, callback_data,
            callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-           ephemeral_payload, pre_checkout_payload
+           ephemeral_payload, pre_checkout_payload, member_payload
 ), wake_webhook AS (
  UPDATE bot_api_webhooks
  SET next_attempt_at = now(), updated_at = now()
@@ -354,23 +370,27 @@ WHERE NOT EXISTS (
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload
+       ephemeral_payload, pre_checkout_payload, member_payload
 FROM inserted
 `, req.BotUserID, string(req.Kind), string(req.Peer.Type), req.Peer.ID, req.MessageID, req.SourcePts, req.Date,
 		callbackQueryID, callbackUserID, callbackChatInstance, callbackData,
 		callbackInlineDCID, callbackInlineOwnerID, callbackInlineMessageID, callbackInlineAccessHash, ephemeralPayload,
-		preCheckoutPayload))
+		preCheckoutPayload, memberPayload))
 	if err == nil {
 		return row, true, nil
 	}
 	if err != pgx.ErrNoRows {
 		return domain.BotAPIUpdate{}, false, fmt.Errorf("insert bot api update: %w", err)
 	}
+	if req.ChatMember != nil {
+		// 成员更新没有唯一键，插不进去只可能是被 allowed_updates 过滤。
+		return domain.BotAPIUpdate{}, false, nil
+	}
 	row, err = s.scanBotAPIUpdate(s.db.QueryRow(ctx, `
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload
+       ephemeral_payload, pre_checkout_payload, member_payload
 FROM bot_api_updates
 WHERE bot_user_id = $1
   AND update_kind = $2
@@ -407,12 +427,12 @@ func (s *BotAPIUpdateStore) ListTailBotAPIUpdates(ctx context.Context, botUserID
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload
+       ephemeral_payload, pre_checkout_payload, member_payload
 FROM (
   SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
          callback_query_id, callback_user_id, callback_chat_instance, callback_data,
          callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-         ephemeral_payload, pre_checkout_payload
+         ephemeral_payload, pre_checkout_payload, member_payload
   FROM bot_api_updates
   WHERE bot_user_id = $1
     AND id > COALESCE((SELECT confirmed_update_id FROM bot_api_update_states WHERE bot_user_id = $1), 0)
@@ -454,7 +474,7 @@ func (s *BotAPIUpdateStore) ListBotAPIUpdates(ctx context.Context, botUserID, fr
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload
+       ephemeral_payload, pre_checkout_payload, member_payload
 FROM bot_api_updates
 WHERE bot_user_id = $1 AND id >= $2
 ORDER BY id
@@ -656,15 +676,22 @@ func scanBotAPIUpdateRows(row botAPIUpdateScanner) (domain.BotAPIUpdate, error) 
 	var callbackInlineDCID, callbackInlineMessageID int
 	var callbackInlineOwnerID, callbackInlineAccessHash int64
 	var callbackData []byte
-	var ephemeralPayload, preCheckoutPayload []byte
+	var ephemeralPayload, preCheckoutPayload, memberPayload []byte
 	if err := row.Scan(&item.ID, &item.BotUserID, &kind, &peerType, &item.Peer.ID, &item.MessageID, &item.SourcePts, &item.Date,
 		&callbackQueryID, &callbackUserID, &callbackChatInstance, &callbackData,
 		&callbackInlineDCID, &callbackInlineOwnerID, &callbackInlineMessageID, &callbackInlineAccessHash,
-		&ephemeralPayload, &preCheckoutPayload); err != nil {
+		&ephemeralPayload, &preCheckoutPayload, &memberPayload); err != nil {
 		return domain.BotAPIUpdate{}, err
 	}
 	item.Kind = domain.BotAPIUpdateKind(kind)
 	item.Peer.Type = domain.PeerType(peerType)
+	if len(memberPayload) != 0 {
+		var payload domain.BotChatMemberUpdated
+		if err := json.Unmarshal(memberPayload, &payload); err != nil {
+			return domain.BotAPIUpdate{}, fmt.Errorf("decode bot api chat member payload: %w", err)
+		}
+		item.ChatMember = &payload
+	}
 	if item.Kind == domain.BotAPIUpdateCallbackQuery {
 		item.Callback = &domain.BotCallbackQuery{
 			ID:           callbackQueryID,
@@ -710,8 +737,15 @@ func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	// A pre-checkout query is message-less by design: the bot is asked before any
 	// payment exists, so it carries no peer and no message id.
 	if req.Kind != domain.BotAPIUpdateMessage && req.Kind != domain.BotAPIUpdateEditedMessage &&
-		req.Kind != domain.BotAPIUpdateCallbackQuery && req.Kind != domain.BotAPIUpdatePreCheckoutQuery {
+		req.Kind != domain.BotAPIUpdateCallbackQuery && req.Kind != domain.BotAPIUpdatePreCheckoutQuery &&
+		req.Kind != domain.BotAPIUpdateMyChatMember && req.Kind != domain.BotAPIUpdateChatMember {
 		return fmt.Errorf("invalid bot api update kind %q", req.Kind)
+	}
+	if err := domain.ValidateBotAPIChatMemberRequest(req); err != nil {
+		return err
+	}
+	if req.ChatMember != nil {
+		return nil
 	}
 	switch req.Peer.Type {
 	case domain.PeerTypeUser, domain.PeerTypeChannel:
