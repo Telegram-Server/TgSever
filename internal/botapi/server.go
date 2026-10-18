@@ -1438,6 +1438,11 @@ func (h *handler) setChatMenuButton(w http.ResponseWriter, r *http.Request, botI
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
+	// 只存一份全局默认按钮；按聊天设置会被写成全局的，所以在支持之前明确拒绝。
+	if chatID := strings.TrimSpace(values["chat_id"]); chatID != "" && chatID != "0" {
+		writeAPIError(w, http.StatusBadRequest, "MENU_BUTTON_PER_CHAT_UNSUPPORTED")
+		return
+	}
 	button, err := menuButtonFromAPI(values["menu_button"])
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "BUTTON_INVALID")

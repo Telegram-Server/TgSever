@@ -429,6 +429,12 @@ func (r *Router) onBotsSetBotMenuButton(ctx context.Context, req *tg.BotsSetBotM
 	if err != nil {
 		return false, err
 	}
+	// 只存一份全局默认按钮；带 user_id 的专属按钮会被写成全局的，所以在支持之前明确拒绝。
+	if req.UserID != nil {
+		if _, empty := req.UserID.(*tg.InputUserEmpty); !empty {
+			return false, menuButtonPerChatUnsupportedErr()
+		}
+	}
 	button, err := domainBotMenuButton(req.Button)
 	if err != nil {
 		return false, err
