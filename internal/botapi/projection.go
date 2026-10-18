@@ -378,6 +378,9 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 			out[k] = v
 		}
 	}
+	for _, extend := range messageProjectionExtensions {
+		extend(msg, out)
+	}
 	return out
 }
 

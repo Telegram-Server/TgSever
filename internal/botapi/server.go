@@ -323,6 +323,10 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request) {
 		// only, so there is no shipping step to answer.
 		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
 	default:
+		if fn, ok := registeredMethods[strings.ToLower(method)]; ok {
+			fn(h, w, r, botID)
+			return
+		}
 		writeAPIError(w, http.StatusNotFound, "METHOD_NOT_FOUND")
 	}
 }
@@ -1792,6 +1796,11 @@ func apiErrorDescription(err error) string {
 		"CHARGE_ID_INVALID",
 		"CHARGE_ID_NOT_FOUND",
 	} {
+		if strings.Contains(text, marker) {
+			return marker
+		}
+	}
+	for _, marker := range registeredErrorMarkers {
 		if strings.Contains(text, marker) {
 			return marker
 		}
