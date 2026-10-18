@@ -353,6 +353,7 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, nil, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, res, cache)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: missingInvitees}, nil
 }
 
@@ -377,7 +378,8 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 			return nil, channelInvalidErr(domain.ErrChannelPrivate)
 		}
 	}
-	res, err := r.deps.Channels.JoinChannel(ctx, userID, ref.ID, int(r.clock.Now().Unix()))
+	date := int(r.clock.Now().Unix())
+	res, err := r.deps.Channels.JoinChannel(ctx, userID, ref.ID, date)
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
@@ -390,6 +392,7 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	// Layer 227：channels.joinChannel 返回 messages.ChatInviteJoinResult；
 	// 正常加入即 chatInviteJoinResultOk 包裹本次操作的 updates。
 	return &tg.MessagesChatInviteJoinResultOk{Updates: updates}, nil
@@ -407,7 +410,8 @@ func (r *Router) onChannelsLeaveChannel(ctx context.Context, input tg.InputChann
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.deps.Channels.LeaveChannel(ctx, userID, channelID, int(r.clock.Now().Unix()))
+	date := int(r.clock.Now().Unix())
+	res, err := r.deps.Channels.LeaveChannel(ctx, userID, channelID, date)
 	if err != nil {
 		return nil, channelAdminErr(err)
 	}
@@ -418,6 +422,7 @@ func (r *Router) onChannelsLeaveChannel(ctx context.Context, input tg.InputChann
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPILeftMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 
@@ -514,6 +519,9 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
+		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
+	})
 	return updates, nil
 }
 
@@ -569,6 +577,9 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	}
 	updates := build(userID)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
+		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
+	})
 	return updates, nil
 }
 
@@ -655,12 +666,13 @@ func (r *Router) onMessagesHideChatJoinRequest(ctx context.Context, req *tg.Mess
 	if len(targets) == 0 {
 		return nil, userIDInvalidErr()
 	}
+	date := int(r.clock.Now().Unix())
 	res, err := r.deps.Channels.HideChatJoinRequest(ctx, userID, domain.HideChannelJoinRequestRequest{
 		UserID:       userID,
 		ChannelID:    view.Channel.ID,
 		TargetUserID: targets[0],
 		Approved:     req.Approved,
-		Date:         int(r.clock.Now().Unix()),
+		Date:         date,
 	})
 	if err != nil {
 		return nil, channelInviteErr(err)
@@ -673,6 +685,7 @@ func (r *Router) onMessagesHideChatJoinRequest(ctx context.Context, req *tg.Mess
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinRequestMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 
@@ -692,13 +705,14 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 			return nil, err
 		}
 	}
+	date := int(r.clock.Now().Unix())
 	res, err := r.deps.Channels.HideAllChatJoinRequests(ctx, userID, domain.HideChannelJoinRequestsRequest{
 		UserID:    userID,
 		ChannelID: view.Channel.ID,
 		Hash:      hash,
 		Approved:  req.Approved,
 		Limit:     domain.MaxChannelHideJoinRequests,
-		Date:      int(r.clock.Now().Unix()),
+		Date:      date,
 	})
 	if err != nil {
 		return nil, channelInviteErr(err)
@@ -711,6 +725,7 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinRequestMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 

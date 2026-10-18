@@ -117,10 +117,11 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 	if err != nil {
 		return nil, internalErr()
 	}
+	date := int(r.clock.Now().Unix())
 	res, err := r.deps.Channels.ImportInvite(ctx, userID, domain.ImportChannelInviteRequest{
 		UserID: userID,
 		Hash:   hash,
-		Date:   int(r.clock.Now().Unix()),
+		Date:   date,
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
@@ -133,6 +134,7 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	// Layer 227：messages.importChatInvite 返回 messages.ChatInviteJoinResult；
 	// 正常加入即 chatInviteJoinResultOk 包裹本次操作的 updates。
 	return &tg.MessagesChatInviteJoinResultOk{Updates: updates}, nil

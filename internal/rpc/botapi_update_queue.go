@@ -79,7 +79,7 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 		if _, ok := botAPIQueuedUpdateKind(botID, item, now); !ok {
 			continue
 		}
-		if item.Ephemeral != nil {
+		if item.Ephemeral != nil || item.ChatMember != nil {
 			continue
 		}
 		if item.Callback != nil && item.Callback.InlineMessage != nil {
@@ -177,6 +177,17 @@ func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate, now time.Time
 	if item.Ephemeral != nil && !botAPIQueuedEphemeralValid(botID, item, now) {
 		return "", false
 	}
+	if item.Kind == domain.BotAPIUpdateMyChatMember || item.Kind == domain.BotAPIUpdateChatMember {
+		// 成员更新没有消息：载荷自足，只核对它与队列行一致。
+		if item.ChatMember == nil || item.MessageID != 0 || item.Peer.Type != domain.PeerTypeChannel ||
+			item.Peer != item.ChatMember.Chat || item.ChatMember.ValidateFor(botID, item.Kind) != nil {
+			return "", false
+		}
+		return eventType, true
+	}
+	if item.ChatMember != nil {
+		return "", false
+	}
 	if item.Kind == domain.BotAPIUpdatePreCheckoutQuery {
 		query := item.PreCheckout
 		if query == nil || query.ID == 0 || query.BotUserID != botID || query.UserID <= 0 ||
@@ -262,6 +273,29 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 			event.BotCallbackQuery = &callback
 		}
 		return event, true
+	}
+	if eventType == domain.UpdateEventBotMyChatMember || eventType == domain.UpdateEventBotChatMember {
+		update := *item.ChatMember
+		// 当事人、操作者、邀请人放进 Peers，由 enrichUpdateEvents 补齐用户对象；
+		// Peer 指向群/频道，同样会被补齐。
+		peers := []domain.Peer{
+			{Type: domain.PeerTypeUser, ID: update.ActorUserID},
+			{Type: domain.PeerTypeUser, ID: update.New.UserID},
+		}
+		for _, inviter := range []int64{update.Old.InviterUserID, update.New.InviterUserID} {
+			if inviter > 0 {
+				peers = append(peers, domain.Peer{Type: domain.PeerTypeUser, ID: inviter})
+			}
+		}
+		return domain.UpdateEvent{
+			UserID:         botID,
+			Type:           eventType,
+			BotAPIUpdateID: item.ID,
+			Date:           item.Date,
+			Peer:           item.Peer,
+			Peers:          peers,
+			BotChatMember:  &update,
+		}, true
 	}
 	// A pre-checkout query is not about any message: it carries only the order
 	// fields, with no peer and no message id. It therefore has to be handled
@@ -380,6 +414,10 @@ func botAPIUpdateEventType(kind domain.BotAPIUpdateKind) (domain.UpdateEventType
 		return domain.UpdateEventBotCallbackQuery, true
 	case domain.BotAPIUpdatePreCheckoutQuery:
 		return domain.UpdateEventBotPreCheckoutQuery, true
+	case domain.BotAPIUpdateMyChatMember:
+		return domain.UpdateEventBotMyChatMember, true
+	case domain.BotAPIUpdateChatMember:
+		return domain.UpdateEventBotChatMember, true
 	default:
 		return "", false
 	}
@@ -539,6 +577,168 @@ func (r *Router) enqueueBotAPIChannelEditMessageUpdate(ctx context.Context, orig
 			r.notifyBotAPIUpdate(botID)
 		}
 	}
+}
+
+// botAPIMemberChange 是一次群/频道成员状态变化，my_chat_member / chat_member 的入队单位。
+type botAPIMemberChange struct {
+	Channel                 domain.Channel
+	ActorUserID             int64
+	Previous                domain.ChannelMember
+	Current                 domain.ChannelMember
+	Date                    int
+	ViaJoinRequest          bool
+	ViaChatFolderInviteLink bool
+}
+
+// botAPIJoinedMemberChanges 把加入类结果（拉人、自行加入、邀请链接、批准申请）
+// 转成成员变化。这类结果只带新状态，旧状态按 left 计。
+func botAPIJoinedMemberChanges(actorUserID int64, res domain.CreateChannelResult, date int) []botAPIMemberChange {
+	out := make([]botAPIMemberChange, 0, len(res.Members))
+	for _, member := range res.Members {
+		if member.UserID == 0 || member.Status != domain.ChannelMemberActive {
+			continue
+		}
+		out = append(out, botAPIMemberChange{
+			Channel: res.Channel, ActorUserID: actorUserID, Date: date, Current: member,
+			Previous: domain.ChannelMember{
+				ChannelID: member.ChannelID, UserID: member.UserID,
+				Role: domain.ChannelRoleMember, Status: domain.ChannelMemberLeft,
+			},
+		})
+	}
+	return out
+}
+
+// botAPIJoinRequestMemberChanges 是批准入群申请产生的加入；拒绝时结果里没有成员。
+func botAPIJoinRequestMemberChanges(adminUserID int64, res domain.CreateChannelResult, date int) []botAPIMemberChange {
+	changes := botAPIJoinedMemberChanges(adminUserID, res, date)
+	for i := range changes {
+		changes[i].ViaJoinRequest = true
+	}
+	return changes
+}
+
+// botAPILeftMemberChanges 把退出结果转成成员变化：Members[0] 是退出者（已置 left），
+// 群主退出时后面跟着接任的新群主。
+func botAPILeftMemberChanges(userID int64, res domain.CreateChannelResult, date int) []botAPIMemberChange {
+	out := make([]botAPIMemberChange, 0, len(res.Members))
+	for _, member := range res.Members {
+		if member.UserID != userID {
+			// 接任群主：旧角色未知，按管理员计。
+			previous := member
+			previous.Role = domain.ChannelRoleAdmin
+			if member.Role == domain.ChannelRoleCreator {
+				out = append(out, botAPIMemberChange{Channel: res.Channel, ActorUserID: userID, Date: date, Previous: previous, Current: member})
+			}
+			continue
+		}
+		previous := member
+		previous.Status = domain.ChannelMemberActive
+		previous.LeftAt = 0
+		if len(res.Members) > 1 {
+			previous.Role = domain.ChannelRoleCreator
+		}
+		out = append(out, botAPIMemberChange{Channel: res.Channel, ActorUserID: userID, Date: date, Previous: previous, Current: member})
+	}
+	return out
+}
+
+// enqueueBotAPIMemberUpdates 是所有成员变动路径的统一出口：当事人是机器人时给它入队
+// my_chat_member；群里其他身为管理员的机器人入队 chat_member（是否订阅由 store 按
+// allowed_updates 过滤，默认不投递）。走 botAPIEnqueueQueue，不拖慢发起变动的 RPC。
+func (r *Router) enqueueBotAPIMemberUpdates(ctx context.Context, changes ...botAPIMemberChange) {
+	if r == nil || r.deps.BotAPIUpdates == nil || len(changes) == 0 {
+		return
+	}
+	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
+		admins := make(map[int64][]int64)
+		for _, change := range changes {
+			r.enqueueBotAPIMemberChange(jobCtx, change, admins)
+		}
+	})
+}
+
+func (r *Router) enqueueBotAPIMemberChange(ctx context.Context, change botAPIMemberChange, adminsByChannel map[int64][]int64) {
+	subjectID := change.Current.UserID
+	if subjectID == 0 {
+		subjectID = change.Previous.UserID
+	}
+	if change.Channel.ID == 0 || subjectID == 0 {
+		return
+	}
+	previous, current := change.Previous, change.Current
+	previous.UserID, current.UserID = subjectID, subjectID
+	if previous.Status == "" {
+		// 之前不是成员（例如封禁一个从未入群的人）：按 left 计。
+		previous.Role, previous.Status = domain.ChannelRoleMember, domain.ChannelMemberLeft
+	}
+	actorID := change.ActorUserID
+	if actorID == 0 {
+		actorID = subjectID
+	}
+	date := change.Date
+	if date <= 0 {
+		date = int(r.clock.Now().Unix())
+	}
+	chat := domain.Peer{Type: domain.PeerTypeChannel, ID: change.Channel.ID}
+	payload := domain.BotChatMemberUpdated{
+		Chat: chat, ActorUserID: actorID, Date: date,
+		Old:                     domain.NewBotChatMemberSnapshot(previous),
+		New:                     domain.NewBotChatMemberSnapshot(current),
+		ViaJoinRequest:          change.ViaJoinRequest,
+		ViaChatFolderInviteLink: change.ViaChatFolderInviteLink,
+	}
+	if payload.Old == payload.New {
+		return
+	}
+	enqueue := func(botID int64, kind domain.BotAPIUpdateKind) {
+		item := payload
+		if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
+			BotUserID: botID, Kind: kind, Peer: chat, Date: date, ChatMember: &item,
+		}); err == nil && created {
+			r.notifyBotAPIUpdate(botID)
+		}
+	}
+	if isBot, err := r.botAPIKnownBot(ctx, subjectID); err == nil && isBot {
+		enqueue(subjectID, domain.BotAPIUpdateMyChatMember)
+	}
+	admins, cached := adminsByChannel[change.Channel.ID]
+	if !cached {
+		admins = r.botAPIChannelAdminBots(ctx, change.Channel)
+		adminsByChannel[change.Channel.ID] = admins
+	}
+	for _, botID := range admins {
+		if botID != subjectID {
+			enqueue(botID, domain.BotAPIUpdateChatMember)
+		}
+	}
+}
+
+// botAPIChannelAdminBots 列出群里当前是管理员（含群主）的机器人。
+func (r *Router) botAPIChannelAdminBots(ctx context.Context, channel domain.Channel) []int64 {
+	if r.deps.Channels == nil {
+		return nil
+	}
+	// 候选列表要求查看者是成员；发起人可能刚离开/被踢，用群主视角更稳。
+	viewerID := channel.CreatorUserID
+	if viewerID == 0 {
+		return nil
+	}
+	botIDs, err := r.botAPIChannelBotCandidates(ctx, viewerID, channel.ID)
+	if err != nil {
+		return nil
+	}
+	out := make([]int64, 0, len(botIDs))
+	for _, botID := range botIDs {
+		member, err := r.deps.Channels.GetParticipant(ctx, botID, channel.ID, botID)
+		if err != nil || member.Status != domain.ChannelMemberActive {
+			continue
+		}
+		if member.Role == domain.ChannelRoleAdmin || member.Role == domain.ChannelRoleCreator {
+			out = append(out, botID)
+		}
+	}
+	return out
 }
 
 func (r *Router) botAPIChannelBotCandidates(ctx context.Context, viewerUserID, channelID int64) ([]int64, error) {

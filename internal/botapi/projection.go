@@ -195,9 +195,70 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 				"invoice_payload": query.Payload,
 			},
 		}, "pre_checkout_query", true
+	case domain.UpdateEventBotMyChatMember, domain.UpdateEventBotChatMember:
+		body, ok := apiChatMemberUpdated(event)
+		if !ok {
+			return nil, "", false
+		}
+		kind := string(domain.BotAPIUpdateChatMember)
+		if event.Type == domain.UpdateEventBotMyChatMember {
+			kind = string(domain.BotAPIUpdateMyChatMember)
+		}
+		return map[string]any{"update_id": updateID, kind: body}, kind, true
 	default:
 		return nil, "", false
 	}
+}
+
+// apiChatMemberUpdated 投影官方 ChatMemberUpdated。can_be_edited 恒为 false：
+// 服务端不记录是谁提拔的管理员，无法判断接收方机器人能否改动对方权限。
+func apiChatMemberUpdated(event domain.UpdateEvent) (map[string]any, bool) {
+	update := event.BotChatMember
+	if update == nil || update.Chat.Type != domain.PeerTypeChannel || update.Chat.ID <= 0 ||
+		update.New.UserID <= 0 || update.ActorUserID <= 0 {
+		return nil, false
+	}
+	users := make(map[int64]domain.User, len(event.Users))
+	for _, user := range event.Users {
+		users[user.ID] = user
+	}
+	userOf := func(id int64) domain.User {
+		if user, ok := users[id]; ok && user.ID != 0 {
+			return user
+		}
+		return domain.User{ID: id}
+	}
+	chat := apiChat(update.Chat, users)
+	for _, channel := range event.Channels {
+		if channel.ID != update.Chat.ID {
+			continue
+		}
+		if channel.Title != "" {
+			chat["title"] = channel.Title
+		}
+		if channel.Username != "" {
+			chat["username"] = channel.Username
+		}
+		if channel.Broadcast && !channel.Megagroup {
+			chat["type"] = "channel"
+		}
+		break
+	}
+	subject := userOf(update.New.UserID)
+	out := map[string]any{
+		"chat":            chat,
+		"from":            apiUser(userOf(update.ActorUserID)),
+		"date":            update.Date,
+		"old_chat_member": apiChatMember(update.Old.ChannelMember(update.Chat.ID), subject, false),
+		"new_chat_member": apiChatMember(update.New.ChannelMember(update.Chat.ID), subject, false),
+	}
+	if update.ViaJoinRequest {
+		out["via_join_request"] = true
+	}
+	if update.ViaChatFolderInviteLink {
+		out["via_chat_folder_invite_link"] = true
+	}
+	return out, true
 }
 
 func apiEphemeralMessage(message domain.EphemeralMessage, users []domain.User, channels []domain.Channel) (map[string]any, bool) {
