@@ -24,7 +24,7 @@ type moderationAdminActions interface {
 }
 
 type moderationChannelDeleter interface {
-	ModerationDeleteMessages(ctx context.Context, channelID int64, ids []int, date int) (domain.DeleteChannelMessagesResult, error)
+	ModerationDeleteMessages(ctx context.Context, channelID int64, ids []int, date int, audit domain.DeletionAudit) (domain.DeleteChannelMessagesResult, error)
 }
 
 type moderationChannelDeleteNotifier interface {
@@ -211,6 +211,7 @@ func (e *ActionExecutor) Execute(ctx context.Context, detail domain.ModerationCa
 		}
 		result, err := e.channels.ModerationDeleteMessages(
 			ctx, detail.Case.Target.ID, payload.IDs, int(e.now().Unix()),
+			domain.ModerationDeletionAudit(meta.Actor, meta.CommandID, meta.Reason),
 		)
 		if err != nil {
 			return err

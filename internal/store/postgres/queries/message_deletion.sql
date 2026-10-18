@@ -52,6 +52,52 @@ CROSS JOIN batch
 CROSS JOIN device
 ORDER BY m.owner_user_id, m.box_id;
 
+-- name: InsertChannelMessageDeletions :exec
+-- 在删除事务内为一批被删的群/频道消息写删除记录；群消息没有逐人副本，owner 取 0。
+WITH batch AS (
+  SELECT nextval('message_deletion_batch_seq') AS id
+),
+device AS (
+  SELECT COALESCE((
+    SELECT jsonb_build_object('device_model', a.device_model, 'platform', a.platform, 'ip', a.ip)
+    FROM authorizations a
+    WHERE a.auth_key_id = sqlc.arg(origin_auth_key_id)::bigint
+  ), '{}'::jsonb) AS info
+)
+INSERT INTO message_deletions (
+  batch_id, deleted_date, source, scope, actor_type, actor_user_id,
+  origin_auth_key_id, origin_session_id, origin_device,
+  operator_id, command_id, reason,
+  owner_user_id, peer_type, peer_id, message_id,
+  sender_user_id, message_date, snapshot
+)
+SELECT
+  batch.id,
+  sqlc.arg(deleted_date)::int,
+  sqlc.arg(source)::text,
+  'everyone',
+  sqlc.arg(actor_type)::text,
+  sqlc.arg(actor_user_id)::bigint,
+  sqlc.arg(origin_auth_key_id)::bigint,
+  sqlc.arg(origin_session_id)::bigint,
+  device.info,
+  sqlc.arg(operator_id)::text,
+  sqlc.arg(command_id)::text,
+  sqlc.arg(reason)::text,
+  0,
+  'channel',
+  m.channel_id,
+  m.id,
+  m.sender_user_id,
+  m.message_date,
+  row_to_json(m)::jsonb
+FROM channel_messages m
+CROSS JOIN batch
+CROSS JOIN device
+WHERE m.channel_id = sqlc.arg(channel_id)::bigint
+  AND m.id = ANY(sqlc.arg(message_ids)::int[])
+ORDER BY m.id;
+
 -- name: ListMessageDeletions :many
 SELECT
   id, batch_id, deleted_date, source, scope, actor_type, actor_user_id,

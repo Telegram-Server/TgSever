@@ -441,7 +441,8 @@ LIMIT $3`, req.ChannelID, req.TopicID, domain.MaxDeleteHistoryBatch)
 		return domain.DeleteChannelHistoryResult{}, err
 	}
 	rows.Close()
-	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date)
+	audit := domain.UserDeletionAudit(domain.DeletionSourceTopicHistory, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
+	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date, audit)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}

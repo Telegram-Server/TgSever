@@ -9,6 +9,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
+	appchannels "telesrv/internal/app/channels"
 	appmessages "telesrv/internal/app/messages"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
@@ -131,6 +132,113 @@ func TestBotAPIDeleteMessageRecordsTheBot(t *testing.T) {
 		if row.Source != domain.DeletionSourceBot || row.ActorType != domain.DeletionActorBot || row.Scope != domain.DeletionScopeBoth {
 			t.Fatalf("deletion = %+v, want a bot api deletion by bot %d", row, bot.ID)
 		}
+	}
+}
+
+type channelDeletionLogFixture struct {
+	ctx       context.Context
+	owner     int64
+	member    int64
+	channel   domain.Channel
+	store     *memory.ChannelStore
+	service   *appchannels.Service
+	deletions *memory.MessageDeletionStore
+	router    *Router
+}
+
+func newChannelDeletionLogFixture(t *testing.T) channelDeletionLogFixture {
+	t.Helper()
+	ctx := context.Background()
+	const owner, member = int64(1000003201), int64(1000003202)
+	store := memory.NewChannelStore()
+	deletions := memory.NewMessageDeletionStore()
+	store.AttachDeletionStore(deletions)
+	created, err := store.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: owner,
+		Title:         "rpc deletion log",
+		Megagroup:     true,
+		MemberUserIDs: []int64{member},
+		Date:          1_700_320_000,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	service := appchannels.NewService(store)
+	router := New(Config{}, Deps{Channels: service, Sessions: &captureSessions{}}, zaptest.NewLogger(t), clock.System)
+	return channelDeletionLogFixture{ctx: ctx, owner: owner, member: member, channel: created.Channel, store: store, service: service, deletions: deletions, router: router}
+}
+
+func (f channelDeletionLogFixture) send(t *testing.T, from int64, randomID int64, body string) domain.ChannelMessage {
+	t.Helper()
+	res, err := f.store.SendChannelMessage(f.ctx, domain.SendChannelMessageRequest{
+		UserID: from, ChannelID: f.channel.ID, RandomID: randomID, Message: body, Date: 1_700_320_001,
+	})
+	if err != nil {
+		t.Fatalf("send channel message: %v", err)
+	}
+	return res.Message
+}
+
+// expiringChannels 在真实频道服务上补一个固定的到期认领结果；memory store
+// 不实现 TTL 认领，删除本身仍走真实 store。
+type expiringChannels struct {
+	*appchannels.Service
+	claims []domain.DeleteChannelMessagesRequest
+}
+
+func (c *expiringChannels) ClaimExpiredMessages(context.Context, int, int) ([]domain.DeleteChannelMessagesRequest, error) {
+	claims := c.claims
+	c.claims = nil
+	return claims, nil
+}
+
+func TestChannelsDeleteMessagesRecordsTheDeletingSession(t *testing.T) {
+	f := newChannelDeletionLogFixture(t)
+	msg := f.send(t, f.member, 320_101, "typo")
+	authKeyID := [8]byte{0x32, 0, 0, 0, 0, 0, 0, 0x02}
+	req := &tg.ChannelsDeleteMessagesRequest{
+		Channel: &tg.InputChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash},
+		ID:      []int{msg.ID},
+	}
+	var in bin.Buffer
+	if err := req.Encode(&in); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+
+	if _, err := f.router.Dispatch(WithUserID(f.ctx, f.member), authKeyID, 88, &in); err != nil {
+		t.Fatalf("dispatch channels.deleteMessages: %v", err)
+	}
+
+	got, err := f.deletions.ListMessageDeletions(f.ctx, domain.MessageDeletionFilter{ActorUserID: f.member, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessageDeletions: %v", err)
+	}
+	if len(got) != 1 || got[0].MessageID != msg.ID || got[0].OriginAuthKeyID != authKeyID || got[0].OriginSessionID != 88 {
+		t.Fatalf("deletions = %+v, want message %d from session %x/88", got, msg.ID, authKeyID)
+	}
+}
+
+func TestExpiryDispatcherRecordsChannelTTLDeletionsAsSystem(t *testing.T) {
+	f := newChannelDeletionLogFixture(t)
+	msg := f.send(t, f.member, 320_102, "self destruct in group")
+	// 存储层按群主身份认领到期消息（只为通过删除权限校验）。
+	f.router.deps.Channels = &expiringChannels{
+		Service: f.service,
+		claims: []domain.DeleteChannelMessagesRequest{{
+			UserID: f.owner, ChannelID: f.channel.ID, IDs: []int{msg.ID}, Date: 1_700_320_100,
+		}},
+	}
+
+	if !NewExpiryDispatcher(f.router, zaptest.NewLogger(t)).DispatchOnce(f.ctx) {
+		t.Fatal("expiry dispatcher found no work")
+	}
+
+	got, err := f.deletions.ListMessageDeletions(f.ctx, domain.MessageDeletionFilter{SenderUserID: f.member, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessageDeletions: %v", err)
+	}
+	if len(got) != 1 || got[0].Source != domain.DeletionSourceTTL || got[0].ActorType != domain.DeletionActorSystem || got[0].ActorUserID != 0 {
+		t.Fatalf("deletions = %+v, want a system ttl deletion, not one attributed to the group owner", got)
 	}
 }
 

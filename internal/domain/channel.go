@@ -1965,10 +1965,12 @@ type ReorderChannelPinnedForumTopicsResult struct {
 
 // DeleteChannelForumTopicHistoryRequest deletes one forum topic page.
 type DeleteChannelForumTopicHistoryRequest struct {
-	UserID    int64
-	ChannelID int64
-	TopicID   int
-	Date      int
+	UserID          int64
+	ChannelID       int64
+	TopicID         int
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
 }
 
 // EditChannelMessageRequest edits one text message in a channel/supergroup.
@@ -2017,10 +2019,14 @@ type EditChannelMessageResult struct {
 
 // DeleteChannelMessagesRequest deletes a bounded set of channel/supergroup messages.
 type DeleteChannelMessagesRequest struct {
-	UserID    int64
-	ChannelID int64
-	IDs       []int
-	Date      int
+	UserID          int64
+	ChannelID       int64
+	IDs             []int
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+	// Audit 声明删除归属；零值表示 UserID 从当前会话自己删除。
+	Audit DeletionAudit
 }
 
 // DeleteChannelMessagesResult describes one channel delete update.
@@ -2043,11 +2049,13 @@ type ChannelCascadeDelete struct {
 
 // DeleteChannelHistoryRequest clears or deletes a bounded channel/supergroup history page.
 type DeleteChannelHistoryRequest struct {
-	UserID      int64
-	ChannelID   int64
-	MaxID       int
-	ForEveryone bool
-	Date        int
+	UserID          int64
+	ChannelID       int64
+	MaxID           int
+	ForEveryone     bool
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
 }
 
 // DeleteChannelParticipantHistoryRequest deletes one bounded page of messages sent by a participant.
@@ -2056,6 +2064,8 @@ type DeleteChannelParticipantHistoryRequest struct {
 	ChannelID         int64
 	ParticipantUserID int64
 	Date              int
+	OriginAuthKeyID   [8]byte
+	OriginSessionID   int64
 }
 
 // DeleteChannelHistoryResult describes a channel history delete/clear page.

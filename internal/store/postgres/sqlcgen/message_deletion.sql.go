@@ -9,6 +9,84 @@ import (
 	"context"
 )
 
+const insertChannelMessageDeletions = `-- name: InsertChannelMessageDeletions :exec
+WITH batch AS (
+  SELECT nextval('message_deletion_batch_seq') AS id
+),
+device AS (
+  SELECT COALESCE((
+    SELECT jsonb_build_object('device_model', a.device_model, 'platform', a.platform, 'ip', a.ip)
+    FROM authorizations a
+    WHERE a.auth_key_id = $5::bigint
+  ), '{}'::jsonb) AS info
+)
+INSERT INTO message_deletions (
+  batch_id, deleted_date, source, scope, actor_type, actor_user_id,
+  origin_auth_key_id, origin_session_id, origin_device,
+  operator_id, command_id, reason,
+  owner_user_id, peer_type, peer_id, message_id,
+  sender_user_id, message_date, snapshot
+)
+SELECT
+  batch.id,
+  $1::int,
+  $2::text,
+  'everyone',
+  $3::text,
+  $4::bigint,
+  $5::bigint,
+  $6::bigint,
+  device.info,
+  $7::text,
+  $8::text,
+  $9::text,
+  0,
+  'channel',
+  m.channel_id,
+  m.id,
+  m.sender_user_id,
+  m.message_date,
+  row_to_json(m)::jsonb
+FROM channel_messages m
+CROSS JOIN batch
+CROSS JOIN device
+WHERE m.channel_id = $10::bigint
+  AND m.id = ANY($11::int[])
+ORDER BY m.id
+`
+
+type InsertChannelMessageDeletionsParams struct {
+	DeletedDate     int32
+	Source          string
+	ActorType       string
+	ActorUserID     int64
+	OriginAuthKeyID int64
+	OriginSessionID int64
+	OperatorID      string
+	CommandID       string
+	Reason          string
+	ChannelID       int64
+	MessageIds      []int32
+}
+
+// 在删除事务内为一批被删的群/频道消息写删除记录；群消息没有逐人副本，owner 取 0。
+func (q *Queries) InsertChannelMessageDeletions(ctx context.Context, arg InsertChannelMessageDeletionsParams) error {
+	_, err := q.db.Exec(ctx, insertChannelMessageDeletions,
+		arg.DeletedDate,
+		arg.Source,
+		arg.ActorType,
+		arg.ActorUserID,
+		arg.OriginAuthKeyID,
+		arg.OriginSessionID,
+		arg.OperatorID,
+		arg.CommandID,
+		arg.Reason,
+		arg.ChannelID,
+		arg.MessageIds,
+	)
+	return err
+}
+
 const insertPrivateMessageDeletions = `-- name: InsertPrivateMessageDeletions :exec
 WITH batch AS (
   SELECT nextval('message_deletion_batch_seq') AS id

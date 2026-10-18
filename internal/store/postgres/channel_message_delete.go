@@ -42,11 +42,12 @@ func (s *ChannelStore) DeleteChannelMessages(ctx context.Context, req domain.Del
 	if err != nil {
 		return domain.DeleteChannelMessagesResult{}, err
 	}
-	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, req.IDs, req.UserID, req.Date)
+	audit := req.Audit.OrUser(domain.DeletionSourceUser, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
+	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, req.IDs, req.UserID, req.Date, audit)
 	if err != nil {
 		return domain.DeleteChannelMessagesResult{}, err
 	}
-	cascades, err := s.cascadeDeleteDiscussionRootsTx(ctx, tx, refs, deleted, req.UserID, req.Date)
+	cascades, err := s.cascadeDeleteDiscussionRootsTx(ctx, tx, refs, deleted, req.UserID, req.Date, audit)
 	if err != nil {
 		return domain.DeleteChannelMessagesResult{}, err
 	}
@@ -61,7 +62,7 @@ func (s *ChannelStore) DeleteChannelMessages(ctx context.Context, req domain.Del
 	return domain.DeleteChannelMessagesResult{Channel: channel, Event: event, DeletedIDs: deleted, Recipients: recipients, DiscussionDeletes: cascades}, nil
 }
 
-func (s *ChannelStore) ModerationDeleteChannelMessages(ctx context.Context, channelID int64, ids []int, date int) (domain.DeleteChannelMessagesResult, error) {
+func (s *ChannelStore) ModerationDeleteChannelMessages(ctx context.Context, channelID int64, ids []int, date int, audit domain.DeletionAudit) (domain.DeleteChannelMessagesResult, error) {
 	if channelID <= 0 || len(ids) == 0 || len(ids) > domain.MaxDeleteMessageIDs {
 		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
 	}
@@ -98,13 +99,13 @@ func (s *ChannelStore) ModerationDeleteChannelMessages(ctx context.Context, chan
 		Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive,
 	}
 	deleted, event, channel, err := s.deleteChannelMessagesTx(
-		ctx, tx, channel, systemMember, ids, domain.OfficialSystemUserID, date,
+		ctx, tx, channel, systemMember, ids, domain.OfficialSystemUserID, date, audit,
 	)
 	if err != nil {
 		return domain.DeleteChannelMessagesResult{}, err
 	}
 	cascades, err := s.cascadeDeleteDiscussionRootsTx(
-		ctx, tx, refs, deleted, domain.OfficialSystemUserID, date,
+		ctx, tx, refs, deleted, domain.OfficialSystemUserID, date, audit,
 	)
 	if err != nil {
 		return domain.DeleteChannelMessagesResult{}, err
@@ -153,10 +154,12 @@ WHERE channel_id = $1 AND id = ANY($2::int[]) AND NOT deleted
 // cascadeDeleteDiscussionRootsTx 随 broadcast post 删除其在 linked 讨论组的
 // 转发根（官方为服务端级联）；锁序固定 post channel → discussion channel，
 // 讨论组侧删根不反向级联，无交叉死锁路径。
-func (s *ChannelStore) cascadeDeleteDiscussionRootsTx(ctx context.Context, tx pgx.Tx, refs map[int]domain.ChannelDiscussionRef, deleted []int, actorUserID int64, date int) ([]domain.ChannelCascadeDelete, error) {
+func (s *ChannelStore) cascadeDeleteDiscussionRootsTx(ctx context.Context, tx pgx.Tx, refs map[int]domain.ChannelDiscussionRef, deleted []int, actorUserID int64, date int, audit domain.DeletionAudit) ([]domain.ChannelCascadeDelete, error) {
 	if len(refs) == 0 || len(deleted) == 0 {
 		return nil, nil
 	}
+	// 级联删除沿用原删除的发起方，只把来源标成 discussion_cascade。
+	audit.Source = domain.DeletionSourceDiscussionCascade
 	byChannel := make(map[int64][]int)
 	for _, id := range deleted {
 		ref, ok := refs[id]
@@ -181,7 +184,7 @@ func (s *ChannelStore) cascadeDeleteDiscussionRootsTx(ctx context.Context, tx pg
 		}
 		// 级联是服务端动作，按 creator 权限执行（频道 admin 未必是讨论组成员）。
 		systemMember := domain.ChannelMember{ChannelID: discussionChannelID, UserID: actorUserID, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}
-		groupDeleted, groupEvent, group, err := s.deleteChannelMessagesTx(ctx, tx, group, systemMember, byChannel[discussionChannelID], actorUserID, date)
+		groupDeleted, groupEvent, group, err := s.deleteChannelMessagesTx(ctx, tx, group, systemMember, byChannel[discussionChannelID], actorUserID, date, audit)
 		if err != nil {
 			return nil, fmt.Errorf("cascade delete discussion roots: %w", err)
 		}
@@ -350,7 +353,8 @@ LIMIT $3`, req.ChannelID, maxID, domain.MaxDeleteHistoryBatch)
 		return domain.DeleteChannelHistoryResult{}, err
 	}
 	rows.Close()
-	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date)
+	audit := domain.UserDeletionAudit(domain.DeletionSourceHistoryClear, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
+	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date, audit)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
@@ -419,7 +423,8 @@ LIMIT $3`, req.ChannelID, req.ParticipantUserID, domain.MaxDeleteHistoryBatch)
 		return domain.DeleteChannelHistoryResult{}, err
 	}
 	rows.Close()
-	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date)
+	audit := domain.UserDeletionAudit(domain.DeletionSourceParticipantHistory, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
+	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date, audit)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
@@ -435,7 +440,9 @@ LIMIT $3`, req.ChannelID, req.ParticipantUserID, domain.MaxDeleteHistoryBatch)
 	return domain.DeleteChannelHistoryResult{Channel: channel, Event: event, DeletedIDs: deleted, Recipients: recipients, Offset: offset}, nil
 }
 
-func (s *ChannelStore) deleteChannelMessagesTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, member domain.ChannelMember, ids []int, actorUserID int64, date int) ([]int, domain.ChannelUpdateEvent, domain.Channel, error) {
+// deleteChannelMessagesTx 软删除一批群/频道消息。actorUserID 用于权限校验与
+// 频道管理日志；audit 是写入删除记录的完整归属，由各入口按自身语义给出。
+func (s *ChannelStore) deleteChannelMessagesTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, member domain.ChannelMember, ids []int, actorUserID int64, date int, audit domain.DeletionAudit) ([]int, domain.ChannelUpdateEvent, domain.Channel, error) {
 	if len(ids) == 0 {
 		return nil, domain.ChannelUpdateEvent{}, channel, nil
 	}
@@ -510,6 +517,9 @@ SET deleted = true,
     updated_at = now()
 WHERE channel_id = $1 AND id = ANY($2::int[])`, channel.ID, deleted32, pts, len(deleted), date); err != nil {
 		return nil, domain.ChannelUpdateEvent{}, channel, fmt.Errorf("soft delete channel messages: %w", err)
+	}
+	if err := insertChannelMessageDeletionsTx(ctx, sqlcgen.New(tx), audit, date, channel.ID, deleted); err != nil {
+		return nil, domain.ChannelUpdateEvent{}, channel, err
 	}
 	if err := deleteChannelUnreadMentionsTx(ctx, tx, channel.ID, deleted); err != nil {
 		return nil, domain.ChannelUpdateEvent{}, channel, err

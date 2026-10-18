@@ -398,7 +398,8 @@ func (s *ChannelStore) DeleteForumTopicHistory(_ context.Context, req domain.Del
 			break
 		}
 	}
-	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date)
+	audit := domain.UserDeletionAudit(domain.DeletionSourceTopicHistory, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
+	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}

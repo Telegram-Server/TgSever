@@ -343,6 +343,45 @@ func TestActionExecutorFreezeDefaultsAndBoundsAppealLink(t *testing.T) {
 	}
 }
 
+type captureModerationChannelDeleter struct {
+	audit domain.DeletionAudit
+	ids   []int
+}
+
+func (d *captureModerationChannelDeleter) ModerationDeleteMessages(_ context.Context, _ int64, ids []int, _ int, audit domain.DeletionAudit) (domain.DeleteChannelMessagesResult, error) {
+	d.ids = ids
+	d.audit = audit
+	return domain.DeleteChannelMessagesResult{}, nil
+}
+
+func TestActionExecutorAttributesChannelDeletionToTheModerator(t *testing.T) {
+	channels := &captureModerationChannelDeleter{}
+	executor := NewActionExecutor(nil, channels, nil, nil)
+	detail := domain.ModerationCaseDetail{
+		Case:      domain.ModerationCase{ID: 11, Target: domain.Peer{Type: domain.PeerTypeChannel, ID: 21}},
+		Decisions: []domain.ModerationDecision{{ID: 31, Actor: "reviewer"}},
+	}
+	action := domain.ModerationAction{
+		CaseID: 11, DecisionID: 31, Kind: domain.ModerationActionDeleteChannelMessage,
+		Payload: []byte(`{"ids":[5]}`), CommandID: "delete-channel-message:000",
+	}
+
+	if err := executor.Execute(context.Background(), detail, action); err != nil {
+		t.Fatal(err)
+	}
+
+	want := domain.DeletionAudit{
+		Source:     domain.DeletionSourceModeration,
+		ActorType:  domain.DeletionActorOperator,
+		OperatorID: "reviewer",
+		CommandID:  "delete-channel-message:000",
+		Reason:     "moderation case 11 decision 31",
+	}
+	if channels.audit != want || len(channels.ids) != 1 || channels.ids[0] != 5 {
+		t.Fatalf("deleted ids=%v audit=%+v, want [5] by %+v", channels.ids, channels.audit, want)
+	}
+}
+
 func TestActionExecutorNotifiesCommittedAccountDeletion(t *testing.T) {
 	revoked := domain.Authorization{AuthKeyID: [8]byte{7}, UserID: 20}
 	result := domain.AccountDeletionResult{

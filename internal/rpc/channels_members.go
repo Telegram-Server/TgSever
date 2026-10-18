@@ -57,11 +57,14 @@ func (r *Router) onChannelsDeleteParticipantHistory(ctx context.Context, req *tg
 	if !ok || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
+	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Channels.DeleteParticipantHistory(ctx, userID, domain.DeleteChannelParticipantHistoryRequest{
 		UserID:            userID,
 		ChannelID:         channelID,
 		ParticipantUserID: peer.ID,
 		Date:              int(r.clock.Now().Unix()),
+		OriginAuthKeyID:   rawAuthKeyIDForOrigin(ctx),
+		OriginSessionID:   sessionID,
 	})
 	if err != nil {
 		return nil, channelDeleteErr(err)

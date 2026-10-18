@@ -65,6 +65,29 @@ func (s *MessageDeletionStore) ListMessageDeletions(ctx context.Context, filter 
 	return out, nil
 }
 
+// insertChannelMessageDeletionsTx 在删除事务内为被删的群/频道消息写删除记录。
+func insertChannelMessageDeletionsTx(ctx context.Context, q *sqlcgen.Queries, audit domain.DeletionAudit, date int, channelID int64, ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := q.InsertChannelMessageDeletions(ctx, sqlcgen.InsertChannelMessageDeletionsParams{
+		DeletedDate:     int32(date),
+		Source:          string(audit.Source),
+		ActorType:       string(audit.ActorType),
+		ActorUserID:     audit.ActorUserID,
+		OriginAuthKeyID: authKeyIDToInt64(audit.OriginAuthKeyID),
+		OriginSessionID: audit.OriginSessionID,
+		OperatorID:      audit.OperatorID,
+		CommandID:       audit.CommandID,
+		Reason:          audit.Reason,
+		ChannelID:       channelID,
+		MessageIds:      int32s(ids),
+	}); err != nil {
+		return fmt.Errorf("insert channel message deletions: %w", err)
+	}
+	return nil
+}
+
 // insertPrivateMessageDeletionsTx 在删除事务内为被删的 message box 写删除记录。
 // 必须在软删除之后、事务提交之前调用：快照取自同一事务内的 message_boxes 行。
 func insertPrivateMessageDeletionsTx(ctx context.Context, q *sqlcgen.Queries, audit domain.DeletionAudit, date int, scope domain.DeletionScope, rows []deletedBox) error {

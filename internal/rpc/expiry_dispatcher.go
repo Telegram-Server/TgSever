@@ -96,6 +96,8 @@ func (d *ExpiryDispatcher) dispatchChannels(ctx context.Context, now int) bool {
 		return false
 	}
 	for _, req := range requests {
+		// UserID 是认领时选出的群主身份，只用于通过删除权限校验；删除记录归系统。
+		req.Audit = domain.SystemDeletionAudit(domain.DeletionSourceTTL)
 		res, err := d.router.deps.Channels.DeleteMessages(ctx, req.UserID, req)
 		if err != nil {
 			d.log.Warn("delete expired channel messages", zap.Int64("channel_id", req.ChannelID), zap.Ints("ids", req.IDs), zap.Error(err))

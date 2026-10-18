@@ -16,6 +16,14 @@ const (
 	DeletionSourceAdmin DeletionSource = "admin"
 	// DeletionSourceBot 是机器人通过 Bot API 删除。
 	DeletionSourceBot DeletionSource = "bot"
+	// DeletionSourceTopicHistory 是删除论坛话题的全部消息。
+	DeletionSourceTopicHistory DeletionSource = "topic_history"
+	// DeletionSourceParticipantHistory 是群管理员删除某成员的全部消息。
+	DeletionSourceParticipantHistory DeletionSource = "participant_history"
+	// DeletionSourceDiscussionCascade 是删除频道帖子时连带删除讨论组里的转发根。
+	DeletionSourceDiscussionCascade DeletionSource = "discussion_cascade"
+	// DeletionSourceModeration 是审核工单处置删除。
+	DeletionSourceModeration DeletionSource = "moderation"
 )
 
 // DeletionActor 是删除操作的发起方类型。
@@ -39,6 +47,8 @@ const (
 	DeletionScopeSelf DeletionScope = "self"
 	// DeletionScopeBoth 同时删除私聊双方的副本（revoke）。
 	DeletionScopeBoth DeletionScope = "both"
+	// DeletionScopeEveryone 是群/频道消息，对所有成员删除。
+	DeletionScopeEveryone DeletionScope = "everyone"
 )
 
 // PrivateDeletionScope 返回私聊删除的范围：revoke 同时删除双方副本。
@@ -70,6 +80,13 @@ func OperatorDeletionAudit(operatorID, commandID, reason string) DeletionAudit {
 		CommandID:  commandID,
 		Reason:     reason,
 	}
+}
+
+// ModerationDeletionAudit 是审核员通过工单处置发起删除时的归属。
+func ModerationDeletionAudit(moderatorID, commandID, reason string) DeletionAudit {
+	audit := OperatorDeletionAudit(moderatorID, commandID, reason)
+	audit.Source = DeletionSourceModeration
+	return audit
 }
 
 // UserDeletionAudit 是用户从某个设备会话自己发起删除时的归属。

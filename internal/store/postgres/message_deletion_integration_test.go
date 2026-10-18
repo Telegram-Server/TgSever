@@ -29,6 +29,69 @@ func TestMessageDeletionsPostgres(t *testing.T) {
 	storetest.MessageDeletions(t, NewMessageStore(pool), NewMessageDeletionStore(pool), sender.ID, recipient.ID)
 }
 
+func TestChannelMessageDeletionsPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	users := NewUserStore(pool)
+	suffix := randomSuffix(t)
+	owner, err := users.Create(ctx, domain.User{AccessHash: 1205, Phone: "+178" + suffix + "05", FirstName: "ChannelDeletionOwner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := users.Create(ctx, domain.User{AccessHash: 1206, Phone: "+178" + suffix + "06", FirstName: "ChannelDeletionMember"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE peer_type='channel' AND peer_id IN (SELECT id FROM channels WHERE creator_user_id=$1)`, owner.ID)
+		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE creator_user_id=$1`, owner.ID)
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{owner.ID, member.ID})
+	})
+	storetest.ChannelMessageDeletions(t, NewChannelStore(pool), NewMessageDeletionStore(pool), owner.ID, member.ID)
+}
+
+func TestModerationChannelDeletionRecordsTheModeratorPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	users := NewUserStore(pool)
+	suffix := randomSuffix(t)
+	owner, err := users.Create(ctx, domain.User{AccessHash: 1207, Phone: "+178" + suffix + "07", FirstName: "ModeratedOwner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE peer_type='channel' AND peer_id IN (SELECT id FROM channels WHERE creator_user_id=$1)`, owner.ID)
+		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE creator_user_id=$1`, owner.ID)
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, owner.ID)
+	})
+	channels := NewChannelStore(pool)
+	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner.ID, Title: "Moderated", Megagroup: true, Date: 1_700_130_000})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	sent, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+		UserID: owner.ID, ChannelID: created.Channel.ID, RandomID: 1_207_001, Message: "reported", Date: 1_700_130_001,
+	})
+	if err != nil {
+		t.Fatalf("SendChannelMessage: %v", err)
+	}
+
+	audit := domain.ModerationDeletionAudit("reviewer", "delete-channel-message:007", "moderation case 7 decision 9")
+	if _, err := channels.ModerationDeleteChannelMessages(ctx, created.Channel.ID, []int{sent.Message.ID}, 1_700_130_002, audit); err != nil {
+		t.Fatalf("ModerationDeleteChannelMessages: %v", err)
+	}
+
+	got, err := NewMessageDeletionStore(pool).ListMessageDeletions(ctx, domain.MessageDeletionFilter{SenderUserID: owner.ID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessageDeletions: %v", err)
+	}
+	if len(got) != 1 || got[0].MessageID != sent.Message.ID || got[0].Source != domain.DeletionSourceModeration ||
+		got[0].ActorType != domain.DeletionActorOperator || got[0].ActorUserID != 0 || got[0].OperatorID != "reviewer" ||
+		got[0].CommandID != "delete-channel-message:007" || got[0].Reason != "moderation case 7 decision 9" {
+		t.Fatalf("deletions = %+v, want moderator reviewer for case 7", got)
+	}
+}
+
 func TestMessageDeletionKeepsDeviceAfterLogoutPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
