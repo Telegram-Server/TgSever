@@ -64,7 +64,9 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	// （TDesktop requestSelf→getParticipant→channel->inviter）生成本地「您加入了此频道」服务消息，
 	// 进而把广播频道补进会话列表（广播加入无服务端服务消息，靠这条本地消息物化会话）。
 	member := domain.ChannelMember{ChannelID: channelID, UserID: userID, InviterUserID: userID, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: date, AvailableMinID: minID, AvailableMinPts: channelInitialAvailableMinPts(channel), ReadInboxMaxID: maxInt(minID, preJoinTopID)}
+	var previous map[int64]domain.ChannelMember
 	if existingErr == nil {
+		previous = map[int64]domain.ChannelMember{userID: existing}
 		// 重进是全新 participant，但部分限制名单独立于在群与否、重进后仍生效；
 		// 只有 channel 当前 owner 仍是该账号时，才保留 creator 身份。
 		member.BannedRights = existing.BannedRights
@@ -139,7 +141,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, userID, member.ReadInboxMaxI
 	}
 	committed = true
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, userID, channelID, 0)
-	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Message: msg, Event: event, Recipients: recipients}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous, Message: msg, Event: event, Recipients: recipients}, nil
 }
 
 func (s *ChannelStore) FutureCreatorAfterLeave(ctx context.Context, channelID, userID int64) (domain.ChannelMember, error) {
@@ -182,6 +184,7 @@ func (s *ChannelStore) LeaveChannel(ctx context.Context, channelID, userID int64
 		date = nowUnix()
 	}
 	members := []domain.ChannelMember{}
+	previous := map[int64]domain.ChannelMember{userID: member}
 	adminsDelta := 0
 	if isChannelAdmin(member) {
 		adminsDelta--
@@ -197,6 +200,7 @@ func (s *ChannelStore) LeaveChannel(ctx context.Context, channelID, userID int64
 			}
 			return domain.CreateChannelResult{}, err
 		}
+		previous[future.UserID] = future
 		if !isChannelAdmin(future) {
 			adminsDelta++
 		}
@@ -271,7 +275,7 @@ WHERE id = $1`, channelID, channel.CreatorUserID, adminsDelta); err != nil {
 	}
 	committed = true
 	recipients = append(recipients, userID)
-	return domain.CreateChannelResult{Channel: channel, Members: members, Message: msg, Event: event, Recipients: recipients}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous, Message: msg, Event: event, Recipients: recipients}, nil
 }
 
 func (s *ChannelStore) futureCreatorAfterLeave(ctx context.Context, db sqlcgen.DBTX, channelID, userID int64) (domain.ChannelMember, error) {

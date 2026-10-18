@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/iamxvbaba/td/tg"
@@ -26,6 +27,41 @@ func TestBotAPICanBeEditedFollowsPromoter(t *testing.T) {
 	f.chatQueryPromote(t, f.owner.ID, f.channel.ID, f.bot.ID, domain.ChannelAdminRights{BanUsers: true, DeleteMessages: true}, "")
 	if _, _, canEdit, err := f.router.BotAPIGetChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID); err != nil || canEdit {
 		t.Fatalf("getChatMember without add_admins canEdit = %v, %v; want false", canEdit, err)
+	}
+}
+
+// 加入/退出类更新的旧状态取自 store 返回的真实旧记录：被踢后又被拉回是 kicked->active，
+// 群主退群时接任者的旧角色是它真实的角色。
+func TestBotAPIMemberUpdateUsesRealPreviousState(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.promoteBotViaRPC(t)
+	if err := f.router.BotAPISetAllowedUpdates(f.ctx, f.bot.ID, []domain.BotAPIUpdateKind{domain.BotAPIUpdateChatMember, domain.BotAPIUpdateMyChatMember}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	ownerCtx := WithUserID(f.ctx, f.owner.ID)
+	f.restrictMember(t, tg.ChatBannedRights{ViewMessages: true})
+	if _, err := f.router.onChannelsInviteToChannel(ownerCtx, &tg.ChannelsInviteToChannelRequest{
+		Channel: f.inputChannel(),
+		Users:   []tg.InputUserClass{&tg.InputUser{UserID: f.member.ID, AccessHash: f.member.AccessHash}},
+	}); err != nil {
+		t.Fatalf("re-invite kicked member: %v", err)
+	}
+	if _, err := f.router.onChannelsLeaveChannel(ownerCtx, f.inputChannel()); err != nil {
+		t.Fatalf("owner leaves: %v", err)
+	}
+	member, owner := itoa64(f.member.ID), itoa64(f.owner.ID)
+	want := []string{
+		"active/member->kicked/member@" + owner,
+		"kicked/member->active/member@" + owner,
+		"active/creator->left/member@" + owner,
+	}
+	if got := memberTransitions(botMemberEvents(t, f, domain.UpdateEventBotChatMember)); !slices.Equal(got, want) {
+		t.Fatalf("chat_member transitions = %v, want %v (member %s)", got, want, member)
+	}
+	mine := botMemberEvents(t, f, domain.UpdateEventBotMyChatMember)
+	last := mine[len(mine)-1].BotChatMember
+	if last.Old.Role != domain.ChannelRoleAdmin || !last.Old.AdminRights.BanUsers || last.New.Role != domain.ChannelRoleCreator {
+		t.Fatalf("successor my_chat_member old = %+v new = %+v", last.Old, last.New)
 	}
 }
 

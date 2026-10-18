@@ -160,7 +160,7 @@ LIMIT $3`, req.ChannelID, inviteID, limit)
 		if err != nil {
 			return domain.CreateChannelResult{}, err
 		}
-		result = next
+		result = result.MergeJoined(next)
 	}
 	if result.Channel.ID == 0 {
 		ch, _, err := s.getChannelForMember(ctx, s.db, req.UserID, req.ChannelID)

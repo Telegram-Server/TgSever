@@ -210,8 +210,8 @@ func TestBotAPIMemberUpdateBotKickedReinvitedAndLeaving(t *testing.T) {
 	bot, owner := itoa64(f.bot.ID), itoa64(f.owner.ID)
 	want := []string{
 		"active/member->kicked/member@" + owner,
-		// 拉人结果不带旧状态，被踢后重新拉入按 left 计（与官方的 kicked 有差异）。
-		"left/member->active/member@" + owner,
+		// 被踢后重新拉入：旧状态是真实的 kicked（对齐官方）。
+		"kicked/member->active/member@" + owner,
 		"active/member->left/member@" + bot,
 	}
 	if got := memberTransitions(botMemberEvents(t, f, domain.UpdateEventBotMyChatMember)); !slices.Equal(got, want) {

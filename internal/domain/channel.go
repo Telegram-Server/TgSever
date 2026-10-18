@@ -1436,11 +1436,40 @@ type CreateChannelRequest struct {
 
 // CreateChannelResult is returned by channel creation paths.
 type CreateChannelResult struct {
-	Channel    Channel
-	Members    []ChannelMember
+	Channel Channel
+	Members []ChannelMember
+	// Previous 是加入/退出类结果里 Members 各成员变化前的真实记录（按 UserID），由 store 在
+	// 同一事务/锁内读出。此前从未有过成员记录的用户不在其中，按 left 处理。
+	Previous   map[int64]ChannelMember
 	Message    ChannelMessage
 	Event      ChannelUpdateEvent
 	Recipients []int64
+}
+
+// MergeJoined 把批量批准入群中的一次结果并入累计结果：Channel/Message/Event/Recipients 取
+// 最新一次，Members 与 Previous 累加，保证每个被批准的人都出现在结果里。
+func (r CreateChannelResult) MergeJoined(next CreateChannelResult) CreateChannelResult {
+	members := append(append([]ChannelMember(nil), r.Members...), next.Members...)
+	var previous map[int64]ChannelMember
+	if len(r.Previous)+len(next.Previous) > 0 {
+		previous = make(map[int64]ChannelMember, len(r.Previous)+len(next.Previous))
+		for userID, member := range r.Previous {
+			previous[userID] = member
+		}
+		for userID, member := range next.Previous {
+			previous[userID] = member
+		}
+	}
+	next.Members, next.Previous = members, previous
+	return next
+}
+
+// PreviousMember 返回 userID 变化前的成员记录；没有旧记录时按 left 的普通成员计。
+func (r CreateChannelResult) PreviousMember(channelID, userID int64) ChannelMember {
+	if previous, ok := r.Previous[userID]; ok && previous.Status != "" {
+		return previous
+	}
+	return ChannelMember{ChannelID: channelID, UserID: userID, Role: ChannelRoleMember, Status: ChannelMemberLeft}
 }
 
 // EditChannelTitleRequest edits a channel/supergroup title and emits a service message.

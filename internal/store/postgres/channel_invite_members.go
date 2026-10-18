@@ -83,6 +83,13 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		members = append(members, member)
 		invitedIDs = append(invitedIDs, userID)
 	}
+	// 旧状态取自上面 FOR UPDATE 锁住的同一批行：只保留真正被拉入的人。
+	previous := make(map[int64]domain.ChannelMember, len(members))
+	for _, member := range members {
+		if existing, ok := existingMembers[member.UserID]; ok {
+			previous[member.UserID] = existing
+		}
+	}
 	if len(members) > 0 {
 		if err := enableChannelMembershipBatchTx(ctx, tx); err != nil {
 			return domain.CreateChannelResult{}, err
@@ -138,7 +145,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		return domain.CreateChannelResult{}, fmt.Errorf("commit invite channel: %w", err)
 	}
 	committed = true
-	return domain.CreateChannelResult{Channel: channel, Members: members, Message: msg, Event: event}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous, Message: msg, Event: event}, nil
 }
 
 func canInviteToChannel(channel domain.Channel, member domain.ChannelMember) bool {

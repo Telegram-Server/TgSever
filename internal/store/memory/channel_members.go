@@ -140,7 +140,9 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 		Status:        domain.ChannelMemberActive,
 		JoinedAt:      date,
 	}
+	var previous map[int64]domain.ChannelMember
 	if existing, ok := s.members[channelID][userID]; ok {
+		previous = map[int64]domain.ChannelMember{userID: existing}
 		member = existing
 		member.Status = domain.ChannelMemberActive
 		member.LeftAt = 0
@@ -206,6 +208,7 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 	return domain.CreateChannelResult{
 		Channel:    channel,
 		Members:    []domain.ChannelMember{member},
+		Previous:   previous,
 		Message:    cloneChannelMessage(msg),
 		Event:      cloneChannelEvent(event),
 		Recipients: s.activeMemberIDsLocked(channelID, 0, 0),
@@ -220,6 +223,7 @@ func (s *ChannelStore) LeaveChannel(_ context.Context, channelID, userID int64, 
 		return domain.CreateChannelResult{}, err
 	}
 	members := []domain.ChannelMember{}
+	previous := map[int64]domain.ChannelMember{userID: member}
 	adminsDelta := 0
 	if isChannelAdmin(member) {
 		adminsDelta--
@@ -232,6 +236,7 @@ func (s *ChannelStore) LeaveChannel(_ context.Context, channelID, userID int64, 
 		if err != nil {
 			return domain.CreateChannelResult{}, domain.ErrChannelUserCreator
 		}
+		previous[future.UserID] = future
 		if !isChannelAdmin(future) {
 			adminsDelta++
 		}
@@ -279,6 +284,7 @@ func (s *ChannelStore) LeaveChannel(_ context.Context, channelID, userID int64, 
 	return domain.CreateChannelResult{
 		Channel:    channel,
 		Members:    cloneChannelMembers(members),
+		Previous:   previous,
 		Message:    cloneChannelMessage(msg),
 		Event:      cloneChannelEvent(event),
 		Recipients: append(s.activeMemberIDsLocked(channelID, 0, 0), userID),

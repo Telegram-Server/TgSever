@@ -95,6 +95,7 @@ func (s *ChannelStore) approveInviteImporterTx(ctx context.Context, tx pgx.Tx, c
 	if channelID == 0 {
 		channelID = invite.ChannelID
 	}
+	var previous map[int64]domain.ChannelMember
 	if existing, err := s.getChannelMember(ctx, tx, channelID, userID); err == nil {
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
@@ -102,6 +103,7 @@ func (s *ChannelStore) approveInviteImporterTx(ctx context.Context, tx pgx.Tx, c
 		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
 			return domain.CreateChannelResult{}, domain.ErrInviteHashInvalid
 		}
+		previous = map[int64]domain.ChannelMember{userID: existing}
 	} else if !errors.Is(err, domain.ErrChannelPrivate) {
 		return domain.CreateChannelResult{}, err
 	}
@@ -208,7 +210,7 @@ WHERE channel_id = $1 AND user_id = $2`, channel.ID, userID, member.ReadInboxMax
 	if err := enqueueWelcomeMessageDeliveriesTx(ctx, tx, channel.ID, []domain.ChannelMember{member}); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Message: msg, Event: event}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous, Message: msg, Event: event}, nil
 }
 
 func (s *ChannelStore) recordPendingInviteImporterTx(ctx context.Context, tx pgx.Tx, invite domain.ChannelInvite, userID int64, date int) error {

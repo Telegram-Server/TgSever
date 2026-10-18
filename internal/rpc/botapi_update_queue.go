@@ -591,7 +591,8 @@ type botAPIMemberChange struct {
 }
 
 // botAPIJoinedMemberChanges 把加入类结果（拉人、自行加入、邀请链接、批准申请）
-// 转成成员变化。这类结果只带新状态，旧状态按 left 计。
+// 转成成员变化。旧状态取 store 在同一事务内读出的 res.Previous（被踢后拉回是 kicked 等），
+// 此前没有成员记录的按 left 计。
 func botAPIJoinedMemberChanges(actorUserID int64, res domain.CreateChannelResult, date int) []botAPIMemberChange {
 	out := make([]botAPIMemberChange, 0, len(res.Members))
 	for _, member := range res.Members {
@@ -600,10 +601,7 @@ func botAPIJoinedMemberChanges(actorUserID int64, res domain.CreateChannelResult
 		}
 		out = append(out, botAPIMemberChange{
 			Channel: res.Channel, ActorUserID: actorUserID, Date: date, Current: member,
-			Previous: domain.ChannelMember{
-				ChannelID: member.ChannelID, UserID: member.UserID,
-				Role: domain.ChannelRoleMember, Status: domain.ChannelMemberLeft,
-			},
+			Previous: res.PreviousMember(member.ChannelID, member.UserID),
 		})
 	}
 	return out
@@ -619,26 +617,17 @@ func botAPIJoinRequestMemberChanges(adminUserID int64, res domain.CreateChannelR
 }
 
 // botAPILeftMemberChanges 把退出结果转成成员变化：Members[0] 是退出者（已置 left），
-// 群主退出时后面跟着接任的新群主。
+// 群主退出时后面跟着接任的新群主。旧状态取 res.Previous（退出者与接任者变化前的真实记录）。
 func botAPILeftMemberChanges(userID int64, res domain.CreateChannelResult, date int) []botAPIMemberChange {
 	out := make([]botAPIMemberChange, 0, len(res.Members))
 	for _, member := range res.Members {
-		if member.UserID != userID {
-			// 接任群主：旧角色未知，按管理员计。
-			previous := member
-			previous.Role = domain.ChannelRoleAdmin
-			if member.Role == domain.ChannelRoleCreator {
-				out = append(out, botAPIMemberChange{Channel: res.Channel, ActorUserID: userID, Date: date, Previous: previous, Current: member})
-			}
+		if member.UserID != userID && member.Role != domain.ChannelRoleCreator {
 			continue
 		}
-		previous := member
-		previous.Status = domain.ChannelMemberActive
-		previous.LeftAt = 0
-		if len(res.Members) > 1 {
-			previous.Role = domain.ChannelRoleCreator
-		}
-		out = append(out, botAPIMemberChange{Channel: res.Channel, ActorUserID: userID, Date: date, Previous: previous, Current: member})
+		out = append(out, botAPIMemberChange{
+			Channel: res.Channel, ActorUserID: userID, Date: date,
+			Previous: res.PreviousMember(member.ChannelID, member.UserID), Current: member,
+		})
 	}
 	return out
 }
