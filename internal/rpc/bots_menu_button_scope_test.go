@@ -37,4 +37,14 @@ func TestBotsSetBotMenuButtonRejectsPerUserButton(t *testing.T) {
 	if err != nil || button.Type != domain.BotMenuButtonCommands {
 		t.Fatalf("default button = %+v, %v; want commands", button, err)
 	}
+
+	// 以机器人自己为目标（inputUserSelf 或自己的 id）也表示默认按钮，客户端常这样传。
+	for _, self := range []tg.InputUserClass{&tg.InputUserSelf{}, &tg.InputUser{UserID: f.bot.ID}} {
+		if ok, err := f.router.onBotsSetBotMenuButton(ctx, &tg.BotsSetBotMenuButtonRequest{
+			UserID: self,
+			Button: &tg.BotMenuButtonDefault{},
+		}); err != nil || !ok {
+			t.Fatalf("self-targeted set %T = %v, %v; want the default set", self, ok, err)
+		}
+	}
 }
