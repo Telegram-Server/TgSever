@@ -31,6 +31,12 @@ type MessageStore struct {
 	// one-shot response fact.
 	privateNoForwards         map[privateNoForwardsPair]domain.PrivateNoForwardsState
 	privateNoForwardsRequests map[int64]memoryNoForwardsRequest
+	deletions                 *MessageDeletionStore
+}
+
+// AttachDeletionStore 注入删除记录（与 ChannelStore 共用同一实例）。
+func (s *MessageStore) AttachDeletionStore(deletions *MessageDeletionStore) {
+	s.deletions = deletions
 }
 
 // AttachPollStore 注入共享 poll 权威（与 ChannelStore 共用同一实例）。

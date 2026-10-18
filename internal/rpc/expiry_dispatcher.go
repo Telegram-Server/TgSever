@@ -6,6 +6,8 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
+
+	"telesrv/internal/domain"
 )
 
 // ExpiryDispatcher deletes messages whose per-message TTL snapshot has expired.
@@ -61,6 +63,8 @@ func (d *ExpiryDispatcher) dispatchPrivate(ctx context.Context, now int) bool {
 		return false
 	}
 	for _, req := range requests {
+		// 到期删除由服务端发起，不能记到消息所属账号头上。
+		req.Audit = domain.SystemDeletionAudit(domain.DeletionSourceTTL)
 		res, err := d.router.deps.Messages.DeleteMessages(ctx, req.OwnerUserID, req)
 		if err != nil {
 			d.log.Warn("delete expired private messages", zap.Int64("owner_user_id", req.OwnerUserID), zap.Ints("ids", req.IDs), zap.Error(err))

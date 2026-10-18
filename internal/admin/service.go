@@ -3752,6 +3752,7 @@ func (s *Service) DeletePrivateMessages(ctx context.Context, req DeletePrivateMe
 			IDs:         req.IDs,
 			Revoke:      req.Revoke,
 			Date:        int(s.now().Unix()),
+			Audit:       domain.OperatorDeletionAudit(req.Actor, req.CommandID, req.Reason),
 		})
 		if err != nil {
 			return CommandResult{}, err
@@ -3813,6 +3814,7 @@ func (s *Service) DeletePrivateHistory(ctx context.Context, req DeletePrivateHis
 				JustClear:   req.JustClear,
 				Revoke:      req.Revoke,
 				Date:        int(s.now().Unix()),
+				Audit:       domain.OperatorDeletionAudit(req.Actor, req.CommandID, req.Reason),
 			})
 			if err != nil {
 				return CommandResult{}, err

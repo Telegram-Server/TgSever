@@ -28,6 +28,7 @@ func (s *MessageStore) deleteMemoryMessagesLocked(userID int64, limit int, match
 				privateMessageID: msg.UID,
 				messageSenderID:  msg.From.ID,
 				randomID:         msg.RandomID,
+				message:          msg,
 			})
 			if msg.UID != 0 {
 				revokeUIDs[msg.UID] = struct{}{}
@@ -59,6 +60,7 @@ func (s *MessageStore) deleteMemoryMessagesByUIDLocked(uids map[int64]struct{}, 
 					privateMessageID: msg.UID,
 					messageSenderID:  msg.From.ID,
 					randomID:         msg.RandomID,
+					message:          msg,
 				})
 				continue
 			}
