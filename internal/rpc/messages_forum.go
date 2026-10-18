@@ -197,11 +197,14 @@ func (r *Router) onMessagesDeleteTopicHistory(ctx context.Context, req *tg.Messa
 	if r.deps.Channels == nil {
 		return nil, internalErr()
 	}
+	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Channels.DeleteForumTopicHistory(ctx, userID, domain.DeleteChannelForumTopicHistoryRequest{
-		UserID:    userID,
-		ChannelID: peer.ID,
-		TopicID:   req.TopMsgID,
-		Date:      int(r.clock.Now().Unix()),
+		UserID:          userID,
+		ChannelID:       peer.ID,
+		TopicID:         req.TopMsgID,
+		Date:            int(r.clock.Now().Unix()),
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
+		OriginSessionID: sessionID,
 	})
 	if err != nil {
 		return nil, forumTopicError(err)

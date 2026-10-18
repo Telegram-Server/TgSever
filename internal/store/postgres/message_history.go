@@ -606,6 +606,10 @@ func (s *MessageStore) DeleteHistory(ctx context.Context, req domain.DeleteHisto
 			deleted = append(deleted, deletedRowsFromPeerBatchRows(peerSideRows)...)
 		}
 	}
+	audit := req.Audit.OrUser(domain.DeletionSourceHistoryClear, req.OwnerUserID, req.OriginAuthKeyID, req.OriginSessionID)
+	if err := insertPrivateMessageDeletionsTx(ctx, qtx, audit, req.Date, domain.PrivateDeletionScope(req.Revoke), deleted); err != nil {
+		return res, err
+	}
 	res, err = s.finishDeleteMessagesTx(ctx, tx, qtx, req.OwnerUserID, req.OriginAuthKeyID, req.OriginSessionID, req.Date, deleted, anchors)
 	if err != nil {
 		return res, err

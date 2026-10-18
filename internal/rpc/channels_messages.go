@@ -325,11 +325,14 @@ func (r *Router) onChannelsDeleteMessages(ctx context.Context, req *tg.ChannelsD
 	if err != nil {
 		return nil, err
 	}
+	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Channels.DeleteMessages(ctx, userID, domain.DeleteChannelMessagesRequest{
-		UserID:    userID,
-		ChannelID: channelID,
-		IDs:       append([]int(nil), req.ID...),
-		Date:      int(r.clock.Now().Unix()),
+		UserID:          userID,
+		ChannelID:       channelID,
+		IDs:             append([]int(nil), req.ID...),
+		Date:            int(r.clock.Now().Unix()),
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
+		OriginSessionID: sessionID,
 	})
 	if err != nil {
 		return nil, channelDeleteErr(err)
@@ -385,12 +388,16 @@ func (r *Router) onChannelsDeleteHistory(ctx context.Context, req *tg.ChannelsDe
 	if req.MaxID < 0 || req.MaxID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
 	}
+	sessionID, _ := SessionIDFrom(ctx)
+	originAuthKeyID := rawAuthKeyIDForOrigin(ctx)
 	res, err := r.deps.Channels.DeleteHistory(ctx, userID, domain.DeleteChannelHistoryRequest{
-		UserID:      userID,
-		ChannelID:   channelID,
-		MaxID:       req.MaxID,
-		ForEveryone: req.GetForEveryone(),
-		Date:        int(r.clock.Now().Unix()),
+		UserID:          userID,
+		ChannelID:       channelID,
+		MaxID:           req.MaxID,
+		ForEveryone:     req.GetForEveryone(),
+		Date:            int(r.clock.Now().Unix()),
+		OriginAuthKeyID: originAuthKeyID,
+		OriginSessionID: sessionID,
 	})
 	if err != nil {
 		return nil, channelDeleteErr(err)
@@ -421,11 +428,13 @@ func (r *Router) onChannelsDeleteHistory(ctx context.Context, req *tg.ChannelsDe
 	// 并立即推送，中途失败时已删批次保持有效，返回最后成功批次的结果。
 	for res.Offset != 0 && ctx.Err() == nil {
 		next, err := r.deps.Channels.DeleteHistory(ctx, userID, domain.DeleteChannelHistoryRequest{
-			UserID:      userID,
-			ChannelID:   channelID,
-			MaxID:       req.MaxID,
-			ForEveryone: req.GetForEveryone(),
-			Date:        int(r.clock.Now().Unix()),
+			UserID:          userID,
+			ChannelID:       channelID,
+			MaxID:           req.MaxID,
+			ForEveryone:     req.GetForEveryone(),
+			Date:            int(r.clock.Now().Unix()),
+			OriginAuthKeyID: originAuthKeyID,
+			OriginSessionID: sessionID,
 		})
 		if err != nil || next.Event.Pts == 0 {
 			break

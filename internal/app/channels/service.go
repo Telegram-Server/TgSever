@@ -1570,13 +1570,14 @@ func (s *Service) DeleteMessages(ctx context.Context, userID int64, req domain.D
 }
 
 type moderationChannelMessageStore interface {
-	ModerationDeleteChannelMessages(ctx context.Context, channelID int64, ids []int, date int) (domain.DeleteChannelMessagesResult, error)
+	ModerationDeleteChannelMessages(ctx context.Context, channelID int64, ids []int, date int, audit domain.DeletionAudit) (domain.DeleteChannelMessagesResult, error)
 }
 
 // ModerationDeleteMessages is the explicit server-authority deletion path used
 // only by the durable moderation action worker. It never accepts a client
 // identity and therefore cannot be reached by ordinary RPC permission checks.
-func (s *Service) ModerationDeleteMessages(ctx context.Context, channelID int64, ids []int, date int) (domain.DeleteChannelMessagesResult, error) {
+// audit 记录处置该工单的审核员与 action，写入删除记录。
+func (s *Service) ModerationDeleteMessages(ctx context.Context, channelID int64, ids []int, date int, audit domain.DeletionAudit) (domain.DeleteChannelMessagesResult, error) {
 	if s == nil || s.channels == nil || channelID <= 0 ||
 		len(ids) == 0 || len(ids) > domain.MaxDeleteMessageIDs {
 		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
@@ -1590,7 +1591,7 @@ func (s *Service) ModerationDeleteMessages(ctx context.Context, channelID int64,
 	if !ok {
 		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
 	}
-	return store.ModerationDeleteChannelMessages(ctx, channelID, append([]int(nil), ids...), date)
+	return store.ModerationDeleteChannelMessages(ctx, channelID, append([]int(nil), ids...), date, audit)
 }
 
 // DeleteHistory clears the current user's history view or deletes a bounded channel history page for everyone.

@@ -111,6 +111,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/messages/detail", s.scopedRoute(permissionMessagesRead, http.HandlerFunc(s.handleMessageDetailAPI)))
 	mux.Handle("GET /api/messages/groups", s.scopedRoute(permissionMessagesRead, http.HandlerFunc(s.handleGroupMessagesAPI)))
 	mux.Handle("GET /api/messages/groups/detail", s.scopedRoute(permissionMessagesRead, http.HandlerFunc(s.handleGroupMessageDetailAPI)))
+	mux.Handle("GET /api/messages/deletions", s.scopedRoute(permissionMessageDeletionsRead, http.HandlerFunc(s.handleMessageDeletionsAPI)))
+	mux.Handle("GET /api/messages/deletions/detail", s.scopedRoute(permissionMessageDeletionsRead, http.HandlerFunc(s.handleMessageDeletionDetailAPI)))
 	mux.Handle("GET /api/gifts", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleStarGiftsAPI)))
 	mux.Handle("GET /api/auctions", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleStarGiftAuctionsAPI)))
 	mux.Handle("GET /api/official-gifts", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleOfficialStarGiftsAPI)))

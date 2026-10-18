@@ -269,6 +269,8 @@ func (s *MessageStore) DeleteHistory(_ context.Context, req domain.DeleteHistory
 			more = more || peerMore
 		}
 	}
+	audit := req.Audit.OrUser(domain.DeletionSourceHistoryClear, req.OwnerUserID, req.OriginAuthKeyID, req.OriginSessionID)
+	s.recordDeletionsLocked(audit, req.Date, domain.PrivateDeletionScope(req.Revoke), deleted)
 	res = s.finishMemoryDeleteLocked(res, deleted, req.Date, anchors)
 	if more {
 		res.Offset = 1

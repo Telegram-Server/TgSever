@@ -25,6 +25,7 @@ import { GifCatalogPage } from "./GifCatalogPage";
 import { GiftsPage } from "./GiftsPage";
 import { GiveGiftsPage } from "./GiveGiftsPage";
 import { GroupMessageDetailPage } from "./GroupMessageDetailPage";
+import { MessageDeletionDetailPage } from "./MessageDeletionsPage";
 import { MessageDetailPage } from "./MessageDetailPage";
 import { MessagesPage } from "./MessagesPage";
 import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
@@ -201,14 +202,18 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
       />
     );
   }
-  // Both tabs keep their own path so a link to one still opens on it -- the
+  if (route.path === "/messages/deletions/detail") {
+    return <MessageDeletionDetailPage id={Number(route.search.get("id") || "0")} navigate={navigate} />;
+  }
+  // Every tab keeps its own path so a link to one still opens on it -- the
   // tab is a view of /messages, not a hidden bit of component state.
-  if (route.path === "/messages" || route.path === "/messages/private" || route.path === "/messages/groups") {
+  if (route.path === "/messages" || route.path === "/messages/private" || route.path === "/messages/groups" || route.path === "/messages/deletions") {
     return (
       <MessagesPage
         navigate={navigate}
-        tab={route.path === "/messages/groups" ? "groups" : "private"}
+        tab={route.path === "/messages/groups" ? "groups" : route.path === "/messages/deletions" ? "deletions" : "private"}
         path={route.path}
+        search={route.search}
       />
     );
   }

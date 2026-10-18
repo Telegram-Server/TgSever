@@ -1115,6 +1115,7 @@ func (r *Router) BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, m
 		IDs:         []int{messageID},
 		Revoke:      true,
 		Date:        int(time.Now().Unix()),
+		Audit:       domain.BotDeletionAudit(botID),
 	})
 	if err != nil {
 		return false, err

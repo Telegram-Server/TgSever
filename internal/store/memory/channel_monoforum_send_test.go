@@ -291,7 +291,7 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 		t.Fatalf("dialogs[1] = %+v, want sub with top message", dialogs.Dialogs[1])
 	}
 	store.mu.Lock()
-	_, deleteEvent, _, err := store.deleteChannelMessagesLocked(store.channels[monoID], domain.ChannelMember{ChannelID: monoID, UserID: 1, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}, []int{a.Message.ID}, 1, 1_700_001_013)
+	_, deleteEvent, _, err := store.deleteChannelMessagesLocked(store.channels[monoID], domain.ChannelMember{ChannelID: monoID, UserID: 1, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}, []int{a.Message.ID}, 1, 1_700_001_013, domain.UserDeletionAudit(domain.DeletionSourceUser, 1, [8]byte{}, 0))
 	store.mu.Unlock()
 	if err != nil {
 		t.Fatalf("delete monoforum message: %v", err)

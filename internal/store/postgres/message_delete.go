@@ -74,6 +74,10 @@ func (s *MessageStore) DeleteMessages(ctx context.Context, req domain.DeleteMess
 		}
 		deleted = append(deleted, deletedRowsFromPrivateRows(peerRows)...)
 	}
+	audit := req.Audit.OrUser(domain.DeletionSourceUser, req.OwnerUserID, req.OriginAuthKeyID, req.OriginSessionID)
+	if err := insertPrivateMessageDeletionsTx(ctx, qtx, audit, req.Date, domain.PrivateDeletionScope(req.Revoke), deleted); err != nil {
+		return res, err
+	}
 	res, err = s.finishDeleteMessagesTx(ctx, tx, qtx, req.OwnerUserID, req.OriginAuthKeyID, req.OriginSessionID, req.Date, deleted, nil)
 	if err != nil {
 		return res, err

@@ -712,6 +712,27 @@ a.stat-tile.clickable {
   width: 150px;
 }
 
+.deletion-filters .inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.deletion-filters .inline-field input {
+  width: 190px;
+}
+
+/* The text the user removed, shown above its raw row so it reads first. */
+.deleted-body {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .message-selector-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(280px, 1fr));

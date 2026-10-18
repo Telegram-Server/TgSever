@@ -65,6 +65,7 @@
 | `channels.manage` | Edit groups and channels — Change settings, usernames and avatars |
 | `messages.read` | View messages — Read private and group message history |
 | `messages.manage` | Delete messages — Remove messages and clear history |
+| `messages.deletions.read` | View deleted messages — See who deleted which message, when, from which device, and what it said |
 | **Moderation and verification** | |
 | `moderation.review` | Handle reports — Work the moderation queue and decide cases |
 | `verification.review` | Verify accounts — Work the verification queue and grant badges |
@@ -233,6 +234,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
 | Messages | Private | `/messages/private` | `messages.read` (also served at the bare alias) |
 | Messages | Groups | `/messages/groups` | `messages.read` |
+| Messages | Deletions | `/messages/deletions` | `messages.deletions.read` |
 | Reports | Reports | `/moderation` | `moderation.review` |
 | Donations | Donations | `/donations` | `donations.manage` |
 | Audit log | Audit log | `/audit-log` | `audit.read` |
@@ -263,6 +265,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | `/emoji/documents` | Документы внутри emoji-набора. |
 | `/messages/detail`, `/messages/private/detail` | Детали личного сообщения (`?owner_user_id=&msg_id=`). |
 | `/messages/groups/detail` | Детали сообщения в группе (`?channel_id=&msg_id=`). |
+| `/messages/deletions/detail` | Одна запись об удалении (`?id=`). Список `/messages/deletions` принимает те же фильтры, что и его API, в query-параметрах. |
 
 `/premium` — постоянный алиас `/monetization`. `/messages` — алиас
 `/messages/private`.
@@ -346,6 +349,8 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | GET | `/api/messages/detail` | Параметры: `owner_user_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
 | GET | `/api/messages/groups` | Параметры: `channel_id` (int64, обяз.), `before_date` (int64), `before_id` (int), `limit` (int). Ответ: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Параметры: `channel_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
+| GET | `/api/messages/deletions` | Требует `messages.deletions.read`. Все параметры — необязательные фильтры: `actor_user_id`, `owner_user_id`, `sender_user_id`, `peer_id` (int64), `peer_type` (`user`/`channel`), `message_id` (int), `source`, `min_date`/`max_date` (unix), `before_id` (int64, курсор), `limit` (int). Ответ: `rows`, новые первыми, без общего количества. |
+| GET | `/api/messages/deletions/detail` | Требует `messages.deletions.read`. Параметры: `id` (int64, обяз.). Ответ: `Deletion`, `SnapshotJSON` (строка в момент удаления), `Batch` (все строки того же действия). |
 
 ## API: звёздные подарки и коллекционки
 

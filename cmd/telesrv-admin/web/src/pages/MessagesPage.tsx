@@ -9,6 +9,7 @@ import { displayName, formatUnix, parseIDs, toInt } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { AccountRow, MessageListResponse } from "../types";
 import { GroupMessagesTab } from "./GroupMessagesPage";
+import { MessageDeletionsTab } from "./MessageDeletionsPage";
 import { SectionTabs } from "../components/SectionTabs";
 
 function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
@@ -163,21 +164,27 @@ function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
 // The two message stores are one screen with two tabs rather than two sidebar
 // entries: they are the same job ("look at what was said") over different peer
 // kinds, and a nested menu made that look like two unrelated sections.
-export function MessagesPage({ navigate, tab, path }: {
+export function MessagesPage({ navigate, tab, path, search }: {
   navigate: Navigate;
-  tab: "private" | "groups";
+  tab: "private" | "groups" | "deletions";
   // The path the page was opened on, so the shared tab bar can mark the active
   // tab. "/messages" is an alias of the private view and lights the same tab.
   path: string;
+  search: URLSearchParams;
 }) {
   const { t } = useI18n();
+  const heading = {
+    private: { title: t("messages.privateTitle"), eyebrow: t("messages.privateEyebrow") },
+    groups: { title: t("messages.groupTitle"), eyebrow: t("messages.groupEyebrow") },
+    deletions: { title: t("deletions.title"), eyebrow: t("deletions.eyebrow") }
+  }[tab];
   return (
-    <PageFrame
-      title={tab === "groups" ? t("messages.groupTitle") : t("messages.privateTitle")}
-      eyebrow={tab === "groups" ? t("messages.groupEyebrow") : t("messages.privateEyebrow")}
-    >
+    <PageFrame title={heading.title} eyebrow={heading.eyebrow}>
       <SectionTabs sectionId="messages" active={path} navigate={navigate} />
-      {tab === "private" ? <PrivateMessagesTab navigate={navigate} /> : <GroupMessagesTab navigate={navigate} />}
+      {tab === "private" && <PrivateMessagesTab navigate={navigate} />}
+      {tab === "groups" && <GroupMessagesTab navigate={navigate} />}
+      {/* Keyed on the query so following a link to another chat's log starts fresh. */}
+      {tab === "deletions" && <MessageDeletionsTab key={search.toString()} navigate={navigate} search={search} />}
     </PageFrame>
   );
 }

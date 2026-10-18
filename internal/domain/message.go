@@ -635,6 +635,8 @@ type DeleteMessagesRequest struct {
 	Date            int
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64
+	// Audit 声明删除归属；零值表示 OwnerUserID 从当前会话自己删除。
+	Audit DeletionAudit
 }
 
 // DeleteHistoryRequest 是账号视角下清空某个 peer 历史的命令。
@@ -651,6 +653,8 @@ type DeleteHistoryRequest struct {
 	Date            int
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64
+	// Audit 声明删除归属；零值表示 OwnerUserID 从当前会话自己清空。
+	Audit DeletionAudit
 }
 
 // DeletedMessagesForUser 描述一次删除对某个 owner 视角造成的影响。

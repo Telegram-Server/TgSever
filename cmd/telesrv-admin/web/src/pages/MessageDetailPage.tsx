@@ -1,15 +1,17 @@
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatDate, formatUnix } from "../lib/format";
+import { permissionMessageDeletionsRead, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import type { MessageDetail } from "../types";
 
 export function MessageDetailPage({ ownerUserID, msgID, navigate }: { ownerUserID: number; msgID: number; navigate: Navigate }) {
   const { t } = useI18n();
+  const { can } = usePermissions();
   const [detail, setDetail] = useState<MessageDetail | null>(null);
   const [error, setError] = useState("");
 
@@ -50,6 +52,14 @@ export function MessageDetailPage({ ownerUserID, msgID, navigate }: { ownerUserI
               </div>
               <div className="entity-badges">
                 {msg.Deleted ? <Badge tone="danger">{t("common.deleted")}</Badge> : <Badge>{t("common.survived")}</Badge>}
+                {msg.Deleted && can(permissionMessageDeletionsRead) && (
+                  <button
+                    className="row-link"
+                    onClick={() => navigate(`/messages/deletions?owner_user_id=${msg.OwnerUserID}&peer_type=user&peer_id=${msg.PeerID}&message_id=${msg.BoxID}`)}
+                  >
+                    {t("deletions.whoDeleted")} <ChevronRight size={14} />
+                  </button>
+                )}
                 <Badge>pts {msg.PTS}</Badge>
                 <Badge>{msg.Outgoing ? t("messages.outgoing") : t("messages.incoming")}</Badge>
               </div>

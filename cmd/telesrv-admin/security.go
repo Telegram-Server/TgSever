@@ -75,19 +75,23 @@ const (
 	// Section rights, in read/manage pairs that follow the sidebar. Reading a
 	// section and changing it are separate grants because most of the people
 	// who need to look at this data never need to alter it.
-	permissionAccountsRead     = "accounts.read"
-	permissionAccountsManage   = "accounts.manage"
-	permissionChannelsRead     = "channels.read"
-	permissionChannelsManage   = "channels.manage"
-	permissionBotsRead         = "bots.read"
-	permissionBotsManage       = "bots.manage"
-	permissionMessagesRead     = "messages.read"
-	permissionMessagesManage   = "messages.manage"
-	permissionModerationReview = "moderation.review"
-	permissionBroadcastsRead   = "broadcasts.read"
-	permissionBroadcastsSend   = "broadcasts.send"
-	permissionStorageRead      = "storage.read"
-	permissionStorageManage    = "storage.manage"
+	permissionAccountsRead   = "accounts.read"
+	permissionAccountsManage = "accounts.manage"
+	permissionChannelsRead   = "channels.read"
+	permissionChannelsManage = "channels.manage"
+	permissionBotsRead       = "bots.read"
+	permissionBotsManage     = "bots.manage"
+	permissionMessagesRead   = "messages.read"
+	permissionMessagesManage = "messages.manage"
+	// permissionMessageDeletionsRead gates the deletion log: who deleted which
+	// message, when, from which device, and what it said. Deliberately NOT
+	// implied by messages.read -- it shows content its sender chose to remove.
+	permissionMessageDeletionsRead = "messages.deletions.read"
+	permissionModerationReview     = "moderation.review"
+	permissionBroadcastsRead       = "broadcasts.read"
+	permissionBroadcastsSend       = "broadcasts.send"
+	permissionStorageRead          = "storage.read"
+	permissionStorageManage        = "storage.manage"
 	// Sticker packs, emoji packs and the GIF catalogue: one section as far as
 	// the panel is concerned, so one pair of rights.
 	permissionContentRead     = "content.read"
@@ -142,6 +146,7 @@ func assignablePermissions() []string {
 		permissionBotsManage,
 		permissionMessagesRead,
 		permissionMessagesManage,
+		permissionMessageDeletionsRead,
 		permissionModerationReview,
 		permissionBroadcastsRead,
 		permissionBroadcastsSend,

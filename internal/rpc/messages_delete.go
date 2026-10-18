@@ -58,12 +58,15 @@ func (r *Router) onMessagesDeleteHistory(ctx context.Context, req *tg.MessagesDe
 		if req.MaxID < 0 || req.MaxID > domain.MaxMessageBoxID {
 			return nil, messageIDInvalidErr()
 		}
+		sessionID, _ := SessionIDFrom(ctx)
 		res, err := r.deps.Channels.DeleteHistory(ctx, userID, domain.DeleteChannelHistoryRequest{
-			UserID:      userID,
-			ChannelID:   peer.ID,
-			MaxID:       req.MaxID,
-			ForEveryone: req.GetRevoke(),
-			Date:        int(r.clock.Now().Unix()),
+			UserID:          userID,
+			ChannelID:       peer.ID,
+			MaxID:           req.MaxID,
+			ForEveryone:     req.GetRevoke(),
+			Date:            int(r.clock.Now().Unix()),
+			OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
+			OriginSessionID: sessionID,
 		})
 		if err != nil {
 			return nil, channelDeleteErr(err)

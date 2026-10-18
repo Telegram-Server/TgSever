@@ -1061,6 +1061,41 @@ export type MessageDetail = {
   Outbox: OutboxRow[];
 };
 
+export type MessageDeletionRow = {
+  ID: number;
+  BatchID: number;
+  Date: number;
+  Source: string;
+  Scope: string;
+  ActorType: string;
+  ActorUserID: number;
+  OperatorID: string;
+  CommandID: string;
+  Reason: string;
+  OwnerUserID: number;
+  PeerType: string;
+  PeerID: number;
+  MessageID: number;
+  SenderUserID: number;
+  MessageDate: number;
+  Body: string;
+  OriginAuthKeyID: string;
+  OriginSessionID: string;
+  DeviceModel: string;
+  Platform: string;
+  IP: string;
+};
+
+export type MessageDeletionListResponse = {
+  rows: MessageDeletionRow[];
+};
+
+export type MessageDeletionDetail = {
+  Deletion: MessageDeletionRow;
+  SnapshotJSON: string;
+  Batch: MessageDeletionRow[];
+};
+
 export type GroupMessageDetail = {
   Message: GroupMessageRow;
   MessageJSON: string;

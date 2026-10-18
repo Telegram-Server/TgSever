@@ -123,6 +123,15 @@ type ChannelStore struct {
 	// polls 是共享 poll 权威（与 MessageStore 同一实例）；nil 时 poll 链路按未接入处理。
 	polls            *PollStore
 	usernameRegistry *CollectibleUsernameStore
+	// deletions 是删除记录（与 MessageStore 共用同一实例）；nil 时不记录。
+	deletions *MessageDeletionStore
+}
+
+// AttachDeletionStore 注入删除记录（与 MessageStore 共用同一实例）。
+func (s *ChannelStore) AttachDeletionStore(deletions *MessageDeletionStore) {
+	s.mu.Lock()
+	s.deletions = deletions
+	s.mu.Unlock()
 }
 
 // AttachPollStore 注入共享 poll 权威。

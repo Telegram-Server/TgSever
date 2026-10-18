@@ -243,6 +243,8 @@ func (s *MessageStore) DeleteSavedHistory(_ context.Context, req domain.DeleteSa
 		return true
 	}
 	deleted, _, more := s.deleteMemoryMessagesLocked(req.OwnerUserID, domain.MaxDeleteHistoryBatch, match)
+	audit := domain.UserDeletionAudit(domain.DeletionSourceSavedHistory, req.OwnerUserID, req.OriginAuthKeyID, req.OriginSessionID)
+	s.recordDeletionsLocked(audit, req.Date, domain.DeletionScopeSelf, deleted)
 	delRes := s.finishMemoryDeleteLocked(domain.DeleteMessagesResult{OwnerUserID: req.OwnerUserID}, deleted, req.Date, nil)
 	res.More = more
 	for _, d := range delRes.Deleted {

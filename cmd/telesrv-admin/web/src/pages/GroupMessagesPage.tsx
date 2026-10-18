@@ -1,15 +1,17 @@
-import { ChevronRight, Search } from "lucide-react";
+import { ChevronRight, History, Search } from "lucide-react";
 import { useState } from "react";
 import { api, errorMessage } from "../api";
 import { ChannelPicker } from "../components/EntityPicker";
 import { Alert, Badge, EmptyRow, Metric, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { channelKind, formatUnix } from "../lib/format";
+import { permissionMessageDeletionsRead, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import type { ChannelRow, GroupMessageListResponse } from "../types";
 
 export function GroupMessagesTab({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
+  const { can } = usePermissions();
   const [channel, setChannel] = useState<ChannelRow | null>(null);
   const [beforeDate, setBeforeDate] = useState("");
   const [beforeID, setBeforeID] = useState("");
@@ -66,6 +68,12 @@ export function GroupMessagesTab({ navigate }: { navigate: Navigate }) {
           <input className="small-input" value={limit} onChange={(event) => setLimit(event.target.value)} placeholder={t("messages.limitPlaceholder")} />
           <button className="btn primary icon-text" type="submit"><Search size={15} /> {t("messages.searchMessages")}</button>
           {rows.length ? <button className="btn icon-text" type="button" onClick={() => load(true)}><ChevronRight size={15} /> {t("messages.nextPage")}</button> : null}
+          {/* This list shows live messages only; what was removed, and by whom, is the deletion log's job. */}
+          {channel && can(permissionMessageDeletionsRead) ? (
+            <button className="btn icon-text" type="button" onClick={() => navigate(`/messages/deletions?peer_type=channel&peer_id=${channel.ID}`)}>
+              <History size={15} /> {t("deletions.thisChat")}
+            </button>
+          ) : null}
         </form>
       </QueryPanel>
       <div className="metric-row">

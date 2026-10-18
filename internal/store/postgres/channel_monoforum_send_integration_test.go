@@ -392,7 +392,7 @@ WHERE m.channel_id = $1 AND m.id = $2`, monoID, otherMessage.Message.ID, sub.ID)
 		_ = tx.Rollback(ctx)
 		t.Fatalf("load monoforum for delete: %v", err)
 	}
-	_, deleteEvent, _, err := channels.deleteChannelMessagesTx(ctx, tx, mono, domain.ChannelMember{ChannelID: monoID, UserID: owner.ID, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}, []int{a.Message.ID}, owner.ID, 1700001013)
+	_, deleteEvent, _, err := channels.deleteChannelMessagesTx(ctx, tx, mono, domain.ChannelMember{ChannelID: monoID, UserID: owner.ID, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}, []int{a.Message.ID}, owner.ID, 1700001013, domain.UserDeletionAudit(domain.DeletionSourceUser, owner.ID, [8]byte{}, 0))
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("delete monoforum message: %v", err)

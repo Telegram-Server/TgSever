@@ -33,7 +33,39 @@ func (s *MessageStore) DeleteMessages(_ context.Context, req domain.DeleteMessag
 	if req.Revoke && len(revokeUIDs) > 0 {
 		deleted = append(deleted, s.deleteMemoryMessagesByUIDLocked(revokeUIDs, req.OwnerUserID)...)
 	}
+	audit := req.Audit.OrUser(domain.DeletionSourceUser, req.OwnerUserID, req.OriginAuthKeyID, req.OriginSessionID)
+	s.recordDeletionsLocked(audit, req.Date, domain.PrivateDeletionScope(req.Revoke), deleted)
 	return s.finishMemoryDeleteLocked(res, deleted, req.Date, nil), nil
+}
+
+// recordDeletionsLocked 为本次删除的每个副本写一行删除记录。
+func (s *MessageStore) recordDeletionsLocked(audit domain.DeletionAudit, date int, scope domain.DeletionScope, deleted []deletedMemoryMessage) {
+	if s.deletions == nil || len(deleted) == 0 {
+		return
+	}
+	rows := make([]domain.MessageDeletion, 0, len(deleted))
+	for _, row := range deleted {
+		rows = append(rows, domain.MessageDeletion{
+			Date:         date,
+			Source:       audit.Source,
+			Scope:        scope,
+			ActorType:    audit.ActorType,
+			ActorUserID:  audit.ActorUserID,
+			OwnerUserID:  row.userID,
+			Peer:         row.peer,
+			MessageID:    row.id,
+			SenderUserID: row.messageSenderID,
+			MessageDate:  row.message.Date,
+			Body:         row.message.Body,
+
+			OriginAuthKeyID: audit.OriginAuthKeyID,
+			OriginSessionID: audit.OriginSessionID,
+			OperatorID:      audit.OperatorID,
+			CommandID:       audit.CommandID,
+			Reason:          audit.Reason,
+		})
+	}
+	s.deletions.appendBatch(rows)
 }
 
 type deletedMemoryMessage struct {
@@ -43,6 +75,8 @@ type deletedMemoryMessage struct {
 	privateMessageID int64
 	messageSenderID  int64
 	randomID         int64
+	// message 是删除前的副本快照，供删除记录使用。
+	message domain.Message
 }
 
 type memoryHistoryClearAnchor struct {
