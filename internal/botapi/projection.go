@@ -230,19 +230,10 @@ func apiChatMemberUpdated(event domain.UpdateEvent) (map[string]any, bool) {
 	}
 	chat := apiChat(update.Chat, users)
 	for _, channel := range event.Channels {
-		if channel.ID != update.Chat.ID {
-			continue
+		if channel.ID == update.Chat.ID {
+			describeChannelChat(chat, channel)
+			break
 		}
-		if channel.Title != "" {
-			chat["title"] = channel.Title
-		}
-		if channel.Username != "" {
-			chat["username"] = channel.Username
-		}
-		if channel.Broadcast && !channel.Megagroup {
-			chat["type"] = "channel"
-		}
-		break
 	}
 	subject := userOf(update.New.UserID)
 	out := map[string]any{
@@ -343,6 +334,10 @@ func apiMessageProjectable(msg domain.Message) bool {
 	if apiSuccessfulPayment(msg.Media) != nil {
 		return true
 	}
+	// 骰子的投影在 send_extra.go 的扩展里，apiMessageMedia 看不到它。
+	if msg.Media != nil && msg.Media.Kind == domain.MessageMediaKindDice && msg.Media.Dice != nil {
+		return true
+	}
 	return msg.Body != "" || (msg.RichMessage != nil && len(msg.RichMessage.BotAPIProjection) > 0) || len(apiMessageMedia(msg.Media, nil, nil)) > 0
 }
 
@@ -380,6 +375,11 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 		"message_id": msg.ID,
 		"date":       msg.Date,
 		"chat":       apiChat(msg.Peer, userByID),
+	}
+	if msg.Peer.Type == domain.PeerTypeChannel {
+		if channel, ok := channelByID[msg.Peer.ID]; ok {
+			describeChannelChat(out["chat"].(map[string]any), channel)
+		}
 	}
 	if msg.From.Type == domain.PeerTypeUser && msg.From.ID != 0 {
 		from := userByID[msg.From.ID]
@@ -452,6 +452,20 @@ func apiMediaUsesCaption(media map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// describeChannelChat 用频道资料补全 apiChat 的超级群默认形状：标题、用户名，以及
+// 广播频道的 type=channel。
+func describeChannelChat(chat map[string]any, channel domain.Channel) {
+	if channel.Title != "" {
+		chat["title"] = channel.Title
+	}
+	if channel.Username != "" {
+		chat["username"] = channel.Username
+	}
+	if channel.Broadcast && !channel.Megagroup {
+		chat["type"] = "channel"
+	}
 }
 
 func apiChat(peer domain.Peer, users map[int64]domain.User) map[string]any {
