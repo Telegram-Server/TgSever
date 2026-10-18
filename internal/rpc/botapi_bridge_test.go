@@ -104,12 +104,23 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 func (f botAPIBridgeFixture) promoteBot(t *testing.T, rights domain.ChannelAdminRights) {
 	t.Helper()
 	if _, err := f.channels.EditAdmin(f.ctx, f.owner.ID, domain.EditChannelAdminRequest{
+		UserID:      f.owner.ID,
 		ChannelID:   f.channel.ID,
-		UserID:      f.bot.ID,
+		MemberID:    f.bot.ID,
 		AdminRights: rights,
 		Date:        20,
 	}); err != nil {
 		t.Fatalf("promote bot: %v", err)
+	}
+}
+
+func TestBotAPIBridgeFixturePromotesBot(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.promoteBot(t, domain.ChannelAdminRights{BanUsers: true})
+
+	member, err := f.channels.GetParticipant(f.ctx, f.owner.ID, f.channel.ID, f.bot.ID)
+	if err != nil || member.Role != domain.ChannelRoleAdmin || !member.AdminRights.BanUsers {
+		t.Fatalf("bot participant = %+v, %v; want admin with ban rights", member, err)
 	}
 }
 
