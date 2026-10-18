@@ -1,6 +1,7 @@
 package botapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -103,8 +104,12 @@ func (h *handler) sendEphemeralContact(w http.ResponseWriter, r *http.Request, b
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	chatID, ok := parsePositiveOrNegativeID(values["chat_id"])
-	if !ok || strings.TrimSpace(values["phone_number"]) == "" || strings.TrimSpace(values["first_name"]) == "" || len(values["vcard"]) > 2048 {
+	chatID, description := h.ephemeralChatID(r.Context(), botID, values["chat_id"], "MEDIA_INVALID")
+	if description != "" {
+		writeAPIError(w, http.StatusBadRequest, description)
+		return
+	}
+	if strings.TrimSpace(values["phone_number"]) == "" || strings.TrimSpace(values["first_name"]) == "" || len(values["vcard"]) > 2048 {
 		writeAPIError(w, http.StatusBadRequest, "MEDIA_INVALID")
 		return
 	}
@@ -146,11 +151,15 @@ func (h *handler) sendEphemeralLocation(w http.ResponseWriter, r *http.Request, 
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	chatID, ok := parsePositiveOrNegativeID(values["chat_id"])
+	chatID, description := h.ephemeralChatID(r.Context(), botID, values["chat_id"], "MEDIA_INVALID")
+	if description != "" {
+		writeAPIError(w, http.StatusBadRequest, description)
+		return
+	}
 	latitude, latErr := strconv.ParseFloat(strings.TrimSpace(values["latitude"]), 64)
 	longitude, longErr := strconv.ParseFloat(strings.TrimSpace(values["longitude"]), 64)
 	accuracy, accuracyErr := strconv.ParseFloat(defaultString(values["horizontal_accuracy"], "0"), 64)
-	if !ok || latErr != nil || longErr != nil || accuracyErr != nil || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 || accuracy < 0 || accuracy > 1500 || apiInt(values["live_period"], 0) != 0 {
+	if latErr != nil || longErr != nil || accuracyErr != nil || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 || accuracy < 0 || accuracy > 1500 || apiInt(values["live_period"], 0) != 0 {
 		writeAPIError(w, http.StatusBadRequest, "MEDIA_INVALID")
 		return
 	}
@@ -199,11 +208,15 @@ func (h *handler) editEphemeralMessage(w http.ResponseWriter, r *http.Request, b
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	chatID, ok := parsePositiveOrNegativeID(values["chat_id"])
 	receiverID, receiverErr := strconv.ParseInt(strings.TrimSpace(values["receiver_user_id"]), 10, 64)
 	messageID := apiInt(values["ephemeral_message_id"], 0)
-	if !ok || receiverErr != nil || receiverID <= 0 || messageID <= 0 {
+	if receiverErr != nil || receiverID <= 0 || messageID <= 0 {
 		writeAPIError(w, http.StatusBadRequest, "EPHEMERAL_MESSAGE_ID_INVALID")
+		return
+	}
+	chatID, description := h.ephemeralChatID(r.Context(), botID, values["chat_id"], "EPHEMERAL_MESSAGE_ID_INVALID")
+	if description != "" {
+		writeAPIError(w, http.StatusBadRequest, description)
 		return
 	}
 	input := domain.BotAPIEphemeralEditInput{
@@ -309,11 +322,15 @@ func (h *handler) deleteEphemeralMessage(w http.ResponseWriter, r *http.Request,
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	chatID, ok := parsePositiveOrNegativeID(values["chat_id"])
 	receiverID, receiverErr := strconv.ParseInt(strings.TrimSpace(values["receiver_user_id"]), 10, 64)
 	messageID := apiInt(values["ephemeral_message_id"], 0)
-	if !ok || receiverErr != nil || receiverID <= 0 || messageID <= 0 {
+	if receiverErr != nil || receiverID <= 0 || messageID <= 0 {
 		writeAPIError(w, http.StatusBadRequest, "EPHEMERAL_MESSAGE_ID_INVALID")
+		return
+	}
+	chatID, description := h.ephemeralChatID(r.Context(), botID, values["chat_id"], "EPHEMERAL_MESSAGE_ID_INVALID")
+	if description != "" {
+		writeAPIError(w, http.StatusBadRequest, description)
 		return
 	}
 	gateway, ok := h.gateway.(EphemeralGatewayService)
@@ -338,9 +355,17 @@ func optionalInlineReplyMarkup(values map[string]string) (*domain.MessageReplyMa
 	return markup, true, err
 }
 
-func parsePositiveOrNegativeID(raw string) (int64, bool) {
-	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-	return id, err == nil && id != 0
+// ephemeralChatID 解析 chat_id：格式错误沿用方法原有的错误描述 invalid，
+// @username 的解析错误（如 USERNAME_NOT_OCCUPIED）原样透出。
+func (h *handler) ephemeralChatID(ctx context.Context, botID int64, raw, invalid string) (int64, string) {
+	chatID, err := h.chatIDParam(ctx, botID, raw)
+	if err == nil {
+		return chatID, ""
+	}
+	if description := apiErrorDescription(err); description != "CHAT_ID_INVALID" {
+		return 0, description
+	}
+	return 0, invalid
 }
 
 func defaultString(value, fallback string) string {
