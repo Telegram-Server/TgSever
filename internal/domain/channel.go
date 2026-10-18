@@ -548,6 +548,18 @@ func (m ChannelMember) CanManageDirectMessages() bool {
 			(m.Role == ChannelRoleAdmin && m.AdminRights.ManageDirectMessages))
 }
 
+// CanEditChannelAdmin 是 Bot API can_be_edited 的官方口径：viewer 是群主，或者 viewer 有
+// add_admins 且 target 是由 viewer 提拔的（在任管理员的 InviterUserID 即提拔人）。
+// target 必须是别人的在任管理员。
+func CanEditChannelAdmin(viewer, target ChannelMember) bool {
+	if target.Role != ChannelRoleAdmin || target.Status != ChannelMemberActive ||
+		target.UserID == viewer.UserID || viewer.Status != ChannelMemberActive {
+		return false
+	}
+	return viewer.Role == ChannelRoleCreator ||
+		(viewer.Role == ChannelRoleAdmin && viewer.AdminRights.AddAdmins && target.InviterUserID == viewer.UserID)
+}
+
 // CanManageWelcomeMessages is the Layer 229 creator/admin capability. Active
 // membership is mandatory even if stale admin rights remain in persisted JSON.
 func (m ChannelMember) CanManageWelcomeMessages() bool {

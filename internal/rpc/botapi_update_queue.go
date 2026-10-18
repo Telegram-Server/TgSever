@@ -651,14 +651,14 @@ func (r *Router) enqueueBotAPIMemberUpdates(ctx context.Context, changes ...botA
 		return
 	}
 	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
-		admins := make(map[int64][]int64)
+		admins := make(map[int64][]domain.ChannelMember)
 		for _, change := range changes {
 			r.enqueueBotAPIMemberChange(jobCtx, change, admins)
 		}
 	})
 }
 
-func (r *Router) enqueueBotAPIMemberChange(ctx context.Context, change botAPIMemberChange, adminsByChannel map[int64][]int64) {
+func (r *Router) enqueueBotAPIMemberChange(ctx context.Context, change botAPIMemberChange, adminsByChannel map[int64][]domain.ChannelMember) {
 	subjectID := change.Current.UserID
 	if subjectID == 0 {
 		subjectID = change.Previous.UserID
@@ -691,8 +691,11 @@ func (r *Router) enqueueBotAPIMemberChange(ctx context.Context, change botAPIMem
 	if payload.Old == payload.New {
 		return
 	}
-	enqueue := func(botID int64, kind domain.BotAPIUpdateKind) {
+	enqueue := func(botID int64, kind domain.BotAPIUpdateKind, viewer domain.ChannelMember) {
 		item := payload
+		if viewer.UserID == botID {
+			item.Viewer = domain.NewBotChatMemberSnapshot(viewer)
+		}
 		if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
 			BotUserID: botID, Kind: kind, Peer: chat, Date: date, ChatMember: &item,
 		}); err == nil && created {
@@ -700,22 +703,24 @@ func (r *Router) enqueueBotAPIMemberChange(ctx context.Context, change botAPIMem
 		}
 	}
 	if isBot, err := r.botAPIKnownBot(ctx, subjectID); err == nil && isBot {
-		enqueue(subjectID, domain.BotAPIUpdateMyChatMember)
+		// 当事人就是收件人：不能编辑自己，无需 Viewer。
+		enqueue(subjectID, domain.BotAPIUpdateMyChatMember, domain.ChannelMember{})
 	}
 	admins, cached := adminsByChannel[change.Channel.ID]
 	if !cached {
 		admins = r.botAPIChannelAdminBots(ctx, change.Channel)
 		adminsByChannel[change.Channel.ID] = admins
 	}
-	for _, botID := range admins {
-		if botID != subjectID {
-			enqueue(botID, domain.BotAPIUpdateChatMember)
+	for _, admin := range admins {
+		if admin.UserID != subjectID {
+			enqueue(admin.UserID, domain.BotAPIUpdateChatMember, admin)
 		}
 	}
 }
 
-// botAPIChannelAdminBots 列出群里当前是管理员（含群主）的机器人。
-func (r *Router) botAPIChannelAdminBots(ctx context.Context, channel domain.Channel) []int64 {
+// botAPIChannelAdminBots 列出群里当前是管理员（含群主）的机器人及其成员记录
+// （chat_member 载荷的 Viewer 取自这里）。
+func (r *Router) botAPIChannelAdminBots(ctx context.Context, channel domain.Channel) []domain.ChannelMember {
 	if r.deps.Channels == nil {
 		return nil
 	}
@@ -728,14 +733,15 @@ func (r *Router) botAPIChannelAdminBots(ctx context.Context, channel domain.Chan
 	if err != nil {
 		return nil
 	}
-	out := make([]int64, 0, len(botIDs))
+	out := make([]domain.ChannelMember, 0, len(botIDs))
 	for _, botID := range botIDs {
 		member, err := r.deps.Channels.GetParticipant(ctx, botID, channel.ID, botID)
 		if err != nil || member.Status != domain.ChannelMemberActive {
 			continue
 		}
 		if member.Role == domain.ChannelRoleAdmin || member.Role == domain.ChannelRoleCreator {
-			out = append(out, botID)
+			member.UserID = botID
+			out = append(out, member)
 		}
 	}
 	return out

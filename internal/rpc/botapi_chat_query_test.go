@@ -102,7 +102,7 @@ func (f botAPIBridgeFixture) promoteMember(t *testing.T, by int64, channelID int
 	f.chatQueryPromote(t, by, channelID, f.member.ID, domain.ChannelAdminRights{DeleteMessages: true}, "mod")
 }
 
-// 成员记录不保存提拔者：管理员机器人即使有 add_admins 也不能确定能编辑别的管理员。
+// 别人提拔的管理员：管理员机器人即使有 add_admins 也不能编辑。
 func TestBotAPIGetChatMemberCanBeEditedIsFalseForAdminBots(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 	f.chatQueryPromote(t, f.owner.ID, f.channel.ID, f.bot.ID, domain.ChannelAdminRights{AddAdmins: true, BanUsers: true}, "")

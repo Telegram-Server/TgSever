@@ -71,6 +71,9 @@ type BotChatMemberUpdated struct {
 	Date        int                   `json:"date"`
 	Old         BotChatMemberSnapshot `json:"old"`
 	New         BotChatMemberSnapshot `json:"new"`
+	// Viewer 是收件机器人入队时自己的成员状态，用来按它的视角算 can_be_edited。
+	// 旧行没有该字段时为零值，投影退化为 can_be_edited=false。
+	Viewer BotChatMemberSnapshot `json:"viewer,omitzero"`
 	// ViaJoinRequest：管理员批准了入群申请。
 	ViaJoinRequest bool `json:"via_join_request,omitempty"`
 	// ViaChatFolderInviteLink：通过 chatlist（文件夹）邀请链接加入。
@@ -81,7 +84,8 @@ type BotChatMemberUpdated struct {
 // chat_member 的当事人必须是别人；新旧状态必须不同。
 func (u BotChatMemberUpdated) ValidateFor(botUserID int64, kind BotAPIUpdateKind) error {
 	if botUserID <= 0 || u.Chat.Type != PeerTypeChannel || u.Chat.ID <= 0 || u.ActorUserID <= 0 || u.Date <= 0 ||
-		u.New.UserID <= 0 || u.Old.UserID != u.New.UserID || u.Old == u.New {
+		u.New.UserID <= 0 || u.Old.UserID != u.New.UserID || u.Old == u.New ||
+		(u.Viewer.UserID != 0 && u.Viewer.UserID != botUserID) {
 		return ErrBotChatMemberUpdateInvalid
 	}
 	switch kind {

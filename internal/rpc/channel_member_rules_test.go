@@ -9,6 +9,50 @@ import (
 	"telesrv/internal/domain"
 )
 
+// 有 add_admins 的管理员机器人能编辑自己提拔的管理员；失去 add_admins 后不能。
+func TestBotAPICanBeEditedFollowsPromoter(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.chatQueryPromote(t, f.owner.ID, f.channel.ID, f.bot.ID, domain.ChannelAdminRights{AddAdmins: true, BanUsers: true, DeleteMessages: true}, "")
+	f.promoteMember(t, f.bot.ID, f.channel.ID)
+
+	if _, _, canEdit, err := f.router.BotAPIGetChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID); err != nil || !canEdit {
+		t.Fatalf("getChatMember(admin promoted by bot) canEdit = %v, %v; want true", canEdit, err)
+	}
+	_, _, editable, err := f.router.BotAPIGetChatAdministrators(f.ctx, f.bot.ID, f.chatID)
+	if err != nil || !editable[f.member.ID] || editable[f.owner.ID] || editable[f.bot.ID] {
+		t.Fatalf("getChatAdministrators editable = %v, %v", editable, err)
+	}
+
+	f.chatQueryPromote(t, f.owner.ID, f.channel.ID, f.bot.ID, domain.ChannelAdminRights{BanUsers: true, DeleteMessages: true}, "")
+	if _, _, canEdit, err := f.router.BotAPIGetChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID); err != nil || canEdit {
+		t.Fatalf("getChatMember without add_admins canEdit = %v, %v; want false", canEdit, err)
+	}
+}
+
+// chat_member 载荷带上收件机器人自己的成员状态，投影据此算 can_be_edited。
+func TestBotAPIChatMemberPayloadCarriesRecipientViewer(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.chatQueryPromote(t, f.owner.ID, f.channel.ID, f.bot.ID, domain.ChannelAdminRights{AddAdmins: true, BanUsers: true, DeleteMessages: true}, "")
+	if err := f.router.BotAPISetAllowedUpdates(f.ctx, f.bot.ID, []domain.BotAPIUpdateKind{domain.BotAPIUpdateChatMember}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := f.router.BotAPIPromoteChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, domain.ChannelAdminRights{DeleteMessages: true}); err != nil {
+		t.Fatalf("bot promotes member: %v", err)
+	}
+	events := botMemberEvents(t, f, domain.UpdateEventBotChatMember)
+	if len(events) != 1 {
+		t.Fatalf("chat_member events = %v", memberTransitions(events))
+	}
+	update := events[0].BotChatMember
+	if update.Viewer.UserID != f.bot.ID || update.Viewer.Role != domain.ChannelRoleAdmin || !update.Viewer.AdminRights.AddAdmins ||
+		update.New.InviterUserID != f.bot.ID {
+		t.Fatalf("payload viewer = %+v new = %+v", update.Viewer, update.New)
+	}
+	if !domain.CanEditChannelAdmin(update.Viewer.ChannelMember(f.channel.ID), update.New.ChannelMember(f.channel.ID)) {
+		t.Fatal("bot cannot edit the admin it promoted")
+	}
+}
+
 // 非群主管理员不能封禁/限制/改动别人提拔的管理员：MTProto 与 Bot API 都返回 USER_ADMIN_INVALID。
 func TestChannelAdminProtectionMapsUserAdminInvalid(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
