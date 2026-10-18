@@ -23,6 +23,7 @@ var (
 	ErrChatPublicRequired             = errors.New("chat public required")
 	ErrChannelUserCreator             = errors.New("channel user creator")
 	ErrChannelRightForbidden          = errors.New("channel right forbidden")
+	ErrUserAdminInvalid               = errors.New("user admin invalid") // 非群主管理员动了不是自己提拔的管理员
 	ErrPersistentTimestamp            = errors.New("persistent timestamp invalid")
 	ErrInviteHashEmpty                = errors.New("invite hash empty")
 	ErrInviteHashInvalid              = errors.New("invite hash invalid")

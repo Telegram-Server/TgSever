@@ -347,6 +347,9 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 			Date:        req.Date,
 		}, nil
 	}
+	if err := checkManageChannelAdmin(actor, previous); err != nil {
+		return domain.EditChannelAdminResult{}, err
+	}
 	if actor.Role != domain.ChannelRoleCreator && !adminRightsSubset(req.AdminRights, actor.AdminRights) {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelRightForbidden
 	}
@@ -551,6 +554,9 @@ func (s *ChannelStore) EditChannelBanned(_ context.Context, req domain.EditChann
 	}
 	if previous.Role == domain.ChannelRoleCreator {
 		return domain.EditChannelBannedResult{}, domain.ErrChannelUserCreator
+	}
+	if err := checkManageChannelAdmin(actor, previous); err != nil {
+		return domain.EditChannelBannedResult{}, err
 	}
 	member := previous
 	member.Role = domain.ChannelRoleMember
