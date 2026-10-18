@@ -61,6 +61,20 @@ func TestRegisteredErrorMarkerSurvivesDescription(t *testing.T) {
 	}
 }
 
+func TestErrorDescriptionPrefersTheLongestMarker(t *testing.T) {
+	// MESSAGE_ID_INVALID is a substring of REPLY_MESSAGE_ID_INVALID; the more
+	// specific code must win regardless of list order.
+	for raw, want := range map[string]string{
+		"rpc error code 400: REPLY_MESSAGE_ID_INVALID": "REPLY_MESSAGE_ID_INVALID",
+		"rpc error code 400: MESSAGE_ID_INVALID":       "MESSAGE_ID_INVALID",
+		"QUERY_ID_INVALID":                             "QUERY_ID_INVALID",
+	} {
+		if got := apiErrorDescription(errors.New(raw)); got != want {
+			t.Fatalf("apiErrorDescription(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestRegisteringADuplicateMethodPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {

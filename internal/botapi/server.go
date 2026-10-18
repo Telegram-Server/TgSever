@@ -1734,7 +1734,7 @@ func apiErrorDescription(err error) string {
 		return ""
 	}
 	text := strings.ToUpper(err.Error())
-	for _, marker := range []string{
+	builtin := []string{
 		"QUERY_ID_INVALID",
 		"USER_ID_INVALID",
 		"RESULT_ID_INVALID",
@@ -1795,15 +1795,17 @@ func apiErrorDescription(err error) string {
 		"PAYLOAD_INVALID",
 		"CHARGE_ID_INVALID",
 		"CHARGE_ID_NOT_FOUND",
-	} {
-		if strings.Contains(text, marker) {
-			return marker
+	}
+	// 取最长的匹配：MESSAGE_ID_INVALID 是 REPLY_MESSAGE_ID_INVALID 的子串，
+	// 按列表顺序取第一个会把更具体的错误码吞掉。
+	best := ""
+	for _, marker := range append(builtin, registeredErrorMarkers...) {
+		if len(marker) > len(best) && strings.Contains(text, marker) {
+			best = marker
 		}
 	}
-	for _, marker := range registeredErrorMarkers {
-		if strings.Contains(text, marker) {
-			return marker
-		}
+	if best != "" {
+		return best
 	}
 	return "BAD_REQUEST"
 }
