@@ -1426,6 +1426,10 @@ type MessageDeletionQuery struct {
 	Source       string
 	MinDate      int
 	MaxDate      int
+	// MinMessageID/MaxMessageID bound message_id, so the audit viewer can fetch
+	// the attribution for exactly the page of history it has loaded.
+	MinMessageID int
+	MaxMessageID int
 	BeforeID     int64
 	Limit        int
 }
@@ -1465,10 +1469,12 @@ WHERE ($1::bigint = 0 OR actor_user_id = $1)
 	AND ($8::int = 0 OR deleted_date >= $8)
 	AND ($9::int = 0 OR deleted_date <= $9)
 	AND ($10::bigint = 0 OR id < $10)
+	AND ($12::int = 0 OR message_id >= $12)
+	AND ($13::int = 0 OR message_id <= $13)
 ORDER BY id DESC
 LIMIT $11`,
 		q.ActorUserID, q.OwnerUserID, q.SenderUserID, q.PeerType, q.PeerID, q.MessageID,
-		q.Source, q.MinDate, q.MaxDate, q.BeforeID, q.Limit)
+		q.Source, q.MinDate, q.MaxDate, q.BeforeID, q.Limit, q.MinMessageID, q.MaxMessageID)
 	if err != nil {
 		return nil, fmt.Errorf("list message deletions: %w", err)
 	}
@@ -1519,6 +1525,418 @@ func scanMessageDeletion(row pgx.Row, item *MessageDeletionRow, extra ...any) er
 		&item.DeviceModel, &item.Platform, &item.IP,
 	}
 	return row.Scan(append(dest, extra...)...)
+}
+
+// AuditDialogRow is one chat in an account's chat list, as the audit viewer's
+// left column shows it.
+type AuditDialogRow struct {
+	PeerType string
+	PeerID   int64
+	// Kind is private, bot, group or channel.
+	Kind         string
+	Title        string
+	Username     string
+	TopMessageID int
+	TopDate      int
+	Preview      string
+	PreviewOut   bool
+	PreviewMedia string
+	UnreadCount  int
+	// HasDeletions says only that something in the chat was deleted; who and
+	// when stays behind messages.deletions.read on the deletion-log endpoint.
+	HasDeletions bool
+}
+
+type AuditDialogQuery struct {
+	OwnerUserID int64
+	// Kind narrows to private (bots included), group or channel; empty is all.
+	Kind   string
+	Q      string
+	Offset int
+	Limit  int
+}
+
+// ListAuditDialogs lists an account's private chats and the groups/channels
+// it belongs to (left ones included), newest activity first.
+func (s *readStore) ListAuditDialogs(ctx context.Context, q AuditDialogQuery) ([]AuditDialogRow, error) {
+	if q.Limit <= 0 || q.Limit > messagePageLimit {
+		q.Limit = messagePageLimit
+	}
+	pattern := ""
+	if needle := strings.TrimSpace(q.Q); needle != "" {
+		pattern = "%" + escapeLikePattern(needle) + "%"
+	}
+	rows, err := s.pool.Query(ctx, `
+WITH chats AS (
+	SELECT 'user'::text AS peer_type, d.peer_id,
+		CASE WHEN u.is_bot THEN 'bot' ELSE 'private' END AS kind,
+		btrim(u.first_name || ' ' || u.last_name) AS title, COALESCE(u.username, '') AS username,
+		d.top_message_id, d.top_message_date AS top_date,
+		COALESCE(m.body, '') AS preview, COALESCE(m.outgoing, false) AS preview_out,
+		COALESCE(m.media->>'kind', '') AS preview_media, d.unread_count,
+		EXISTS (SELECT 1 FROM message_deletions x
+			WHERE x.owner_user_id = d.user_id AND x.peer_id = d.peer_id AND x.peer_type = 'user') AS has_deletions
+	FROM dialogs d
+	JOIN users u ON u.id = d.peer_id
+	LEFT JOIN message_boxes m ON m.owner_user_id = d.user_id AND m.box_id = d.top_message_id
+	WHERE d.user_id = $1 AND d.peer_type = 'user'
+	UNION ALL
+	SELECT 'channel', c.id,
+		CASE WHEN c.broadcast THEN 'channel' ELSE 'group' END,
+		c.title, COALESCE(c.username, ''),
+		c.top_message_id, COALESCE(cm.message_date, c.date),
+		COALESCE(cm.body, ''), COALESCE(cm.sender_user_id = $1, false),
+		COALESCE(cm.media->>'kind', ''), 0,
+		EXISTS (SELECT 1 FROM message_deletions x WHERE x.peer_type = 'channel' AND x.peer_id = c.id)
+	FROM user_channel_member_index i
+	JOIN channels c ON c.id = i.channel_id
+	LEFT JOIN channel_messages cm ON cm.channel_id = c.id AND cm.id = c.top_message_id
+	WHERE i.user_id = $1 AND NOT c.deleted
+)
+SELECT peer_type, peer_id, kind, title, username, top_message_id, top_date,
+	preview, preview_out, preview_media, unread_count, has_deletions
+FROM chats
+WHERE ($2::text = ''
+		OR kind = $2
+		OR ($2 = 'private' AND kind = 'bot'))
+	AND ($3::text = ''
+		OR title ILIKE $3
+		OR username ILIKE $3
+		OR peer_id::text = $4)
+ORDER BY top_date DESC, peer_id DESC
+LIMIT $5 OFFSET $6`, q.OwnerUserID, q.Kind, pattern, strings.TrimSpace(q.Q), q.Limit, max(q.Offset, 0))
+	if err != nil {
+		return nil, fmt.Errorf("list audit dialogs: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AuditDialogRow, 0)
+	for rows.Next() {
+		var row AuditDialogRow
+		if err := rows.Scan(&row.PeerType, &row.PeerID, &row.Kind, &row.Title, &row.Username, &row.TopMessageID, &row.TopDate,
+			&row.Preview, &row.PreviewOut, &row.PreviewMedia, &row.UnreadCount, &row.HasDeletions); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// AuditMessage is one message of a transcript, live or deleted, seen from the
+// viewing account. Out marks the viewing account's own messages.
+type AuditMessage struct {
+	ID           int
+	Date         int
+	SenderUserID int64
+	Out          bool
+	Body         string
+	Deleted      bool
+	EditDate     int
+	// GroupedID ties the members of an album together. A full-range int64, so
+	// it travels as a string.
+	GroupedID           string
+	ReplyToID           int
+	ForwardFromPeerType string
+	ForwardFromPeerID   int64
+	ForwardFromName     string
+	Post                bool
+	Pinned              bool
+	// Service is the action kind of a service message (join, title change...).
+	Service string
+	Media   *AuditMedia
+}
+
+// AuditMedia is the part of a message's media the transcript draws. Photo and
+// document ids are full-range int64s, so they travel as strings.
+type AuditMedia struct {
+	// Kind is photo, video, gif, round, voice, audio, sticker, file, or the
+	// raw media kind for anything else (contact, geo, poll...).
+	Kind       string
+	PhotoID    string
+	DocumentID string
+	// ThumbType is the document thumbnail to request, if it has one.
+	ThumbType string
+	W         int
+	H         int
+	Duration  int
+	FileName  string
+	MimeType  string
+	Size      int64
+	Spoiler   bool
+}
+
+type AuditUser struct {
+	Name     string
+	Username string
+	IsBot    bool
+}
+
+type AuditHistoryPage struct {
+	Messages []AuditMessage
+	HasOlder bool
+	HasNewer bool
+	// Users names every sender (and the chat partner), keyed by user id.
+	Users map[string]AuditUser
+}
+
+type AuditHistoryQuery struct {
+	OwnerUserID int64
+	PeerType    string
+	PeerID      int64
+	// At most one of BeforeID (older page), AfterID (newer page) and AroundID
+	// (a page centred on a message) is used; none means the latest page.
+	BeforeID int
+	AfterID  int
+	AroundID int
+	Limit    int
+}
+
+// auditMessageSource selects one chat's messages as AuditMessage columns,
+// wrapped so callers can append conditions on the common names id, sender_id
+// and body. Private history is the viewing account's own message boxes; a
+// group or channel has one shared copy, and Out compares the sender with the
+// viewer.
+func auditMessageSource(peerType string) (string, bool) {
+	var inner string
+	switch peerType {
+	case "user":
+		inner = `
+SELECT box_id AS id, message_date, from_user_id AS sender_id, outgoing, body, deleted, edit_date, grouped_id,
+	reply_to_msg_id, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, false AS post, pinned,
+	COALESCE(media, '{}'::jsonb) AS media, COALESCE(media->'service_action'->>'kind', '') AS service
+FROM message_boxes
+WHERE owner_user_id = $1 AND peer_type = 'user' AND peer_id = $2`
+	case "channel":
+		inner = `
+SELECT id, message_date, sender_user_id AS sender_id, sender_user_id = $1 AS outgoing, body, deleted, edit_date, grouped_id,
+	reply_to_msg_id, COALESCE(fwd_from->'From'->>'Type', '') AS fwd_from_peer_type,
+	COALESCE((fwd_from->'From'->>'ID')::bigint, 0) AS fwd_from_peer_id,
+	COALESCE(fwd_from->>'FromName', '') AS fwd_from_name, post, pinned,
+	COALESCE(media, '{}'::jsonb) AS media, COALESCE(action->>'Type', '') AS service
+FROM channel_messages
+WHERE channel_id = $2`
+	default:
+		return "", false
+	}
+	return `SELECT * FROM (` + inner + `) audit WHERE true`, true
+}
+
+// AuditHistory pages one chat's transcript, deleted messages included, and
+// returns it oldest first.
+func (s *readStore) AuditHistory(ctx context.Context, q AuditHistoryQuery) (AuditHistoryPage, error) {
+	page := AuditHistoryPage{Messages: []AuditMessage{}, Users: map[string]AuditUser{}}
+	source, ok := auditMessageSource(q.PeerType)
+	if !ok || q.OwnerUserID <= 0 || q.PeerID <= 0 {
+		return page, fmt.Errorf("audit history: owner and a user or channel peer are required")
+	}
+	if q.Limit <= 0 || q.Limit > messagePageLimit {
+		q.Limit = messagePageLimit
+	}
+	older := func(bound, n int, inclusive bool) ([]AuditMessage, bool, error) {
+		op := "<"
+		if inclusive {
+			op = "<="
+		}
+		rows, err := s.auditMessages(ctx, source+fmt.Sprintf(` AND ($3::int = 0 OR id %s $3) ORDER BY id DESC LIMIT $4`, op), q.OwnerUserID, q.PeerID, bound, n+1)
+		if err != nil {
+			return nil, false, err
+		}
+		more := len(rows) > n
+		if more {
+			rows = rows[:n]
+		}
+		for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+			rows[i], rows[j] = rows[j], rows[i]
+		}
+		return rows, more, nil
+	}
+	newer := func(bound, n int) ([]AuditMessage, bool, error) {
+		rows, err := s.auditMessages(ctx, source+` AND id > $3 ORDER BY id ASC LIMIT $4`, q.OwnerUserID, q.PeerID, bound, n+1)
+		if err != nil {
+			return nil, false, err
+		}
+		more := len(rows) > n
+		if more {
+			rows = rows[:n]
+		}
+		return rows, more, nil
+	}
+	var err error
+	switch {
+	case q.AroundID > 0:
+		var before, after []AuditMessage
+		if before, page.HasOlder, err = older(q.AroundID, q.Limit-q.Limit/2, true); err != nil {
+			return page, err
+		}
+		if after, page.HasNewer, err = newer(q.AroundID, q.Limit/2); err != nil {
+			return page, err
+		}
+		page.Messages = append(before, after...)
+	case q.AfterID > 0:
+		page.HasOlder = true
+		if page.Messages, page.HasNewer, err = newer(q.AfterID, q.Limit); err != nil {
+			return page, err
+		}
+	default:
+		page.HasNewer = q.BeforeID > 0
+		if page.Messages, page.HasOlder, err = older(q.BeforeID, q.Limit, false); err != nil {
+			return page, err
+		}
+	}
+	page.Users, err = s.auditUsers(ctx, q, page.Messages)
+	return page, err
+}
+
+type AuditSearchQuery struct {
+	OwnerUserID  int64
+	PeerType     string
+	PeerID       int64
+	Q            string
+	SenderUserID int64
+	Limit        int
+}
+
+// AuditSearch finds messages in one chat, deleted ones included, newest first.
+// The text is matched literally (LIKE wildcards are escaped).
+func (s *readStore) AuditSearch(ctx context.Context, q AuditSearchQuery) ([]AuditMessage, error) {
+	source, ok := auditMessageSource(q.PeerType)
+	needle := strings.TrimSpace(q.Q)
+	if !ok || q.OwnerUserID <= 0 || q.PeerID <= 0 || needle == "" {
+		return []AuditMessage{}, nil
+	}
+	if q.Limit <= 0 || q.Limit > messagePageLimit {
+		q.Limit = messagePageLimit
+	}
+	return s.auditMessages(ctx, source+` AND body ILIKE $3 AND ($4::bigint = 0 OR sender_id = $4) ORDER BY id DESC LIMIT $5`,
+		q.OwnerUserID, q.PeerID, "%"+escapeLikePattern(needle)+"%", q.SenderUserID, q.Limit)
+}
+
+func (s *readStore) auditMessages(ctx context.Context, sql string, args ...any) ([]AuditMessage, error) {
+	rows, err := s.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list audit messages: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AuditMessage, 0)
+	for rows.Next() {
+		var m AuditMessage
+		var groupedID int64
+		var media []byte
+		if err := rows.Scan(&m.ID, &m.Date, &m.SenderUserID, &m.Out, &m.Body, &m.Deleted, &m.EditDate, &groupedID,
+			&m.ReplyToID, &m.ForwardFromPeerType, &m.ForwardFromPeerID, &m.ForwardFromName, &m.Post, &m.Pinned,
+			&media, &m.Service); err != nil {
+			return nil, err
+		}
+		if groupedID != 0 {
+			m.GroupedID = strconv.FormatInt(groupedID, 10)
+		}
+		m.Media = summarizeAuditMedia(media)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// auditUsers names every sender on the page, the chat partner and any
+// forwarded-from user, in one query.
+func (s *readStore) auditUsers(ctx context.Context, q AuditHistoryQuery, messages []AuditMessage) (map[string]AuditUser, error) {
+	ids := []int64{q.OwnerUserID}
+	if q.PeerType == "user" {
+		ids = append(ids, q.PeerID)
+	}
+	for _, m := range messages {
+		ids = append(ids, m.SenderUserID)
+		if m.ForwardFromPeerType == string(domain.PeerTypeUser) {
+			ids = append(ids, m.ForwardFromPeerID)
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id, btrim(first_name || ' ' || last_name), COALESCE(username, ''), is_bot
+FROM users
+WHERE id = ANY($1::bigint[])`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("name audit users: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]AuditUser, len(ids))
+	for rows.Next() {
+		var id int64
+		var user AuditUser
+		if err := rows.Scan(&id, &user.Name, &user.Username, &user.IsBot); err != nil {
+			return nil, err
+		}
+		out[strconv.FormatInt(id, 10)] = user
+	}
+	return out, rows.Err()
+}
+
+// summarizeAuditMedia reduces a stored media snapshot to what a bubble draws.
+// A snapshot that does not decode is reported by its kind alone rather than
+// failing the whole page.
+func summarizeAuditMedia(raw []byte) *AuditMedia {
+	var media domain.MessageMedia
+	if len(raw) == 0 || json.Unmarshal(raw, &media) != nil || media.Kind == domain.MessageMediaKindNone || media.Kind == domain.MessageMediaKindService {
+		return nil
+	}
+	out := &AuditMedia{Kind: string(media.Kind), Spoiler: media.Spoiler}
+	switch {
+	case media.Kind == domain.MessageMediaKindPhoto && media.Photo != nil:
+		out.PhotoID = strconv.FormatInt(media.Photo.ID, 10)
+		for _, size := range media.Photo.Sizes {
+			if size.W*size.H > out.W*out.H {
+				out.W, out.H = size.W, size.H
+			}
+		}
+	case media.Kind == domain.MessageMediaKindDocument && media.Document != nil:
+		doc := media.Document
+		out.Kind = "file"
+		out.DocumentID = strconv.FormatInt(doc.ID, 10)
+		out.MimeType = doc.MimeType
+		out.Size = doc.Size
+		for _, thumb := range doc.Thumbs {
+			if thumb.Downloadable() || thumb.Kind == domain.PhotoSizeKindCached {
+				if out.ThumbType == "" || thumb.W > 0 {
+					out.ThumbType = thumb.Type
+				}
+			}
+		}
+		isVideo, isAnimated := false, false
+		for _, attr := range doc.Attributes {
+			switch attr.Kind {
+			case domain.DocAttrVideo:
+				isVideo = true
+				out.W, out.H, out.Duration = attr.W, attr.H, int(attr.Duration)
+				if attr.RoundMessage {
+					out.Kind = "round"
+				}
+			case domain.DocAttrImageSize:
+				if out.W == 0 {
+					out.W, out.H = attr.W, attr.H
+				}
+			case domain.DocAttrAnimated:
+				isAnimated = true
+			case domain.DocAttrSticker:
+				out.Kind = "sticker"
+			case domain.DocAttrAudio:
+				out.Duration = attr.AudioDuration
+				if attr.Voice || media.Voice {
+					out.Kind = "voice"
+				} else {
+					out.Kind = "audio"
+				}
+			case domain.DocAttrFilename:
+				out.FileName = attr.FileName
+			}
+		}
+		if out.Kind == "file" && isVideo {
+			out.Kind = "video"
+			if isAnimated {
+				out.Kind = "gif"
+			}
+		}
+		if media.Round {
+			out.Kind = "round"
+		}
+	}
+	return out
 }
 
 func (s *readStore) rowJSON(ctx context.Context, sql string, args ...any) (string, error) {

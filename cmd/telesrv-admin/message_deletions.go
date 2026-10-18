@@ -26,6 +26,8 @@ func (s *server) handleMessageDeletionsAPI(w http.ResponseWriter, r *http.Reques
 	query.MessageID, _ = parseInt(q.Get("message_id"))
 	query.MinDate, _ = parseInt(q.Get("min_date"))
 	query.MaxDate, _ = parseInt(q.Get("max_date"))
+	query.MinMessageID, _ = parseInt(q.Get("min_message_id"))
+	query.MaxMessageID, _ = parseInt(q.Get("max_message_id"))
 	query.BeforeID, _ = parseInt64(q.Get("before_id"))
 	query.Limit, _ = parseInt(q.Get("limit"))
 	rows, err := s.read.ListMessageDeletions(r.Context(), query)
