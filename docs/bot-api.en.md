@@ -16,10 +16,15 @@ Russian version of this document: [bot-api.ru.md](./bot-api.ru.md).
 - [Method summary](#method-summary)
 - [Updates](#updates)
 - [Methods: bot identity and commands](#methods-bot-identity-and-commands)
+- [Methods: bot profile](#methods-bot-profile)
 - [Methods: sending](#methods-sending)
+- [Methods: media groups, polls, dice, chat actions](#methods-media-groups-polls-dice-chat-actions)
 - [Methods: rich messages](#methods-rich-messages)
 - [Methods: ephemeral messages](#methods-ephemeral-messages)
+- [Methods: forwarding and copying](#methods-forwarding-and-copying)
 - [Methods: editing and deleting](#methods-editing-and-deleting)
+- [Methods: chat queries](#methods-chat-queries)
+- [Methods: chat management](#methods-chat-management)
 - [Methods: files](#methods-files)
 - [Methods: webhooks](#methods-webhooks)
 - [Methods: menus, emoji status, web apps](#methods-menus-emoji-status-web-apps)
@@ -84,6 +89,22 @@ first value of each field. This is why several methods accept both the
 why `setChatMenuButton` accepts both a nested `menu_button` object and a flat
 body carrying `type`.
 
+`chat_id` as `@username`: the media group / poll / dice / chat action
+methods, the edit methods `editMessageCaption`, `editMessageMedia`,
+`editMessageReplyMarkup` and `stopPoll`, the forwarding methods (both
+`chat_id` and `from_chat_id`), the chat queries and the chat management
+methods accept either a numeric id or `@username`. A username resolves only
+to a **public supergroup or channel** — users are addressed by numeric id,
+as in the official gateway. An unknown username is `USERNAME_NOT_OCCUPIED`,
+a malformed one is `CHAT_ID_INVALID` or `USERNAME_INVALID`. The older
+methods (`sendMessage`, the `send<Media>` family, `sendRichMessage`,
+`editMessageText`, `deleteMessage`, the ephemeral methods, `sendInvoice`)
+still take a numeric `chat_id` only.
+
+Chat ids follow the official numbering: positive for users,
+`-100<channel_id>` for supergroups and channels. telesrv has **no legacy basic
+groups**, so every group is a supergroup.
+
 ## Errors
 
 Markers the gateway can return directly:
@@ -92,26 +113,44 @@ Markers the gateway can return directly:
 |---|---:|---|
 | `ACCESS_TOKEN_INVALID` | 401 | bad or unknown token |
 | `METHOD_NOT_FOUND` | 404 / 501 | unknown method, or the feature is not wired in this deployment |
-| `BAD_REQUEST` | 400 | unclassified failure |
-| `CHAT_ID_INVALID` | 400 | `chat_id` missing, zero, or unparsable |
-| `MESSAGE_ID_INVALID` | 400 | `message_id` missing or `<= 0` |
+| `BAD_REQUEST` | 400 | unclassified failure, or an unparsable object parameter (for example `permissions`) |
+| `BOT_INVALID` | 400 | the call is not valid for this bot (also returned for `setMyName` with an empty name) |
+| `CHAT_ID_INVALID` | 400 | `chat_id` missing, zero, unparsable, or of the wrong kind for the method (for example a private chat passed to a group-only method) |
+| `USERNAME_NOT_OCCUPIED`, `USERNAME_INVALID` | 400 | `@username` in `chat_id` does not resolve |
+| `PEER_ID_INVALID` | 400 | the bot cannot reach the target chat |
+| `MESSAGE_ID_INVALID` | 400 | `message_id` missing or `<= 0`, or no usable message at that id |
+| `MESSAGE_IDS_EMPTY` | 400 | `message_ids` missing or an empty array |
 | `MESSAGE_IDENTIFIER_INVALID` | 400 | `inline_message_id` mixed with `chat_id`/`message_id` |
 | `MESSAGE_EMPTY` | 400 | no `text` given |
 | `MESSAGE_TOO_LONG` | 400 | over the text limit |
 | `MESSAGE_NOT_MODIFIED` | 400 | edit that changes nothing |
+| `MESSAGE_AUTHOR_REQUIRED`, `EDIT_MESSAGES_FORBIDDEN` | 400 | the bot may not edit that message |
+| `MESSAGE_POLL_CLOSED` | 400 | `stopPoll` on a poll that is already closed |
+| `MEDIA_PREV_INVALID` | 400 | `editMessageMedia` on a message that is not a photo/document message |
+| `CHAT_FORWARDS_RESTRICTED` | 400 | forwarding or copying protected content |
 | `REPLY_PARAMETERS_INVALID` | 400 | conflicting reply selectors |
 | `REPLY_MESSAGE_ID_INVALID` | 400 | negative or malformed reply target |
 | `MESSAGE_THREAD_ID_INVALID` | 400 | ephemeral top-message id out of range |
 | `ENTITY_INVALID`, `ENTITY_BOUNDS_INVALID`, `ENTITY_TYPE_UNSUPPORTED`, `ENTITIES_TOO_LONG` | 400 | entity list problems |
-| `FILE_ID_INVALID`, `FILE_TOO_BIG`, `MEDIA_INVALID` | 400 | file/media problems |
+| `FILE_ID_INVALID`, `FILE_TOO_BIG`, `MEDIA_INVALID`, `MEDIA_EMPTY`, `PHOTO_INVALID`, `MEDIA_CAPTION_TOO_LONG` | 400 | file/media problems |
+| `MEDIA_GROUP_INVALID` | 400 | `media` is not 2–10 items, or mixes types that cannot share an album |
+| `POLL_QUESTION_INVALID`, `POLL_ANSWERS_INVALID`, `POLL_ANSWER_INVALID`, `POLL_OPTION_INVALID`, `OPTIONS_TOO_MUCH`, `OPTION_INVALID`, `QUIZ_CORRECT_ANSWERS_INVALID`, `POLL_TYPE_INVALID`, `POLL_CLOSE_INVALID` | 400 | `sendPoll` problems |
+| `EMOTICON_INVALID` | 400 | `sendDice` with an unsupported emoji |
+| `ACTION_INVALID` | 400 | `sendChatAction` with an unknown action |
 | `BUTTON_INVALID`, `BUTTON_TYPE_INVALID`, `BUTTON_DATA_INVALID`, `BUTTON_URL_INVALID` | 400 | markup problems |
 | `RICH_MESSAGE_INVALID`, `RICH_MESSAGE_TOO_LONG`, `RICH_MESSAGE_DATE_INVALID`, `RICH_MESSAGE_BLOCKS_UNSUPPORTED`, `RICH_MESSAGE_MEDIA_UNSUPPORTED`, `RICH_MESSAGE_OPTION_UNSUPPORTED` | 400 | rich message problems |
 | `WEBPAGE_MEDIA_EMPTY` | 400 | rich HTML referenced remote media the local blob backend cannot materialize |
-| `EFFECT_ID_INVALID`, `VALUE_INVALID` | 400 | bad numeric parameter |
+| `EFFECT_ID_INVALID`, `VALUE_INVALID`, `LIMIT_INVALID` | 400 | bad numeric parameter |
 | `BOT_COMMAND_INVALID` | 400 | malformed or oversized `commands` |
 | `BOT_COMMAND_SCOPE_UNSUPPORTED` | 400 | non-default scope, or any `language_code` |
+| `LANG_CODE_NOT_SUPPORTED` | 400 | `setMyName` / `setMyDescription` / `setMyShortDescription` with a non-empty `language_code` |
+| `NAME_TOO_LONG`, `DESCRIPTION_TOO_LONG`, `ABOUT_TOO_LONG` | 400 | bot profile text over its limit |
 | `EPHEMERAL_MESSAGE_ID_INVALID`, `EPHEMERAL_TARGET_REQUIRED`, `EPHEMERAL_ACTION_EXPIRED` | 400 | ephemeral addressing problems |
 | `QUERY_ID_INVALID`, `USER_ID_INVALID`, `RESULT_ID_INVALID`, `RESULT_ID_EMPTY`, `RESULT_TYPE_INVALID` | 400 | query/user/result problems |
+| `USER_NOT_PARTICIPANT`, `PARTICIPANT_ID_INVALID` | 400 | the target user is not (or cannot be) a member |
+| `USER_ADMIN_INVALID`, `USER_NOT_ADMIN`, `RIGHT_FORBIDDEN`, `USER_CREATOR`, `ADMINS_TOO_MUCH`, `ADMIN_RANK_INVALID` | 400 | promotion / custom title problems |
+| `CHAT_NOT_MODIFIED`, `CHAT_TITLE_EMPTY`, `TITLE_INVALID`, `CHAT_ABOUT_TOO_LONG`, `CHAT_ABOUT_NOT_MODIFIED` | 400 | chat title / description / permissions problems |
+| `CHANNEL_INVALID`, `CHANNEL_PRIVATE`, `USER_BANNED_IN_CHANNEL`, `MEGAGROUP_ID_INVALID`, `FROZEN_METHOD_INVALID` | 400 | the chat cannot be managed by this bot |
 | `OFFSET_INVALID` | 400 | `getUpdates` offset below `-10000` |
 | `ALLOWED_UPDATES_INVALID` | 400 | not a JSON array of up to 100 strings |
 | `ALLOWED_UPDATES_UNSUPPORTED` | 501 | gateway without the update-control service |
@@ -126,6 +165,9 @@ Markers the gateway can return directly:
 | `USER_PERMISSION_DENIED` | 403 | emoji status without the required user grant |
 | `PREMIUM_ACCOUNT_REQUIRED` | 400 | emoji status without Premium |
 | `PREMIUM_GIFT_SELF_INVALID`, `PREMIUM_GIFT_CODE_INVALID`, `BALANCE_TOO_LOW`, `STAR_COUNT_INVALID`, `MONTH_COUNT_INVALID` | 400 | premium gift problems |
+| `GIFT_ID_INVALID`, `GIFT_NOT_AVAILABLE`, `GIFT_UPGRADE_UNAVAILABLE` | 400 | `sendGift` problems |
+| `STAR_GIFT_UNAVAILABLE` | 500 | the gift subsystem itself is unavailable |
+| `CURRENCY_INVALID`, `INVOICE_AMOUNT_INVALID`, `INVOICE_INVALID`, `INVOICE_ALREADY_PAID`, `INVOICE_REFUNDED` | 400 | `sendInvoice` / `refundStarPayment` problems |
 | `IDEMPOTENCY_KEY_INVALID` | 400 | conflicting `request_id`/`Idempotency-Key`, or bad charset/length |
 | `PAYMENT_FORM_INVALID` | 400 | payment form rejected |
 | `CHAT_WRITE_FORBIDDEN`, `CHAT_ADMIN_REQUIRED` | 400 | rights missing |
@@ -133,47 +175,101 @@ Markers the gateway can return directly:
 | `CONFLICT: ...` | 409 | concurrent poll or webhook delivery |
 | `INTERNAL_SERVER_ERROR` | 500 / 503 | store or transport failure |
 
+A TL error that the gateway does not know is folded into `BAD_REQUEST`; the
+list above is the whitelist that survives.
+
 ## Method summary
 
-Implemented (37 methods + 1 file route):
+Implemented (79 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
-| Updates | `getUpdates` |
+| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription` |
+| Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
 | Media | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
+| Albums, polls, dice, actions | `sendMediaGroup`, `sendPoll`, `sendDice`, `sendChatAction` |
 | Location | `sendContact`, `sendLocation`, `sendVenue` |
-| Edit/delete | `editMessageText`, `deleteMessage` |
+| Forwarding | `forwardMessage`, `forwardMessages`, `copyMessage`, `copyMessages` |
+| Edit/delete | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
 | Ephemeral edit/delete | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
+| Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount` |
+| Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
 | Files | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
 | Webhooks | `setWebhook`, `deleteWebhook`, `getWebhookInfo` |
 | Menus & status | `setChatMenuButton`, `getChatMenuButton`, `setUserEmojiStatus` |
 | Web apps & inline | `answerWebAppQuery`, `savePreparedInlineMessage` |
-| Payments | `giftPremiumSubscription` |
+| Payments & gifts | `giftPremiumSubscription`, `getAvailableGifts`, `sendGift`, `sendInvoice`, `answerPreCheckoutQuery`, `refundStarPayment` |
 | Blocked by design | `answerShippingQuery` (HTTP 501) |
+
+The method groups added on top of the core switch (albums/polls/dice/actions,
+the extra edit methods, forwarding, chat queries, chat management, bot profile)
+each depend on an optional gateway interface; a deployment that does not wire
+one answers that group with `501 METHOD_NOT_FOUND`.
 
 ## Updates
 
-Only three update kinds are produced:
+Six update kinds are produced:
 
-| `allowed_updates` value | Update key |
-|---|---|
-| `message` | `message` |
-| `edited_message` | `edited_message` |
-| `callback_query` | `callback_query` |
+| `allowed_updates` value | Update key | Delivered by default |
+|---|---|---|
+| `message` | `message` | yes |
+| `edited_message` | `edited_message` | yes |
+| `callback_query` | `callback_query` | yes |
+| `pre_checkout_query` | `pre_checkout_query` | yes |
+| `my_chat_member` | `my_chat_member` | yes |
+| `chat_member` | `chat_member` | **no** — only when listed explicitly |
 
-`allowed_updates` is a JSON array of up to 100 strings; unknown names parse
-successfully but never match anything, so do not rely on filtering to hide
-updates — drop the fields in the bot. The setting is accepted both by
-`getUpdates` and by `setWebhook`, and it persists per bot.
+`allowed_updates` is a JSON array of up to 100 strings, accepted both by
+`getUpdates` and by `setWebhook`, and it persists per bot. The filter is
+applied when an update is queued: with an explicit list, kinds that are not
+listed are never queued (changing the list does not touch what is already in
+the queue). An empty array `[]` resets the bot to the default set, which is
+every kind above except `chat_member`. Unknown names parse successfully but
+never match anything.
 
 Ephemeral (Bot API 10.2) messages arrive as normal `message` updates, but
 their `message_id` belongs to the ephemeral namespace rather than the chat's
 message numbering, so ordinary `reply_to_message_id` will not address them.
 Replies go back through `reply_parameters.ephemeral_message_id`; see
 [Methods: ephemeral messages](#methods-ephemeral-messages).
+
+`Message` projection notes:
+
+- `chat` of a broadcast channel is `type: "channel"` and carries `title` and
+  `username` when the update has the channel at hand; supergroups are
+  `type: "supergroup"`;
+- album items carry `media_group_id` (a string);
+- `sendDice` results carry `dice` (`emoji`, `value`);
+- forwarded messages carry `forward_origin` of type `user`, `chat`,
+  `channel` (with `message_id`) or `hidden_user`. `sender_user`,
+  `sender_chat` and `chat` inside the origin are built from the id only.
+
+### `my_chat_member` and `chat_member`
+
+Both carry an official `ChatMemberUpdated`: `chat`, `from` (who made the
+change), `date`, `old_chat_member`, `new_chat_member`, and optionally
+`via_join_request` / `via_chat_folder_invite_link`.
+
+- `my_chat_member` — the bot's own status changed in a supergroup or channel
+  (added, promoted, restricted, banned, left). Delivered by default.
+- `chat_member` — another member's status changed. Delivered only when
+  `allowed_updates` lists `chat_member` explicitly **and** the bot is an
+  administrator (or the creator) of that chat at the time of the change.
+
+Known differences from the official gateway:
+
+- member updates exist only for supergroups and channels; there is no
+  `my_chat_member` for a user blocking or unblocking the bot in a private chat;
+- for join-type events (added by someone, joined by themselves, joined by an
+  invite link, approved join request) `old_chat_member` is always `left`, even
+  if the user had been kicked or restricted before;
+- `can_be_edited` in an `administrator` member is always `false` — the server
+  does not record who promoted an admin;
+- there is no `invite_link` field; `via_join_request` and
+  `via_chat_folder_invite_link` are filled.
 
 Queue retention is controlled by `TELESRV_BOT_API_UPDATE_RETENTION`
 (default `24h`); acknowledged updates are dropped earlier.
@@ -204,6 +300,33 @@ Same scope rules as `setMyCommands`; clears the list. Returns `true`.
 
 Same scope rules. Returns the stored array; entries include
 `is_ephemeral: true` only when the flag is set.
+
+## Methods: bot profile
+
+### `setMyName`, `setMyDescription`, `setMyShortDescription`
+
+| Method | Parameter | Limit | Too long |
+|---|---|---|---|
+| `setMyName` | `name` | 64 characters | `NAME_TOO_LONG` |
+| `setMyDescription` | `description` | 512 characters | `DESCRIPTION_TOO_LONG` |
+| `setMyShortDescription` | `short_description` | 120 characters | `ABOUT_TOO_LONG` |
+
+They go through MTProto `bots.setBotInfo` (the short description is the
+MTProto `about`), so other clients see the change. Returns `true`.
+
+Differences from the official gateway:
+
+- `language_code` is not supported: only the default-language profile is
+  stored, and a non-empty `language_code` is `LANG_CODE_NOT_SUPPORTED`
+  instead of being stored per language;
+- `setMyName` cannot clear the name: an empty `name` is rejected (`BOT_INVALID`).
+  An empty description or short description clears it, as officially.
+
+### `getMyName`, `getMyDescription`, `getMyShortDescription`
+
+Return `{"name": ...}`, `{"description": ...}` and
+`{"short_description": ...}`. `language_code` is accepted but ignored: the
+default-language value is always returned.
 
 ## Methods: sending
 
@@ -280,6 +403,65 @@ implemented.
 `sendVenue` adds required `title` and `address`, and accepts either
 `foursquare_id` + `foursquare_type` or `google_place_id` +
 `google_place_type`.
+
+## Methods: media groups, polls, dice, chat actions
+
+`sendMediaGroup`, `sendPoll` and `sendDice` share these parameters:
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `chat_id` | integer / `@username` | required |
+| `disable_notification`, `protect_content` | boolean | |
+| `reply_parameters` | object | `{"message_id": N}`; the legacy `reply_to_message_id` is also accepted, but not both |
+| `reply_markup` | object | `sendPoll` and `sendDice` only |
+
+`message_thread_id`, `business_connection_id`, `message_effect_id`,
+`allow_paid_broadcast` and the other newer send options are not supported
+and are ignored. These methods are ordinary sends only — there is no ephemeral
+form.
+
+### `sendMediaGroup`
+
+`media` is a JSON array of 2–10 `InputMedia` objects (`MEDIA_GROUP_INVALID`
+otherwise). Each item takes `type`, `media`, `caption` (up to 1024
+characters), `parse_mode`, `caption_entities`, `has_spoiler`, and the
+`width` / `height` / `duration` / `title` / `performer` hints. `media`
+accepts `attach://<field>`, an `http(s)` URL, or a `file_id`.
+
+Album rules: `photo` and `video` may be mixed; `audio` and `document` can only
+form albums of their own type. Any other `type` (including `animation`) is
+`MEDIA_GROUP_INVALID`. Returns the array of sent `Message` objects, all sharing
+one `media_group_id`.
+
+### `sendPoll`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `question` | string | required, up to 255 characters; `question_parse_mode`, `question_entities` |
+| `options` | JSON array | strings or `InputPollOption` objects (`text`, `text_parse_mode`, `text_entities`); each up to 100 characters |
+| `type` | string | `regular` (default) or `quiz` |
+| `is_anonymous` | boolean | default `true` |
+| `allows_multiple_answers` | boolean | |
+| `correct_option_id` | integer | required for `quiz`, rejected otherwise |
+| `explanation` | string | up to 200 characters; `explanation_parse_mode`, `explanation_entities` |
+| `open_period` / `close_date` | integer | mutually exclusive (`POLL_CLOSE_INVALID`) |
+| `is_closed` | boolean | send an already closed poll |
+
+The number of options is checked by the MTProto handler
+(`POLL_ANSWERS_INVALID`, `OPTIONS_TOO_MUCH`). Returns the sent `Message`.
+
+### `sendDice`
+
+`emoji` defaults to `🎲`; the accepted set is `🎲`, `🎯`, `🏀`, `⚽`, `🎳`,
+`🎰` (`EMOTICON_INVALID` otherwise). Returns the `Message` with `dice`.
+
+### `sendChatAction`
+
+`chat_id`, `action` — one of `typing`, `upload_photo`, `record_video`,
+`upload_video`, `record_voice`, `upload_voice`, `upload_document`,
+`choose_sticker`, `find_location`, `record_video_note`,
+`upload_video_note` (`ACTION_INVALID` otherwise). An optional
+`message_thread_id` is passed through as the top message id. Returns `true`.
 
 ## Methods: rich messages
 
@@ -374,12 +556,49 @@ file references, or HTTPS URLs (`FILE_ID_INVALID` otherwise).
 `reply_markup` is inline-only, and its *presence* matters: sending
 `reply_markup` with an empty value clears the keyboard.
 
+## Methods: forwarding and copying
+
+All four methods act as the bot: the bot must be able to see the source
+messages in `from_chat_id` (a chat it is a member of, or its own private chat
+with a user) and to write to `chat_id`. Both accept a numeric id or
+`@username`.
+
+| Method | Parameters | Result |
+|---|---|---|
+| `forwardMessage` | `chat_id`, `from_chat_id`, `message_id`, `disable_notification`, `protect_content` | `Message` |
+| `forwardMessages` | `chat_id`, `from_chat_id`, `message_ids`, `disable_notification`, `protect_content` | array of `MessageId` |
+| `copyMessage` | `chat_id`, `from_chat_id`, `message_id`, `caption`, `parse_mode`, `caption_entities`, `reply_markup`, `reply_parameters` / `reply_to_message_id`, `disable_notification`, `protect_content` | `MessageId` |
+| `copyMessages` | `chat_id`, `from_chat_id`, `message_ids`, `remove_caption`, `disable_notification`, `protect_content` | array of `MessageId` |
+
+- `message_ids` is a JSON array of 1–100 positive ids; it is de-duplicated and
+  processed in ascending order. An empty array is `MESSAGE_IDS_EMPTY`.
+- As officially, ids that cannot be found or cannot be forwarded/copied are
+  skipped; only when nothing is left is the call `MESSAGE_ID_INVALID`.
+  Service messages are never forwarded; service messages, invoices and
+  giveaways are never copied.
+- `copyMessage`: a `caption` key that is present replaces the original caption
+  (an empty string removes it); a missing key keeps it. The caption is checked
+  against the 4096-character text limit, not the 1024 caption limit.
+
+Differences from the official gateway:
+
+- `message_thread_id`, `direct_messages_topic_id`, `video_start_timestamp`,
+  `show_caption_above_media`, `allow_paid_broadcast` and
+  `suggested_post_parameters` are not supported (ignored);
+- a plain copy is a forward without the author header and keeps albums
+  intact; a copy that changes the caption, uses `remove_caption`, or adds
+  `reply_markup` is a **re-send** of the source content, so an album copied
+  that way arrives as separate messages without a shared `media_group_id`;
+- protected content (a chat or message with forwarding restricted, or a
+  private chat whose owner disabled forwarding) fails the whole call with
+  `CHAT_FORWARDS_RESTRICTED`.
+
 ## Methods: editing and deleting
 
 ### `editMessageText`
 
-The single edit method. It covers both ordinary and rich text edits, and both
-chat messages and inline messages.
+Covers both ordinary and rich text edits, and both chat messages and inline
+messages.
 
 | Parameter | Type | Notes |
 |---|---|---|
@@ -395,9 +614,35 @@ For an `inline_message_id` the result is a boolean; for a chat message it is
 the updated `Message`. An edit that changes nothing returns
 `MESSAGE_NOT_MODIFIED`.
 
-There is no `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`,
-`editMessageLiveLocation`, or `stopMessageLiveLocation` — use
-`editMessageText` (or the ephemeral variants) instead.
+### `editMessageCaption`, `editMessageReplyMarkup`, `editMessageMedia`
+
+All three accept `chat_id` (integer or `@username`) + `message_id`, or
+`inline_message_id` (mixing them is `MESSAGE_IDENTIFIER_INVALID`). The result
+is the edited `Message` for a chat message and `true` for an inline message.
+`reply_markup` is inline-only and its presence matters: present but empty
+clears the keyboard, absent keeps it.
+
+- `editMessageCaption` — `caption` (up to 1024 characters), `parse_mode`,
+  `caption_entities`, `reply_markup`.
+- `editMessageReplyMarkup` — `reply_markup` only; omitting it removes the
+  keyboard.
+- `editMessageMedia` — `media` is one `InputMedia` (`animation`, `audio`,
+  `document`, `photo`, `video`; `MEDIA_INVALID` otherwise) with its own
+  `caption` / `parse_mode` / `caption_entities` / `has_spoiler`, plus
+  `reply_markup`. The file may be an upload via `attach://`, a URL, or a
+  `file_id`. For a chat message only messages that already carry a photo or a
+  document (which includes video, audio and animation files) can have their
+  media replaced; text, poll, dice and other messages are `MEDIA_PREV_INVALID`.
+
+There is no `editMessageLiveLocation` or `stopMessageLiveLocation` (live
+location is not implemented).
+
+### `stopPoll`
+
+`chat_id` + `message_id` (there is no inline form), optional `reply_markup`.
+Closes a poll the bot sent and returns the final `Poll`. A poll that is
+already closed is `MESSAGE_POLL_CLOSED`; a message without a poll is
+`MESSAGE_ID_INVALID`.
 
 ### `deleteMessage`
 
@@ -415,6 +660,113 @@ foreign message returns `false` or an error, as with the official gateway.
 | `cache_time` | integer | seconds |
 
 Returns `true`.
+
+## Methods: chat queries
+
+All four read as the bot, with the bot as the viewer. A chat the bot cannot
+see (never joined, kicked, deleted) is `CHAT_ID_INVALID`.
+
+### `getChat`
+
+`chat_id` — a positive user id or a `-100…` supergroup/channel id (any other
+negative id is `CHAT_ID_INVALID`). Returns a `ChatFullInfo` with this subset of
+fields:
+
+- private chats: `id`, `type: "private"`, `first_name`, `last_name`,
+  `username`, `bio`, `birthdate`, `accent_color_id`,
+  `background_custom_emoji_id`, `profile_accent_color_id`,
+  `profile_background_custom_emoji_id`, `emoji_status_custom_emoji_id`,
+  `emoji_status_expiration_date`, `max_reaction_count`,
+  `accepted_gift_types`. `bio` and `birthdate` honour the user's privacy
+  settings towards the bot;
+- supergroups and channels (`type` is `channel` for broadcast channels,
+  `supergroup` otherwise): `id`, `type`, `title`, `username`, `description`,
+  `is_forum`, `has_protected_content`, `has_hidden_members`, `linked_chat_id`,
+  `message_auto_delete_time`, `paid_message_star_count`,
+  `available_reactions`, the colour and emoji status fields, `max_reaction_count`,
+  `accepted_gift_types`;
+- supergroups only: `permissions`, `slow_mode_delay`, `unrestrict_boost_count`,
+  `join_to_send_messages`, `join_by_request`, and — only when the bot is an
+  administrator — `has_visible_history` and `has_aggressive_anti_spam_enabled`.
+
+Differences from the official gateway:
+
+- not returned: `photo`, `active_usernames`, `invite_link`, `pinned_message`,
+  `sticker_set_name`, `can_set_sticker_set`, `custom_emoji_sticker_set_name`,
+  `location`, `personal_chat`, the `business_*` fields,
+  `has_private_forwards`, `has_restricted_voice_and_video_messages`,
+  `can_send_paid_media` and the other fields not listed above;
+- `accepted_gift_types` is a fixed rule, not the user's real settings: users
+  accept every gift type including Premium, channels accept every gift type
+  except Premium, supergroups accept none.
+
+### `getChatMember`
+
+`chat_id` (supergroup or channel), `user_id`. Returns a `ChatMember` in one of
+the six official shapes (`creator`, `administrator`, `member`, `restricted`,
+`left`, `kicked`). A user who is not in the chat is `status: "left"`, not an
+error.
+
+### `getChatAdministrators`
+
+`chat_id` (supergroup or channel). Returns the creator and every
+administrator. Other bots are omitted unless `return_bots=true`; the calling
+bot itself is always included.
+
+In both methods `can_be_edited` of an `administrator` is `true` only when the
+calling bot is the chat's **creator**: the server does not record who promoted
+an admin, so an admin bot with `can_promote_members` conservatively gets
+`false`.
+
+### `getChatMemberCount`
+
+`chat_id` (supergroup or channel). Returns an integer.
+
+## Methods: chat management
+
+Every method acts as the bot through the corresponding MTProto handler, so
+rights checks, service messages and update fan-out are the same as for a
+human admin. Missing rights are `CHAT_ADMIN_REQUIRED`. Every method returns
+`true`.
+
+telesrv has no legacy basic groups: everything except pinning works only on
+supergroups and channels. A private-chat `chat_id` passed to a group-only
+method is `CHAT_ID_INVALID`. Pinning methods also work in private chats.
+
+| Method | Parameters | Notes |
+|---|---|---|
+| `banChatMember` | `chat_id`, `user_id`, `until_date`, `revoke_messages` | `until_date` under 30 seconds or over 366 days from now means forever |
+| `unbanChatMember` | `chat_id`, `user_id`, `only_if_banned` | as officially, without `only_if_banned` an active member is removed (and free to rejoin) |
+| `restrictChatMember` | `chat_id`, `user_id`, `permissions`, `use_independent_chat_permissions`, `until_date` | `permissions` is a `ChatPermissions` object; missing fields are `false`; unparsable is `BAD_REQUEST` |
+| `promoteChatMember` | `chat_id`, `user_id`, every `can_*` right and `is_anonymous` | all rights `false` demotes |
+| `setChatAdministratorCustomTitle` | `chat_id`, `user_id`, `custom_title` | 0–16 characters (`ADMIN_RANK_INVALID`); the target must already be an admin (`USER_NOT_ADMIN`) |
+| `setChatPermissions` | `chat_id`, `permissions`, `use_independent_chat_permissions` | supergroups |
+| `pinChatMessage` | `chat_id`, `message_id`, `disable_notification` | also private chats |
+| `unpinChatMessage` | `chat_id`, `message_id` (optional) | without `message_id` unpins the most recent pin |
+| `unpinAllChatMessages` | `chat_id` | also private chats |
+| `setChatTitle` | `chat_id`, `title` | 1–128 characters (`CHAT_TITLE_EMPTY` / `TITLE_INVALID`) |
+| `setChatDescription` | `chat_id`, `description` | 0–255 characters (`CHAT_ABOUT_TOO_LONG`) |
+| `setChatPhoto` | `chat_id`, `photo` | multipart upload only |
+| `deleteChatPhoto` | `chat_id` | |
+| `leaveChat` | `chat_id` | |
+
+With `use_independent_chat_permissions=false` (the default), any media, poll,
+"other messages" or web-preview permission also allows plain text messages, as
+officially.
+
+Differences from the official gateway:
+
+- `banChatMember` deletes the user's message history only when
+  `revoke_messages` is explicitly `true`; omitted or `false` keeps it.
+  Officially the history is always revoked in supergroups and channels;
+- if a ban with `revoke_messages=true` is made by a bot that has the
+  ban right but not the delete right, the ban takes effect but the call
+  returns `CHAT_ADMIN_REQUIRED` (the history is not deleted);
+- `setChatPhoto` accepts only a file uploaded with this request (`photo` as a
+  multipart file, or `attach://<field>`); a `file_id` or URL is
+  `PHOTO_INVALID`;
+- there are no basic groups, so methods and errors specific to them do not
+  exist.
 
 ## Methods: files
 
@@ -529,6 +881,38 @@ result; replaying it with a different recipient, plan, price, or text is
 `IDEMPOTENCY_KEY_INVALID`. Requests without any key still work, but each
 retry charges again, so always send a key.
 
+### `getAvailableGifts`
+
+No parameters. Returns `{"gifts": [...]}` — the server's enabled Star Gift
+catalog, the same list MTProto `payments.getStarGifts` serves. Each gift has
+`id`, `star_count`, `sticker`, `upgrade_star_count` (only while an upgrade can
+actually be bought) and, for limited gifts, `total_count` and
+`remaining_count`. Sold-out or not-yet-released gifts still appear; read
+`remaining_count` before buying.
+
+### `sendGift`
+
+`gift_id` (required), exactly one of `user_id` / `chat_id` (neither or both is
+`CHAT_ID_INVALID`), `pay_for_upgrade`, `text` (up to 128 characters),
+`text_parse_mode`, `text_entities`. Paid from the bot's Stars balance. The
+same `Idempotency-Key` / `request_id` extension as `giftPremiumSubscription`
+applies. Returns `true`. `STAR_GIFT_UNAVAILABLE` (HTTP 500) means the gift
+subsystem itself is down, not that the request was wrong.
+
+### `sendInvoice`
+
+Stars invoices only: `currency` must be `XTR` (or omitted;
+`CURRENCY_INVALID` otherwise). Takes `chat_id` (numeric), `title`,
+`description`, `payload`, and the price as either a scalar `price` or a
+single-entry `prices` array (`INVOICE_AMOUNT_INVALID` otherwise). Returns the
+sent `Message`. Shipping, tips, photos and provider tokens are not modelled.
+
+### `refundStarPayment`
+
+`user_id`, `telegram_payment_charge_id` (from `successful_payment`). Refunds
+exactly the Stars that the charge credited; `user_id` must match the payer
+recorded on the invoice. Returns `true`.
+
 ### `dropPendingUpdates`
 
 Implemented: discards the bot's unconfirmed queued updates and answers `true`.
@@ -556,6 +940,7 @@ answer; a stale `pre_checkout_query_id` gets `QUERY_ID_INVALID`. The currency an
 
 Recognized, but answers HTTP `501 METHOD_NOT_FOUND`: a Stars payment has no
 shipping step, so there is nothing to answer.
+
 ## Markup and entities
 
 `reply_markup` accepts exactly one constructor:
@@ -602,7 +987,7 @@ units, unknown types are `ENTITY_TYPE_UNSUPPORTED`.
 | Limit | Value |
 |---|---|
 | Text length | 4096 characters after parsing |
-| Caption length | 1024 characters |
+| Caption length | 1024 characters (`copyMessage` caption: 4096) |
 | Entities per message | 256 |
 | Inline result id | 64 bytes |
 | Callback data | 64 bytes |
@@ -614,32 +999,39 @@ units, unknown types are `ENTITY_TYPE_UNSUPPORTED`.
 | `max_connections` | 1..100, default 40 |
 | Rich message source | 256 KiB |
 | `getFile` offset/limit | offset ignored; size reported in full |
+| `sendMediaGroup` items | 2..10 |
+| `forwardMessages` / `copyMessages` ids | 1..100 |
+| Poll question / option / explanation | 255 / 100 / 200 characters |
+| Bot name / description / short description | 64 / 512 / 120 characters |
+| Chat title / description | 1..128 / 0..255 characters |
+| Admin custom title | 0..16 characters |
 
 ## Not implemented
 
 Every other official method returns HTTP `404 METHOD_NOT_FOUND`. The most
 commonly reached ones:
 
-- editing: `editMessageCaption`, `editMessageMedia`,
-  `editMessageReplyMarkup`, `editMessageLiveLocation`,
-  `stopMessageLiveLocation`, `stopPoll`;
-- media groups and the rest of the `send*` surface: `sendMediaGroup`,
-  `sendPoll`, `sendDice`, `sendGame`, `sendChatAction`;
-- payments: `createInvoiceLink`, `sendInvoice`, `answerPreCheckoutQuery`,
-  `answerShippingQuery`, `getStarTransactions`, `refundStarPayment`;
-- chat administration: `banChatMember`, `unbanChatMember`,
-  `restrictChatMember`, `promoteChatMember`, `setChatPermissions`,
-  `setChatPhoto`, `deleteChatPhoto`, `pinChatMessage`, `unpinChatMessage`,
-  `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`,
-  `leaveChat`;
-- queries: `getChat`, `getChatAdministrators`, `getChatMember`,
-  `getChatMemberCount`, `getForumTopic*`, `getUserChatBoosts`;
-- messages: `forwardMessage`, `forwardMessages`, `copyMessage`,
-  `copyMessages`, `sendPoll`, `getFile`-adjacent helpers;
-- bot administration: `setMyName`, `setMyDescription`, `setMyShortDescription`,
-  `setMyDefaultAdministratorRights`, `deleteWebhook` for other bots,
-  `close`, `logOut`;
-- reactions, games, and business-account methods.
+- live location: `editMessageLiveLocation`, `stopMessageLiveLocation`
+  (and `sendLocation` with `live_period`);
+- other sending: `sendGame`, `sendPaidMedia`, `sendChecklist`,
+  `editMessageChecklist`;
+- inline mode: `answerInlineQuery` (and no `inline_query` /
+  `chosen_inline_result` updates);
+- payments: `createInvoiceLink`, `getStarTransactions`,
+  `editUserStarSubscription`, `getMyStarBalance`, and the gift-management
+  methods beyond `getAvailableGifts` / `sendGift`;
+- chat administration: `banChatSenderChat`, `unbanChatSenderChat`,
+  `setChatStickerSet`, `deleteChatStickerSet`, invite links
+  (`exportChatInviteLink`, `createChatInviteLink`, `editChatInviteLink`,
+  `revokeChatInviteLink`, subscription links), join requests
+  (`approveChatJoinRequest`, `declineChatJoinRequest`);
+- forum topics: `createForumTopic`, `editForumTopic`, `closeForumTopic`,
+  `getForumTopicIconStickers` and the rest of the topic family;
+- queries: `getUserProfilePhotos`, `getUserChatBoosts`;
+- bot administration: `setMyDefaultAdministratorRights`,
+  `getMyDefaultAdministratorRights`, `close`, `logOut`;
+- reactions (`setMessageReaction`), stickers and sticker sets, stories,
+  business-account methods, and Telegram Passport.
 
 MTProto clients are unaffected: everything implemented for the official
 Android/iOS/Desktop clients is reached over MTProto, not HTTP. See
