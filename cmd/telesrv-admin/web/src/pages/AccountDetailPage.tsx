@@ -1,4 +1,4 @@
-import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, Minus, Sparkles, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MessagesSquare, Minus, Sparkles, Star, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -10,12 +10,14 @@ import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
 import { ColorAction, EmojiStatusAction, LoginEmailAction, PhoneAction, ProfileAction, SupportAction, UsernameAction } from "../components/attributes";
 import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix, toInt } from "../lib/format";
+import { permissionMessagesRead, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import type { AccountDetail } from "../types";
 import { SectionTabs } from "../components/SectionTabs";
 
 export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navigate }) {
   const { t } = useI18n();
+  const { can } = usePermissions();
   const [detail, setDetail] = useState<AccountDetail | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -61,7 +63,16 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
     <PageFrame
       title={t("account.detailTitle", { id: account.ID })}
       eyebrow={t("account.profile")}
-      actions={<button className="btn icon-text" onClick={() => navigate("/accounts")}><ArrowLeft size={15} /> {t("common.backToList")}</button>}
+      actions={
+        <>
+          {can(permissionMessagesRead) && (
+            <button className="btn icon-text" onClick={() => navigate(`/messages/audit?owner=${id}`)}>
+              <MessagesSquare size={15} /> {t("audit.openForAccount")}
+            </button>
+          )}
+          <button className="btn icon-text" onClick={() => navigate("/accounts")}><ArrowLeft size={15} /> {t("common.backToList")}</button>
+        </>
+      }
     >
       <SectionTabs sectionId="accounts" active="/accounts" navigate={navigate} />
       <SplitLayout

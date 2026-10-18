@@ -821,6 +821,14 @@ func (fakeService) AccountAvatar(context.Context, int64) ([]byte, string, bool, 
 	return nil, "", false, nil
 }
 
+func (fakeService) MessagePhoto(context.Context, int64, bool) ([]byte, string, bool, error) {
+	return nil, "", false, nil
+}
+
+func (fakeService) MessageDocument(context.Context, int64, string) (admin.MessageMediaFile, bool, error) {
+	return admin.MessageMediaFile{}, false, nil
+}
+
 func (fakeService) SetAccountAvatar(_ context.Context, req admin.SetAccountAvatarRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }

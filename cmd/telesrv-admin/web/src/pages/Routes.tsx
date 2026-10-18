@@ -207,11 +207,12 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
   }
   // Every tab keeps its own path so a link to one still opens on it -- the
   // tab is a view of /messages, not a hidden bit of component state.
-  if (route.path === "/messages" || route.path === "/messages/private" || route.path === "/messages/groups" || route.path === "/messages/deletions") {
+  const messageTabs = { "/messages/groups": "groups", "/messages/audit": "audit", "/messages/deletions": "deletions" } as const;
+  if (route.path === "/messages" || route.path === "/messages/private" || route.path in messageTabs) {
     return (
       <MessagesPage
         navigate={navigate}
-        tab={route.path === "/messages/groups" ? "groups" : route.path === "/messages/deletions" ? "deletions" : "private"}
+        tab={messageTabs[route.path as keyof typeof messageTabs] ?? "private"}
         path={route.path}
         search={route.search}
       />

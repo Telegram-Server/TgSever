@@ -234,6 +234,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
 | Messages | Private | `/messages/private` | `messages.read` (also served at the bare alias) |
 | Messages | Groups | `/messages/groups` | `messages.read` |
+| Messages | Chat audit | `/messages/audit` | `messages.read` |
 | Messages | Deletions | `/messages/deletions` | `messages.deletions.read` |
 | Reports | Reports | `/moderation` | `moderation.review` |
 | Donations | Donations | `/donations` | `donations.manage` |
@@ -266,6 +267,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | `/messages/detail`, `/messages/private/detail` | Детали личного сообщения (`?owner_user_id=&msg_id=`). |
 | `/messages/groups/detail` | Детали сообщения в группе (`?channel_id=&msg_id=`). |
 | `/messages/deletions/detail` | Одна запись об удалении (`?id=`). Список `/messages/deletions` принимает те же фильтры, что и его API, в query-параметрах. |
+| `/messages/audit` | Аудит чатов. `?owner=` — аккаунт, `peer_type=&peer_id=` — чат, `msg=` — сообщение, на котором открыть. |
 
 `/premium` — постоянный алиас `/monetization`. `/messages` — алиас
 `/messages/private`.
@@ -349,8 +351,13 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | GET | `/api/messages/detail` | Параметры: `owner_user_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
 | GET | `/api/messages/groups` | Параметры: `channel_id` (int64, обяз.), `before_date` (int64), `before_id` (int), `limit` (int). Ответ: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Параметры: `channel_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
-| GET | `/api/messages/deletions` | Требует `messages.deletions.read`. Все параметры — необязательные фильтры: `actor_user_id`, `owner_user_id`, `sender_user_id`, `peer_id` (int64), `peer_type` (`user`/`channel`), `message_id` (int), `source`, `min_date`/`max_date` (unix), `before_id` (int64, курсор), `limit` (int). Ответ: `rows`, новые первыми, без общего количества. |
+| GET | `/api/messages/deletions` | Требует `messages.deletions.read`. Все параметры — необязательные фильтры: `actor_user_id`, `owner_user_id`, `sender_user_id`, `peer_id` (int64), `peer_type` (`user`/`channel`), `message_id` (int), `min_message_id`/`max_message_id` (int, страница истории), `source`, `min_date`/`max_date` (unix), `before_id` (int64, курсор), `limit` (int). Ответ: `rows`, новые первыми, без общего количества. |
 | GET | `/api/messages/deletions/detail` | Требует `messages.deletions.read`. Параметры: `id` (int64, обяз.). Ответ: `Deletion`, `SnapshotJSON` (строка в момент удаления), `Batch` (все строки того же действия). |
+| GET | `/api/messages/audit/dialogs` | Параметры: `owner_user_id` (int64, обяз.), `kind` (`private`/`group`/`channel`), `q` (имя, username или ID), `offset`, `limit` (int). Ответ: `rows` — чаты аккаунта, новые первыми, с последним сообщением и `HasDeletions`. |
+| GET | `/api/messages/audit/history` | Параметры: `owner_user_id`, `peer_id` (int64, обяз.), `peer_type` (`user`/`channel`, обяз.), один из `before_id` / `after_id` / `around_id` (int), `limit` (int). Ответ: `Messages` (старые первыми, включая удалённые), `HasOlder`, `HasNewer`, `Users` (имена по ID). Кто удалил — не здесь: это даёт `/api/messages/deletions` с `min_message_id`/`max_message_id`. |
+| GET | `/api/messages/audit/search` | Параметры: `owner_user_id`, `peer_id` (int64, обяз.), `peer_type` (обяз.), `q` (обяз., ищется буквально), `sender_user_id` (int64), `limit` (int). Ответ: `rows` (новые первыми, включая удалённые), `users`. |
+| GET | `/api/messages/media/photo/{id}` | Фото сообщения: миниатюра под пузырь или самый большой размер с `?full=1`. Только безопасные типы изображений. |
+| GET | `/api/messages/media/document/{id}` | Миниатюра документа с `?thumb=<type>`, иначе сам файл как вложение с `nosniff`. |
 
 ## API: звёздные подарки и коллекционки
 

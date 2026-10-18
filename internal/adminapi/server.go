@@ -59,6 +59,8 @@ type Service interface {
 	SetPhone(ctx context.Context, req admin.SetPhoneRequest) (admin.CommandResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
+	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
+	MessageDocument(ctx context.Context, documentID int64, thumbType string) (admin.MessageMediaFile, bool, error)
 	SetAccountAvatar(ctx context.Context, req admin.SetAccountAvatarRequest) (admin.CommandResult, error)
 	ChannelAvatar(ctx context.Context, channelID int64) ([]byte, string, bool, error)
 	SetChannelAvatar(ctx context.Context, req admin.SetChannelAvatarRequest) (admin.CommandResult, error)
@@ -255,6 +257,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
 	mux.HandleFunc("POST /v1/accounts/set-username", s.authenticated(s.handleSetUsername))
 	mux.HandleFunc("GET /v1/accounts/{id}/avatar", s.authenticated(s.handleAccountAvatar))
+	mux.HandleFunc("GET /v1/media/photos/{id}", s.authenticated(s.handleMessagePhoto))
+	mux.HandleFunc("GET /v1/media/documents/{id}", s.authenticated(s.handleMessageDocument))
 	mux.HandleFunc("POST /v1/accounts/set-profile", s.authenticated(s.handleSetProfile))
 	mux.HandleFunc("POST /v1/accounts/set-phone", s.authenticated(s.handleSetPhone))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
@@ -593,6 +597,58 @@ func (s *Server) handleSetUsername(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.svc.SetUsername(r.Context(), req)
 	writeCommandResult(w, result, err)
+}
+
+// handleMessagePhoto serves a message photo to the audit viewer: a bubble-sized
+// thumbnail, or the largest stored size with ?full=1.
+func (s *Server) handleMessagePhoto(w http.ResponseWriter, r *http.Request) {
+	photoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || photoID <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	data, mimeType, found, err := s.svc.MessagePhoto(r.Context(), photoID, r.URL.Query().Get("full") == "1")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// handleMessageDocument serves a document thumbnail (?thumb=<type>) or the
+// stored file. The file is user-supplied bytes, so it always goes out as a
+// sniff-proof attachment and can never render inside the panel's origin.
+func (s *Server) handleMessageDocument(w http.ResponseWriter, r *http.Request) {
+	documentID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || documentID <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	file, found, err := s.svc.MessageDocument(r.Context(), documentID, r.URL.Query().Get("thumb"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", file.MimeType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(file.Bytes)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if file.Attachment {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="document-%d"`, documentID))
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(file.Bytes)
 }
 
 func (s *Server) handleAccountAvatar(w http.ResponseWriter, r *http.Request) {

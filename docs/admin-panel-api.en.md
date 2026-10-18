@@ -215,6 +215,7 @@ and the old URL still lands there rather than 404ing on a bookmark.
 | Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
 | Messages | Private | `/messages/private` | `messages.read` (also served at the bare alias) |
 | Messages | Groups | `/messages/groups` | `messages.read` |
+| Messages | Chat audit | `/messages/audit` | `messages.read` |
 | Messages | Deletions | `/messages/deletions` | `messages.deletions.read` |
 | Reports | Reports | `/moderation` | `moderation.review` |
 | Donations | Donations | `/donations` | `donations.manage` |
@@ -246,6 +247,7 @@ specific record inside one, and each is gated by the same right as its list.
 | `/messages/detail`, `/messages/private/detail` | Private message detail (`?owner_user_id=&msg_id=`). |
 | `/messages/groups/detail` | Group message detail (`?channel_id=&msg_id=`). |
 | `/messages/deletions/detail` | One deletion record (`?id=`). The list at `/messages/deletions` accepts the same filters as its API as query parameters. |
+| `/messages/audit` | Chat audit. `?owner=` picks the account, `peer_type=&peer_id=` the chat, `msg=` the message to open on. |
 
 `/premium` is a permanent alias of `/monetization`. `/messages` is an alias of
 `/messages/private`.
@@ -325,8 +327,13 @@ Every mutating request carries in its body:
 | GET | `/api/messages/detail` | Params: `owner_user_id` (int64, req.), `msg_id` (int, req.). Response: message card. |
 | GET | `/api/messages/groups` | Params: `channel_id` (int64, req.), `before_date` (int64), `before_id` (int), `limit` (int). Response: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Params: `channel_id` (int64, req.), `msg_id` (int, req.). Response: message card. |
-| GET | `/api/messages/deletions` | Needs `messages.deletions.read`. All params optional filters: `actor_user_id`, `owner_user_id`, `sender_user_id`, `peer_id` (int64), `peer_type` (`user`/`channel`), `message_id` (int), `source`, `min_date`/`max_date` (unix), `before_id` (int64 cursor), `limit` (int). Response: `rows`, newest first, no total. |
+| GET | `/api/messages/deletions` | Needs `messages.deletions.read`. All params optional filters: `actor_user_id`, `owner_user_id`, `sender_user_id`, `peer_id` (int64), `peer_type` (`user`/`channel`), `message_id` (int), `min_message_id`/`max_message_id` (int, a page of history), `source`, `min_date`/`max_date` (unix), `before_id` (int64 cursor), `limit` (int). Response: `rows`, newest first, no total. |
 | GET | `/api/messages/deletions/detail` | Needs `messages.deletions.read`. Params: `id` (int64, req.). Response: `Deletion`, `SnapshotJSON` (the row as it stood when deleted), `Batch` (every row the same action produced). |
+| GET | `/api/messages/audit/dialogs` | Params: `owner_user_id` (int64, req.), `kind` (`private`/`group`/`channel`), `q` (name, username or ID), `offset`, `limit` (int). Response: `rows` -- the account's chats newest first, each with its last message and `HasDeletions`. |
+| GET | `/api/messages/audit/history` | Params: `owner_user_id`, `peer_id` (int64, req.), `peer_type` (`user`/`channel`, req.), one of `before_id` / `after_id` / `around_id` (int), `limit` (int). Response: `Messages` (oldest first, deleted ones included), `HasOlder`, `HasNewer`, `Users` (names by ID). Who deleted what is not here: it comes from `/api/messages/deletions` with `min_message_id`/`max_message_id`. |
+| GET | `/api/messages/audit/search` | Params: `owner_user_id`, `peer_id` (int64, req.), `peer_type` (req.), `q` (req., matched literally), `sender_user_id` (int64), `limit` (int). Response: `rows` (newest first, deleted ones included), `users`. |
+| GET | `/api/messages/media/photo/{id}` | A message photo: a bubble-sized thumbnail, or the largest size with `?full=1`. Safe image types only. |
+| GET | `/api/messages/media/document/{id}` | A document thumbnail with `?thumb=<type>`, otherwise the file itself as a `nosniff` attachment. |
 
 ## API: star gifts and collectibles
 

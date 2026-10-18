@@ -32,6 +32,10 @@ import type {
   CollectiblePhoneDetail,
   CommandResult,
   DashboardResponse,
+  AuditDialogRow,
+  AuditHistoryPage,
+  AuditMessage,
+  AuditUser,
   GroupMessageDetail,
   GroupMessageListResponse,
   MessageDeletionDetail,
@@ -250,6 +254,9 @@ export const api = {
     const params = new URLSearchParams({ channel_id: String(channelID), msg_id: String(msgID) });
     return request<GroupMessageDetail>(`/api/messages/groups/detail?${params.toString()}`);
   },
+  auditDialogs: (params: URLSearchParams) => request<{ rows: AuditDialogRow[] }>(`/api/messages/audit/dialogs?${params.toString()}`),
+  auditHistory: (params: URLSearchParams) => request<AuditHistoryPage>(`/api/messages/audit/history?${params.toString()}`),
+  auditSearch: (params: URLSearchParams) => request<{ rows: AuditMessage[]; users: Record<string, AuditUser> }>(`/api/messages/audit/search?${params.toString()}`),
   messageDeletions: (params: URLSearchParams) =>
     request<MessageDeletionListResponse>(`/api/messages/deletions?${params.toString()}`),
   messageDeletion: (id: number) =>

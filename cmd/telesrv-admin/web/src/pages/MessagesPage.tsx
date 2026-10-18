@@ -10,6 +10,7 @@ import type { Navigate } from "../routing";
 import type { AccountRow, MessageListResponse } from "../types";
 import { GroupMessagesTab } from "./GroupMessagesPage";
 import { MessageDeletionsTab } from "./MessageDeletionsPage";
+import { AuditTab } from "./audit/AuditPage";
 import { SectionTabs } from "../components/SectionTabs";
 
 function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
@@ -166,7 +167,7 @@ function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
 // kinds, and a nested menu made that look like two unrelated sections.
 export function MessagesPage({ navigate, tab, path, search }: {
   navigate: Navigate;
-  tab: "private" | "groups" | "deletions";
+  tab: "private" | "groups" | "audit" | "deletions";
   // The path the page was opened on, so the shared tab bar can mark the active
   // tab. "/messages" is an alias of the private view and lights the same tab.
   path: string;
@@ -176,13 +177,15 @@ export function MessagesPage({ navigate, tab, path, search }: {
   const heading = {
     private: { title: t("messages.privateTitle"), eyebrow: t("messages.privateEyebrow") },
     groups: { title: t("messages.groupTitle"), eyebrow: t("messages.groupEyebrow") },
+    audit: { title: t("audit.title"), eyebrow: t("audit.eyebrow") },
     deletions: { title: t("deletions.title"), eyebrow: t("deletions.eyebrow") }
   }[tab];
   return (
-    <PageFrame title={heading.title} eyebrow={heading.eyebrow}>
+    <PageFrame title={heading.title} eyebrow={heading.eyebrow} compact={tab === "audit"}>
       <SectionTabs sectionId="messages" active={path} navigate={navigate} />
       {tab === "private" && <PrivateMessagesTab navigate={navigate} />}
       {tab === "groups" && <GroupMessagesTab navigate={navigate} />}
+      {tab === "audit" && <AuditTab navigate={navigate} search={search} />}
       {/* Keyed on the query so following a link to another chat's log starts fresh. */}
       {tab === "deletions" && <MessageDeletionsTab key={search.toString()} navigate={navigate} search={search} />}
     </PageFrame>

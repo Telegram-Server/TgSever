@@ -1086,6 +1086,63 @@ export type MessageDeletionRow = {
   IP: string;
 };
 
+export type AuditDialogRow = {
+  PeerType: "user" | "channel";
+  PeerID: number;
+  Kind: "private" | "bot" | "group" | "channel";
+  Title: string;
+  Username: string;
+  TopMessageID: number;
+  TopDate: number;
+  Preview: string;
+  PreviewOut: boolean;
+  PreviewMedia: string;
+  UnreadCount: number;
+  HasDeletions: boolean;
+};
+
+export type AuditMedia = {
+  Kind: string;
+  PhotoID: string;
+  DocumentID: string;
+  ThumbType: string;
+  W: number;
+  H: number;
+  Duration: number;
+  FileName: string;
+  MimeType: string;
+  Size: number;
+  Spoiler: boolean;
+};
+
+export type AuditMessage = {
+  ID: number;
+  Date: number;
+  SenderUserID: number;
+  Out: boolean;
+  Body: string;
+  Deleted: boolean;
+  EditDate: number;
+  GroupedID: string;
+  ReplyToID: number;
+  ForwardFromPeerType: string;
+  ForwardFromPeerID: number;
+  ForwardFromName: string;
+  Post: boolean;
+  Pinned: boolean;
+  Service: string;
+  Media: AuditMedia | null;
+};
+
+export type AuditUser = { Name: string; Username: string; IsBot: boolean };
+
+export type AuditHistoryPage = {
+  Messages: AuditMessage[];
+  HasOlder: boolean;
+  HasNewer: boolean;
+  Users: Record<string, AuditUser>;
+};
+
 export type MessageDeletionListResponse = {
   rows: MessageDeletionRow[];
 };
