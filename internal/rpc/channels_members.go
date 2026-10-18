@@ -180,8 +180,10 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 		seenUserIDs[id] = struct{}{}
 		userIDs = append(userIDs, id)
 	}
+	viewer := r.channelViewerMemberForAdmins(ctx, userID, ref.ID, list.Participants)
 	for _, member := range list.Participants {
 		participant := tgChannelParticipant(userID, member)
+		setChannelParticipantCanEdit(participant, viewer, member)
 		participants = append(participants, participant)
 		for _, id := range channelParticipantUserRefs(participant) {
 			addUserID(id)
@@ -223,6 +225,35 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 	}, nil
 }
 
+// channelViewerMemberForAdmins 返回查看者自己的成员记录，供计算 can_edit；列表里没有在任
+// 管理员时不需要，直接返回零值以免多一次查询。
+func (r *Router) channelViewerMemberForAdmins(ctx context.Context, viewerID, channelID int64, members []domain.ChannelMember) domain.ChannelMember {
+	needed := false
+	for _, member := range members {
+		if member.UserID == viewerID {
+			return member
+		}
+		if member.Role == domain.ChannelRoleAdmin && member.Status == domain.ChannelMemberActive {
+			needed = true
+		}
+	}
+	if !needed || r.deps.Channels == nil {
+		return domain.ChannelMember{}
+	}
+	viewer, err := r.deps.Channels.GetParticipant(ctx, viewerID, channelID, viewerID)
+	if err != nil {
+		return domain.ChannelMember{}
+	}
+	return viewer
+}
+
+// setChannelParticipantCanEdit 按官方规则填 channelParticipantAdmin.can_edit。
+func setChannelParticipantCanEdit(participant tg.ChannelParticipantClass, viewer, target domain.ChannelMember) {
+	if admin, ok := participant.(*tg.ChannelParticipantAdmin); ok {
+		admin.CanEdit = domain.CanEditChannelAdmin(viewer, target)
+	}
+}
+
 func (r *Router) onChannelsGetParticipant(ctx context.Context, req *tg.ChannelsGetParticipantRequest) (*tg.ChannelsChannelParticipant, error) {
 	if r.deps.Channels == nil {
 		return &tg.ChannelsChannelParticipant{}, nil
@@ -244,6 +275,7 @@ func (r *Router) onChannelsGetParticipant(ctx context.Context, req *tg.ChannelsG
 		return nil, channelParticipantErr(err)
 	}
 	participant := tgChannelParticipant(userID, member)
+	setChannelParticipantCanEdit(participant, r.channelViewerMemberForAdmins(ctx, userID, channelID, []domain.ChannelMember{member}), member)
 	users := r.tgUsersForIDs(ctx, userID, channelParticipantUserRefs(participant))
 	r.applyPeerReadModels(ctx, userID, users, nil)
 	return &tg.ChannelsChannelParticipant{
