@@ -1,0 +1,187 @@
+package rpc
+
+import (
+	"testing"
+
+	"github.com/iamxvbaba/td/tg"
+
+	"telesrv/internal/domain"
+)
+
+func botAPITestKeyboard(text string) *domain.MessageReplyMarkup {
+	return &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{
+		{Type: domain.MarkupButtonCallback, Text: text, Data: []byte(text)},
+	}}}
+}
+
+// sendBotPhoto 让机器人往 chatID 发一张带 caption 和按钮的照片，作为编辑测试的目标。
+func (f botAPISendEditFixture) sendBotPhoto(t *testing.T, chatID int64, caption string) domain.Message {
+	t.Helper()
+	msg, err := f.router.BotAPISendMedia(f.ctx, f.bot.ID, chatID, "photo", "", "", "a.png", "image/png", []byte("png"), caption, nil, botAPITestKeyboard("Old"), false, 0)
+	if err != nil {
+		t.Fatalf("send photo: %v", err)
+	}
+	return msg
+}
+
+// sendOwnerText 让群主在群里发一条文本，作为"别人的消息"。
+func (f botAPISendEditFixture) sendOwnerText(t *testing.T) domain.Message {
+	t.Helper()
+	input, peer, err := f.router.botAPIInputPeer(f.ctx, f.owner.ID, f.chatID)
+	if err != nil {
+		t.Fatalf("owner input peer: %v", err)
+	}
+	updates, err := f.router.onMessagesSendMessage(WithUserID(f.ctx, f.owner.ID), &tg.MessagesSendMessageRequest{Peer: input, Message: "owner text", RandomID: 4401})
+	if err != nil {
+		t.Fatalf("owner send: %v", err)
+	}
+	msgs, err := f.router.botAPIMessagesFromUpdates(f.ctx, f.owner.ID, peer, updates)
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("owner message = %+v, %v", msgs, err)
+	}
+	return msgs[0]
+}
+
+func TestBotAPIEditMessageCaptionInGroupAndPrivate(t *testing.T) {
+	f := newBotAPISendEditFixture(t)
+	for _, chatID := range []int64{f.chatID, f.member.ID} {
+		sent := f.sendBotPhoto(t, chatID, "old caption")
+
+		edited, err := f.router.BotAPIEditMessageCaption(f.ctx, f.bot.ID, chatID, sent.ID, "new caption",
+			[]domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 3}}, false, nil)
+		if err != nil {
+			t.Fatalf("chat %d: BotAPIEditMessageCaption: %v", chatID, err)
+		}
+		if edited.ID != sent.ID || edited.Body != "new caption" || len(edited.Entities) != 1 || edited.EditDate == 0 ||
+			edited.Media == nil || edited.Media.Photo == nil {
+			t.Fatalf("chat %d: edited = %+v", chatID, edited)
+		}
+		// 未给 reply_markup 时保留原键盘。
+		if edited.ReplyMarkup == nil || len(edited.ReplyMarkup.Inline) != 1 {
+			t.Fatalf("chat %d: markup = %+v, want the original keyboard kept", chatID, edited.ReplyMarkup)
+		}
+	}
+}
+
+func TestBotAPIEditMessageReplyMarkupKeepsCaption(t *testing.T) {
+	f := newBotAPISendEditFixture(t)
+	for _, chatID := range []int64{f.chatID, f.member.ID} {
+		sent := f.sendBotPhoto(t, chatID, "keep me")
+
+		edited, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, chatID, sent.ID, botAPITestKeyboard("New"))
+		if err != nil {
+			t.Fatalf("chat %d: BotAPIEditMessageReplyMarkup: %v", chatID, err)
+		}
+		if edited.Body != "keep me" || edited.Media == nil || edited.Media.Photo == nil || edited.ReplyMarkup == nil ||
+			edited.ReplyMarkup.Inline[0][0].Text != "New" {
+			t.Fatalf("chat %d: edited = %+v markup = %+v", chatID, edited, edited.ReplyMarkup)
+		}
+
+		cleared, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, chatID, sent.ID, nil)
+		if err != nil {
+			t.Fatalf("chat %d: clear markup: %v", chatID, err)
+		}
+		if cleared.Body != "keep me" || (cleared.ReplyMarkup != nil && !cleared.ReplyMarkup.IsZero()) {
+			t.Fatalf("chat %d: cleared = %+v markup = %+v", chatID, cleared, cleared.ReplyMarkup)
+		}
+	}
+}
+
+func TestBotAPIEditMessageReplyMarkupRejectsOthersMessages(t *testing.T) {
+	f := newBotAPISendEditFixture(t)
+	owner := f.sendOwnerText(t)
+
+	if _, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, f.chatID, owner.ID, botAPITestKeyboard("X")); err == nil {
+		t.Fatal("bot changed the keyboard of the owner's message")
+	}
+}
+
+func TestBotAPIEditMessageMediaReplacesPhoto(t *testing.T) {
+	f := newBotAPISendEditFixture(t)
+	for _, chatID := range []int64{f.chatID, f.member.ID} {
+		sent := f.sendBotPhoto(t, chatID, "old")
+		item := BotAPIInputMediaItem{Kind: "document", File: domain.BotAPIFileInput{Bytes: []byte("pdf"), FileName: "a.pdf", MimeType: "application/pdf"}, Caption: "a document"}
+
+		edited, err := f.router.BotAPIEditMessageMedia(f.ctx, f.bot.ID, chatID, sent.ID, item, false, nil)
+		if err != nil {
+			t.Fatalf("chat %d: BotAPIEditMessageMedia: %v", chatID, err)
+		}
+		if edited.ID != sent.ID || edited.Body != "a document" || edited.Media == nil || edited.Media.Document == nil ||
+			edited.Media.Photo != nil || edited.EditDate == 0 {
+			t.Fatalf("chat %d: edited = %+v media = %+v", chatID, edited, edited.Media)
+		}
+		if edited.ReplyMarkup == nil || len(edited.ReplyMarkup.Inline) != 1 {
+			t.Fatalf("chat %d: markup = %+v, want the original keyboard kept", chatID, edited.ReplyMarkup)
+		}
+	}
+}
+
+func TestBotAPIEditMessageMediaRejectsTextMessages(t *testing.T) {
+	f := newBotAPISendEditFixture(t)
+	sent, err := f.router.BotAPISendMessage(f.ctx, f.bot.ID, f.member.ID, "plain", nil, nil, false, false, 0)
+	if err != nil {
+		t.Fatalf("send text: %v", err)
+	}
+	item := BotAPIInputMediaItem{Kind: "photo", File: domain.BotAPIFileInput{Bytes: []byte("png")}}
+	if _, err := f.router.BotAPIEditMessageMedia(f.ctx, f.bot.ID, f.member.ID, sent.ID, item, false, nil); !containsErr(err, "MEDIA_PREV_INVALID") {
+		t.Fatalf("err = %v, want MEDIA_PREV_INVALID", err)
+	}
+}
+
+func TestBotAPIStopPollClosesAndReportsVotes(t *testing.T) {
+	f := newBotAPISendEditFixture(t)
+	sent, err := f.router.BotAPISendPoll(f.ctx, f.bot.ID, f.chatID, botAPITestPoll("Lunch?", "pizza", "sushi"), nil, "", nil, nil, false, false, 0)
+	if err != nil {
+		t.Fatalf("send poll: %v", err)
+	}
+	input, _, err := f.router.botAPIInputPeer(f.ctx, f.member.ID, f.chatID)
+	if err != nil {
+		t.Fatalf("member input peer: %v", err)
+	}
+	if _, err := f.router.onMessagesSendVote(WithUserID(f.ctx, f.member.ID), &tg.MessagesSendVoteRequest{
+		Peer: input, MsgID: sent.ID, Options: [][]byte{sent.Media.Poll.Answers[1].Option},
+	}); err != nil {
+		t.Fatalf("member vote: %v", err)
+	}
+
+	poll, err := f.router.BotAPIStopPoll(f.ctx, f.bot.ID, f.chatID, sent.ID, true, botAPITestKeyboard("Results"))
+	if err != nil {
+		t.Fatalf("BotAPIStopPoll: %v", err)
+	}
+	if !poll.Closed || poll.ID != sent.Media.Poll.ID || poll.Results == nil || poll.Results.TotalVoters != 1 {
+		t.Fatalf("poll = %+v results = %+v", poll, poll.Results)
+	}
+	reloaded, err := f.router.botAPIReloadMessage(f.ctx, f.bot.ID, sent.Peer, sent.ID)
+	if err != nil || reloaded.ReplyMarkup == nil || reloaded.ReplyMarkup.Inline[0][0].Text != "Results" {
+		t.Fatalf("reloaded = %+v, %v", reloaded, err)
+	}
+
+	if _, err := f.router.BotAPIStopPoll(f.ctx, f.bot.ID, f.chatID, sent.ID, false, nil); !containsErr(err, "MESSAGE_POLL_CLOSED") {
+		t.Fatalf("second stop err = %v, want MESSAGE_POLL_CLOSED", err)
+	}
+}
+
+func TestBotAPIEditInlineVariantsRejectUnknownInlineMessages(t *testing.T) {
+	f := newBotAPISendEditFixture(t)
+	unknown := domain.BotInlineMessageID{DCID: 2, OwnerID: f.member.ID, ID: 999, AccessHash: 1}
+
+	if _, err := f.router.BotAPIEditInlineMessageCaption(f.ctx, f.bot.ID, unknown, "x", nil, false, nil); !containsErr(err, "MESSAGE_ID_INVALID") {
+		t.Fatalf("caption err = %v", err)
+	}
+	if _, err := f.router.BotAPIEditInlineMessageReplyMarkup(f.ctx, f.bot.ID, unknown, nil); !containsErr(err, "MESSAGE_ID_INVALID") {
+		t.Fatalf("markup err = %v", err)
+	}
+	item := BotAPIInputMediaItem{Kind: "photo", File: domain.BotAPIFileInput{Bytes: []byte("png")}}
+	if _, err := f.router.BotAPIEditInlineMessageMedia(f.ctx, f.bot.ID, unknown, item, false, nil); !containsErr(err, "MESSAGE_ID_INVALID") {
+		t.Fatalf("media err = %v", err)
+	}
+}
+
+func TestBotAPIEditMessageCaptionRejectsOthersMessages(t *testing.T) {
+	f := newBotAPISendEditFixture(t)
+	owner := f.sendOwnerText(t)
+
+	if _, err := f.router.BotAPIEditMessageCaption(f.ctx, f.bot.ID, f.chatID, owner.ID, "hijack", nil, false, nil); err == nil {
+		t.Fatal("bot edited the owner's message")
+	}
+}
