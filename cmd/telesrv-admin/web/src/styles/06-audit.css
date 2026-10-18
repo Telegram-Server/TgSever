@@ -1,0 +1,875 @@
+/* Chat audit (/messages/audit): account picker + chat list | transcript | inspector.
+   Every colour comes from the panel tokens, so dark mode follows [data-theme]. The
+   only new tokens are the chat backdrop and the outgoing bubble. */
+
+:root {
+  --chat-bg: #eef2f7;
+  --bubble-in: var(--panel);
+  --bubble-out: #dcebff;
+}
+
+[data-theme="dark"] {
+  --chat-bg: #10161d;
+  --bubble-in: #1c2530;
+  --bubble-out: #1d3557;
+}
+
+.audit-shell {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  /* The topbar and the compact title/tab line sit above; the shell takes the rest. */
+  height: calc(100vh - 170px);
+  min-height: 480px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.audit-shell.has-inspector {
+  grid-template-columns: 320px minmax(0, 1fr) 300px;
+}
+
+.audit-sidebar,
+.audit-main,
+.audit-inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.audit-sidebar {
+  border-right: 1px solid var(--line);
+}
+
+.audit-inspector {
+  border-left: 1px solid var(--line);
+}
+
+/* Every column opens with a head of the same height, so the three line up. */
+.audit-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.audit-pane-head.owner > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.audit-pane-title {
+  flex: 1;
+  font-weight: 600;
+  color: var(--heading);
+}
+
+.audit-shell .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.audit-shell .icon-button:hover,
+.audit-shell .icon-button.active {
+  background: var(--btn-hover);
+  color: var(--text);
+}
+
+.audit-back {
+  display: none !important;
+}
+
+/* Left column: search, kind tabs, the chat list. */
+.audit-list-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px 4px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--muted);
+}
+
+.audit-list-search input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.audit-kind-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 12px 8px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.audit-kind-tabs button {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.audit-kind-tabs button.active {
+  background: var(--brand-tint);
+  color: var(--brand-tint-text);
+  font-weight: 600;
+}
+
+.audit-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.audit-dialog,
+.audit-hit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.audit-hit {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.audit-dialog:hover,
+.audit-hit:hover {
+  background: var(--btn-hover);
+}
+
+.audit-dialog.active {
+  background: var(--brand-tint);
+}
+
+.audit-dialog-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.audit-dialog-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.audit-dialog-title {
+  overflow: hidden;
+  font-weight: 600;
+  color: var(--heading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-dialog-id {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted-2, var(--muted));
+}
+
+.audit-dialog-time {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.audit-dialog-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-dialog-kind,
+.audit-dialog-out {
+  color: var(--brand);
+}
+
+.audit-dialog-deleted {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: 1px solid var(--danger-border);
+  border-radius: 999px;
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.audit-dialog-unread {
+  flex-shrink: 0;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.audit-search-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.audit-search-form {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Middle column: chat head and transcript. */
+.audit-chat-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.audit-chat-name {
+  overflow: hidden;
+  font-weight: 600;
+  color: var(--heading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-chat-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.audit-transcript {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--chat-bg);
+}
+
+.audit-scroller {
+  height: 100%;
+  overflow-y: auto;
+  padding: 8px 0 16px;
+}
+
+.audit-edge,
+.audit-center {
+  display: flex;
+  justify-content: center;
+  padding: 6px 16px;
+  color: var(--muted);
+}
+
+.audit-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 80%;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--text-soft);
+  font-size: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 32, 0.08);
+  cursor: default;
+}
+
+button.audit-pill {
+  cursor: pointer;
+}
+
+.audit-pill.muted {
+  color: var(--muted);
+}
+
+.audit-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.audit-to-bottom {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(15, 23, 32, 0.16);
+  cursor: pointer;
+}
+
+/* A row holds an optional avatar slot and one bubble. */
+.audit-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 1px 16px;
+}
+
+.audit-row.out {
+  justify-content: flex-end;
+}
+
+.audit-row.run-end {
+  margin-bottom: 6px;
+}
+
+.audit-row-avatar {
+  width: 32px;
+  flex-shrink: 0;
+}
+
+.audit-row.flash .audit-bubble {
+  animation: audit-flash 1.6s ease-out;
+}
+
+@keyframes audit-flash {
+  0%,
+  35% {
+    box-shadow: 0 0 0 3px var(--brand);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.audit-bubble {
+  position: relative;
+  max-width: min(36rem, 75%);
+  padding: 6px 10px 6px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--bubble-in);
+  color: var(--text);
+  font-size: 14px;
+  box-shadow: 0 1px 1px rgba(15, 23, 32, 0.06);
+  cursor: pointer;
+}
+
+.audit-bubble.out {
+  background: var(--bubble-out);
+}
+
+/* The tail: the last bubble of a run tucks its corner toward the sender. */
+.audit-bubble.in.tail {
+  border-bottom-left-radius: 4px;
+}
+
+.audit-bubble.out.tail {
+  border-bottom-right-radius: 4px;
+}
+
+.audit-bubble.selected {
+  border-color: var(--brand);
+}
+
+.audit-bubble.bare {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Deleted: the content stays readable, the border says how far the deletion reached. */
+.audit-bubble.deleted {
+  border-width: 2px;
+  border-style: dashed;
+  opacity: 0.92;
+}
+
+.audit-bubble.deleted-self {
+  border-color: var(--warn);
+}
+
+.audit-bubble.deleted-all {
+  border-color: var(--danger);
+}
+
+.audit-bubble.deleted-auto,
+.audit-bubble.deleted-unknown {
+  border-color: var(--muted);
+}
+
+.audit-deleted-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.audit-deleted-tag.self {
+  color: var(--warn);
+}
+
+.audit-deleted-tag.all {
+  color: var(--danger);
+}
+
+.audit-deleted-tag.auto,
+.audit-deleted-tag.unknown {
+  color: var(--muted);
+}
+
+.audit-sender {
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brand);
+}
+
+.audit-sender .mono {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.audit-forward {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  font-size: 12px;
+  color: var(--brand);
+}
+
+.audit-reply {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 3px 8px;
+  border: 0;
+  border-left: 2px solid var(--brand);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  color: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.audit-reply-name {
+  font-weight: 600;
+  color: var(--brand);
+}
+
+.audit-reply-text {
+  overflow: hidden;
+  color: var(--text-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.audit-text mark,
+.audit-dialog-preview mark,
+.audit-pill mark {
+  border-radius: 2px;
+  background: #fde68a;
+  color: #111827;
+}
+
+/* Time floats to the end of the last line of text, Telegram style. */
+.audit-meta {
+  display: inline-flex;
+  float: right;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 -2px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.audit-bubble.bare .audit-meta {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  margin: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  float: none;
+}
+
+.audit-edited {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Media. */
+.audit-visual {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  margin: 2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--panel-strong);
+  cursor: pointer;
+}
+
+.audit-visual img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.audit-visual.fill {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+}
+
+.audit-visual.round {
+  border-radius: 50%;
+}
+
+.audit-visual.sticker {
+  background: transparent;
+  cursor: default;
+}
+
+.audit-visual.sticker img {
+  object-fit: contain;
+}
+
+.audit-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  transform: translate(-50%, -50%);
+}
+
+.audit-duration {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 11px;
+}
+
+.audit-media-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 80px;
+  height: 100%;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.audit-album {
+  position: relative;
+  max-width: 100%;
+  margin: 2px 0;
+}
+
+.audit-album-cell {
+  position: absolute;
+  overflow: hidden;
+}
+
+.audit-album-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.audit-album-deleted {
+  opacity: 0.7;
+  outline: 2px dashed var(--danger);
+  outline-offset: -2px;
+}
+
+.audit-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+}
+
+.audit-file-icon {
+  flex-shrink: 0;
+  color: var(--brand);
+}
+
+.audit-file-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.audit-file-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-file-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.audit-file-download {
+  color: var(--muted);
+}
+
+.audit-media-chip {
+  display: inline-block;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* A batch deletion (history clear and friends) collapses behind one line. */
+.audit-cleared-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.audit-cleared-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--danger);
+  opacity: 0.5;
+}
+
+.audit-cleared-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--danger-text);
+  font-size: 12px;
+}
+
+.audit-cleared-body {
+  margin: 0 8px;
+  border-left: 2px dashed var(--danger-border);
+}
+
+/* Right column. */
+.audit-inspector-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.audit-inspector-section {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.audit-inspector-section.danger {
+  border-color: var(--danger-border);
+  background: var(--danger-tint);
+}
+
+.audit-inspector-heading {
+  font-weight: 600;
+  color: var(--danger-text);
+}
+
+.audit-inspector-profile {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.audit-inspector-name {
+  font-weight: 600;
+  color: var(--heading);
+}
+
+.audit-field {
+  display: grid;
+  gap: 1px;
+}
+
+.audit-field-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.audit-field-value {
+  overflow-wrap: anywhere;
+}
+
+.audit-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.audit-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay);
+}
+
+.audit-lightbox img {
+  max-width: 92vw;
+  max-height: 90vh;
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.audit-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  padding: 8px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* Narrower screens: the inspector becomes a drawer, then list and chat alternate. */
+@media (max-width: 1180px) {
+  .audit-shell.has-inspector {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+
+  .audit-inspector {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    /* Above the sticky topbar, so the drawer's own head and close button show. */
+    z-index: 200;
+    width: min(320px, 90vw);
+    background: var(--panel);
+    box-shadow: -8px 0 24px rgba(15, 23, 32, 0.18);
+  }
+}
+
+@media (max-width: 860px) {
+  .page-frame.compact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .audit-shell,
+  .audit-shell.has-inspector {
+    grid-template-columns: minmax(0, 1fr);
+    height: calc(100vh - 200px);
+  }
+
+  .audit-shell.has-chat .audit-sidebar {
+    display: none;
+  }
+
+  .audit-shell:not(.has-chat) .audit-main {
+    display: none;
+  }
+
+  .audit-back {
+    display: inline-flex !important;
+  }
+
+  .audit-bubble {
+    max-width: 88%;
+  }
+}

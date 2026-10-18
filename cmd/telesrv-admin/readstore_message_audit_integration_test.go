@@ -112,8 +112,10 @@ func TestReadStoreMessageAudit(t *testing.T) {
 		if !ok || groupRow.Kind != "group" || groupRow.Preview != "admin note" || !groupRow.PreviewOut || groupRow.HasDeletions {
 			t.Fatalf("group dialog = %+v (ok=%v), want the group's last message, sent by alice", groupRow, ok)
 		}
-		if row, ok := byPeer[fmt.Sprintf("channel:%d", broadcast.Channel.ID)]; !ok || row.Kind != "channel" {
-			t.Fatalf("broadcast dialog = %+v (ok=%v)", row, ok)
+		// A new channel's only message is the creation service message: the
+		// preview must say so, not pass it off as an empty message from the owner.
+		if row, ok := byPeer[fmt.Sprintf("channel:%d", broadcast.Channel.ID)]; !ok || row.Kind != "channel" || row.PreviewMedia != "service" || row.PreviewOut {
+			t.Fatalf("broadcast dialog = %+v (ok=%v), want a service-message preview", row, ok)
 		}
 		for i := 1; i < len(rows); i++ {
 			if rows[i].TopDate > rows[i-1].TopDate {

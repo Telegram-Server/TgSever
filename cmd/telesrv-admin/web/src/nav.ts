@@ -171,6 +171,7 @@ export const navSections: NavSection[] = [
     tabs: [
       { path: "/messages/private", labelKey: "layout.privateMessages", permission: permissionMessagesRead, aliases: ["/messages"] },
       { path: "/messages/groups", labelKey: "layout.groupMessages", permission: permissionMessagesRead },
+      { path: "/messages/audit", labelKey: "layout.messageAudit", permission: permissionMessagesRead },
       { path: "/messages/deletions", labelKey: "layout.messageDeletions", permission: permissionMessageDeletionsRead }
     ]
   },

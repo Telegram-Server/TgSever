@@ -74,7 +74,12 @@ func (s *server) handleAuditSearchAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
+	users, err := s.read.auditUsers(r.Context(), AuditHistoryQuery{OwnerUserID: query.OwnerUserID, PeerType: query.PeerType, PeerID: query.PeerID}, rows)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rows": rows, "users": users})
 }
 
 // maxProxiedMessageFile bounds a relayed message file; the admin API refuses

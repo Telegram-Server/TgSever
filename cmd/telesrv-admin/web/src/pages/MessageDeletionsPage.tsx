@@ -1,9 +1,10 @@
-import { ArrowLeft, ChevronRight, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, MessagesSquare, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, Metric, PageFrame, QueryPanel, SectionHead, Summary } from "../components/ui";
 import { useI18n, type TFunction } from "../i18n";
 import { formatUnix, toUnixSeconds } from "../lib/format";
+import { permissionMessagesRead, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import type { MessageDeletionDetail, MessageDeletionListResponse, MessageDeletionRow } from "../types";
 
@@ -178,6 +179,7 @@ export function MessageDeletionsTab({ navigate, search }: { navigate: Navigate; 
 
 export function MessageDeletionDetailPage({ id, navigate }: { id: number; navigate: Navigate }) {
   const { t } = useI18n();
+  const { can } = usePermissions();
   const [detail, setDetail] = useState<MessageDeletionDetail | null>(null);
   const [error, setError] = useState("");
 
@@ -195,11 +197,25 @@ export function MessageDeletionDetailPage({ id, navigate }: { id: number; naviga
   }
 
   const row = detail.Deletion;
+  // 在会话中查看：私聊以被删副本所属账号的视角打开；群消息没有逐人副本，用发送人的视角。
+  const viewer = row.PeerType === "user" ? row.OwnerUserID : row.SenderUserID;
+  const inChat = `/messages/audit?${new URLSearchParams({ owner: String(viewer), peer_type: row.PeerType, peer_id: String(row.PeerID), msg: String(row.MessageID) }).toString()}`;
   return (
     <PageFrame
       title={t("deletions.detailTitle", { id: row.MessageID })}
       eyebrow={t("deletions.detailEyebrow")}
-      actions={<button className="btn icon-text" onClick={() => navigate("/messages/deletions")}><ArrowLeft size={15} /> {t("deletions.back")}</button>}
+      actions={
+        <>
+          {can(permissionMessagesRead) && viewer > 0 && (
+            <button className="btn icon-text" onClick={() => navigate(inChat)}>
+              <MessagesSquare size={15} /> {t("deletions.viewInChat")}
+            </button>
+          )}
+          <button className="btn icon-text" onClick={() => navigate("/messages/deletions")}>
+            <ArrowLeft size={15} /> {t("deletions.back")}
+          </button>
+        </>
+      }
     >
       <div className="stacked-sections">
         <section className="entity-head">

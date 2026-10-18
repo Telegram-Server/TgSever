@@ -694,6 +694,38 @@ a.stat-tile.clickable {
   border-bottom: 1px solid var(--line);
 }
 
+/* Compact frame: title and section tabs share the first line; everything else
+   spans the full width below. */
+.page-frame.compact {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 16px;
+  padding: 10px 14px;
+}
+
+.page-frame.compact > .page-title-row {
+  align-items: center;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.page-frame.compact > .page-title-row .eyebrow {
+  display: none;
+}
+
+.page-frame.compact > .page-title-row h2 {
+  font-size: 17px;
+}
+
+.page-frame.compact > .tab-bar {
+  margin: 0;
+  justify-self: start;
+}
+
+.page-frame.compact > :not(.page-title-row):not(.tab-bar) {
+  grid-column: 1 / -1;
+}
+
 .query-panel {
   padding: 10px;
   background: var(--panel-subtle);

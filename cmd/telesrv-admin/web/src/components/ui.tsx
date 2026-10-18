@@ -10,15 +10,19 @@ export function PageFrame({
   title,
   eyebrow,
   children,
-  actions
+  actions,
+  compact = false
 }: {
   title: string;
   eyebrow?: string;
   children: ReactNode;
   actions?: ReactNode;
+  // compact puts the title and the section tab bar on one line and drops the
+  // eyebrow, for full-height workspaces that need every pixel below.
+  compact?: boolean;
 }) {
   return (
-    <div className="page-frame">
+    <div className={`page-frame ${compact ? "compact" : ""}`}>
       <div className="page-title-row">
         <div>
           {eyebrow && <div className="eyebrow">{eyebrow}</div>}

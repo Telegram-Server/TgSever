@@ -1585,8 +1585,9 @@ WITH chats AS (
 		CASE WHEN c.broadcast THEN 'channel' ELSE 'group' END,
 		c.title, COALESCE(c.username, ''),
 		c.top_message_id, COALESCE(cm.message_date, c.date),
-		COALESCE(cm.body, ''), COALESCE(cm.sender_user_id = $1, false),
-		COALESCE(cm.media->>'kind', ''), 0,
+		COALESCE(cm.body, ''),
+		COALESCE(cm.sender_user_id = $1 AND COALESCE(cm.action->>'Type', '') = '', false),
+		CASE WHEN COALESCE(cm.action->>'Type', '') <> '' THEN 'service' ELSE COALESCE(cm.media->>'kind', '') END, 0,
 		EXISTS (SELECT 1 FROM message_deletions x WHERE x.peer_type = 'channel' AND x.peer_id = c.id)
 	FROM user_channel_member_index i
 	JOIN channels c ON c.id = i.channel_id
