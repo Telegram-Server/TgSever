@@ -210,8 +210,8 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 	}
 }
 
-// apiChatMemberUpdated 投影官方 ChatMemberUpdated。can_be_edited 恒为 false：
-// 服务端不记录是谁提拔的管理员，无法判断接收方机器人能否改动对方权限。
+// apiChatMemberUpdated 投影官方 ChatMemberUpdated。can_be_edited 按收件机器人入队时的
+// 成员状态（Viewer）算：它是群主，或有 add_admins 且是该管理员的提拔人；旧行没有 Viewer 时为 false。
 func apiChatMemberUpdated(event domain.UpdateEvent) (map[string]any, bool) {
 	update := event.BotChatMember
 	if update == nil || update.Chat.Type != domain.PeerTypeChannel || update.Chat.ID <= 0 ||
@@ -236,12 +236,14 @@ func apiChatMemberUpdated(event domain.UpdateEvent) (map[string]any, bool) {
 		}
 	}
 	subject := userOf(update.New.UserID)
+	viewer := update.Viewer.ChannelMember(update.Chat.ID)
+	old, updated := update.Old.ChannelMember(update.Chat.ID), update.New.ChannelMember(update.Chat.ID)
 	out := map[string]any{
 		"chat":            chat,
 		"from":            apiUser(userOf(update.ActorUserID)),
 		"date":            update.Date,
-		"old_chat_member": apiChatMember(update.Old.ChannelMember(update.Chat.ID), subject, false),
-		"new_chat_member": apiChatMember(update.New.ChannelMember(update.Chat.ID), subject, false),
+		"old_chat_member": apiChatMember(old, subject, domain.CanEditChannelAdmin(viewer, old)),
+		"new_chat_member": apiChatMember(updated, subject, domain.CanEditChannelAdmin(viewer, updated)),
 	}
 	if update.ViaJoinRequest {
 		out["via_join_request"] = true

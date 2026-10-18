@@ -548,6 +548,18 @@ func (m ChannelMember) CanManageDirectMessages() bool {
 			(m.Role == ChannelRoleAdmin && m.AdminRights.ManageDirectMessages))
 }
 
+// CanEditChannelAdmin 是 Bot API can_be_edited 的官方口径：viewer 是群主，或者 viewer 有
+// add_admins 且 target 是由 viewer 提拔的（在任管理员的 InviterUserID 即提拔人）。
+// target 必须是别人的在任管理员。
+func CanEditChannelAdmin(viewer, target ChannelMember) bool {
+	if target.Role != ChannelRoleAdmin || target.Status != ChannelMemberActive ||
+		target.UserID == viewer.UserID || viewer.Status != ChannelMemberActive {
+		return false
+	}
+	return viewer.Role == ChannelRoleCreator ||
+		(viewer.Role == ChannelRoleAdmin && viewer.AdminRights.AddAdmins && target.InviterUserID == viewer.UserID)
+}
+
 // CanManageWelcomeMessages is the Layer 229 creator/admin capability. Active
 // membership is mandatory even if stale admin rights remain in persisted JSON.
 func (m ChannelMember) CanManageWelcomeMessages() bool {
@@ -1424,11 +1436,40 @@ type CreateChannelRequest struct {
 
 // CreateChannelResult is returned by channel creation paths.
 type CreateChannelResult struct {
-	Channel    Channel
-	Members    []ChannelMember
+	Channel Channel
+	Members []ChannelMember
+	// Previous 是加入/退出类结果里 Members 各成员变化前的真实记录（按 UserID），由 store 在
+	// 同一事务/锁内读出。此前从未有过成员记录的用户不在其中，按 left 处理。
+	Previous   map[int64]ChannelMember
 	Message    ChannelMessage
 	Event      ChannelUpdateEvent
 	Recipients []int64
+}
+
+// MergeJoined 把批量批准入群中的一次结果并入累计结果：Channel/Message/Event/Recipients 取
+// 最新一次，Members 与 Previous 累加，保证每个被批准的人都出现在结果里。
+func (r CreateChannelResult) MergeJoined(next CreateChannelResult) CreateChannelResult {
+	members := append(append([]ChannelMember(nil), r.Members...), next.Members...)
+	var previous map[int64]ChannelMember
+	if len(r.Previous)+len(next.Previous) > 0 {
+		previous = make(map[int64]ChannelMember, len(r.Previous)+len(next.Previous))
+		for userID, member := range r.Previous {
+			previous[userID] = member
+		}
+		for userID, member := range next.Previous {
+			previous[userID] = member
+		}
+	}
+	next.Members, next.Previous = members, previous
+	return next
+}
+
+// PreviousMember 返回 userID 变化前的成员记录；没有旧记录时按 left 的普通成员计。
+func (r CreateChannelResult) PreviousMember(channelID, userID int64) ChannelMember {
+	if previous, ok := r.Previous[userID]; ok && previous.Status != "" {
+		return previous
+	}
+	return ChannelMember{ChannelID: channelID, UserID: userID, Role: ChannelRoleMember, Status: ChannelMemberLeft}
 }
 
 // EditChannelTitleRequest edits a channel/supergroup title and emits a service message.

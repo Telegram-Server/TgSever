@@ -145,11 +145,9 @@ func (r *Router) botAPIChatUser(ctx context.Context, botID, userID int64) (domai
 	return user, nil
 }
 
-// botAPICanEditAdmin 判定 can_be_edited。成员记录不保存"由谁提拔"，所以只有机器人
-// 是群主时才能确定可编辑；有 add_admins 权限的管理员机器人保守地一律返回 false。
+// botAPICanEditAdmin 判定 can_be_edited：机器人是群主，或有 add_admins 且该管理员由它提拔。
 func botAPICanEditAdmin(self, member domain.ChannelMember) bool {
-	return member.Role == domain.ChannelRoleAdmin && member.UserID != self.UserID &&
-		self.Status == domain.ChannelMemberActive && self.Role == domain.ChannelRoleCreator
+	return domain.CanEditChannelAdmin(self, member)
 }
 
 // BotAPIGetChatMemberCount 实现 getChatMemberCount。

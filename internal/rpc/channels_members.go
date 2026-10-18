@@ -977,6 +977,8 @@ func channelAdminErr(err error) error {
 		return tgerr.New(403, "RIGHT_FORBIDDEN")
 	case errors.Is(err, domain.ErrChannelUserCreator):
 		return tgerr400("USER_CREATOR")
+	case errors.Is(err, domain.ErrUserAdminInvalid):
+		return tgerr400("USER_ADMIN_INVALID")
 	case errors.Is(err, domain.ErrUserNotParticipant):
 		return tgerr400("USER_NOT_PARTICIPANT")
 	case errors.Is(err, domain.ErrMegagroupIDInvalid):
