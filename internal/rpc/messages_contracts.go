@@ -73,4 +73,6 @@ type forwardSource struct {
 	from      domain.Peer
 	date      int
 	noForward bool
+	// groupedID 是源消息的相册分组 id（非相册为 0）；转发时据此分配新的分组。
+	groupedID int64
 }
