@@ -1385,6 +1385,142 @@ WHERE channel_id = $1 AND id = $2`, channelID, msgID).Scan(
 	return out, nil
 }
 
+// MessageDeletionRow is one removed copy from message_deletions: who removed
+// it, when, from which device, and what it said.
+type MessageDeletionRow struct {
+	ID           int64
+	BatchID      int64
+	Date         int
+	Source       string
+	Scope        string
+	ActorType    string
+	ActorUserID  int64
+	OperatorID   string
+	CommandID    string
+	Reason       string
+	OwnerUserID  int64
+	PeerType     string
+	PeerID       int64
+	MessageID    int
+	SenderUserID int64
+	MessageDate  int
+	Body         string
+	// OriginAuthKeyID is a full-range int64; it travels as a decimal string so
+	// the browser cannot round it.
+	OriginAuthKeyID int64 `json:"OriginAuthKeyID,string"`
+	OriginSessionID int64 `json:"OriginSessionID,string"`
+	DeviceModel     string
+	Platform        string
+	IP              string
+}
+
+// MessageDeletionQuery filters the deletion log. Zero fields do not filter;
+// BeforeID pages backwards from the previous page's last ID.
+type MessageDeletionQuery struct {
+	ActorUserID  int64
+	OwnerUserID  int64
+	SenderUserID int64
+	PeerType     string
+	PeerID       int64
+	MessageID    int
+	Source       string
+	MinDate      int
+	MaxDate      int
+	BeforeID     int64
+	Limit        int
+}
+
+type MessageDeletionDetail struct {
+	Deletion     MessageDeletionRow
+	SnapshotJSON string
+	// Batch is every row the same delete operation produced, this one included.
+	Batch []MessageDeletionRow
+}
+
+const messageDeletionColumns = `
+	id, batch_id, deleted_date, source, scope, actor_type, actor_user_id,
+	operator_id, command_id, reason, owner_user_id, peer_type, peer_id, message_id,
+	sender_user_id, message_date, COALESCE(snapshot->>'body', ''),
+	origin_auth_key_id, origin_session_id,
+	COALESCE(origin_device->>'device_model', ''), COALESCE(origin_device->>'platform', ''),
+	COALESCE(origin_device->>'ip', '')`
+
+// ListMessageDeletions pages the deletion log newest first. Every filter maps
+// onto an index prefix (actor, owner+peer, peer, sender), so a page stays an
+// index range scan however large the log grows; there is deliberately no total.
+func (s *readStore) ListMessageDeletions(ctx context.Context, q MessageDeletionQuery) ([]MessageDeletionRow, error) {
+	if q.Limit <= 0 || q.Limit > messagePageLimit {
+		q.Limit = messagePageLimit
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+messageDeletionColumns+`
+FROM message_deletions
+WHERE ($1::bigint = 0 OR actor_user_id = $1)
+	AND ($2::bigint = 0 OR owner_user_id = $2)
+	AND ($3::bigint = 0 OR sender_user_id = $3)
+	AND ($4::text = '' OR peer_type = $4)
+	AND ($5::bigint = 0 OR peer_id = $5)
+	AND ($6::int = 0 OR message_id = $6)
+	AND ($7::text = '' OR source = $7)
+	AND ($8::int = 0 OR deleted_date >= $8)
+	AND ($9::int = 0 OR deleted_date <= $9)
+	AND ($10::bigint = 0 OR id < $10)
+ORDER BY id DESC
+LIMIT $11`,
+		q.ActorUserID, q.OwnerUserID, q.SenderUserID, q.PeerType, q.PeerID, q.MessageID,
+		q.Source, q.MinDate, q.MaxDate, q.BeforeID, q.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("list message deletions: %w", err)
+	}
+	defer rows.Close()
+	return scanMessageDeletionRows(rows)
+}
+
+func (s *readStore) MessageDeletionDetail(ctx context.Context, id int64) (MessageDeletionDetail, error) {
+	var out MessageDeletionDetail
+	var snapshot []byte
+	row := s.pool.QueryRow(ctx, `SELECT `+messageDeletionColumns+`, snapshot FROM message_deletions WHERE id = $1`, id)
+	if err := scanMessageDeletion(row, &out.Deletion, &snapshot); err != nil {
+		return out, fmt.Errorf("get message deletion: %w", err)
+	}
+	out.SnapshotJSON = prettyJSON(snapshot)
+	rows, err := s.pool.Query(ctx, `
+SELECT `+messageDeletionColumns+`
+FROM message_deletions
+WHERE batch_id = $1
+ORDER BY id
+LIMIT 200`, out.Deletion.BatchID)
+	if err != nil {
+		return out, fmt.Errorf("list message deletion batch: %w", err)
+	}
+	defer rows.Close()
+	out.Batch, err = scanMessageDeletionRows(rows)
+	return out, err
+}
+
+func scanMessageDeletionRows(rows pgx.Rows) ([]MessageDeletionRow, error) {
+	out := make([]MessageDeletionRow, 0)
+	for rows.Next() {
+		var item MessageDeletionRow
+		if err := scanMessageDeletion(rows, &item); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func scanMessageDeletion(row pgx.Row, item *MessageDeletionRow, extra ...any) error {
+	dest := []any{
+		&item.ID, &item.BatchID, &item.Date, &item.Source, &item.Scope, &item.ActorType, &item.ActorUserID,
+		&item.OperatorID, &item.CommandID, &item.Reason, &item.OwnerUserID, &item.PeerType, &item.PeerID, &item.MessageID,
+		&item.SenderUserID, &item.MessageDate, &item.Body,
+		&item.OriginAuthKeyID, &item.OriginSessionID,
+		&item.DeviceModel, &item.Platform, &item.IP,
+	}
+	return row.Scan(append(dest, extra...)...)
+}
+
 func (s *readStore) rowJSON(ctx context.Context, sql string, args ...any) (string, error) {
 	var raw []byte
 	if err := s.pool.QueryRow(ctx, sql, args...).Scan(&raw); err != nil {

@@ -36,6 +36,7 @@ export const permissionBotsRead = "bots.read";
 export const permissionBotsManage = "bots.manage";
 export const permissionMessagesRead = "messages.read";
 export const permissionMessagesManage = "messages.manage";
+export const permissionMessageDeletionsRead = "messages.deletions.read";
 export const permissionModerationReview = "moderation.review";
 export const permissionBroadcastsRead = "broadcasts.read";
 export const permissionBroadcastsSend = "broadcasts.send";
@@ -141,6 +142,7 @@ const permissionLabels: Record<string, { title: string; hint: string }> = {
   "bots.token.read": { title: "Reveal bot tokens", hint: "Export a bot's live credential" },
   "messages.read": { title: "View messages", hint: "Read private and group message history" },
   "messages.manage": { title: "Delete messages", hint: "Remove messages and clear history" },
+  "messages.deletions.read": { title: "View deleted messages", hint: "See who deleted which message, when, from which device, and what it said" },
   "moderation.review": { title: "Handle reports", hint: "Work the moderation queue and decide cases" },
   "broadcasts.read": { title: "View broadcasts", hint: "See past and scheduled broadcasts" },
   "broadcasts.send": { title: "Send broadcasts", hint: "Deliver a message to many users at once" },
@@ -189,7 +191,7 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   {
     title: "People and chats",
     hint: "Users, groups and their message history",
-    permissions: ["accounts.read", "accounts.manage", "channels.read", "channels.manage", "messages.read", "messages.manage"]
+    permissions: ["accounts.read", "accounts.manage", "channels.read", "channels.manage", "messages.read", "messages.manage", "messages.deletions.read"]
   },
   {
     title: "Moderation and verification",

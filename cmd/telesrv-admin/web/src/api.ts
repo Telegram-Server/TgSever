@@ -34,6 +34,8 @@ import type {
   DashboardResponse,
   GroupMessageDetail,
   GroupMessageListResponse,
+  MessageDeletionDetail,
+  MessageDeletionListResponse,
   MessageDetail,
   MessageListResponse,
   ModerationCaseDetail,
@@ -248,6 +250,10 @@ export const api = {
     const params = new URLSearchParams({ channel_id: String(channelID), msg_id: String(msgID) });
     return request<GroupMessageDetail>(`/api/messages/groups/detail?${params.toString()}`);
   },
+  messageDeletions: (params: URLSearchParams) =>
+    request<MessageDeletionListResponse>(`/api/messages/deletions?${params.toString()}`),
+  messageDeletion: (id: number) =>
+    request<MessageDeletionDetail>(`/api/messages/deletions/detail?id=${encodeURIComponent(String(id))}`),
   moderationCases: (params: URLSearchParams) =>
     request<{ cases: ModerationCaseRow[] }>(`/api/moderation/cases?${params.toString()}`),
   moderationCase: (id: number) =>

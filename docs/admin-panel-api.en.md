@@ -56,6 +56,7 @@ to a named operator account.
 | `channels.manage` | Edit groups and channels — Change settings, usernames and avatars |
 | `messages.read` | View messages — Read private and group message history |
 | `messages.manage` | Delete messages — Remove messages and clear history |
+| `messages.deletions.read` | View deleted messages — See who deleted which message, when, from which device, and what it said |
 | **Moderation and verification** | |
 | `moderation.review` | Handle reports — Work the moderation queue and decide cases |
 | `verification.review` | Verify accounts — Work the verification queue and grant badges |
@@ -214,6 +215,7 @@ and the old URL still lands there rather than 404ing on a bookmark.
 | Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
 | Messages | Private | `/messages/private` | `messages.read` (also served at the bare alias) |
 | Messages | Groups | `/messages/groups` | `messages.read` |
+| Messages | Deletions | `/messages/deletions` | `messages.deletions.read` |
 | Reports | Reports | `/moderation` | `moderation.review` |
 | Donations | Donations | `/donations` | `donations.manage` |
 | Audit log | Audit log | `/audit-log` | `audit.read` |
@@ -243,6 +245,7 @@ specific record inside one, and each is gated by the same right as its list.
 | `/emoji/documents` | Documents inside an emoji pack. |
 | `/messages/detail`, `/messages/private/detail` | Private message detail (`?owner_user_id=&msg_id=`). |
 | `/messages/groups/detail` | Group message detail (`?channel_id=&msg_id=`). |
+| `/messages/deletions/detail` | One deletion record (`?id=`). The list at `/messages/deletions` accepts the same filters as its API as query parameters. |
 
 `/premium` is a permanent alias of `/monetization`. `/messages` is an alias of
 `/messages/private`.
@@ -322,6 +325,8 @@ Every mutating request carries in its body:
 | GET | `/api/messages/detail` | Params: `owner_user_id` (int64, req.), `msg_id` (int, req.). Response: message card. |
 | GET | `/api/messages/groups` | Params: `channel_id` (int64, req.), `before_date` (int64), `before_id` (int), `limit` (int). Response: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Params: `channel_id` (int64, req.), `msg_id` (int, req.). Response: message card. |
+| GET | `/api/messages/deletions` | Needs `messages.deletions.read`. All params optional filters: `actor_user_id`, `owner_user_id`, `sender_user_id`, `peer_id` (int64), `peer_type` (`user`/`channel`), `message_id` (int), `source`, `min_date`/`max_date` (unix), `before_id` (int64 cursor), `limit` (int). Response: `rows`, newest first, no total. |
+| GET | `/api/messages/deletions/detail` | Needs `messages.deletions.read`. Params: `id` (int64, req.). Response: `Deletion`, `SnapshotJSON` (the row as it stood when deleted), `Batch` (every row the same action produced). |
 
 ## API: star gifts and collectibles
 

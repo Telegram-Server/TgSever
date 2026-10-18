@@ -29,6 +29,7 @@ import {
   permissionDashboardRead,
   permissionDonationsManage,
   permissionGiftsRead,
+  permissionMessageDeletionsRead,
   permissionMessagesRead,
   permissionModerationReview,
   permissionPhonesRead,
@@ -169,7 +170,8 @@ export const navSections: NavSection[] = [
     icon: MessageSquareText,
     tabs: [
       { path: "/messages/private", labelKey: "layout.privateMessages", permission: permissionMessagesRead, aliases: ["/messages"] },
-      { path: "/messages/groups", labelKey: "layout.groupMessages", permission: permissionMessagesRead }
+      { path: "/messages/groups", labelKey: "layout.groupMessages", permission: permissionMessagesRead },
+      { path: "/messages/deletions", labelKey: "layout.messageDeletions", permission: permissionMessageDeletionsRead }
     ]
   },
   {
@@ -261,6 +263,9 @@ const routePermissions: { prefix: string; permission: string }[] = [
   { prefix: "/stickers", permission: permissionContentRead },
   { prefix: "/emoji", permission: permissionContentRead },
   { prefix: "/gif-catalog", permission: permissionContentRead },
+  // Must precede "/messages": the deletion log is its own right, and
+  // messages.read alone must not open it.
+  { prefix: "/messages/deletions", permission: permissionMessageDeletionsRead },
   { prefix: "/messages", permission: permissionMessagesRead },
   { prefix: "/give-gifts", permission: permissionGiftsRead },
   { prefix: "/gifts", permission: permissionGiftsRead },

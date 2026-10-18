@@ -1,14 +1,16 @@
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatUnix } from "../lib/format";
+import { permissionMessageDeletionsRead, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import type { GroupMessageDetail } from "../types";
 
 export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channelID: number; msgID: number; navigate: Navigate }) {
   const { t } = useI18n();
+  const { can } = usePermissions();
   const [detail, setDetail] = useState<GroupMessageDetail | null>(null);
   const [error, setError] = useState("");
 
@@ -47,6 +49,14 @@ export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channel
           </div>
           <div className="entity-badges">
             {msg.Deleted ? <Badge tone="danger">{t("common.deleted")}</Badge> : <Badge>{t("common.survived")}</Badge>}
+            {msg.Deleted && can(permissionMessageDeletionsRead) && (
+              <button
+                className="row-link"
+                onClick={() => navigate(`/messages/deletions?peer_type=channel&peer_id=${msg.ChannelID}&message_id=${msg.ID}`)}
+              >
+                {t("deletions.whoDeleted")} <ChevronRight size={14} />
+              </button>
+            )}
             {msg.Pinned && <Badge tone="warn">{t("messages.pinned")}</Badge>}
             {msg.Post && <Badge>{t("messages.channelPost")}</Badge>}
             <Badge>pts {msg.PTS}</Badge>
