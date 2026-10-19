@@ -3,14 +3,12 @@ package account
 import (
 	"bytes"
 	"context"
-	"crypto/sha512"
 	"errors"
-	"math/big"
 	"sync"
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/pbkdf2"
+	tdsrp "github.com/iamxvbaba/td/crypto/srp"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/otpdelivery"
@@ -30,7 +28,7 @@ func TestPasswordSRPRoundTrip(t *testing.T) {
 	algo.Salt1 = append(append([]byte(nil), algo.Salt1...), bytes.Repeat([]byte{0xA5}, 32)...)
 	input := domain.PasswordInputSettings{
 		NewAlgo:         &algo,
-		NewPasswordHash: verifierForPassword(algo, []byte("correct horse")),
+		NewPasswordHash: verifierForPassword(t, algo, []byte("correct horse")),
 		Hint:            "horse",
 		HasHint:         true,
 		Email:           "alice@example.com",
@@ -83,7 +81,7 @@ func TestRecoverPasswordClearsTwoFactorPassword(t *testing.T) {
 	algo.Salt1 = append(append([]byte(nil), algo.Salt1...), bytes.Repeat([]byte{0x5C}, 32)...)
 	if err := svc.UpdatePasswordSettings(ctx, userID, domain.PasswordCheck{Empty: true}, domain.PasswordInputSettings{
 		NewAlgo:         &algo,
-		NewPasswordHash: verifierForPassword(algo, []byte("old password")),
+		NewPasswordHash: verifierForPassword(t, algo, []byte("old password")),
 		Email:           "bob@example.com",
 		HasEmail:        true,
 	}); err != nil {
@@ -316,48 +314,34 @@ func clientPasswordCheck(t *testing.T, settings domain.PasswordSettings, passwor
 	if settings.CurrentAlgo != nil {
 		algo = *settings.CurrentAlgo
 	}
-	p := new(big.Int).SetBytes(algo.P)
-	g := big.NewInt(int64(algo.G))
-	a := new(big.Int).SetBytes(bytes.Repeat([]byte{0x23}, passwordHashSize))
-	A := new(big.Int).Exp(g, a, p)
-	aForHash := padToHash(A.Bytes())
-	bForHash := padToHash(settings.SRPB)
-	x := new(big.Int).SetBytes(passwordDigest(algo, password))
-	u := new(big.Int).SetBytes(hashBytes(aForHash, bForHash))
-	k := new(big.Int).SetBytes(hashBytes(padToHash(algo.P), padToHash(g.Bytes())))
-	gx := new(big.Int).Exp(g, x, p)
-	kgx := new(big.Int).Mul(k, gx)
-	kgx.Mod(kgx, p)
-	b := new(big.Int).SetBytes(settings.SRPB)
-	base := new(big.Int).Sub(b, kgx)
-	base.Mod(base, p)
-	exp := new(big.Int).Mul(u, x)
-	exp.Add(exp, a)
-	s := new(big.Int).Exp(base, exp, p)
-	kBytes := hashBytes(padToHash(s.Bytes()))
-	m1 := hashBytes(
-		xorBytes(hashBytes(padToHash(algo.P)), hashBytes(padToHash(g.Bytes()))),
-		hashBytes(algo.Salt1),
-		hashBytes(algo.Salt2),
-		aForHash,
-		bForHash,
-		kBytes,
-	)
-	return domain.PasswordCheck{SRPID: settings.SRPID, A: aForHash, M1: m1}
+	answer, err := tdsrp.NewSRP(nil).Hash(password, settings.SRPB, bytes.Repeat([]byte{0x23}, 256), tdInput(algo))
+	if err != nil {
+		t.Fatalf("td client SRP hash: %v", err)
+	}
+	return domain.PasswordCheck{SRPID: settings.SRPID, A: answer.A, M1: answer.M1}
 }
 
-// passwordDigest 与 verifierForPassword 是客户端侧（明文口令 → verifier）的模拟助手，
-// 服务端从不执行明文口令路径，仅供这里的客户端 SRP helper 构造测试输入。
-func passwordDigest(algo domain.PasswordKDFAlgo, password []byte) []byte {
-	hash1 := hashBytes(algo.Salt1, password, algo.Salt1)
-	hash2 := hashBytes(algo.Salt2, hash1, algo.Salt2)
-	hash3 := pbkdf2.Key(hash2, algo.Salt1, 100000, 64, sha512.New)
-	return hashBytes(algo.Salt2, hash3, algo.Salt2)
+// verifierForPassword 是客户端侧（明文口令 → verifier）的模拟助手，服务端从不执行明文口令路径。
+// algo.Salt1 已是"默认 salt1 + 32 字节后缀"，这里把后缀作为 td 客户端的随机源喂回去，
+// 让 td 的 NewHash 算出同一个 salt1 下的 new_password_hash。
+func verifierForPassword(t *testing.T, algo domain.PasswordKDFAlgo, password []byte) []byte {
+	t.Helper()
+	const suffix = 32
+	if len(algo.Salt1) <= suffix {
+		t.Fatalf("verifierForPassword: salt1 has %d bytes, want default salt1 + %d-byte suffix", len(algo.Salt1), suffix)
+	}
+	base := algo
+	base.Salt1 = algo.Salt1[:len(algo.Salt1)-suffix]
+	hash, salt1, err := tdsrp.NewSRP(bytes.NewReader(algo.Salt1[len(algo.Salt1)-suffix:])).NewHash(password, tdInput(base))
+	if err != nil {
+		t.Fatalf("td client SRP new hash: %v", err)
+	}
+	if !bytes.Equal(salt1, algo.Salt1) {
+		t.Fatalf("td client salt1 = %x, want %x", salt1, algo.Salt1)
+	}
+	return hash
 }
 
-func verifierForPassword(algo domain.PasswordKDFAlgo, password []byte) []byte {
-	p := new(big.Int).SetBytes(algo.P)
-	g := big.NewInt(int64(algo.G))
-	x := new(big.Int).SetBytes(passwordDigest(algo, password))
-	return padToHash(new(big.Int).Exp(g, x, p).Bytes())
+func tdInput(algo domain.PasswordKDFAlgo) tdsrp.Input {
+	return tdsrp.Input{Salt1: algo.Salt1, Salt2: algo.Salt2, G: algo.G, P: algo.P}
 }
