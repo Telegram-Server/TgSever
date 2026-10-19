@@ -164,3 +164,17 @@ Binaries in `cmd/`: `telesrv` (server), `telesrv-admin` (admin dashboard), `tele
 - `telesrv-admin.exe` at the repo root is a force-added artifact; ignore it.
 - `.session` and `*.session.qr.png` are **Telegram account credentials**, produced by `giftfetch -login-qr` / `appearancefetch` / `scripts/giftfetch_telethon.py` (whose `--session` defaults to a bare relative name, so running it from the repo root drops one in the tree). They are git-ignored; keep it that way and never quote a session path into a committed example.
 - `docs/admin-panel-api.{en,ru}.md` carry **generated** route and permission tables (`scripts/gen_admin_panel_doc_tables.py`). Edit `nav.ts` / `permissions.tsx` and rerun with `--write`; `--check` is the form worth running in CI. They drifted badly once because nothing checked them.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues for Telegram-Server/TgSever, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
