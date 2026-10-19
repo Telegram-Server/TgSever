@@ -431,7 +431,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 	domainMessages := make([]domain.Message, 0, len(sources))
 	// 定时转发不查重放，sources 与 req.ID 一一对应；同一源相册得到同一个新 grouped_id，
 	// 持久化在定时行上，到点发出时原样沿用。
-	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources)
+	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources, nil)
 	for i, source := range sources {
 		forward := source.forward
 		if req.DropAuthor {
