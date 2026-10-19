@@ -60,7 +60,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 				}
 				continue
 			}
-			if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+			if existing.IsKicked() {
 				if !canRestoreKicked {
 					if inviteOne {
 						return domain.CreateChannelResult{}, domain.ErrUserKicked

@@ -434,7 +434,7 @@ func (s *ChannelStore) channelForViewerLocked(userID, channelID int64) (domain.C
 		return domain.Channel{}, domain.ChannelMember{}, false, domain.ErrChannelInvalid
 	}
 	existing, found := s.effectiveMemberLocked(channelID, userID, restrictionNow(0))
-	if found && (existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages) {
+	if found && existing.IsKicked() {
 		return domain.Channel{}, domain.ChannelMember{}, false, domain.ErrChannelUserBanned
 	}
 	if guest, ok, guestErr := s.linkedDiscussionGuestLocked(userID, channel); guestErr != nil {

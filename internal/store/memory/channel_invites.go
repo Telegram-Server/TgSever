@@ -40,7 +40,7 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 				}
 				continue
 			}
-			if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+			if existing.IsKicked() {
 				if !canRestoreKicked {
 					if inviteOne {
 						return domain.CreateChannelResult{}, domain.ErrUserKicked
@@ -277,7 +277,7 @@ func (s *ChannelStore) CheckInvite(_ context.Context, userID int64, hash string,
 		return domain.CheckChannelInviteResult{}, domain.ErrInviteHashInvalid
 	}
 	member, _ := s.effectiveMemberLocked(invite.ChannelID, userID, restrictionNow(date))
-	if member.Status == domain.ChannelMemberKicked || member.Status == domain.ChannelMemberBanned || member.BannedRights.ViewMessages {
+	if member.IsKicked() {
 		return domain.CheckChannelInviteResult{}, domain.ErrInviteHashInvalid
 	}
 	return domain.CheckChannelInviteResult{
@@ -726,7 +726,7 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.CreateChannelResult{}, domain.ErrInviteHashInvalid
 		}
 		previous = map[int64]domain.ChannelMember{userID: existing}
@@ -826,7 +826,7 @@ func (s *ChannelStore) recordPendingInviteRequestLocked(invite domain.ChannelInv
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.ErrInviteHashInvalid
 		}
 	}

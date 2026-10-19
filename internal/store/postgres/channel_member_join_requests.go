@@ -96,7 +96,7 @@ func (s *ChannelStore) recordPublicJoinRequestTx(ctx context.Context, tx pgx.Tx,
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.ErrInviteHashInvalid
 		}
 	} else if !errors.Is(err, domain.ErrChannelPrivate) {

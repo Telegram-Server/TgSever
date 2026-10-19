@@ -458,13 +458,15 @@ LEFT JOIN channel_members m
   ON m.channel_id = c.id AND m.user_id = candidate.user_id
 WHERE c.id = $1
   AND NOT c.deleted
-  AND NOT COALESCE((m.banned_rights->>'ViewMessages')::boolean, false)
-  AND COALESCE(m.status, '') NOT IN ('kicked', 'banned')
+  AND NOT (
+    (COALESCE(m.status, '') = 'kicked' OR COALESCE((m.banned_rights->>'ViewMessages')::boolean, false))
+    AND `+channelRestrictionActiveSQL("m", "$3")+`
+  )
   AND (
     m.status = 'active'
-    OR (COALESCE(c.username, '') <> '' AND COALESCE(m.status, 'left') = 'left')
+    OR (COALESCE(c.username, '') <> '' AND COALESCE(m.status, 'left') IN ('left', 'banned', 'kicked'))
   )
-ORDER BY candidate.user_id`, channelID, candidates[start:end])
+ORDER BY candidate.user_id`, channelID, candidates[start:end], nowUnix())
 		if err != nil {
 			return nil, fmt.Errorf("filter channel message audience: %w", err)
 		}

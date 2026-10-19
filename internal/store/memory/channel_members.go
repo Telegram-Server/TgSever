@@ -142,7 +142,7 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.CreateChannelResult{}, domain.ErrChannelUserBanned
 		}
 	}
@@ -885,7 +885,7 @@ func (s *ChannelStore) recordPublicJoinRequestLocked(channel domain.Channel, use
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.ErrInviteHashInvalid
 		}
 	}
@@ -993,7 +993,7 @@ func (s *ChannelStore) FilterChannelMessageAudienceIDs(_ context.Context, channe
 		return nil, nil
 	}
 	public := s.publicPreviewableChannelLocked(channel)
-	members := s.members[channelID]
+	now := restrictionNow(0)
 	out := make([]int64, 0, len(userIDs))
 	seen := make(map[int64]struct{}, len(userIDs))
 	for _, userID := range userIDs {
@@ -1004,13 +1004,12 @@ func (s *ChannelStore) FilterChannelMessageAudienceIDs(_ context.Context, channe
 			continue
 		}
 		seen[userID] = struct{}{}
-		member, found := members[userID]
-		if member.BannedRights.ViewMessages ||
-			member.Status == domain.ChannelMemberKicked ||
-			member.Status == domain.ChannelMemberBanned {
+		member, found := s.effectiveMemberLocked(channelID, userID, now)
+		if member.IsKicked() {
 			continue
 		}
-		if member.Status == domain.ChannelMemberActive || public && (!found || member.Status == domain.ChannelMemberLeft) {
+		// banned 是"不在群里但带着限制"：对公开频道与 left 一样能看到消息。
+		if member.Status == domain.ChannelMemberActive || public && (!found || member.Status == domain.ChannelMemberLeft || member.Status == domain.ChannelMemberBanned) {
 			out = append(out, userID)
 		}
 	}
@@ -1054,10 +1053,11 @@ func (s *ChannelStore) channelAndMemberLocked(userID, channelID int64) (domain.C
 		return domain.Channel{}, domain.ChannelMember{}, domain.ErrChannelInvalid
 	}
 	member, ok := s.effectiveMemberLocked(channelID, userID, restrictionNow(0))
-	if !ok || member.Status == domain.ChannelMemberLeft {
+	// banned 是"不在群里但带着限制"，与 left 一样不是成员；只有踢出才是 ErrChannelUserBanned。
+	if !ok || member.Status == domain.ChannelMemberLeft || member.Status == domain.ChannelMemberBanned {
 		return domain.Channel{}, domain.ChannelMember{}, domain.ErrChannelPrivate
 	}
-	if member.Status == domain.ChannelMemberBanned || member.Status == domain.ChannelMemberKicked || member.BannedRights.ViewMessages {
+	if member.IsKicked() {
 		return domain.Channel{}, domain.ChannelMember{}, domain.ErrChannelUserBanned
 	}
 	return channel, member, nil
@@ -1090,7 +1090,7 @@ func (s *ChannelStore) linkedDiscussionGuestLocked(userID int64, target domain.C
 		return domain.ChannelMember{}, false, nil
 	}
 	if existing, ok := s.effectiveMemberLocked(target.ID, userID, restrictionNow(0)); ok {
-		if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.ChannelMember{}, false, domain.ErrChannelUserBanned
 		}
 		if existing.Status == domain.ChannelMemberActive {
@@ -1302,11 +1302,12 @@ func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
 }
 
 // rejoinBannedRights 返回旧成员记录重新入群后应带的限制：退群不解除限制，
-// 否则"先退群再让人拉回来"就能绕过；被踢/封禁者能重新入群只可能是被有封禁权的管理员拉回，等同解封。
+// 否则"先退群再让人拉回来"就能绕过；不在群里时被限制的人（Status banned）同样带着限制入群。
+// 被踢出者（IsKicked）能重新入群只可能是被有封禁权的管理员拉回，等同解封。
 // 期限（UntilDate，0 为永久）在入群时刻 date 已过的限制视为无限制。
 func rejoinBannedRights(existing domain.ChannelMember, date int) domain.ChannelBannedRights {
 	existing = existing.EffectiveAt(restrictionNow(date))
-	if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+	if existing.IsKicked() {
 		return domain.ChannelBannedRights{}
 	}
 	return existing.BannedRights
