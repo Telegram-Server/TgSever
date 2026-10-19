@@ -269,6 +269,13 @@ func (s *Service) GetPassword(ctx context.Context, userID int64) (domain.Passwor
 	return settings, nil
 }
 
+// NoPasswordSettings 返回"尚未设置密码"时下发给客户端的参数：默认 new_algo、
+// new_secure_algo 和 secure_random，与 account.getPassword 对无密码账号的返回一致。
+// 登录密码注册（telesrv.getLoginPassword）复用同一套参数。
+func NoPasswordSettings() domain.PasswordSettings {
+	return defaultPasswordSettings()
+}
+
 func defaultPasswordSettings() domain.PasswordSettings {
 	return normalizePasswordSettings(domain.PasswordSettings{SecureRandom: append([]byte(nil), defaultSecureRandom...)})
 }
