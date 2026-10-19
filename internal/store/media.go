@@ -81,4 +81,10 @@ type MediaStore interface {
 	ListProfilePhotoDetailsKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, offset, limit int, maxID int64) (photos []domain.Photo, total int, err error)
 	DeleteProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerID int64, photoIDs []int64) ([]int64, error)
 	DeleteProfilePhotosKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoIDs []int64) ([]int64, error)
+	// ProfilePhotoInHistory 报告 photo 是否曾进入 owner 的头像历史（profile 或 fallback，
+	// 含已停用的行）。
+	ProfilePhotoInHistory(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64) (bool, error)
+	// OfferProfilePhoto 把别人建议的头像以停用行记入 owner 的头像历史：不改变当前头像、
+	// 不出现在相册里，但 owner 之后可以把它设为当前头像。
+	OfferProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int) error
 }
