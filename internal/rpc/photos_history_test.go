@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -213,6 +214,100 @@ func TestUpdateProfilePhotoAcceptsSuggestedPhoto(t *testing.T) {
 	steal := &tg.PhotosUpdateProfilePhotoRequest{ID: &tg.InputPhoto{ID: suggested.ID, AccessHash: suggested.AccessHash}}
 	_, err = r.onPhotosUpdateProfilePhoto(WithUserID(ctx, owner.ID), steal)
 	wantPhotoIDInvalid(t, err)
+}
+
+// suggestSendFailingMessages 让建议头像的 service message 投递失败，其余调用透传。
+type suggestSendFailingMessages struct {
+	MessagesService
+	err error
+}
+
+func (m suggestSendFailingMessages) SendPrivateText(context.Context, int64, domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
+	return domain.SendPrivateTextResult{}, m.err
+}
+
+// TestSuggestedPhotoNotOfferedWhenSendFails 守护：建议消息没发出去时，照片不能
+// 留在收件人的头像历史里，收件人也就无法把它设成头像。
+func TestSuggestedPhotoNotOfferedWhenSendFails(t *testing.T) {
+	ctx := context.Background()
+	r, _, _, owner, friend := newContactProfilePhotoTestRouter(t)
+	r.selfPhotoEchoPushDelay = 0
+	r.deps.Messages = suggestSendFailingMessages{MessagesService: r.deps.Messages, err: errors.New("send failed")}
+	files := r.deps.Files.(*fakeFiles)
+
+	req := contactProfilePhotoReq(friend)
+	req.SetSuggest(true)
+	req.SetFile(uploadedAvatarFile())
+	if _, err := r.onPhotosUploadContactProfilePhoto(WithUserID(ctx, owner.ID), req); err == nil {
+		t.Fatal("suggest with failing send succeeded, want error")
+	}
+	if len(files.profileHistory) != 0 {
+		t.Fatalf("profile history after failed suggestion = %v, want empty", files.profileHistory)
+	}
+	for id := range files.photos {
+		accept := &tg.PhotosUpdateProfilePhotoRequest{ID: &tg.InputPhoto{ID: id, AccessHash: 7}}
+		_, err := r.onPhotosUpdateProfilePhoto(WithUserID(ctx, friend.ID), accept)
+		wantPhotoIDInvalid(t, err)
+	}
+}
+
+// recipientBlocksContacts 让 blocker 拉黑 blocked，其余调用透传。
+type recipientBlocksContacts struct {
+	ContactsService
+	blocker, blocked int64
+}
+
+func (c recipientBlocksContacts) IsBlocked(ctx context.Context, userID, peerUserID int64) (bool, error) {
+	if userID == c.blocker && peerUserID == c.blocked {
+		return true, nil
+	}
+	return c.ContactsService.IsBlocked(ctx, userID, peerUserID)
+}
+
+// TestSuggestedPhotoNotOfferedWhenRecipientBlocksSuggester 守护：收件人拉黑了建议者时，
+// 消息不投递，照片也不进入收件人的头像历史。
+func TestSuggestedPhotoNotOfferedWhenRecipientBlocksSuggester(t *testing.T) {
+	ctx := context.Background()
+	r, _, _, owner, friend := newContactProfilePhotoTestRouter(t)
+	r.selfPhotoEchoPushDelay = 0
+	r.deps.Contacts = recipientBlocksContacts{ContactsService: r.deps.Contacts, blocker: friend.ID, blocked: owner.ID}
+	files := r.deps.Files.(*fakeFiles)
+
+	req := contactProfilePhotoReq(friend)
+	req.SetSuggest(true)
+	req.SetFile(uploadedAvatarFile())
+	got, err := r.onPhotosUploadContactProfilePhoto(WithUserID(ctx, owner.ID), req)
+	if err != nil {
+		t.Fatalf("suggest to a recipient who blocked the suggester: %v", err)
+	}
+	if len(files.profileHistory) != 0 {
+		t.Fatalf("profile history after blocked suggestion = %v, want empty", files.profileHistory)
+	}
+	suggested, ok := got.Photo.(*tg.Photo)
+	if !ok {
+		t.Fatalf("suggested photo = %T, want *tg.Photo", got.Photo)
+	}
+	accept := &tg.PhotosUpdateProfilePhotoRequest{ID: &tg.InputPhoto{ID: suggested.ID, AccessHash: suggested.AccessHash}}
+	_, err = r.onPhotosUpdateProfilePhoto(WithUserID(ctx, friend.ID), accept)
+	wantPhotoIDInvalid(t, err)
+}
+
+// TestSuggestedPhotoOfferFailureAfterSendKeepsRPCSuccess 守护：消息已经投递后，
+// 写入头像历史失败只记日志，不让 RPC 失败（否则客户端重试会再发一条建议）。
+func TestSuggestedPhotoOfferFailureAfterSendKeepsRPCSuccess(t *testing.T) {
+	ctx := context.Background()
+	r, _, _, owner, friend := newContactProfilePhotoTestRouter(t)
+	r.selfPhotoEchoPushDelay = 0
+	files := r.deps.Files.(*fakeFiles)
+	files.offerErr = errors.New("offer failed")
+
+	req := contactProfilePhotoReq(friend)
+	req.SetSuggest(true)
+	req.SetFile(uploadedAvatarFile())
+	if _, err := r.onPhotosUploadContactProfilePhoto(WithUserID(ctx, owner.ID), req); err != nil {
+		t.Fatalf("suggest with failing offer write: %v, want success after delivery", err)
+	}
+	assertSuggestProfilePhotoHistory(t, r, friend.ID, owner.ID, false)
 }
 
 func TestUpdateProfilePhotoFallbackUsesOwnHistory(t *testing.T) {
