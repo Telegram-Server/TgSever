@@ -145,7 +145,7 @@ func (r *Router) onPremiumGetUserBoosts(ctx context.Context, req *tg.PremiumGetU
 	if err != nil {
 		return nil, premiumBoostErr(err)
 	}
-	return r.tgPremiumBoostsList(ctx, userID, list), nil
+	return r.tgPremiumBoostsList(ctx, userID, list, ids[0]), nil
 }
 
 func (r *Router) premiumBoostChannelView(ctx context.Context, peer tg.InputPeerClass, requireAdmin bool) (int64, domain.ChannelView, error) {
@@ -228,11 +228,11 @@ func tgPremiumBoostsStatus(channelID int64, in domain.PremiumBoostStatus, public
 	return out
 }
 
-func (r *Router) tgPremiumBoostsList(ctx context.Context, viewerUserID int64, in domain.PremiumBoostList) *tg.PremiumBoostsList {
-	users := in.Users
-	if len(users) == 0 {
-		users = r.domainUsersForIDs(ctx, viewerUserID, premiumBoostUserIDs(in.Boosts))
-	}
+// tgPremiumBoostsList 是所有 boost 列表接口（getBoostsList、getUserBoosts）唯一的
+// 输出口：boost 用户只按查看者投影后输出（手机号、头像隐私、已注销），见 #40。
+// extraUserIDs 是列表之外也要带上的用户（getUserBoosts 查询的目标，即使他没有 boost）。
+func (r *Router) tgPremiumBoostsList(ctx context.Context, viewerUserID int64, in domain.PremiumBoostList, extraUserIDs ...int64) *tg.PremiumBoostsList {
+	users := r.domainUsersForIDs(ctx, viewerUserID, append(premiumBoostUserIDs(in.Boosts), extraUserIDs...))
 	out := &tg.PremiumBoostsList{
 		Count:  in.Count,
 		Boosts: tgBoosts(in.Boosts),
@@ -245,10 +245,7 @@ func (r *Router) tgPremiumBoostsList(ctx context.Context, viewerUserID int64, in
 }
 
 func (r *Router) tgPremiumMyBoosts(ctx context.Context, viewerUserID int64, in domain.PremiumMyBoosts) *tg.PremiumMyBoosts {
-	users := in.Users
-	if len(users) == 0 {
-		users = r.domainUsersForIDs(ctx, viewerUserID, premiumBoostPeerUserIDs(in.Slots))
-	}
+	users := r.domainUsersForIDs(ctx, viewerUserID, premiumBoostPeerUserIDs(in.Slots))
 	return &tg.PremiumMyBoosts{
 		MyBoosts: tgMyBoosts(in.Slots),
 		Chats:    tgChannels(viewerUserID, in.Channels),
