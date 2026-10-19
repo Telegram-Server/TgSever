@@ -325,17 +325,31 @@ func (r *Router) onChannelsDeleteMessages(ctx context.Context, req *tg.ChannelsD
 	if err != nil {
 		return nil, err
 	}
+	res, err := r.deleteChannelMessages(ctx, userID, channelID, req.ID, domain.DeletionAudit{})
+	if err != nil {
+		return nil, err
+	}
+	if res.Event.Pts != 0 {
+		return &tg.MessagesAffectedMessages{Pts: res.Event.Pts, PtsCount: res.Event.PtsCount}, nil
+	}
+	return &tg.MessagesAffectedMessages{Pts: res.Channel.Pts, PtsCount: 0}, nil
+}
+
+// deleteChannelMessages 是 channels.deleteMessages 的删除与扇出主体，Bot API
+// deleteMessage 也走这里。audit 零值表示当前会话里的用户本人发起删除。
+func (r *Router) deleteChannelMessages(ctx context.Context, userID, channelID int64, ids []int, audit domain.DeletionAudit) (domain.DeleteChannelMessagesResult, error) {
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Channels.DeleteMessages(ctx, userID, domain.DeleteChannelMessagesRequest{
 		UserID:          userID,
 		ChannelID:       channelID,
-		IDs:             append([]int(nil), req.ID...),
+		IDs:             append([]int(nil), ids...),
 		Date:            int(r.clock.Now().Unix()),
 		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,
+		Audit:           audit,
 	})
 	if err != nil {
-		return nil, channelDeleteErr(err)
+		return domain.DeleteChannelMessagesResult{}, channelDeleteErr(err)
 	}
 	if res.Event.Pts != 0 {
 		// 删除 fan-out 异步化（设计 Phase 0）。channelDeleteMessagesUpdates 是纯 CPU 构建
@@ -350,9 +364,8 @@ func (r *Router) onChannelsDeleteMessages(ctx context.Context, req *tg.ChannelsD
 				return r.channelDeleteMessagesUpdates(viewerUserID, cascade.Channel, cascade.Event)
 			})
 		}
-		return &tg.MessagesAffectedMessages{Pts: res.Event.Pts, PtsCount: res.Event.PtsCount}, nil
 	}
-	return &tg.MessagesAffectedMessages{Pts: res.Channel.Pts, PtsCount: 0}, nil
+	return res, nil
 }
 
 // NotifyModerationChannelDeletion performs the online accelerator for a
