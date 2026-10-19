@@ -719,65 +719,104 @@ func (s *CommunityStore) ToggleCommunityParticipantBanned(_ context.Context, act
 	old, alreadyKicked := s.members[id][participant]
 	alreadyKicked = alreadyKicked && old.Role == domain.CommunityRoleMember && old.Status == domain.CommunityMemberKicked
 	result := domain.CommunityParticipantBanResult{}
+	owned, err := s.banCommunityParticipantFromChannelsLocked(id, actor, participant, date, &result)
+	if err != nil {
+		return domain.CommunityParticipantBanResult{}, err
+	}
 	for p := range s.links[id] {
-		owned := false
-		if p.Type == domain.PeerTypeChannel && s.channels != nil {
-			s.channels.mu.Lock()
-			ch := s.channels.channels[p.ID]
-			owned = ch.CreatorUserID == participant
-			if !owned {
-				if cm, ok := s.channels.members[p.ID][participant]; ok && cm.Status == domain.ChannelMemberActive {
-					previous := cm
-					cm.Status = domain.ChannelMemberKicked
-					cm.Role = domain.ChannelRoleMember
-					cm.InviterUserID = actor
-					cm.LeftAt = date
-					cm.BannedRights = domain.ChannelBannedRights{ViewMessages: true}
-					s.channels.members[p.ID][participant] = cm
-					ch.ParticipantsCount--
-					ch.KickedCount++
-					s.channels.channels[p.ID] = ch
-					event := transientChannelParticipantEvent(ch.ID, actor, previous, cm, date)
-					var serviceMessage domain.ChannelMessage
-					var serviceEvent domain.ChannelUpdateEvent
-					if ch.Megagroup {
-						serviceMessage, serviceEvent = s.channels.appendChannelServiceMessageLocked(ch.ID, actor, date, domain.ChannelMessageAction{Type: domain.ChannelActionChatDelete, UserIDs: []int64{participant}})
-						ch = s.channels.channels[p.ID]
-						ch.TopMessageID, ch.Pts = serviceMessage.ID, serviceEvent.Pts
-						s.channels.channels[p.ID] = ch
-					}
-					recipients := s.channels.activeMemberIDsLocked(p.ID, 0, 0)
-					recipients = append(recipients, participant)
-					result.ChannelBans = append(result.ChannelBans, domain.EditChannelBannedResult{
-						Channel: ch, Previous: previous, Participant: cm, Event: event, Recipients: recipients,
-						Date: date, Message: serviceMessage, ServiceEvent: serviceEvent,
-					})
-				}
-			}
-			s.channels.mu.Unlock()
-		} else if p.Type == domain.PeerTypeUser && s.bots != nil {
+		if p.Type == domain.PeerTypeUser && s.bots != nil {
 			s.bots.mu.RLock()
-			owned = s.bots.byID[p.ID].OwnerUserID == participant
+			if s.bots.byID[p.ID].OwnerUserID == participant {
+				owned = append(owned, p)
+			}
 			s.bots.mu.RUnlock()
 		}
-		if owned {
-			if e := s.setPeerLinkLocked(p, 0); e != nil {
-				return domain.CommunityParticipantBanResult{}, e
-			}
-			serviceMessage, e := s.appendCommunityServiceMessageLocked(p, actor, date, 0)
-			if e != nil {
-				_ = s.setPeerLinkLocked(p, c.ID)
-				return domain.CommunityParticipantBanResult{}, e
-			}
-			delete(s.links[id], p)
-			result.RemovedLinks = append(result.RemovedLinks, domain.CommunityTogglePeerLinkResult{Community: c, Peer: p, Removed: true, ServiceMessage: serviceMessage})
+	}
+	for _, p := range owned {
+		if e := s.setPeerLinkLocked(p, 0); e != nil {
+			return domain.CommunityParticipantBanResult{}, e
 		}
+		serviceMessage, e := s.appendCommunityServiceMessageLocked(p, actor, date, 0)
+		if e != nil {
+			_ = s.setPeerLinkLocked(p, c.ID)
+			return domain.CommunityParticipantBanResult{}, e
+		}
+		delete(s.links[id], p)
+		result.RemovedLinks = append(result.RemovedLinks, domain.CommunityTogglePeerLinkResult{Community: c, Peer: p, Removed: true, ServiceMessage: serviceMessage})
 	}
 	if !alreadyKicked {
 		s.members[id][participant] = domain.CommunityMember{CommunityID: id, UserID: participant, Role: domain.CommunityRoleMember, Status: domain.CommunityMemberKicked, Date: date}
 	}
 	result.Changed = !alreadyKicked || len(result.ChannelBans) > 0 || len(result.RemovedLinks) > 0
 	return result, nil
+}
+
+// banCommunityParticipantFromChannelsLocked 在同一把频道锁内先对每个关联频道做管理员保护
+// 检查（domain.CheckManageChannelAdmin），任一频道不通过则整次不改动直接返回；全部通过后
+// 再把参与者踢出其余关联频道。返回参与者自己创建、需要解除关联的频道。调用方持有 s.mu。
+func (s *CommunityStore) banCommunityParticipantFromChannelsLocked(id, actor, participant int64, date int, result *domain.CommunityParticipantBanResult) ([]domain.Peer, error) {
+	if s.channels == nil {
+		return nil, nil
+	}
+	s.channels.mu.Lock()
+	defer s.channels.mu.Unlock()
+	for p := range s.links[id] {
+		if p.Type != domain.PeerTypeChannel || s.channels.channels[p.ID].CreatorUserID == participant {
+			continue
+		}
+		target, ok := s.channels.members[p.ID][participant]
+		if !ok {
+			continue
+		}
+		actorMember, ok := s.channels.members[p.ID][actor]
+		if !ok {
+			actorMember = domain.ChannelMember{ChannelID: p.ID, UserID: actor}
+		}
+		if err := domain.CheckManageChannelAdmin(actorMember, target); err != nil {
+			return nil, err
+		}
+	}
+	var owned []domain.Peer
+	for p := range s.links[id] {
+		if p.Type != domain.PeerTypeChannel {
+			continue
+		}
+		ch := s.channels.channels[p.ID]
+		if ch.CreatorUserID == participant {
+			owned = append(owned, p)
+			continue
+		}
+		cm, ok := s.channels.members[p.ID][participant]
+		if !ok || cm.Status != domain.ChannelMemberActive {
+			continue
+		}
+		previous := cm
+		cm.Status = domain.ChannelMemberKicked
+		cm.Role = domain.ChannelRoleMember
+		cm.InviterUserID = actor
+		cm.LeftAt = date
+		cm.BannedRights = domain.ChannelBannedRights{ViewMessages: true}
+		s.channels.members[p.ID][participant] = cm
+		ch.ParticipantsCount--
+		ch.KickedCount++
+		s.channels.channels[p.ID] = ch
+		event := transientChannelParticipantEvent(ch.ID, actor, previous, cm, date)
+		var serviceMessage domain.ChannelMessage
+		var serviceEvent domain.ChannelUpdateEvent
+		if ch.Megagroup {
+			serviceMessage, serviceEvent = s.channels.appendChannelServiceMessageLocked(ch.ID, actor, date, domain.ChannelMessageAction{Type: domain.ChannelActionChatDelete, UserIDs: []int64{participant}})
+			ch = s.channels.channels[p.ID]
+			ch.TopMessageID, ch.Pts = serviceMessage.ID, serviceEvent.Pts
+			s.channels.channels[p.ID] = ch
+		}
+		recipients := s.channels.activeMemberIDsLocked(p.ID, 0, 0)
+		recipients = append(recipients, participant)
+		result.ChannelBans = append(result.ChannelBans, domain.EditChannelBannedResult{
+			Channel: ch, Previous: previous, Participant: cm, Event: event, Recipients: recipients,
+			Date: date, Message: serviceMessage, ServiceEvent: serviceEvent,
+		})
+	}
+	return owned, nil
 }
 
 func (s *CommunityStore) allParticipantsLocked(id int64) []domain.CommunityMember {
