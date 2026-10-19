@@ -25,12 +25,13 @@ ARG VCS_REF=unknown
 ARG VCS_BRANCH=unknown
 ARG VCS_TREE_STATE=unknown
 ARG BUILD_DATE=unknown
+# One build for both binaries: with -o ending in "/" go writes /out/telesrv and
+# /out/telesrv-update. telesrv-update has none of the main.* build variables,
+# and the linker ignores -X for symbols a binary does not have.
 RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath \
       -ldflags="-s -w -X main.gitCommit=${VCS_REF} -X main.gitBranch=${VCS_BRANCH} -X main.gitTreeState=${VCS_TREE_STATE} -X main.buildTime=${BUILD_DATE}" \
-      -o /out/telesrv ./cmd/telesrv \
-    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/telesrv-update ./cmd/telesrv-update
+      -o /out/ ./cmd/telesrv ./cmd/telesrv-update
 
 FROM build-base AS build-admin
 RUN apk add --no-cache nodejs npm
