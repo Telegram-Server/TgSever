@@ -196,6 +196,10 @@ jobs:
           # default that compose forgets to pin kills the server at startup --
           # which is exactly how TELESRV_WALLET_STATE_DIR took the stack down once.
           "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; assert s["server"].get("network_mode") == "host"; assert s["admin"].get("network_mode") == "host"; assert len(s["server"].get("ports", [])) == 0; assert len(s["admin"].get("ports", [])) == 0; assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12999"; _e = s["server"]["environment"]; assert _e["TELESRV_WALLET_STATE_DIR"].startswith("/var/lib/telesrv"); assert _e["TELESRV_WALLET_KEY_FILE"].startswith("/var/lib/telesrv")'
+          # Desktop updates stay off by default (a non-empty manifest turns the
+          # in-process service on), and the update volume is the only writable
+          # mount the server gains.
+          "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]["server"]; e=s["environment"]; keys=("TELESRV_UPDATE_MANIFEST", "TELESRV_UPDATE_FILES_DIR", "TELESRV_UPDATE_ROOT_PUBLIC_KEY", "TELESRV_UPDATE_PUBLIC_URL"); assert all(k in e and not e[k] for k in keys), {k: e.get(k) for k in keys}; m={v["target"]: v for v in s["volumes"]}; assert sorted(m) == ["/var/lib/telesrv", "/var/lib/telesrv-updates"], sorted(m); assert m["/var/lib/telesrv-updates"]["type"] == "volume" and not m["/var/lib/telesrv-updates"].get("read_only", False); assert s["read_only"] is True'
           "${bridge[@]}" config --quiet
           "${bridge[@]}" config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin); s=c["services"]; assert s["server"].get("network_mode") != "host"; assert s["admin"].get("network_mode") != "host"; assert len(s["server"].get("ports", [])) == 69; assert len(s["admin"].get("ports", [])) == 1; assert "admin_host_access" in s["admin"]["networks"]; assert not c["networks"]["admin_host_access"].get("internal", False); assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12563"'
 
@@ -244,6 +248,12 @@ jobs:
           # permissive mode here is what stopped the server from booting.
           server_container="$("${compose[@]}" ps --quiet server)"
           test "$(docker exec "$server_container" stat -c %a /var/lib/telesrv/wallet)" = "700"
+          # Operators publish desktop updates with `docker compose exec server
+          # telesrv-update publish`, so the image must ship an executable
+          # telesrv-update and the update volume must belong to the container user.
+          docker exec "$server_container" sh -c 'test -x "$(command -v telesrv-update)"'
+          docker exec "$server_container" telesrv-update publish -h
+          test "$(docker exec "$server_container" stat -c %u:%g /var/lib/telesrv-updates)" = "10001:10001"
           curl --fail --silent --show-error http://127.0.0.1:2401/healthz | grep -qx ok
           curl --fail --silent --show-error http://127.0.0.1:2600/ >/dev/null
           timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2400'
