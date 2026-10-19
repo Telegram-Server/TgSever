@@ -24,9 +24,10 @@ func (s *ChannelStore) CheckInvite(ctx context.Context, userID int64, hash strin
 		return domain.CheckChannelInviteResult{}, domain.ErrInviteHashExpired
 	}
 	member, err := s.getChannelMember(ctx, s.db, channel.ID, userID)
+	member = member.EffectiveAt(restrictionNow(date))
 	already := false
 	if err == nil {
-		if member.Status == domain.ChannelMemberKicked || member.Status == domain.ChannelMemberBanned || member.BannedRights.ViewMessages {
+		if member.IsKicked() {
 			return domain.CheckChannelInviteResult{}, domain.ErrInviteHashInvalid
 		}
 		already = member.Status == domain.ChannelMemberActive
@@ -97,10 +98,11 @@ func (s *ChannelStore) approveInviteImporterTx(ctx context.Context, tx pgx.Tx, c
 	}
 	var previous map[int64]domain.ChannelMember
 	if existing, err := s.getChannelMember(ctx, tx, channelID, userID); err == nil {
+		existing = existing.EffectiveAt(restrictionNow(date))
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.CreateChannelResult{}, domain.ErrInviteHashInvalid
 		}
 		previous = map[int64]domain.ChannelMember{userID: existing}
@@ -218,10 +220,11 @@ WHERE channel_id = $1 AND user_id = $2`, channel.ID, userID, member.ReadInboxMax
 
 func (s *ChannelStore) recordPendingInviteImporterTx(ctx context.Context, tx pgx.Tx, invite domain.ChannelInvite, userID int64, date int) error {
 	if existing, err := s.getChannelMember(ctx, tx, invite.ChannelID, userID); err == nil {
+		existing = existing.EffectiveAt(restrictionNow(date))
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.ErrInviteHashInvalid
 		}
 	} else if !errors.Is(err, domain.ErrChannelPrivate) {

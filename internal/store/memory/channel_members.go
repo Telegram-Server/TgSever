@@ -38,7 +38,9 @@ func (s *ChannelStore) GetParticipants(_ context.Context, viewerUserID, channelI
 	}
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	items := make([]domain.ChannelMember, 0, len(s.members[channelID]))
+	now := restrictionNow(0)
 	for _, member := range s.members[channelID] {
+		member = member.EffectiveAt(now)
 		if !channelParticipantMatchesFilter(member, filter.Kind, query) {
 			continue
 		}
@@ -86,11 +88,30 @@ func (s *ChannelStore) GetParticipant(_ context.Context, viewerUserID, channelID
 	if viewerUserID == participantUserID && viewer.Guest {
 		return domain.ChannelMember{}, domain.ErrUserNotParticipant
 	}
-	member, ok := s.members[channelID][participantUserID]
+	member, ok := s.effectiveMemberLocked(channelID, participantUserID, restrictionNow(0))
 	if !ok || (participantUserID == viewerUserID && member.Status == domain.ChannelMemberLeft) {
 		return domain.ChannelMember{}, domain.ErrUserNotParticipant
 	}
 	return member, nil
+}
+
+// restrictionNow 返回换算限制期限用的当前时刻：操作带请求 Date 时用它（与同一操作里写入的
+// 时间一致），没有时用真实时钟。
+func restrictionNow(date int) int {
+	if date > 0 {
+		return date
+	}
+	return int(time.Now().Unix())
+}
+
+// effectiveMemberLocked 返回成员记录在 now 时刻生效的视图（见 domain.ChannelMember.EffectiveAt）：
+// 存储里保留管理员设置时的原始限制，期限到了的限制在读取时才视为解除。
+func (s *ChannelStore) effectiveMemberLocked(channelID, userID int64, now int) (domain.ChannelMember, bool) {
+	member, ok := s.members[channelID][userID]
+	if !ok {
+		return domain.ChannelMember{}, false
+	}
+	return member.EffectiveAt(now), true
 }
 
 func (s *ChannelStore) FutureCreatorAfterLeave(_ context.Context, channelID, userID int64) (domain.ChannelMember, error) {
@@ -117,11 +138,11 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 		return domain.CreateChannelResult{}, domain.ErrChannelMonoforumUnsupported
 	}
 	preJoinTopID := channel.TopMessageID
-	if existing, ok := s.members[channelID][userID]; ok {
+	if existing, ok := s.effectiveMemberLocked(channelID, userID, restrictionNow(date)); ok {
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.CreateChannelResult{}, domain.ErrChannelUserBanned
 		}
 	}
@@ -142,7 +163,7 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 		JoinedAt:      date,
 	}
 	var previous map[int64]domain.ChannelMember
-	if existing, ok := s.members[channelID][userID]; ok {
+	if existing, ok := s.effectiveMemberLocked(channelID, userID, restrictionNow(date)); ok {
 		previous = map[int64]domain.ChannelMember{userID: existing}
 		member = existing
 		member.Status = domain.ChannelMemberActive
@@ -307,7 +328,7 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 	if !canAddChannelAdmins(actor) {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelAdminRequired
 	}
-	previous, ok := s.members[req.ChannelID][req.MemberID]
+	previous, ok := s.effectiveMemberLocked(req.ChannelID, req.MemberID, restrictionNow(req.Date))
 	if !ok {
 		previous = domain.ChannelMember{
 			ChannelID:       req.ChannelID,
@@ -509,8 +530,9 @@ func (s *ChannelStore) EditChannelMemberRank(_ context.Context, req domain.EditC
 	if err != nil {
 		return domain.EditChannelAdminResult{}, err
 	}
-	actor := s.members[req.ChannelID][req.UserID]
-	previous, ok := s.members[req.ChannelID][req.MemberID]
+	now := restrictionNow(req.Date)
+	actor, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, now)
+	previous, ok := s.effectiveMemberLocked(req.ChannelID, req.MemberID, now)
 	if !ok || previous.Status != domain.ChannelMemberActive {
 		return domain.EditChannelAdminResult{}, domain.ErrUserNotParticipant
 	}
@@ -556,7 +578,7 @@ func (s *ChannelStore) EditChannelBanned(_ context.Context, req domain.EditChann
 	if !canBanChannelUsers(actor) {
 		return domain.EditChannelBannedResult{}, domain.ErrChannelAdminRequired
 	}
-	previous, ok := s.members[req.ChannelID][req.Participant.ID]
+	previous, ok := s.effectiveMemberLocked(req.ChannelID, req.Participant.ID, restrictionNow(req.Date))
 	if !ok {
 		previous = domain.ChannelMember{ChannelID: req.ChannelID, UserID: req.Participant.ID, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberLeft}
 	}
@@ -859,11 +881,11 @@ func (s *ChannelStore) HideChatJoinRequest(_ context.Context, req domain.HideCha
 }
 
 func (s *ChannelStore) recordPublicJoinRequestLocked(channel domain.Channel, userID int64, date int) error {
-	if existing, ok := s.members[channel.ID][userID]; ok {
+	if existing, ok := s.effectiveMemberLocked(channel.ID, userID, restrictionNow(date)); ok {
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.ErrInviteHashInvalid
 		}
 	}
@@ -971,7 +993,7 @@ func (s *ChannelStore) FilterChannelMessageAudienceIDs(_ context.Context, channe
 		return nil, nil
 	}
 	public := s.publicPreviewableChannelLocked(channel)
-	members := s.members[channelID]
+	now := restrictionNow(0)
 	out := make([]int64, 0, len(userIDs))
 	seen := make(map[int64]struct{}, len(userIDs))
 	for _, userID := range userIDs {
@@ -982,13 +1004,12 @@ func (s *ChannelStore) FilterChannelMessageAudienceIDs(_ context.Context, channe
 			continue
 		}
 		seen[userID] = struct{}{}
-		member, found := members[userID]
-		if member.BannedRights.ViewMessages ||
-			member.Status == domain.ChannelMemberKicked ||
-			member.Status == domain.ChannelMemberBanned {
+		member, found := s.effectiveMemberLocked(channelID, userID, now)
+		if member.IsKicked() {
 			continue
 		}
-		if member.Status == domain.ChannelMemberActive || public && (!found || member.Status == domain.ChannelMemberLeft) {
+		// banned 是"不在群里但带着限制"：对公开频道与 left 一样能看到消息。
+		if member.Status == domain.ChannelMemberActive || public && (!found || member.Status == domain.ChannelMemberLeft || member.Status == domain.ChannelMemberBanned) {
 			out = append(out, userID)
 		}
 	}
@@ -1031,11 +1052,12 @@ func (s *ChannelStore) channelAndMemberLocked(userID, channelID int64) (domain.C
 	if !ok || channel.Deleted {
 		return domain.Channel{}, domain.ChannelMember{}, domain.ErrChannelInvalid
 	}
-	member, ok := s.members[channelID][userID]
-	if !ok || member.Status == domain.ChannelMemberLeft {
+	member, ok := s.effectiveMemberLocked(channelID, userID, restrictionNow(0))
+	// banned 是"不在群里但带着限制"，与 left 一样不是成员；只有踢出才是 ErrChannelUserBanned。
+	if !ok || member.Status == domain.ChannelMemberLeft || member.Status == domain.ChannelMemberBanned {
 		return domain.Channel{}, domain.ChannelMember{}, domain.ErrChannelPrivate
 	}
-	if member.Status == domain.ChannelMemberBanned || member.Status == domain.ChannelMemberKicked || member.BannedRights.ViewMessages {
+	if member.IsKicked() {
 		return domain.Channel{}, domain.ChannelMember{}, domain.ErrChannelUserBanned
 	}
 	return channel, member, nil
@@ -1067,8 +1089,8 @@ func (s *ChannelStore) linkedDiscussionGuestLocked(userID int64, target domain.C
 	if target.Broadcast || !target.Megagroup || target.LinkedChatID == 0 {
 		return domain.ChannelMember{}, false, nil
 	}
-	if existing, ok := s.members[target.ID][userID]; ok {
-		if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+	if existing, ok := s.effectiveMemberLocked(target.ID, userID, restrictionNow(0)); ok {
+		if existing.IsKicked() {
 			return domain.ChannelMember{}, false, domain.ErrChannelUserBanned
 		}
 		if existing.Status == domain.ChannelMemberActive {
@@ -1079,7 +1101,7 @@ func (s *ChannelStore) linkedDiscussionGuestLocked(userID int64, target domain.C
 	if !ok || source.Deleted || !source.Broadcast || source.LinkedChatID != target.ID {
 		return domain.ChannelMember{}, false, nil
 	}
-	sourceMember, ok := s.members[source.ID][userID]
+	sourceMember, ok := s.effectiveMemberLocked(source.ID, userID, restrictionNow(0))
 	if !ok || sourceMember.Status != domain.ChannelMemberActive || sourceMember.BannedRights.ViewMessages {
 		return domain.ChannelMember{}, false, nil
 	}
@@ -1280,16 +1302,12 @@ func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
 }
 
 // rejoinBannedRights 返回旧成员记录重新入群后应带的限制：退群不解除限制，
-// 否则"先退群再让人拉回来"就能绕过；被踢/封禁者能重新入群只可能是被有封禁权的管理员拉回，等同解封。
+// 否则"先退群再让人拉回来"就能绕过；不在群里时被限制的人（Status banned）同样带着限制入群。
+// 被踢出者（IsKicked）能重新入群只可能是被有封禁权的管理员拉回，等同解封。
 // 期限（UntilDate，0 为永久）在入群时刻 date 已过的限制视为无限制。
 func rejoinBannedRights(existing domain.ChannelMember, date int) domain.ChannelBannedRights {
-	if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
-		return domain.ChannelBannedRights{}
-	}
-	if date <= 0 {
-		date = int(time.Now().Unix())
-	}
-	if until := existing.BannedRights.UntilDate; until > 0 && until <= date {
+	existing = existing.EffectiveAt(restrictionNow(date))
+	if existing.IsKicked() {
 		return domain.ChannelBannedRights{}
 	}
 	return existing.BannedRights

@@ -92,10 +92,11 @@ func (s *ChannelStore) SetJoinRequest(ctx context.Context, userID, channelID int
 
 func (s *ChannelStore) recordPublicJoinRequestTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, userID int64, date int) error {
 	if existing, err := s.getChannelMember(ctx, tx, channel.ID, userID); err == nil {
+		existing = existing.EffectiveAt(restrictionNow(date))
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.ErrUserAlreadyParticipant
 		}
-		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		if existing.IsKicked() {
 			return domain.ErrInviteHashInvalid
 		}
 	} else if !errors.Is(err, domain.ErrChannelPrivate) {
