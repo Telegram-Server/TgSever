@@ -111,7 +111,7 @@ MTProto client
   ← updates/state          outbox dispatchers, durable delivery, projections
 ```
 
-Binaries in `cmd/`: `telesrv` (server), `telesrv-admin` (admin dashboard), `telesrv-load`, `telesrv-update` (standalone update CDN, defunct in monolith unless `TELESRV_UPDATE_PUBLIC_URL` set), `gramsrv-backup` (bundle capture/restore/verify; guide in `docs/backup-restore.md`, wrappers in `scripts/backup.{sh,ps1}`, `scripts/restore.{sh,ps1}`, `scripts/check-media.{sh,ps1}`), plus fetch/seed utilities (`catalogfetch`, `giftfetch` — guide in `docs/giftfetch.md`, including the `-login-qr` session flow — `langpackfetch`, `stickerseeddeploy`, `blobmigrate`, `telegramloginkeygen`, `walletminiapp`, `bots/*`).
+Binaries in `cmd/`: `telesrv` (server), `telesrv-admin` (admin dashboard), `telesrv-load`, `telesrv-update` (desktop update CDN: `publish` packs a signed v2 package into the manifest; `serve` runs it standalone. `telesrv` itself serves the same handler under `/_updates/` on the public link listener when `TELESRV_UPDATE_MANIFEST` is set — guide in `docs/update-service.md`), `gramsrv-backup` (bundle capture/restore/verify; guide in `docs/backup-restore.md`, wrappers in `scripts/backup.{sh,ps1}`, `scripts/restore.{sh,ps1}`, `scripts/check-media.{sh,ps1}`), plus fetch/seed utilities (`catalogfetch`, `giftfetch` — guide in `docs/giftfetch.md`, including the `-login-qr` session flow — `langpackfetch`, `stickerseeddeploy`, `blobmigrate`, `telegramloginkeygen`, `walletminiapp`, `bots/*`).
 
 ## Module map (find-and-fix guide)
 
