@@ -11,6 +11,11 @@ import (
 
 const maxResolveQueryLength = 256
 
+// PublicWebPrefix 是主进程把 Handler 挂到公开 Web 上的路径前缀。公开 Web 按它剥离
+// 前缀后转发，配置按它推导 autoupdate_url_prefix（<PublicBaseURL>/_updates）。用户名
+// 不能以下划线开头，所以它不会遮蔽 /{username} 落地页。
+const PublicWebPrefix = "/_updates"
+
 type Handler struct {
 	store *Store
 	mux   *http.ServeMux
@@ -52,14 +57,15 @@ func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
 	if !allowReadMethod(w, r) {
 		return
 	}
-	if _, err := h.store.Snapshot(); err != nil {
+	_, stale, err := h.store.snapshot()
+	if err != nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "catalog unavailable")
 		return
 	}
 	// 新清单加载失败时仍在用上一份正常快照服务，因此保持就绪（200），只把状态标为
 	// stale 供监控发现；具体原因不对外暴露，由 Store 的重新加载回调记录到日志。
 	body := "{\"status\":\"ready\"}\n"
-	if h.store.Err() != nil {
+	if stale != nil {
 		body = "{\"status\":\"stale\",\"error\":\"manifest reload failed; serving the previous catalog\"}\n"
 	}
 	w.Header().Set("Content-Type", "application/json")

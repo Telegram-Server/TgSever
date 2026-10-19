@@ -1,6 +1,8 @@
 package updatecdn
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +117,40 @@ func TestStoreKeepsLastGoodSnapshotWhenManifestDisappears(t *testing.T) {
 	}
 	if len(reloadErrors) != 1 || store.Err() == nil {
 		t.Fatalf("reload errors = %v, Err() = %v; want one reported error", reloadErrors, store.Err())
+	}
+}
+
+// 失败原因可能不在清单本身：先改清单、后上传包时，包到位后（重试间隔过后）应自动
+// 恢复，而不必再碰一次清单。
+func TestStoreRetriesFailedReloadAfterPackageArrives(t *testing.T) {
+	dir := t.TempDir()
+	filesDir := filepath.Join(dir, "files")
+	if err := os.Mkdir(filesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := writeTestManifest(t, dir, appsManifest(8))
+	store, err := NewStore(manifestPath, filesDir, testCatalogOptions(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.retryInterval = 0
+
+	packageData := testDesktopPackage(t, "win64", "stable", 7007000)
+	hash := sha256.Sum256(packageData)
+	manifest := appsManifest(9)
+	manifest.Desktop = map[string]map[string]DesktopRelease{
+		"win64": {"stable": {Build: 7007000, File: "td-update-win-x64-7007000", SHA256: hex.EncodeToString(hash[:])}},
+	}
+	writeTestManifest(t, dir, manifest)
+	setManifestTime(t, manifestPath, time.Now().Add(-time.Hour))
+	if id := resolveIOSUpdateID(t, store); id != 8 || store.Err() == nil {
+		t.Fatalf("before the package arrives: id = %d, Err() = %v; want the previous snapshot and an error", id, store.Err())
+	}
+	if err := os.WriteFile(filepath.Join(filesDir, "td-update-win-x64-7007000"), packageData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if id := resolveIOSUpdateID(t, store); id != 9 || store.Err() != nil {
+		t.Fatalf("after the package arrives: id = %d, Err() = %v; want the new snapshot", id, store.Err())
 	}
 }
 
