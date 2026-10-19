@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -1098,29 +1100,83 @@ func (r *Router) BotAPIEditInlineRichMessage(ctx context.Context, botID int64, i
 	return r.onMessagesEditInlineBotMessage(WithUserID(ctx, botID), req)
 }
 
-// BotAPIDeleteMessage deletes a bot-owned private message with revoke=true so
-// the target user's MTProto clients observe the normal delete update.
+// BotAPIDeleteMessage 实现 deleteMessage。私聊里消息必须在 chat_id 对应的会话中，
+// 按 revoke 删除让对端客户端收到正常的删除 update；群/频道走 channels.deleteMessages
+// 的删除主体，自己的消息无需管理员身份，别人的消息需要删除消息权限。找不到消息时
+// 报 MESSAGE_ID_INVALID（网关映射为 "message to delete not found"），不返回 true。
 func (r *Router) BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, messageID int) (bool, error) {
-	if r == nil || r.deps.Messages == nil || botID == 0 {
+	if r == nil || botID == 0 {
 		return false, errors.New("BOT_INVALID")
 	}
-	if chatID <= 0 {
+	if messageID <= 0 || messageID > domain.MaxMessageBoxID {
+		return false, errors.New("MESSAGE_ID_INVALID")
+	}
+	peer, ok := botAPIPeerFromChatID(chatID)
+	if !ok {
 		return false, errors.New("CHAT_ID_INVALID")
 	}
-	if messageID <= 0 || messageID > domain.MaxMessageBoxID {
+	if peer.Type == domain.PeerTypeChannel {
+		return r.botAPIDeleteChannelMessage(ctx, botID, chatID, messageID)
+	}
+	return r.botAPIDeletePrivateMessage(ctx, botID, peer, messageID)
+}
+
+// botAPIDeletePrivateMessage 先在机器人消息盒里查出消息并校验它属于 peer 的会话：
+// 消息盒 id 在机器人所有私聊间共用一个序列，不校验时错误的 chat_id 会删掉另一个
+// 用户会话里的同号消息。
+func (r *Router) botAPIDeletePrivateMessage(ctx context.Context, botID int64, peer domain.Peer, messageID int) (bool, error) {
+	if r.deps.Messages == nil {
+		return false, errors.New("BOT_INVALID")
+	}
+	list, err := r.deps.Messages.GetMessages(ctx, botID, []int{messageID})
+	if err != nil {
+		return false, err
+	}
+	if !slices.ContainsFunc(list.Messages, func(msg domain.Message) bool {
+		return msg.ID == messageID && msg.Peer == peer && !msg.Deleted
+	}) {
 		return false, errors.New("MESSAGE_ID_INVALID")
 	}
 	res, err := r.deps.Messages.DeleteMessages(ctx, botID, domain.DeleteMessagesRequest{
 		OwnerUserID: botID,
 		IDs:         []int{messageID},
 		Revoke:      true,
-		Date:        int(time.Now().Unix()),
+		Date:        int(r.clock.Now().Unix()),
 		Audit:       domain.BotDeletionAudit(botID),
 	})
 	if err != nil {
 		return false, err
 	}
+	if len(res.Self().MessageIDs) == 0 {
+		// 查到之后被并发删除。
+		return false, errors.New("MESSAGE_ID_INVALID")
+	}
 	r.notifyPushDeletes(res)
+	return true, nil
+}
+
+// botAPIDeleteChannelMessage 以机器人身份删除群/频道消息，权限校验与扇出和
+// channels.deleteMessages 相同，删除记录归属于机器人。
+func (r *Router) botAPIDeleteChannelMessage(ctx context.Context, botID, chatID int64, messageID int) (bool, error) {
+	channel, _, err := r.botAPIInputChannel(ctx, botID, chatID)
+	if err != nil {
+		return false, err
+	}
+	res, err := r.deleteChannelMessages(WithUserID(ctx, botID), botID, channel.ChannelID, []int{messageID}, domain.BotDeletionAudit(botID))
+	if err != nil {
+		// 与其他 Bot API 群方法一致：机器人已不在群里/被封禁时按 chat_id 无效处理。
+		if tgerr.Is(err, "CHANNEL_PRIVATE", "CHANNEL_INVALID", "USER_BANNED_IN_CHANNEL") {
+			return false, errors.New("CHAT_ID_INVALID")
+		}
+		return false, err
+	}
+	if len(res.DeletedIDs) == 0 {
+		if messageID == 1 {
+			// id=1 建群服务消息存在但存储层恒跳过，属于不能删除而不是找不到。
+			return false, tgerr400("MESSAGE_DELETE_FORBIDDEN")
+		}
+		return false, errors.New("MESSAGE_ID_INVALID")
+	}
 	return true, nil
 }
 
