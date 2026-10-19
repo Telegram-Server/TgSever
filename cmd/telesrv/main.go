@@ -1692,7 +1692,9 @@ func run(logger *zap.Logger) error {
 	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool),
 		memory.NewLoginPasswordChallengeStore(nil), authService,
 		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled),
-		loginpasswordapp.WithUserRateLimit(rateLimiter, cfg.PasswordLoginUserRateLimit, cfg.PasswordLoginUserRateWindow))
+		loginpasswordapp.WithUserRateLimit(rateLimiter, cfg.PasswordLoginUserRateLimit, cfg.PasswordLoginUserRateWindow),
+		// 设置、修改、删除登录密码后由 777000 通知该账号：消息与 outbox 同事务落库，再推给所有在线会话。
+		loginpasswordapp.WithChangeNotices(messageStore, logger.Named("login-password")))
 	if cfg.PasswordLoginEnabled {
 		logger.Warn("手机号 + 密码登录已启用：任何人都可以不经验证码用任意号码注册")
 	}

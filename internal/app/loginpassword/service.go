@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
+
 	"telesrv/internal/app/account"
 	"telesrv/internal/app/auth"
 	"telesrv/internal/domain"
@@ -55,6 +57,9 @@ type Service struct {
 	flows      AuthFlows
 	now        func() time.Time
 	userLimit  userRateLimit // signInWithPassword 按目标用户限流，见 rate_limit.go
+	// notices 与 log 见 manage.go 的 WithChangeNotices。
+	notices NoticeSender
+	log     *zap.Logger
 }
 
 // Option 调整登录密码服务。

@@ -27,6 +27,8 @@ type LoginPasswordService interface {
 	SignIn(ctx context.Context, a domain.Authorization, rawAuthKeyID [8]byte, phone string, check domain.PasswordCheck) (domain.User, error)
 	// SignUp 处理 telesrv.signUpWithPassword：建号并写入登录密码，绑定当前授权。
 	SignUp(ctx context.Context, a domain.Authorization, phone, firstName, lastName string, settings domain.PasswordInputSettings) (domain.User, error)
+	// 已登录时管理登录密码，见 telesrv_login_password_manage.go。
+	LoginPasswordManager
 }
 
 // registerTelesrv 注册 telesrv.* 扩展方法（td 的 telesrv overlay，见 _schema/TELESRV_EXTENSIONS.md）。
@@ -40,6 +42,7 @@ func (r *Router) registerTelesrv(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.TelesrvSignInWithPasswordRequest](d, tlprofile.SemanticMethodTelesrvSignInWithPassword, func(ctx context.Context, req *tg.TelesrvSignInWithPasswordRequest) (any, error) {
 		return r.onTelesrvSignInWithPassword(ctx, req)
 	})
+	r.registerTelesrvLoginPasswordManage(d)
 }
 
 // onTelesrvGetLoginPassword 处理 telesrv.getLoginPassword（未登录可调用）。

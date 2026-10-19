@@ -91,6 +91,8 @@ type loginPasswordServer struct {
 	addr   *net.TCPAddr
 	ctx    context.Context
 	users  *tombstoningUserStore
+	// loginPasswords 是服务端用的登录密码存储，供测试直接确认某一行已经不在了。
+	loginPasswords *memory.LoginPasswordStore
 }
 
 // tombstoningUserStore 在内存 UserStore 外面加一层"已注销"标记。内存 store 没有账号
@@ -147,23 +149,31 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	dialogStore := memory.NewDialogStore()
 	messageStore := memory.NewMessageStore(dialogStore)
 	updateEventStore := memory.NewUpdateEventStore()
+	// 私聊消息（777000 的登录密码改动通知）与 pts 事件、投递任务一起落进这个 store。
+	messageStore.AttachUpdateEventStore(updateEventStore)
 	// 2FA 云密码的 store 由 auth（登录时判断 password_pending）和 account（设置云密码）共用。
 	cloudPasswords := memory.NewPasswordStore()
 	activeSessions := NewSessionManager(zaptest.NewLogger(t).Named("sessions"))
-	authService := auth.NewService(userStore, memory.NewAuthorizationStore(), memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), loginPasswordTestCode,
+	authorizations := memory.NewAuthorizationStore()
+	authService := auth.NewService(userStore, authorizations, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), loginPasswordTestCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore)),
 		auth.WithPasswords(cloudPasswords))
 	limiter := newCountingRateLimiter()
-	loginPasswords := loginpasswordapp.NewService(userStore, memory.NewLoginPasswordStore(baseUsers),
+	loginPasswordStore := memory.NewLoginPasswordStore(baseUsers)
+	loginPasswords := loginpasswordapp.NewService(userStore, loginPasswordStore,
 		memory.NewLoginPasswordChallengeStore(nil, opts.challengeLimits...), authService,
-		loginpasswordapp.WithEnabled(opts.enabled), opts.rateLimits.userRateLimit(limiter))
+		loginpasswordapp.WithEnabled(opts.enabled), opts.rateLimits.userRateLimit(limiter),
+		loginpasswordapp.WithChangeNotices(messageStore, zaptest.NewLogger(t).Named("login-password")))
+	// 注销账号（account.deleteAccount）走内存的账号生命周期 store，同一事务里删掉登录密码。
+	lifecycle := memory.NewAccountLifecycleStore(baseUsers, loginPasswordStore,
+		memory.WithAccountLifecyclePasswords(cloudPasswords), memory.WithAccountLifecycleAuthorizations(authorizations))
 
 	deps := rpc.Deps{
 		Auth:          authService,
 		LoginPassword: loginPasswords,
 		Sessions:      activeSessions,
-		Account:       account.NewService(cloudPasswords, account.WithUsers(userStore)),
+		Account:       account.NewService(cloudPasswords, account.WithUsers(userStore), account.WithAccountLifecycle(lifecycle)),
 		Help:          help.NewService(helpStore, helpStore, help.WithPasswordLogin(opts.enabled)),
 		Users:         users.NewService(userStore),
 		Updates:       updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
@@ -179,6 +189,13 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ctx, ln) }()
+	// 落库消息（如 777000 的登录密码改动通知）经 outbox 推给在线会话，与生产相同。
+	outboxDone := make(chan struct{})
+	go func() {
+		defer close(outboxDone)
+		rpc.NewOutboxDispatcher(updateEventStore, memory.NewDispatchOutboxStore(updateEventStore), activeSessions, zaptest.NewLogger(t).Named("outbox"),
+			rpc.WithOutboxInterval(10*time.Millisecond), rpc.WithOutboxUpdateBuilder(router.BuildOutboxUpdates)).Run(ctx)
+	}()
 	// 子测试是并行的，会在顶层测试函数返回之后才运行；用 Cleanup 而不是 defer，
 	// 保证服务端在所有子测试结束后才关闭。
 	t.Cleanup(func() {
@@ -186,8 +203,9 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		if err := <-serveErr; err != nil {
 			t.Errorf("serve: %v", err)
 		}
+		<-outboxDone
 	})
-	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore}
+	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore}
 }
 
 // run 用一个全新的 auth key 连上服务端执行 fn。fn 里的断言失败要 return error，
@@ -221,6 +239,7 @@ func (s *loginPasswordServer) runWithUpdates(t *testing.T, updates telegram.Upda
 func TestLoginPasswordEndToEnd(t *testing.T) {
 	t.Parallel()
 	srv := startLoginPasswordServer(t, loginPasswordServerOptions{enabled: true})
+	runLoginPasswordManageSubtests(t, srv)
 
 	t.Run("getAppConfig advertises password_login", func(t *testing.T) {
 		t.Parallel()
@@ -828,6 +847,7 @@ func TestLoginPasswordEndToEnd(t *testing.T) {
 func TestLoginPasswordDisabledEndToEnd(t *testing.T) {
 	t.Parallel()
 	srv := startLoginPasswordServer(t, loginPasswordServerOptions{enabled: false})
+	runLoginPasswordManageDisabled(t, srv)
 
 	srv.run(t, func(ctx context.Context, raw *tg.Client) error {
 		if features, ok, err := appConfigTelesrvFeatures(ctx, raw); err != nil {
