@@ -120,6 +120,9 @@ func TestMessageDeletionKeepsDeviceAfterLogoutPostgres(t *testing.T) {
 	if err := NewAuthKeyStore(pool).Save(ctx, store.AuthKeyData{ID: authKeyID, Value: authKey}); err != nil {
 		t.Fatalf("save auth key: %v", err)
 	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM auth_keys WHERE auth_key_id = $1`, authKeyIDToInt64(authKeyID))
+	})
 	authorizations := NewAuthorizationStore(pool)
 	if err := authorizations.Bind(ctx, domain.Authorization{
 		AuthKeyID:   authKeyID,

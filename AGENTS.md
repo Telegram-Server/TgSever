@@ -19,7 +19,16 @@ go test ./... -count=1                            # CI gate, passes without exte
 
 ### Tests that need Postgres
 
-Postgres integration tests are `*_integration_test.go` in `internal/store/postgres` and `cmd/telesrv-admin`. They **skip** unless `TELESRV_TEST_POSTGRES_DSN` is set, and the DSN's database name **must contain "test"** or the helper fails fast (see `testPool` in `internal/store/postgres/authkey_integration_test.go`). Run a focused subset like CI does:
+Postgres integration tests are `*_integration_test.go` in `internal/store/postgres` and `cmd/telesrv-admin` (plus a few in `internal/rpc` and `internal/loadtest`). They **skip** unless `TELESRV_TEST_POSTGRES_DSN` is set, and the DSN's database name **must contain "test"** or they fail fast. The DSN's role needs **CREATEDB**.
+
+The shared machinery is `internal/store/postgres/pgtest` (wired in each package's `TestMain`):
+
+- **Template database** `telesrv_tmpl_<hash>_test`, named after a hash of the embedded migrations. Built once — migrated from empty to head and checked against the head version — then marked `IS_TEMPLATE`. Reused while the migrations are unchanged; a migration change builds a new one (cold run ≈ 15 s). Stale templates from old hashes are not pruned automatically: `ALTER DATABASE … IS_TEMPLATE false; DROP DATABASE …`.
+- **Per-package clone** (`<pkg>_<rand>_test`), dropped when the test binary exits. `testPool(t)` in `internal/store/postgres` and `pgtest.DSN(t)` elsewhere point at it. In `internal/store/postgres` the `TestMain` also rewrites `TELESRV_TEST_POSTGRES_DSN` to the clone, so tests that read the variable directly land there too. Tests in one package share this database: use unique ids or clean up.
+- **Per-test clone**: `pgtest.NewDatabase(t)` returns a DSN to a database of the test's own, dropped in `t.Cleanup`. Use it for tests that count whole tables, claim globally, or `TRUNCATE`.
+- A killed test run (timeout, Ctrl-C) can leave `*_test` clones behind; drop them by hand.
+
+Run a focused subset like CI does:
 
 ```powershell
 $env:TELESRV_TEST_POSTGRES_DSN="postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable"
@@ -125,6 +134,7 @@ Binaries in `cmd/`: `telesrv` (server), `telesrv-admin` (admin dashboard), `tele
 ## Migrations
 
 - `deploy/migrations/NNNN_name.up.sql` + matching `.down.sql`; single source of truth for both golang-migrate (embedded, run on startup via `store/postgres.Migrate`) and sqlc. **Migration 0123 is deliberately skipped** — the sequence jumps 0122 → 0124, don't reuse 0123.
+- After 0223 versions are timestamps (`YYYYMMDDhhmmss_name`). A new migration must sort after every existing one: golang-migrate keeps a single `schema_migrations.version`, so one slotted in between is never run on a deployed database. `TestEmbeddedMigrationsAreContiguousAndReversible` checks this against `publishedTimestampVersions`; adding a migration at the end needs no test change (append it to that list once it has shipped).
 - DBs are branch-isolated: `telesrv_main` and `telesrv_v2` in one container (`deploy/postgres-init/010_branch_databases.sql`). Legacy `telesrv` DB is kept for compat/migration only — never touch it.
 - Windows dev scripts derive the Postgres DB from the current branch name (`telesrv_main` for `main`, `telesrv_v2` for `v2`).
 

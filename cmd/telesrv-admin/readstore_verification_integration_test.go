@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
-	"telesrv/internal/store/postgres"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 // The verification review queue is read with hand-written SQL, so the only thing
@@ -19,22 +18,24 @@ import (
 // ownership predicates are right is running them against the real schema. Gated on
 // TELESRV_TEST_POSTGRES_DSN, like every other integration test in the repo.
 
+// verificationReadStore opens a pool on this package's shared clone database
+// (pgtest, set up in TestMain). Tests in the package share it, so their rows
+// must use unique ids or be cleaned up.
 func verificationReadStore(t *testing.T) (*readStore, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
-	}
-	parsed, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatalf("parse TELESRV_TEST_POSTGRES_DSN: %v", err)
-	}
-	if !strings.Contains(strings.ToLower(parsed.ConnConfig.Database), "test") {
-		t.Fatalf("TELESRV_TEST_POSTGRES_DSN must name a dedicated test database, got %q", parsed.ConnConfig.Database)
-	}
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	return readStoreOn(t, pgtest.DSN(t))
+}
+
+// isolatedReadStore opens a pool on a database of the test's own, for tests
+// that assert on whole-table state (a leaderboard, a global count) and would
+// otherwise see rows written by their neighbours.
+func isolatedReadStore(t *testing.T) (*readStore, *pgxpool.Pool) {
+	t.Helper()
+	return readStoreOn(t, pgtest.NewDatabase(t))
+}
+
+func readStoreOn(t *testing.T, dsn string) (*readStore, *pgxpool.Pool) {
+	t.Helper()
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		t.Fatalf("open pool: %v", err)

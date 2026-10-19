@@ -25,6 +25,7 @@ import (
 	"telesrv/internal/mtprotoedge"
 	"telesrv/internal/rpc"
 	"telesrv/internal/store/postgres"
+	"telesrv/internal/store/postgres/pgtest"
 	"telesrv/internal/store/redisstore"
 )
 
@@ -45,11 +46,12 @@ const (
 // 吞吐 = messages / wallclock，延迟分位反映该并发下的饱和延迟。
 // 固定到达率（open-loop）的版本留作后续细化（见 docs/message-module.md）。
 func TestMessageSendBaseline(t *testing.T) {
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
 	redisAddr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
-	if dsn == "" || redisAddr == "" {
+	if os.Getenv(pgtest.EnvDSN) == "" || redisAddr == "" {
 		t.Skip("set TELESRV_TEST_POSTGRES_DSN and TELESRV_TEST_REDIS_ADDR to run message load baseline")
 	}
+	// 库是本包从模板克隆的独立库（pgtest），已迁移到最新。
+	dsn := pgtest.DSN(t)
 
 	// 默认用户池取较大值：用户太少会把写集中到少数 dialog/message_box 行造成行锁争用，
 	// 拉高 send 尾延迟（这是小池假象，生产 20 万用户分散后争用极低）。
@@ -74,9 +76,6 @@ func TestMessageSendBaseline(t *testing.T) {
 	deferDispatch := os.Getenv("TELESRV_LOAD_DEFER_DISPATCH") == "1"
 
 	ctx := context.Background()
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	pool, err := postgres.Open(ctx, dsn, postgres.WithMaxConns(poolConns))
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)

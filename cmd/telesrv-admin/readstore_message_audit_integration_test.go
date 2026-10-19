@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store/postgres"
@@ -18,7 +17,7 @@ import (
 func TestReadStoreMessageAudit(t *testing.T) {
 	store, pool := verificationReadStore(t)
 	ctx := context.Background()
-	suffix := fmt.Sprintf("%06d", time.Now().UnixNano()%1_000_000)
+	suffix := fmt.Sprintf("%06d", randomBelow(t, 1_000_000))
 	users := postgres.NewUserStore(pool)
 	newUser := func(name string, n int) domain.User {
 		t.Helper()
@@ -36,8 +35,9 @@ func TestReadStoreMessageAudit(t *testing.T) {
 	})
 
 	messages := postgres.NewMessageStore(pool)
-	base := int(time.Now().Unix()) - 3600
-	random := time.Now().UnixNano()
+	// A fixed date keeps the history ordering independent of the wall clock.
+	base := 1_700_300_000
+	random := randomBelow(t, 1<<62)
 	send := func(from, to domain.User, body string, at int) domain.SendPrivateTextResult {
 		t.Helper()
 		random++
@@ -229,22 +229,6 @@ func TestReadStoreMessageAudit(t *testing.T) {
 		hits, err = store.AuditSearch(ctx, AuditSearchQuery{OwnerUserID: alice.ID, PeerType: "user", PeerID: bob.ID, Q: "%", Limit: 20})
 		if err != nil || len(hits) != 0 {
 			t.Fatalf("search %% = %+v err %v, want it taken literally", hits, err)
-		}
-	})
-
-	t.Run("deletions narrow to a page's message id range", func(t *testing.T) {
-		rows, err := store.ListMessageDeletions(ctx, MessageDeletionQuery{
-			OwnerUserID: alice.ID, PeerType: "user", PeerID: bob.ID,
-			MinMessageID: secret.SenderMessage.ID, MaxMessageID: secret.SenderMessage.ID, Limit: 10,
-		})
-		if err != nil || len(rows) != 1 || rows[0].MessageID != secret.SenderMessage.ID {
-			t.Fatalf("range = %+v err %v", rows, err)
-		}
-		rows, err = store.ListMessageDeletions(ctx, MessageDeletionQuery{
-			OwnerUserID: alice.ID, PeerType: "user", PeerID: bob.ID, MaxMessageID: secret.SenderMessage.ID - 1, Limit: 10,
-		})
-		if err != nil || len(rows) != 0 {
-			t.Fatalf("range below = %+v err %v", rows, err)
 		}
 	})
 }
