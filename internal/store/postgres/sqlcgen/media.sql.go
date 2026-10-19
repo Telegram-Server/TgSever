@@ -925,6 +925,55 @@ func (q *Queries) NextProfilePhotoOrder(ctx context.Context, arg NextProfilePhot
 	return max_order, err
 }
 
+const offerProfilePhoto = `-- name: OfferProfilePhoto :exec
+INSERT INTO profile_photos (owner_peer_type, owner_peer_id, kind, photo_id, date, active, sort_order)
+VALUES ($1::text, $2::bigint, 'profile', $3::bigint, $4::int, false, 0)
+ON CONFLICT (owner_peer_type, owner_peer_id, kind, photo_id) DO NOTHING
+`
+
+type OfferProfilePhotoParams struct {
+	OwnerPeerType string
+	OwnerPeerID   int64
+	PhotoID       int64
+	Date          int32
+}
+
+// 别人建议的头像：以停用行进入 owner 的头像历史，不改变当前头像，也不出现在相册里；
+// owner 之后可经 updateProfilePhoto 接受（激活）它。已有同一行时保持原状。
+func (q *Queries) OfferProfilePhoto(ctx context.Context, arg OfferProfilePhotoParams) error {
+	_, err := q.db.Exec(ctx, offerProfilePhoto,
+		arg.OwnerPeerType,
+		arg.OwnerPeerID,
+		arg.PhotoID,
+		arg.Date,
+	)
+	return err
+}
+
+const profilePhotoInHistory = `-- name: ProfilePhotoInHistory :one
+SELECT EXISTS (
+  SELECT 1
+  FROM profile_photos
+  WHERE owner_peer_type = $1::text
+    AND owner_peer_id = $2::bigint
+    AND photo_id = $3::bigint
+)::bool AS in_history
+`
+
+type ProfilePhotoInHistoryParams struct {
+	OwnerPeerType string
+	OwnerPeerID   int64
+	PhotoID       int64
+}
+
+// 头像历史归属：不分 kind（profile / fallback），不分 active。
+func (q *Queries) ProfilePhotoInHistory(ctx context.Context, arg ProfilePhotoInHistoryParams) (bool, error) {
+	row := q.db.QueryRow(ctx, profilePhotoInHistory, arg.OwnerPeerType, arg.OwnerPeerID, arg.PhotoID)
+	var in_history bool
+	err := row.Scan(&in_history)
+	return in_history, err
+}
+
 const putAvailableReaction = `-- name: PutAvailableReaction :exec
 
 INSERT INTO available_reactions (

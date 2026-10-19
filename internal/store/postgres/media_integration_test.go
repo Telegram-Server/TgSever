@@ -352,6 +352,83 @@ func TestMediaStoreDocumentCacheCopiesAndRefreshes(t *testing.T) {
 	}
 }
 
+// TestMediaStoreProfilePhotoInHistory 守护 #38 的归属判断：profile / fallback 历史里的照片
+// （含已停用、别人建议的）算作 owner 的，别的 owner 的头像和从未进入头像历史的照片不算。
+func TestMediaStoreProfilePhotoInHistory(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := NewMediaStore(pool)
+
+	const ownerID, otherID = int64(9100000000000000301), int64(9100000000000000302)
+	const profileID, fallbackID, deletedID, otherAvatarID, messagePhotoID = int64(9100000000000000311), int64(9100000000000000312), int64(9100000000000000313), int64(9100000000000000314), int64(9100000000000000315)
+	const suggestedID = int64(9100000000000000316)
+	for _, id := range []int64{profileID, fallbackID, deletedID, otherAvatarID, messagePhotoID, suggestedID} {
+		photo := domain.Photo{ID: id, AccessHash: 7, Date: 1700000300, DCID: 2, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "x", W: 100, H: 100, Size: 1000}}}
+		if err := s.PutPhoto(ctx, photo); err != nil {
+			t.Fatalf("put photo %d: %v", id, err)
+		}
+	}
+	adds := []struct {
+		owner int64
+		kind  domain.ProfilePhotoKind
+		photo int64
+	}{
+		{ownerID, domain.ProfilePhotoKindProfile, profileID},
+		{ownerID, domain.ProfilePhotoKindFallback, fallbackID},
+		{ownerID, domain.ProfilePhotoKindProfile, deletedID},
+		{otherID, domain.ProfilePhotoKindProfile, otherAvatarID},
+	}
+	for _, a := range adds {
+		if err := s.AddProfilePhotoKind(ctx, domain.PeerTypeUser, a.owner, a.kind, a.photo, 1700000301); err != nil {
+			t.Fatalf("add profile photo %d: %v", a.photo, err)
+		}
+	}
+	if _, err := s.DeleteProfilePhotosKind(ctx, domain.PeerTypeUser, ownerID, domain.ProfilePhotoKindProfile, []int64{deletedID}); err != nil {
+		t.Fatalf("delete profile photo: %v", err)
+	}
+	// 别人建议的照片：进入历史，但不改变当前头像、不出现在相册里。
+	if err := s.OfferProfilePhoto(ctx, domain.PeerTypeUser, ownerID, suggestedID, 1700000302); err != nil {
+		t.Fatalf("offer profile photo: %v", err)
+	}
+	if cur, ok, err := s.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, ownerID, domain.ProfilePhotoKindProfile); err != nil || !ok || cur != profileID {
+		t.Fatalf("current after offer = %d ok=%v err=%v, want %d", cur, ok, err, profileID)
+	}
+	if _, total, err := s.ListProfilePhotosKind(ctx, domain.PeerTypeUser, ownerID, domain.ProfilePhotoKindProfile, 0, 10, 0); err != nil || total != 1 {
+		t.Fatalf("profile list total after offer = %d err=%v, want 1", total, err)
+	}
+	// 再次 offer 一张已激活的照片不会把它停用。
+	if err := s.OfferProfilePhoto(ctx, domain.PeerTypeUser, ownerID, profileID, 1700000303); err != nil {
+		t.Fatalf("re-offer active photo: %v", err)
+	}
+	if cur, ok, err := s.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, ownerID, domain.ProfilePhotoKindProfile); err != nil || !ok || cur != profileID {
+		t.Fatalf("current after re-offer = %d ok=%v err=%v, want %d", cur, ok, err, profileID)
+	}
+
+	cases := []struct {
+		name    string
+		ownerTy domain.PeerType
+		photo   int64
+		want    bool
+	}{
+		{"profile", domain.PeerTypeUser, profileID, true},
+		{"fallback", domain.PeerTypeUser, fallbackID, true},
+		{"deactivated", domain.PeerTypeUser, deletedID, true},
+		{"suggested", domain.PeerTypeUser, suggestedID, true},
+		{"other owner's avatar", domain.PeerTypeUser, otherAvatarID, false},
+		{"message photo", domain.PeerTypeUser, messagePhotoID, false},
+		{"same id other owner type", domain.PeerTypeChannel, profileID, false},
+	}
+	for _, tc := range cases {
+		got, err := s.ProfilePhotoInHistory(ctx, tc.ownerTy, ownerID, tc.photo)
+		if err != nil {
+			t.Fatalf("%s: ProfilePhotoInHistory: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s: ProfilePhotoInHistory = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestMediaStoreListProfilePhotoDetailsBatchesPhotosAndRefreshesMaxID(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

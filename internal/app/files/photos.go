@@ -601,6 +601,8 @@ func (s *Service) SetCurrentProfilePhoto(ctx context.Context, ownerType domain.P
 }
 
 // SetCurrentProfilePhotoKind sets an existing photo as current for profile or fallback history.
+// 不校验归属：供刚创建好头像 photo 的内部路径使用（上传、后台、内置 bot 头像）。
+// 客户端传来的 photo ID 须先经 ProfilePhotoInHistory 确认属于该 owner。
 func (s *Service) SetCurrentProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64, date int) (domain.Photo, bool, error) {
 	photo, ok, err := s.media.GetPhoto(ctx, photoID)
 	if err != nil || !ok {
@@ -613,6 +615,19 @@ func (s *Service) SetCurrentProfilePhotoKind(ctx context.Context, ownerType doma
 		return domain.Photo{}, false, err
 	}
 	return photo, true, nil
+}
+
+// ProfilePhotoInHistory 报告 photo 是否在 owner 的头像历史里（profile 或 fallback，含已停用）。
+func (s *Service) ProfilePhotoInHistory(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64) (bool, error) {
+	return s.media.ProfilePhotoInHistory(ctx, ownerType, ownerID, photoID)
+}
+
+// OfferProfilePhoto 记录别人建议给 owner 的头像（suggest），使 owner 之后能接受它。
+func (s *Service) OfferProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int) error {
+	if date == 0 {
+		date = int(time.Now().Unix())
+	}
+	return s.media.OfferProfilePhoto(ctx, ownerType, ownerID, photoID, date)
 }
 
 // CurrentProfilePhoto 返回某 owner 的当前头像 Photo。
