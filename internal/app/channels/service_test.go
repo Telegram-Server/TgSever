@@ -2637,7 +2637,7 @@ func TestChannelInviteCannotBypassKickedMemberWithoutBanRight(t *testing.T) {
 		Participant: domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
 		BannedRights: domain.ChannelBannedRights{
 			ViewMessages: true,
-			UntilDate:    100,
+			UntilDate:    0, // 永久：不让测试依赖限制到期的判定时钟。
 		},
 		Date: 11,
 	}); err != nil {
