@@ -70,7 +70,18 @@ function Invoke-Compose {
 }
 
 Invoke-Compose -Arguments @("config", "--quiet")
-if ($Build) { Invoke-Compose -Arguments @("build", "--pull") } else { Invoke-Compose -Arguments @("pull") }
+if ($Build) {
+    # .env holds the provenance of the first build; a rebuild stamps the checkout
+    # it actually builds. Process env wins over --env-file in compose.
+    $commit = git -C $repoRoot rev-parse HEAD 2>$null
+    $env:TELESRV_BUILD_COMMIT = if ($LASTEXITCODE -eq 0 -and $commit) { $commit } else { "unknown" }
+    $branch = git -C $repoRoot rev-parse --abbrev-ref HEAD 2>$null
+    $env:TELESRV_BUILD_BRANCH = if ($LASTEXITCODE -eq 0 -and $branch) { $branch } else { "unknown" }
+    $treeStatus = git -C $repoRoot status --porcelain 2>$null
+    $env:TELESRV_BUILD_TREE_STATE = if ($LASTEXITCODE -ne 0) { "unknown" } elseif ($treeStatus) { "dirty" } else { "clean" }
+    $env:TELESRV_BUILD_DATE = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    Invoke-Compose -Arguments @("build", "--pull")
+} else { Invoke-Compose -Arguments @("pull") }
 try { Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--wait", "--wait-timeout", "600") }
 catch { & docker @composeBase logs --no-color --tail 160; throw }
 
