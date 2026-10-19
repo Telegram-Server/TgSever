@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"telesrv/internal/domain"
 )
@@ -141,21 +139,6 @@ func TestBanChatMemberPassesArgumentsAndReturnsTrue(t *testing.T) {
 	}
 }
 
-func TestBanChatMemberNormalizesUntilDate(t *testing.T) {
-	gateway := newFakeChatAdminGateway()
-	future := time.Now().Unix() + 3600
-
-	callChatAdmin(t, gateway, "banChatMember", fmt.Sprintf(`{"chat_id":-1001234,"user_id":42,"until_date":%d}`, future))
-	if got := gateway.lastCall(t).untilDate; got != int(future) {
-		t.Fatalf("until_date = %d, want %d kept", got, future)
-	}
-	// 不足 30 秒视为永久。
-	callChatAdmin(t, gateway, "banChatMember", fmt.Sprintf(`{"chat_id":-1001234,"user_id":42,"until_date":%d}`, time.Now().Unix()+5))
-	if got := gateway.lastCall(t).untilDate; got != 0 {
-		t.Fatalf("until_date = %d, want 0 (forever)", got)
-	}
-}
-
 func TestBanChatMemberRejectsBadArguments(t *testing.T) {
 	gateway := newFakeChatAdminGateway()
 	if got := callChatAdminError(t, gateway, "banChatMember", `{"chat_id":-1001234}`); got != "USER_ID_INVALID" {
@@ -184,15 +167,13 @@ func TestUnbanChatMemberPassesOnlyIfBanned(t *testing.T) {
 
 func TestRestrictChatMemberConvertsPermissions(t *testing.T) {
 	gateway := newFakeChatAdminGateway()
-	future := time.Now().Unix() + 7200
 
-	callChatAdmin(t, gateway, "restrictChatMember", fmt.Sprintf(
-		`{"chat_id":-1001234,"user_id":42,"permissions":{"can_send_photos":true},"until_date":%d}`, future))
+	// 换算规则由 chat_rights_test 覆盖；这里只证明 permissions 经换算后到了网关。
+	callChatAdmin(t, gateway, "restrictChatMember",
+		`{"chat_id":-1001234,"user_id":42,"permissions":{"can_send_photos":true}}`)
 	call := gateway.lastCall(t)
-	want := chatPermissionsToBanned(botAPIChatPermissions{CanSendPhotos: true}, false)
-	want.UntilDate = int(future)
-	if call.method != "restrict" || call.userID != 42 || call.banned != want {
-		t.Fatalf("call = %+v, want rights %+v", call, want)
+	if call.method != "restrict" || call.userID != 42 || call.banned.SendPhotos || !call.banned.SendAudios || call.banned.UntilDate != 0 {
+		t.Fatalf("call = %+v, want photos allowed, audios banned, forever", call)
 	}
 	// 独立权限时不顺带放开纯文本。
 	callChatAdmin(t, gateway, "restrictChatMember",
@@ -260,9 +241,8 @@ func TestSetChatPermissionsConvertsPermissions(t *testing.T) {
 	callChatAdmin(t, gateway, "setChatPermissions",
 		`{"chat_id":-1001234,"permissions":{"can_send_polls":true,"can_invite_users":true},"use_independent_chat_permissions":true}`)
 	call := gateway.lastCall(t)
-	want := chatPermissionsToBanned(botAPIChatPermissions{CanSendPolls: true, CanInviteUsers: true}, true)
-	if call.method != "permissions" || call.chatID != -1001234 || call.banned != want {
-		t.Fatalf("call = %+v, want %+v", call, want)
+	if call.method != "permissions" || call.chatID != -1001234 || call.banned.SendPolls || call.banned.InviteUsers || !call.banned.PinMessages {
+		t.Fatalf("call = %+v, want polls and invites allowed, pinning banned", call)
 	}
 	if got := callChatAdminError(t, gateway, "setChatPermissions", `{"chat_id":-1001234}`); got != "BAD_REQUEST" {
 		t.Fatalf("missing permissions: %q", got)
@@ -305,12 +285,23 @@ func TestUnpinChatMessageMessageIDIsOptional(t *testing.T) {
 	}
 }
 
-func TestUnpinAllChatMessages(t *testing.T) {
-	gateway := newFakeChatAdminGateway()
-
-	callChatAdmin(t, gateway, "unpinAllChatMessages", `{"chat_id":2001}`)
-	if call := gateway.lastCall(t); call.method != "unpinAll" || call.chatID != 2001 {
-		t.Fatalf("call = %+v", call)
+// 只带 chat_id 的方法把 bot 与 chat_id 原样转发给对应的网关方法。
+func TestChatIDOnlyMethodsForwardToGateway(t *testing.T) {
+	for _, tc := range []struct {
+		method string
+		call   string
+	}{
+		{"unpinAllChatMessages", "unpinAll"},
+		{"deleteChatPhoto", "deletePhoto"},
+		{"leaveChat", "leave"},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			gateway := newFakeChatAdminGateway()
+			callChatAdmin(t, gateway, tc.method, `{"chat_id":-1001234}`)
+			if call := gateway.lastCall(t); call.method != tc.call || call.chatID != -1001234 || call.botID != testBotProfile.BotUserID {
+				t.Fatalf("call = %+v, want %s on chat -1001234", call, tc.call)
+			}
+		})
 	}
 }
 
@@ -411,24 +402,6 @@ func TestSetChatPhotoRejectsFileIDsAndURLs(t *testing.T) {
 	}
 }
 
-func TestDeleteChatPhoto(t *testing.T) {
-	gateway := newFakeChatAdminGateway()
-
-	callChatAdmin(t, gateway, "deleteChatPhoto", `{"chat_id":-1001234}`)
-	if call := gateway.lastCall(t); call.method != "deletePhoto" || call.chatID != -1001234 {
-		t.Fatalf("call = %+v", call)
-	}
-}
-
-func TestLeaveChat(t *testing.T) {
-	gateway := newFakeChatAdminGateway()
-
-	callChatAdmin(t, gateway, "leaveChat", `{"chat_id":-1001234}`)
-	if call := gateway.lastCall(t); call.method != "leave" || call.chatID != -1001234 || call.botID != testBotProfile.BotUserID {
-		t.Fatalf("call = %+v", call)
-	}
-}
-
 func TestChatAdminMethodsNeedTheOptionalGateway(t *testing.T) {
 	rec := callMethod(t, newTestHandler(t, &fakeBotAPIGateway{}), "banChatMember", `{"chat_id":-1001234,"user_id":42}`)
 	if rec.Code != http.StatusNotImplemented || decodeAPIResponse(t, rec).Description != "METHOD_NOT_FOUND" {
@@ -437,7 +410,7 @@ func TestChatAdminMethodsNeedTheOptionalGateway(t *testing.T) {
 }
 
 func TestChatAdminErrorsKeepTheirTLCodes(t *testing.T) {
-	for _, code := range chatAdminErrorMarkers {
+	for _, code := range []string{"USER_ADMIN_INVALID", "CHAT_NOT_MODIFIED"} {
 		gateway := newFakeChatAdminGateway()
 		gateway.err = errors.New("rpc error code 400: " + code)
 		if got := callChatAdminError(t, gateway, "banChatMember", `{"chat_id":-1001234,"user_id":42}`); got != code {

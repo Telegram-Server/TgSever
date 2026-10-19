@@ -68,36 +68,22 @@ func (g *fakeSendExtraGateway) BotAPISendMediaGroup(_ context.Context, botID, ch
 	return g.album, g.err
 }
 
-func TestSendDiceDefaultsToDieAndProjectsDice(t *testing.T) {
+// 骰子的消息投影由 dice_update_test 覆盖；这里只看参数与缺省 emoji 到达网关。
+func TestSendDiceDefaultsToDie(t *testing.T) {
 	gateway := newFakeSendExtraGateway()
 	gateway.result = domain.Message{
 		ID: 7, Date: 100, Out: true, OwnerUserID: 1001,
-		Peer:  domain.Peer{Type: domain.PeerTypeUser, ID: 42},
-		From:  domain.Peer{Type: domain.PeerTypeUser, ID: 1001},
-		Media: &domain.MessageMedia{Kind: domain.MessageMediaKindDice, Dice: &domain.MessageDice{Emoticon: "🎲", Value: 4}},
+		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 42},
+		From: domain.Peer{Type: domain.PeerTypeUser, ID: 1001},
 	}
 	h := newTestHandler(t, gateway)
 
 	rec := callMethod(t, h, "sendDice", `{"chat_id":42,"disable_notification":true,"reply_to_message_id":3}`)
-	resp := decodeAPIResponse(t, rec)
-	if rec.Code != http.StatusOK || !resp.OK {
+	if resp := decodeAPIResponse(t, rec); rec.Code != http.StatusOK || !resp.OK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 	if gateway.chatID != 42 || gateway.emoji != "🎲" || !gateway.silent || gateway.replyTo != 3 {
 		t.Fatalf("gateway call = %+v", gateway)
-	}
-	var msg struct {
-		MessageID int `json:"message_id"`
-		Dice      struct {
-			Emoji string `json:"emoji"`
-			Value int    `json:"value"`
-		} `json:"dice"`
-	}
-	if err := json.Unmarshal(resp.Result, &msg); err != nil {
-		t.Fatalf("decode message: %v", err)
-	}
-	if msg.MessageID != 7 || msg.Dice.Emoji != "🎲" || msg.Dice.Value != 4 {
-		t.Fatalf("message = %s", resp.Result)
 	}
 }
 
