@@ -1732,6 +1732,15 @@ type LoginCodeMessageDelivery struct {
 	Template string
 }
 
+type LoginPassword struct {
+	UserID    int64
+	Salt1     []byte
+	Salt2     []byte
+	Verifier  []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type MessageBox struct {
 	OwnerUserID          int64
 	BoxID                int32

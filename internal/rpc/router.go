@@ -334,6 +334,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 
 	r.registerHelp(d)
 	r.registerAuth(d)
+	r.registerTelesrv(d)
 	r.registerUsers(d)
 	r.registerUpdates(d)
 	r.registerAccount(d)

@@ -267,6 +267,10 @@ type Config struct {
 	LoginEmailRequireSetup bool
 	// LoginEmailCodeLength 是邮箱验证码长度。
 	LoginEmailCodeLength int
+	// PasswordLoginEnabled 是手机号 + 密码登录（telesrv 扩展协议）的总开关，默认关闭。
+	// 打开后不经验证码即可用任意号码注册，号码不做归属验证，风险由运营者承担。
+	// 关闭时 telesrv. 密码登录方法一律返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
+	PasswordLoginEnabled bool
 	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate 是 777000 登录成功后的
 	// 欢迎消息（每次手机号/邮箱登录完成即发送）的回退模板——仅在管理面板未在
 	// internal/identity.Store 设置覆盖时生效（见 domain.ResolveWelcomeMessageTemplate）。
@@ -1079,6 +1083,7 @@ func Load() (Config, error) {
 		LoginEmailEnable:                  envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
 		LoginEmailRequireSetup:            envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
 		LoginEmailCodeLength:              envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
+		PasswordLoginEnabled:              envBoolOr("TELESRV_PASSWORD_LOGIN_ENABLED", false),
 		WelcomeMessagePhoneTemplate:       envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),
 		WelcomeMessageEmailTemplate:       envOr("TELESRV_WELCOME_MESSAGE_EMAIL_TEMPLATE", domain.DefaultWelcomeMessageEmailTemplate),
 		LoginCodeMessageTemplate:          envOr("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", domain.DefaultLoginCodeMessageTemplate),
@@ -2116,6 +2121,11 @@ func validateASRConfig(cfg Config) error {
 func validateLoginEmailConfig(cfg Config) error {
 	if cfg.LoginEmailRequireSetup && !cfg.LoginEmailEnable {
 		return fmt.Errorf("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP requires TELESRV_LOGIN_EMAIL_ENABLE=true")
+	}
+	// 密码注册不经过验证码，也就没有设置登录邮箱的环节；两者同时打开会让密码注册绕过
+	// "必须先设置登录邮箱"的策略，因此直接拒绝这种组合。
+	if cfg.LoginEmailRequireSetup && cfg.PasswordLoginEnabled {
+		return fmt.Errorf("TELESRV_PASSWORD_LOGIN_ENABLED cannot be combined with TELESRV_LOGIN_EMAIL_REQUIRE_SETUP: password sign-up has no login email setup step")
 	}
 	if cfg.AuthCodeTTL <= 0 {
 		return fmt.Errorf("TELESRV_AUTH_CODE_TTL must be positive")

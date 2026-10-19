@@ -1307,6 +1307,11 @@ func (s *Service) SignUpWithAccountCreator(ctx context.Context, auth domain.Auth
 	if err != nil {
 		return domain.User{}, err
 	}
+	// 建号会立即提交，而这条路径没有验证码可作废：先确认当前 auth key 能绑定授权，
+	// 否则 bind 失败时号码已被一个没人登录的新账号占住。
+	if err := s.checkPermanentAuthKey(ctx, auth.AuthKeyID); err != nil {
+		return domain.User{}, err
+	}
 	return s.signUpAccount(ctx, auth, phone, firstName, lastName, create, nil)
 }
 
@@ -1549,17 +1554,8 @@ func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID in
 	if !found || systemUserLoginForbidden(u) {
 		return ErrSystemUserLoginForbidden
 	}
-	if s.authKeys != nil {
-		key, found, err := s.authKeys.Get(ctx, auth.AuthKeyID)
-		if err != nil {
-			return err
-		}
-		// Defense in depth: Router normally converts a bound temp key to its perm
-		// identity and edge rejects expired temp keys. Never let an unbound/sticky
-		// temp key create authorization even if either outer boundary regresses.
-		if !found || key.ExpiresAt != 0 {
-			return ErrAuthKeyPermEmpty
-		}
+	if err := s.checkPermanentAuthKey(ctx, auth.AuthKeyID); err != nil {
+		return err
 	}
 	auth.UserID = userID
 	// Bind 是授权切换的持久化状态边界：生产 store 会先清同 auth key 的旧用户
@@ -1573,6 +1569,24 @@ func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID in
 			return ErrSystemUserLoginForbidden
 		}
 		return err
+	}
+	return nil
+}
+
+// checkPermanentAuthKey 确认 authKeyID 是已知的永久 auth key，只有它能绑定授权。
+func (s *Service) checkPermanentAuthKey(ctx context.Context, authKeyID [8]byte) error {
+	if s.authKeys == nil {
+		return nil
+	}
+	key, found, err := s.authKeys.Get(ctx, authKeyID)
+	if err != nil {
+		return err
+	}
+	// Defense in depth: Router normally converts a bound temp key to its perm
+	// identity and edge rejects expired temp keys. Never let an unbound/sticky
+	// temp key create authorization even if either outer boundary regresses.
+	if !found || key.ExpiresAt != 0 {
+		return ErrAuthKeyPermEmpty
 	}
 	return nil
 }

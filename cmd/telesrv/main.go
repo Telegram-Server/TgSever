@@ -47,6 +47,7 @@ import (
 	"telesrv/internal/app/help"
 	"telesrv/internal/app/langpack"
 	"telesrv/internal/app/livestream"
+	loginpasswordapp "telesrv/internal/app/loginpassword"
 	"telesrv/internal/app/maintenance"
 	messageapp "telesrv/internal/app/messages"
 	moderationapp "telesrv/internal/app/moderation"
@@ -1684,6 +1685,13 @@ func run(logger *zap.Logger) error {
 			Store:        accountService,
 			Sender:       loginEmailSender,
 		}))
+	// 手机号 + 密码登录（telesrv 扩展协议）。总开关默认关闭；关闭时服务照常构造，
+	// telesrv. 方法由服务自己返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
+	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool), authService,
+		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled))
+	if cfg.PasswordLoginEnabled {
+		logger.Warn("手机号 + 密码登录已启用：任何人都可以不经验证码用任意号码注册")
+	}
 	// Collectible (NFT) usernames and the gramsrv composite account rating are
 	// optional read models projected at the protocol edge. The rating worker
 	// computes and persists scores; profile reads never recompute them.
@@ -1866,6 +1874,7 @@ func run(logger *zap.Logger) error {
 		PresenceLastSeenDrainTimeout:   cfg.PresenceLastSeenDrainTimeout,
 	}, rpc.Deps{
 		Auth:                 authService,
+		LoginPassword:        loginPasswordService,
 		AuthDeliveryReports:  authDeliveryReportService,
 		ClientTelemetry:      clientTelemetryService,
 		AuthKeySessionLayers: authKeySessionLayerStore,
@@ -1880,6 +1889,7 @@ func run(logger *zap.Logger) error {
 			// operator turns it off, and that is exactly when a client must be told
 			// the wallet is unavailable rather than shown an entry that cannot work.
 			help.WithWalletAvailable(cfg.WalletStateDir != ""),
+			help.WithPasswordLogin(loginPasswordService.Enabled()),
 			help.WithAccountFreezeProvider(adminService)),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
