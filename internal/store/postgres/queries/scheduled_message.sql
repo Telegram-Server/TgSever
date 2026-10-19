@@ -7,6 +7,7 @@ INSERT INTO scheduled_messages (
   reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
   quote_text, quote_entities, quote_offset,
   fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
+  fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id,
   send_as_peer_type, send_as_peer_id, grouped_id,
   schedule_date, schedule_repeat_period, state, created_at, updated_at
 ) VALUES (
@@ -15,6 +16,7 @@ INSERT INTO scheduled_messages (
   sqlc.arg(reply_to_msg_id), sqlc.arg(reply_to_peer_type), sqlc.arg(reply_to_peer_id), sqlc.arg(reply_to_top_id),
   sqlc.arg(quote_text), sqlc.arg(quote_entities)::jsonb, sqlc.arg(quote_offset),
   sqlc.arg(fwd_from_peer_type), sqlc.arg(fwd_from_peer_id), sqlc.arg(fwd_from_name), sqlc.arg(fwd_date),
+  sqlc.arg(fwd_channel_post), sqlc.arg(fwd_saved_from_peer_type), sqlc.arg(fwd_saved_from_peer_id), sqlc.arg(fwd_saved_from_msg_id),
   sqlc.arg(send_as_peer_type), sqlc.arg(send_as_peer_id), sqlc.arg(grouped_id),
   sqlc.arg(schedule_date), sqlc.arg(schedule_repeat_period), 'pending', sqlc.arg(message_date), sqlc.arg(message_date)
 )

@@ -294,6 +294,7 @@ func (r *Router) sendScheduledMessage(ctx context.Context, userID int64, schedul
 		replyToReady: true,
 		sendAs:       sendAs,
 		sendAsReady:  true,
+		forward:      scheduled.Forward,
 		// 同组定时消息无论一次还是分批发出，都沿用排程时持久化的同一 grouped_id。
 		groupedID: scheduled.GroupedID,
 	}
@@ -435,6 +436,13 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 		forward := source.forward
 		if req.DropAuthor {
 			forward = nil
+		}
+		if forward != nil && toPeer.Type == domain.PeerTypeUser && toPeer.ID == userID {
+			// 与立即转发一致：转发进收藏夹记下来源会话与原消息，收藏夹据此按来源分组。
+			saved := *forward
+			saved.SavedFrom = fromPeer
+			saved.SavedFromMsgID = req.ID[i]
+			forward = &saved
 		}
 		msg, err := scheduledSvc.ScheduleMessage(ctx, userID, domain.ScheduleMessageRequest{
 			OwnerUserID:          userID,

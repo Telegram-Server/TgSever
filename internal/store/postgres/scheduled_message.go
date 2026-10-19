@@ -93,6 +93,10 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 		sendAsType = string(req.SendAs.Type)
 		sendAsID = req.SendAs.ID
 	}
+	fwdChannelPost := int32(0)
+	if req.Forward != nil {
+		fwdChannelPost = int32(req.Forward.ChannelPost)
+	}
 	row, err := q.InsertScheduledMessage(ctx, sqlcgen.InsertScheduledMessageParams{
 		OwnerUserID:          req.OwnerUserID,
 		ScheduledID:          int32(nextID),
@@ -117,6 +121,10 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 		FwdFromPeerID:        meta.FwdFromPeerID,
 		FwdFromName:          meta.FwdFromName,
 		FwdDate:              meta.FwdDate,
+		FwdChannelPost:       fwdChannelPost,
+		FwdSavedFromPeerType: meta.FwdSavedFromPeerType,
+		FwdSavedFromPeerID:   meta.FwdSavedFromPeerID,
+		FwdSavedFromMsgID:    meta.FwdSavedFromMsgID,
 		SendAsPeerType:       sendAsType,
 		SendAsPeerID:         sendAsID,
 		GroupedID:            req.GroupedID,
@@ -494,17 +502,28 @@ func scheduledMessageFromRow(row sqlcgen.ScheduledMessage) (domain.ScheduledMess
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled rich message: %w", err)
 	}
 	msg.RichMessage = richMessage
-	// scheduled_messages 不存 saved_from：到点投递经 SendPrivateText 实时
-	// 重算 saved 语义（self-chat 直发归 self），fwd saved 维度恒空。
+	// 转发头完整落表（含 channel_post 与转发进收藏夹的 saved_from），到点发出原样还原。
 	_, _, reply, forward, err := messageMetadataFromFields(
 		msg.Silent, msg.NoForwards, row.ReplyToMsgID, row.ReplyToPeerType, row.ReplyToPeerID, row.ReplyToTopID,
 		0, // scheduled_messages 不持久化 story 回复（定时回复 story 是边角，恒 0）
 		row.QuoteText, string(row.QuoteEntities), row.QuoteOffset, "{}",
 		row.FwdFromPeerType, row.FwdFromPeerID, row.FwdFromName, row.FwdDate,
-		"", 0, 0,
+		row.FwdSavedFromPeerType, row.FwdSavedFromPeerID, row.FwdSavedFromMsgID,
 	)
 	if err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled metadata: %w", err)
+	}
+	if forward != nil {
+		forward.ChannelPost = int(row.FwdChannelPost)
+	}
+	if reply == nil && row.ReplyToTopID > 0 {
+		// 只指向 forum 话题、不回复具体消息的定时消息（如定时转发进话题）：reply_to_msg_id 为 0，
+		// 话题落在 reply_to_top_id。共享解码只认 reply_to_msg_id，这里补回，否则发出时落进 General。
+		reply = &domain.MessageReply{
+			Peer:         domain.Peer{Type: domain.PeerType(row.ReplyToPeerType), ID: row.ReplyToPeerID},
+			TopMessageID: int(row.ReplyToTopID),
+			ForumTopic:   true,
+		}
 	}
 	msg.ReplyTo = reply
 	msg.Forward = forward

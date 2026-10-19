@@ -30,7 +30,7 @@ SET state = 'dispatching',
 FROM due
 WHERE sm.owner_user_id = due.owner_user_id
   AND sm.scheduled_id = due.scheduled_id
-RETURNING sm.owner_user_id, sm.scheduled_id, sm.peer_type, sm.peer_id, sm.random_id, sm.message_date, sm.body, sm.entities, sm.media, sm.rich_message, sm.silent, sm.noforwards, sm.reply_to_msg_id, sm.reply_to_peer_type, sm.reply_to_peer_id, sm.reply_to_top_id, sm.quote_text, sm.quote_entities, sm.quote_offset, sm.fwd_from_peer_type, sm.fwd_from_peer_id, sm.fwd_from_name, sm.fwd_date, sm.send_as_peer_type, sm.send_as_peer_id, sm.schedule_date, sm.schedule_repeat_period, sm.state, sm.lease_until, sm.sent_message_id, sm.last_error, sm.created_at, sm.updated_at, sm.grouped_id
+RETURNING sm.owner_user_id, sm.scheduled_id, sm.peer_type, sm.peer_id, sm.random_id, sm.message_date, sm.body, sm.entities, sm.media, sm.rich_message, sm.silent, sm.noforwards, sm.reply_to_msg_id, sm.reply_to_peer_type, sm.reply_to_peer_id, sm.reply_to_top_id, sm.quote_text, sm.quote_entities, sm.quote_offset, sm.fwd_from_peer_type, sm.fwd_from_peer_id, sm.fwd_from_name, sm.fwd_date, sm.send_as_peer_type, sm.send_as_peer_id, sm.schedule_date, sm.schedule_repeat_period, sm.state, sm.lease_until, sm.sent_message_id, sm.last_error, sm.created_at, sm.updated_at, sm.grouped_id, sm.fwd_channel_post, sm.fwd_saved_from_peer_type, sm.fwd_saved_from_peer_id, sm.fwd_saved_from_msg_id
 `
 
 type ClaimDueScheduledMessagesParams struct {
@@ -91,6 +91,10 @@ func (q *Queries) ClaimDueScheduledMessages(ctx context.Context, arg ClaimDueSch
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.GroupedID,
+			&i.FwdChannelPost,
+			&i.FwdSavedFromPeerType,
+			&i.FwdSavedFromPeerID,
+			&i.FwdSavedFromMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -113,7 +117,7 @@ WHERE owner_user_id = $3
   AND peer_id = $5
   AND scheduled_id = ANY($6::int[])
   AND (state = 'pending' OR (state = 'dispatching' AND lease_until <= $2))
-RETURNING owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id
+RETURNING owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id, fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id
 `
 
 type ClaimScheduledMessagesByIDsParams struct {
@@ -176,6 +180,10 @@ func (q *Queries) ClaimScheduledMessagesByIDs(ctx context.Context, arg ClaimSche
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.GroupedID,
+			&i.FwdChannelPost,
+			&i.FwdSavedFromPeerType,
+			&i.FwdSavedFromPeerID,
+			&i.FwdSavedFromMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -188,7 +196,7 @@ func (q *Queries) ClaimScheduledMessagesByIDs(ctx context.Context, arg ClaimSche
 }
 
 const getPendingScheduledMessageByRandomID = `-- name: GetPendingScheduledMessageByRandomID :one
-SELECT owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id
+SELECT owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id, fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id
 FROM scheduled_messages
 WHERE owner_user_id = $1
   AND random_id = $2
@@ -241,12 +249,16 @@ func (q *Queries) GetPendingScheduledMessageByRandomID(ctx context.Context, arg 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.GroupedID,
+		&i.FwdChannelPost,
+		&i.FwdSavedFromPeerType,
+		&i.FwdSavedFromPeerID,
+		&i.FwdSavedFromMsgID,
 	)
 	return i, err
 }
 
 const getPendingScheduledMessageForEdit = `-- name: GetPendingScheduledMessageForEdit :one
-SELECT owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id
+SELECT owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id, fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id
 FROM scheduled_messages
 WHERE owner_user_id = $1
   AND peer_type = $2
@@ -306,6 +318,10 @@ func (q *Queries) GetPendingScheduledMessageForEdit(ctx context.Context, arg Get
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.GroupedID,
+		&i.FwdChannelPost,
+		&i.FwdSavedFromPeerType,
+		&i.FwdSavedFromPeerID,
+		&i.FwdSavedFromMsgID,
 	)
 	return i, err
 }
@@ -341,6 +357,7 @@ INSERT INTO scheduled_messages (
   reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
   quote_text, quote_entities, quote_offset,
   fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
+  fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id,
   send_as_peer_type, send_as_peer_id, grouped_id,
   schedule_date, schedule_repeat_period, state, created_at, updated_at
 ) VALUES (
@@ -349,10 +366,11 @@ INSERT INTO scheduled_messages (
   $13, $14, $15, $16,
   $17, $18::jsonb, $19,
   $20, $21, $22, $23,
-  $24, $25, $26,
-  $27, $28, 'pending', $6, $6
+  $24, $25, $26, $27,
+  $28, $29, $30,
+  $31, $32, 'pending', $6, $6
 )
-RETURNING owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id
+RETURNING owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id, fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id
 `
 
 type InsertScheduledMessageParams struct {
@@ -379,6 +397,10 @@ type InsertScheduledMessageParams struct {
 	FwdFromPeerID        int64
 	FwdFromName          string
 	FwdDate              int32
+	FwdChannelPost       int32
+	FwdSavedFromPeerType string
+	FwdSavedFromPeerID   int64
+	FwdSavedFromMsgID    int32
 	SendAsPeerType       string
 	SendAsPeerID         int64
 	GroupedID            int64
@@ -413,6 +435,10 @@ func (q *Queries) InsertScheduledMessage(ctx context.Context, arg InsertSchedule
 		arg.FwdFromPeerID,
 		arg.FwdFromName,
 		arg.FwdDate,
+		arg.FwdChannelPost,
+		arg.FwdSavedFromPeerType,
+		arg.FwdSavedFromPeerID,
+		arg.FwdSavedFromMsgID,
 		arg.SendAsPeerType,
 		arg.SendAsPeerID,
 		arg.GroupedID,
@@ -455,12 +481,16 @@ func (q *Queries) InsertScheduledMessage(ctx context.Context, arg InsertSchedule
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.GroupedID,
+		&i.FwdChannelPost,
+		&i.FwdSavedFromPeerType,
+		&i.FwdSavedFromPeerID,
+		&i.FwdSavedFromMsgID,
 	)
 	return i, err
 }
 
 const listScheduledMessagesByIDs = `-- name: ListScheduledMessagesByIDs :many
-SELECT owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id
+SELECT owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id, fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id
 FROM scheduled_messages
 WHERE owner_user_id = $1
   AND peer_type = $2
@@ -529,6 +559,10 @@ func (q *Queries) ListScheduledMessagesByIDs(ctx context.Context, arg ListSchedu
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.GroupedID,
+			&i.FwdChannelPost,
+			&i.FwdSavedFromPeerType,
+			&i.FwdSavedFromPeerID,
+			&i.FwdSavedFromMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -541,7 +575,7 @@ func (q *Queries) ListScheduledMessagesByIDs(ctx context.Context, arg ListSchedu
 }
 
 const listScheduledMessagesByPeer = `-- name: ListScheduledMessagesByPeer :many
-SELECT owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id
+SELECT owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id, fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id
 FROM scheduled_messages
 WHERE owner_user_id = $1
   AND peer_type = $2
@@ -607,6 +641,10 @@ func (q *Queries) ListScheduledMessagesByPeer(ctx context.Context, arg ListSched
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.GroupedID,
+			&i.FwdChannelPost,
+			&i.FwdSavedFromPeerType,
+			&i.FwdSavedFromPeerID,
+			&i.FwdSavedFromMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -662,7 +700,7 @@ WHERE owner_user_id = $2
   AND peer_id = $4
   AND scheduled_id = ANY($5::int[])
   AND state IN ('pending', 'dispatching')
-RETURNING owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id
+RETURNING owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id, fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id
 `
 
 type MarkScheduledMessagesDeletedParams struct {
@@ -723,6 +761,10 @@ func (q *Queries) MarkScheduledMessagesDeleted(ctx context.Context, arg MarkSche
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.GroupedID,
+			&i.FwdChannelPost,
+			&i.FwdSavedFromPeerType,
+			&i.FwdSavedFromPeerID,
+			&i.FwdSavedFromMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -800,7 +842,7 @@ WHERE owner_user_id = $6
   AND peer_id = $8
   AND scheduled_id = $9
   AND state = 'pending'
-RETURNING owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id
+RETURNING owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date, body, entities, media, rich_message, silent, noforwards, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id, quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date, send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, lease_until, sent_message_id, last_error, created_at, updated_at, grouped_id, fwd_channel_post, fwd_saved_from_peer_type, fwd_saved_from_peer_id, fwd_saved_from_msg_id
 `
 
 type UpdateScheduledMessageContentParams struct {
@@ -863,6 +905,10 @@ func (q *Queries) UpdateScheduledMessageContent(ctx context.Context, arg UpdateS
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.GroupedID,
+		&i.FwdChannelPost,
+		&i.FwdSavedFromPeerType,
+		&i.FwdSavedFromPeerID,
+		&i.FwdSavedFromMsgID,
 	)
 	return i, err
 }

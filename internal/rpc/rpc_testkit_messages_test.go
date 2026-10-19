@@ -215,10 +215,17 @@ func (rows *scheduledRows) schedule(req domain.ScheduleMessageRequest, id int) d
 	return msg
 }
 
-// scheduledStoredReply 只保留 scheduled_messages 有列的回复字段（reply_to_* 与 quote_*）。
+// scheduledStoredReply 只保留 scheduled_messages 有列的回复字段（reply_to_* 与 quote_*）；
+// 只指向 forum 话题的回复按 reply_to_top_id 还原。
 func scheduledStoredReply(in *domain.MessageReply) *domain.MessageReply {
-	if in == nil || in.MessageID <= 0 {
+	if in == nil {
 		return nil
+	}
+	if in.MessageID <= 0 {
+		if in.TopMessageID <= 0 {
+			return nil
+		}
+		return &domain.MessageReply{Peer: in.Peer, TopMessageID: in.TopMessageID, ForumTopic: true}
 	}
 	return &domain.MessageReply{
 		MessageID:     in.MessageID,
@@ -230,12 +237,17 @@ func scheduledStoredReply(in *domain.MessageReply) *domain.MessageReply {
 	}
 }
 
-// scheduledStoredForward 只保留 scheduled_messages 有列的转发头字段（fwd_*）。
+// scheduledStoredForward 按 scheduled_messages 的 fwd_* 列还原转发头（含 channel_post、saved_from）。
 func scheduledStoredForward(in *domain.MessageForward) *domain.MessageForward {
-	if in == nil || (in.Date == 0 && in.From.ID == 0 && in.FromName == "") {
+	if in == nil || (in.Date == 0 && in.From.ID == 0 && in.FromName == "" && in.SavedFrom.ID == 0) {
 		return nil
 	}
-	return &domain.MessageForward{From: in.From, FromName: in.FromName, Date: in.Date}
+	out := domain.MessageForward{From: in.From, FromName: in.FromName, Date: in.Date, ChannelPost: in.ChannelPost}
+	if in.SavedFrom.ID != 0 {
+		out.SavedFrom = in.SavedFrom
+		out.SavedFromMsgID = in.SavedFromMsgID
+	}
+	return &out
 }
 
 func scheduledStoredSendAs(in *domain.Peer) *domain.Peer {

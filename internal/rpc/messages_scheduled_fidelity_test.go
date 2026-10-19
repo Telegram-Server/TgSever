@@ -219,6 +219,115 @@ func TestScheduledSendAsRevokedIsNotSentAsSelf(t *testing.T) {
 	}
 }
 
+func TestScheduledForwardKeepsForwardHeaderWhenDispatched(t *testing.T) {
+	f := newScheduledFidelityFixture(t)
+	source := f.sendPrivate(75001, "forward me")
+	req := &tg.MessagesForwardMessagesRequest{
+		FromPeer: f.friendPeer(),
+		ToPeer:   f.friendPeer(),
+		ID:       []int{source.ID},
+		RandomID: []int64{75002},
+	}
+	req.SetScheduleDate(scheduledFidelityDate())
+	if _, err := f.router.onMessagesForwardMessages(f.ctx(f.owner), req); err != nil {
+		t.Fatalf("schedule forward: %v", err)
+	}
+
+	f.dispatch()
+
+	sent, ok := f.privateByRandomID(75002)
+	if !ok {
+		t.Fatalf("scheduled forward was not dispatched (row state %q)", f.scheduledRow(75002).State)
+	}
+	if sent.Forward == nil || sent.Forward.From != (domain.Peer{Type: domain.PeerTypeUser, ID: f.owner.ID}) || sent.Forward.Date != source.Date {
+		t.Fatalf("dispatched forward header = %+v, want from owner %d at %d", sent.Forward, f.owner.ID, source.Date)
+	}
+}
+
+// TestScheduledForwardToSavedMessagesKeepsSavedFrom 验证定时转发进收藏夹：与立即转发一致，
+// 转发头带 saved_from（来源会话与原消息 id），收藏夹据此按来源分组。
+func TestScheduledForwardToSavedMessagesKeepsSavedFrom(t *testing.T) {
+	f := newScheduledFidelityFixture(t)
+	source := f.sendPrivate(77001, "save me")
+	self := &tg.InputPeerSelf{}
+	req := &tg.MessagesForwardMessagesRequest{
+		FromPeer: f.friendPeer(),
+		ToPeer:   self,
+		ID:       []int{source.ID},
+		RandomID: []int64{77002},
+	}
+	req.SetScheduleDate(scheduledFidelityDate())
+	if _, err := f.router.onMessagesForwardMessages(f.ctx(f.owner), req); err != nil {
+		t.Fatalf("schedule forward to saved: %v", err)
+	}
+
+	f.dispatch()
+
+	history, err := f.messages.GetHistory(context.Background(), f.owner.ID, domain.MessageFilter{
+		HasPeer: true,
+		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: f.owner.ID},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("saved history: %v", err)
+	}
+	var sent *domain.Message
+	for i := range history.Messages {
+		if history.Messages[i].RandomID == 77002 {
+			sent = &history.Messages[i]
+		}
+	}
+	if sent == nil {
+		t.Fatalf("scheduled forward to saved was not dispatched (row state %q)", f.scheduledRow(77002).State)
+	}
+	wantFrom := domain.Peer{Type: domain.PeerTypeUser, ID: f.friend.ID}
+	if sent.Forward == nil || sent.Forward.SavedFrom != wantFrom || sent.Forward.SavedFromMsgID != source.ID {
+		t.Fatalf("dispatched saved forward header = %+v, want saved_from %+v msg %d", sent.Forward, wantFrom, source.ID)
+	}
+}
+
+// TestScheduledForwardOfChannelPostKeepsPostLink 验证定时转发频道帖子：到点发出的转发头
+// 仍带 channel_post（客户端据此跳回原帖），与立即转发一致。
+func TestScheduledForwardOfChannelPostKeepsPostLink(t *testing.T) {
+	f := newScheduledFidelityFixture(t)
+	created, err := f.router.onChannelsCreateChannel(f.ctx(f.owner), &tg.ChannelsCreateChannelRequest{Title: "Source Broadcast", Broadcast: true})
+	if err != nil {
+		t.Fatalf("create broadcast: %v", err)
+	}
+	broadcast := created.(*tg.Updates).Chats[0].(*tg.Channel)
+	if _, err := f.router.onMessagesSendMessage(f.ctx(f.owner), &tg.MessagesSendMessageRequest{
+		Peer: inputPeerChannel(broadcast), Message: "post", RandomID: 76001,
+	}); err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	post, ok := f.channelByRandomID(broadcast, 76001)
+	if !ok {
+		t.Fatalf("post not in broadcast history")
+	}
+	group := f.createGroup("Forward Target")
+	req := &tg.MessagesForwardMessagesRequest{
+		FromPeer: inputPeerChannel(broadcast),
+		ToPeer:   inputPeerChannel(group),
+		ID:       []int{post.ID},
+		RandomID: []int64{76002},
+	}
+	req.SetScheduleDate(scheduledFidelityDate())
+	if _, err := f.router.onMessagesForwardMessages(f.ctx(f.owner), req); err != nil {
+		t.Fatalf("schedule forward: %v", err)
+	}
+
+	f.dispatch()
+
+	sent, ok := f.channelByRandomID(group, 76002)
+	if !ok {
+		t.Fatalf("scheduled forward was not dispatched (row state %q)", f.scheduledRow(76002).State)
+	}
+	wantFrom := domain.Peer{Type: domain.PeerTypeChannel, ID: broadcast.ID}
+	if sent.Forward == nil || sent.Forward.From != wantFrom || sent.Forward.ChannelPost != post.ID {
+		t.Fatalf("dispatched forward header = %+v, want from %+v channel_post %d", sent.Forward, wantFrom, post.ID)
+	}
+}
+
 // scheduledRow 返回 owner 定时队列里 random_id 对应的行（含已发出/已删除）。
 func (f scheduledFidelityFixture) scheduledRow(randomID int64) domain.ScheduledMessage {
 	f.t.Helper()
