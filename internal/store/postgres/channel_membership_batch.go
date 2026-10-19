@@ -55,6 +55,8 @@ func upsertChannelMembersBatchTx(ctx context.Context, tx pgx.Tx, channel domain.
 	availableMinIDs := make([]int32, len(members))
 	availableMinPts := make([]int32, len(members))
 	readInboxMaxIDs := make([]int32, len(members))
+	// 重新入群的被限制成员带着原限制回来（见 rejoinBannedRights），所以 banned_rights 逐行写入。
+	bannedRights := make([]string, len(members))
 	for i, member := range members {
 		userIDs[i] = member.UserID
 		inviterIDs[i] = member.InviterUserID
@@ -62,13 +64,19 @@ func upsertChannelMembersBatchTx(ctx context.Context, tx pgx.Tx, channel domain.
 		availableMinIDs[i] = int32(member.AvailableMinID)
 		availableMinPts[i] = int32(member.AvailableMinPts)
 		readInboxMaxIDs[i] = int32(member.ReadInboxMaxID)
+		rights, err := marshalJSON(member.BannedRights, "{}")
+		if err != nil {
+			return err
+		}
+		bannedRights[i] = string(rights)
 	}
+	// 手写 SQL：多参数 unnest 是 sqlc 解析不了的语法。
 	if _, err := tx.Exec(ctx, `
 WITH input AS MATERIALIZED (
-    SELECT user_id, inviter_user_id, joined_at, available_min_id, available_min_pts, read_inbox_max_id
+    SELECT user_id, inviter_user_id, joined_at, available_min_id, available_min_pts, read_inbox_max_id, banned_rights
     FROM unnest(
-        $2::bigint[], $3::bigint[], $4::integer[], $5::integer[], $6::integer[], $7::integer[]
-    ) AS value(user_id, inviter_user_id, joined_at, available_min_id, available_min_pts, read_inbox_max_id)
+        $2::bigint[], $3::bigint[], $4::integer[], $5::integer[], $6::integer[], $7::integer[], $8::text[]
+    ) AS value(user_id, inviter_user_id, joined_at, available_min_id, available_min_pts, read_inbox_max_id, banned_rights)
 )
 INSERT INTO channel_members (
     channel_id, user_id, inviter_user_id, role, status, joined_at, left_at,
@@ -76,7 +84,7 @@ INSERT INTO channel_members (
     read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
 )
 SELECT $1, user_id, inviter_user_id, 'member', 'active', joined_at, 0,
-       '{}'::jsonb, '{}'::jsonb, '', available_min_id, available_min_pts,
+       '{}'::jsonb, banned_rights::jsonb, '', available_min_id, available_min_pts,
        read_inbox_max_id, 0, false, 0
 FROM input
 ORDER BY user_id
@@ -92,7 +100,7 @@ ON CONFLICT (channel_id, user_id) DO UPDATE SET
     available_min_id = GREATEST(channel_members.available_min_id, EXCLUDED.available_min_id),
     available_min_pts = GREATEST(channel_members.available_min_pts, EXCLUDED.available_min_pts),
     read_inbox_max_id = GREATEST(channel_members.read_inbox_max_id, EXCLUDED.read_inbox_max_id),
-    updated_at = now()`, channel.ID, userIDs, inviterIDs, joinedAt, availableMinIDs, availableMinPts, readInboxMaxIDs); err != nil {
+    updated_at = now()`, channel.ID, userIDs, inviterIDs, joinedAt, availableMinIDs, availableMinPts, readInboxMaxIDs, bannedRights); err != nil {
 		return fmt.Errorf("batch upsert channel members: %w", err)
 	}
 

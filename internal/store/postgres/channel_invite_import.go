@@ -124,6 +124,9 @@ func (s *ChannelStore) approveInviteImporterTx(ctx context.Context, tx pgx.Tx, c
 		AvailableMinPts: channelInitialAvailableMinPts(channel),
 		ReadInboxMaxID:  maxInt(minID, preJoinTopID),
 	}
+	if existing, ok := previous[userID]; ok {
+		member.BannedRights = rejoinBannedRights(existing, date)
+	}
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
