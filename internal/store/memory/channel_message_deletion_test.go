@@ -1,14 +1,17 @@
 package memory_test
 
 import (
+	"testing"
+
 	"telesrv/internal/store/memory"
 	"telesrv/internal/store/storetest"
-	"testing"
 )
 
 func TestChannelMessageDeletions(t *testing.T) {
-	deletions := memory.NewMessageDeletionStore()
-	channels := memory.NewChannelStore()
-	channels.AttachDeletionStore(deletions)
-	storetest.ChannelMessageDeletions(t, channels, deletions, 101, 102)
+	storetest.ChannelMessageDeletions(t, func(t *testing.T) storetest.ChannelMessageDeletionFixture {
+		deletions := memory.NewMessageDeletionStore()
+		channels := memory.NewChannelStore()
+		channels.AttachDeletionStore(deletions)
+		return storetest.ChannelMessageDeletionFixture{Channels: channels, Deletions: deletions, Owner: 101, Member: 102}
+	})
 }

@@ -10,15 +10,14 @@ import (
 
 // MonoforumAlbumGrouping 校验两套实现在频道私信(monoforum)写入 channel_messages 时保留相册
 // grouped_id：同一相册各条共享非零值，发送回声与读历史都可见，单条恒 0。
-// owner 是母广播频道创建者，sub 是订阅者；返回创建的频道 id 供调用方清理。
-func MonoforumAlbumGrouping(t *testing.T, s store.ChannelStore, owner, sub int64, title string) []int64 {
+// owner 是母广播频道（以及随之建出的 monoforum）的创建者，调用方按创建者清理；sub 是订阅者。
+func MonoforumAlbumGrouping(t *testing.T, s store.ChannelStore, owner, sub int64, title string) {
 	t.Helper()
 	ctx := context.Background()
 	broadcast, err := s.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: title, Broadcast: true, Date: baseNow()})
 	if err != nil {
 		t.Fatalf("create channel: %v", err)
 	}
-	channelIDs := []int64{broadcast.Channel.ID}
 	enabled, err := s.SetPaidMessagesPrice(ctx, owner, broadcast.Channel.ID, 0, true)
 	if err != nil {
 		t.Fatalf("enable DM: %v", err)
@@ -27,7 +26,6 @@ func MonoforumAlbumGrouping(t *testing.T, s store.ChannelStore, owner, sub int64
 	if monoID == 0 {
 		t.Fatalf("no monoforum created")
 	}
-	channelIDs = append(channelIDs, monoID)
 
 	subPeer := domain.Peer{Type: domain.PeerTypeUser, ID: sub}
 	const groupedID = int64(55443322110)
@@ -66,5 +64,4 @@ func MonoforumAlbumGrouping(t *testing.T, s store.ChannelStore, owner, sub int64
 			t.Fatalf("history message %d grouped_id = %d, want %d", msg.ID, msg.GroupedID, want)
 		}
 	}
-	return channelIDs
 }

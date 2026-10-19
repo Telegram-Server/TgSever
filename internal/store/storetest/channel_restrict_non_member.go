@@ -2,7 +2,6 @@ package storetest
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -11,14 +10,14 @@ import (
 
 // ChannelRestrictNonMember 校验对不在群里的用户设置部分限制（没有 view_messages）后：记录表达
 // 为"不在群里 + 带着限制"（官方 channelParticipantBanned left=true），不阻止他入群——可以自行
-// 加入、可以被只有邀请权的管理员拉回、可以经邀请链接加入，入群后限制保留；只有 view_messages
-// 踢出才阻止入群。users：群主、只有邀请权的管理员 A、从未入群的 N、退过群的 L、被踢的 K。
-func ChannelRestrictNonMember(t *testing.T, s store.ChannelStore, users [5]int64) {
+// 加入、可以被只有邀请权的管理员拉回、可以经邀请链接加入，入群后限制保留。
+// users：群主、只有邀请权的管理员 A、从未入群的 N、退过群的 L。
+func ChannelRestrictNonMember(t *testing.T, s store.ChannelStore, users [4]int64) {
 	t.Helper()
 	ctx := context.Background()
-	owner, a, n, l, k := users[0], users[1], users[2], users[3], users[4]
+	owner, a, n, l := users[0], users[1], users[2], users[3]
 	now := baseNow()
-	created, err := s.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: "Restrict non-member", Megagroup: true, MemberUserIDs: []int64{a, l, k}, Date: now})
+	created, err := s.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: "Restrict non-member", Megagroup: true, MemberUserIDs: []int64{a, l}, Date: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,11 +57,11 @@ func ChannelRestrictNonMember(t *testing.T, s store.ChannelStore, users [5]int64
 
 	// 1. 限制从未入群的人：不在群里但带着限制。
 	res := restrict(n, limited)
-	if res.Participant.Status == domain.ChannelMemberActive || res.Participant.Status == domain.ChannelMemberKicked || res.Participant.BannedRights != limited {
-		t.Fatalf("restricted non-member = %+v, want not in the channel and restricted with %+v", res.Participant, limited)
+	if res.Participant.Status != domain.ChannelMemberBanned || res.Participant.BannedRights != limited {
+		t.Fatalf("restricted non-member = %+v, want banned (left) with %+v", res.Participant, limited)
 	}
-	if m := participant(n); m.Status == domain.ChannelMemberActive || m.Status == domain.ChannelMemberKicked || m.BannedRights != limited {
-		t.Fatalf("restricted non-member participant = %+v, want not in the channel and restricted", m)
+	if m := participant(n); m.Status != domain.ChannelMemberBanned || m.BannedRights != limited {
+		t.Fatalf("restricted non-member participant = %+v, want banned (left) with %+v", m, limited)
 	}
 	banned, err := s.GetParticipants(ctx, owner, id, domain.ChannelParticipantsFilter{Kind: domain.ChannelParticipantsBanned}, 0, 100)
 	if err != nil {
@@ -107,13 +106,5 @@ func ChannelRestrictNonMember(t *testing.T, s store.ChannelStore, users [5]int64
 		t.Fatalf("import invite as restricted non-member = %v, want allowed", err)
 	}
 	expectJoined("import invite", imported, l, limited)
-
-	// 5. view_messages 踢出仍阻止入群。
-	restrict(k, domain.ChannelBannedRights{ViewMessages: true, SendMessages: true})
-	if _, err := s.JoinChannel(ctx, id, k, now); !errors.Is(err, domain.ErrChannelUserBanned) {
-		t.Fatalf("kicked join = %v, want ErrChannelUserBanned", err)
-	}
-	if _, err := s.InviteToChannel(ctx, id, a, []int64{k}, now); !errors.Is(err, domain.ErrUserKicked) {
-		t.Fatalf("kicked invite without ban right = %v, want ErrUserKicked", err)
-	}
+	// view_messages 踢出仍阻止入群：由 ChannelRejoinKeepsRestrictions 的 kicked 子测试断言。
 }

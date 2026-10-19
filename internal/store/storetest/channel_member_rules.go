@@ -101,10 +101,39 @@ func ChannelMemberPreviousStates(t *testing.T, s store.ChannelStore, users [5]in
 	if prev := expect("approve all restricted", all, c, domain.ChannelMemberLeft, domain.ChannelRoleMember); !prev.BannedRights.SendMessages {
 		t.Fatalf("approve all lost restricted previous: %+v", prev)
 	}
+}
 
-	ownerLeft := must(s.LeaveChannel(ctx, id, owner, baseNow()))
-	expect("owner leave", ownerLeft, owner, domain.ChannelMemberActive, domain.ChannelRoleCreator)
-	expect("successor", ownerLeft, a, domain.ChannelMemberActive, domain.ChannelRoleAdmin)
+// ChannelOwnerLeavePrevious 校验群主退群时结果的 Previous 同时带着群主（creator）与接任者
+// （原先是 admin）变化前的记录。users：群主、管理员 A、成员 B。
+func ChannelOwnerLeavePrevious(t *testing.T, s store.ChannelStore, users [3]int64) {
+	t.Helper()
+	ctx := context.Background()
+	owner, a, b := users[0], users[1], users[2]
+	created, err := s.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: "Owner leave", Megagroup: true, MemberUserIDs: []int64{a, b}, Date: baseNow()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.Channel.ID
+	if _, err := s.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{UserID: owner, ChannelID: id, MemberID: a, AdminRights: domain.ChannelAdminRights{BanUsers: true, InviteUsers: true}, Date: baseNow()}); err != nil {
+		t.Fatal(err)
+	}
+	ownerLeft, err := s.LeaveChannel(ctx, id, owner, baseNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		step string
+		user int64
+		role domain.ChannelMemberRole
+	}{
+		{"owner leave", owner, domain.ChannelRoleCreator},
+		{"successor", a, domain.ChannelRoleAdmin},
+	} {
+		prev := ownerLeft.PreviousMember(id, want.user)
+		if prev.UserID != want.user || prev.Status != domain.ChannelMemberActive || prev.Role != want.role {
+			t.Fatalf("%s: previous of %d = %+v (all %+v), want active/%s", want.step, want.user, prev, ownerLeft.Previous, want.role)
+		}
+	}
 }
 
 // ChannelAdminProtection 校验管理员保护规则：群主可编辑/封禁任何管理员；

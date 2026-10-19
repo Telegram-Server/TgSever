@@ -11,6 +11,10 @@ func TestChannelMemberPreviousStates(t *testing.T) {
 	storetest.ChannelMemberPreviousStates(t, memory.NewChannelStore(), [5]int64{301, 302, 303, 304, 305})
 }
 
+func TestChannelOwnerLeavePrevious(t *testing.T) {
+	storetest.ChannelOwnerLeavePrevious(t, memory.NewChannelStore(), [3]int64{311, 312, 313})
+}
+
 func TestChannelAdminProtection(t *testing.T) {
 	storetest.ChannelAdminProtection(t, memory.NewChannelStore(), [4]int64{201, 202, 203, 204})
 }

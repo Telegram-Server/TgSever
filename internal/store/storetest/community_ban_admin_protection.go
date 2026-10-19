@@ -12,9 +12,9 @@ import (
 // CommunityBanAdminProtection 校验社区封禁沿用频道层的管理员保护：在任一关联频道里，
 // 操作者既不是群主、也不是目标的提拔人，而目标是该频道在任管理员时，整次社区封禁被拒
 // （ErrUserAdminInvalid），且任何频道、关联与社区成员状态都不变；群主与提拔人可以封禁，
-// 普通成员照常封禁，解封不受限。返回建出的社区 ID 供调用方清理。
+// 普通成员照常封禁，解封不受限。社区由 users[0] 创建，调用方按创建者清理。
 // users：群主 O、社区管理员 A、频道 Y 里由 O 提拔的管理员 T、由 A 提拔的管理员 P、成员 B。
-func CommunityBanAdminProtection(t *testing.T, communities store.CommunityStore, channels store.ChannelStore, users [5]int64) int64 {
+func CommunityBanAdminProtection(t *testing.T, communities store.CommunityStore, channels store.ChannelStore, users [5]int64) {
 	t.Helper()
 	ctx := context.Background()
 	owner, a, target, p, b := users[0], users[1], users[2], users[3], users[4]
@@ -126,5 +126,4 @@ func CommunityBanAdminProtection(t *testing.T, communities store.CommunityStore,
 	if res, err := communities.ToggleCommunityParticipantBanned(ctx, a, id, target, true, date); err != nil || !res.Changed {
 		t.Fatalf("unban by community admin = %+v, %v, want changed", res, err)
 	}
-	return id
 }
