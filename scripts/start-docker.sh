@@ -81,7 +81,21 @@ if [[ "$configured_host_network" = false ]]; then compose+=(--file "$docker_dir/
 "${compose[@]}" version >/dev/null
 "${compose[@]}" config --quiet
 
-if [[ "$build" = true ]]; then "${compose[@]}" build --pull; else "${compose[@]}" pull; fi
+if [[ "$build" = true ]]; then
+  # .env holds the provenance of the first build; a rebuild stamps the checkout
+  # it actually builds. Process env wins over --env-file in compose.
+  TELESRV_BUILD_COMMIT=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf unknown)
+  TELESRV_BUILD_BRANCH=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || printf unknown)
+  TELESRV_BUILD_TREE_STATE=unknown
+  if tree_status=$(git -C "$repo_root" status --porcelain 2>/dev/null); then
+    if [[ -n "$tree_status" ]]; then TELESRV_BUILD_TREE_STATE=dirty; else TELESRV_BUILD_TREE_STATE=clean; fi
+  fi
+  TELESRV_BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  export TELESRV_BUILD_COMMIT TELESRV_BUILD_BRANCH TELESRV_BUILD_TREE_STATE TELESRV_BUILD_DATE
+  "${compose[@]}" build --pull
+else
+  "${compose[@]}" pull
+fi
 if ! "${compose[@]}" up --detach --no-build --wait --wait-timeout 600; then
   "${compose[@]}" logs --no-color --tail 160 || true
   exit 1
