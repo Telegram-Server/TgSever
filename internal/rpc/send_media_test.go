@@ -52,6 +52,14 @@ type fakeProfilePhotoKey struct {
 	kind      domain.ProfilePhotoKind
 }
 
+// setCurrentProfile 把 photoID 设为 owner 指定 kind 的当前头像（测试辅助）。
+func (f *fakeFiles) setCurrentProfile(ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64) {
+	if f.profile == nil {
+		f.profile = map[fakeProfilePhotoKey]int64{}
+	}
+	f.profile[fakeProfilePhotoKey{ownerType: ownerType, ownerID: ownerID, kind: kind}] = photoID
+}
+
 func (f *fakeFiles) putPhoto(photo domain.Photo) domain.Photo {
 	if f.photos == nil {
 		f.photos = map[int64]domain.Photo{}
