@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
@@ -246,23 +245,34 @@ func TestForwardDropMediaCaptionsAppliesToMonoforum(t *testing.T) {
 	}
 }
 
+// 定时转发同样去掉说明文字与转发头：从定时队列（getScheduledHistory）里读回排程结果。
 func TestForwardDropMediaCaptionsAppliesToScheduledForward(t *testing.T) {
-	scheduled := &scheduledCaptureMessages{captureMessages: &captureMessages{}}
-	f := newForwardCaptionFixtureWithMessages(t, scheduled)
-	photo := f.post(t, "pic caption", forwardCaptionPhoto(8821), 0, 6121)
-	_, err := f.router.onMessagesForwardMessages(WithUserID(f.ctx, f.owner.ID), &tg.MessagesForwardMessagesRequest{
-		FromPeer:          f.channelPeer(),
-		ToPeer:            f.recipientPeer(),
-		ID:                []int{photo},
+	f := newScheduledFixture(t)
+	group := f.createGroup("Caption Source")
+	posted, err := f.channels.SendChannelMessage(context.Background(), domain.SendChannelMessageRequest{
+		UserID: f.owner.ID, ChannelID: group.ID, RandomID: 6121, Message: "pic caption",
+		Entities: []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 1}},
+		Media:    forwardCaptionPhoto(8821), Date: 40,
+	})
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	f.forward(&tg.MessagesForwardMessagesRequest{
+		FromPeer:          inputPeerChannel(group),
+		ToPeer:            f.friendPeer(),
+		ID:                []int{posted.Message.ID},
 		RandomID:          []int64{6221},
 		DropAuthor:        true,
 		DropMediaCaptions: true,
-		ScheduleDate:      int(time.Now().Add(time.Hour).Unix()),
-	})
-	if err != nil {
-		t.Fatalf("scheduled forward: %v", err)
+	}, f.scheduleDate())
+	queued := f.scheduledHistory(f.owner, f.friendPeer())
+	if len(queued) != 1 {
+		t.Fatalf("scheduled queue = %+v, want the forwarded photo", queued)
 	}
-	if req := scheduled.scheduleReq; req.Message != "" || len(req.Entities) != 0 || req.Media == nil || req.Forward != nil {
-		t.Fatalf("schedule request = %+v, want media without caption or header", req)
+	if msg := queued[0]; msg.Message != "" || len(msg.Entities) != 0 || msg.Media == nil {
+		t.Fatalf("scheduled forward = %q %+v media=%T, want media without caption", msg.Message, msg.Entities, msg.Media)
+	}
+	if fwd, ok := queued[0].GetFwdFrom(); ok {
+		t.Fatalf("scheduled forward header = %+v, want none", fwd)
 	}
 }
