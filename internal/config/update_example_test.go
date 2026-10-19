@@ -61,3 +61,25 @@ func exampleUpdateKeys(t *testing.T, path string) (active map[string]string, lis
 	}
 	return active, listed
 }
+
+// TestDocsDescribeDesktopUpdateKeys 保证中英文配置文档与更新服务文档列出进程内更新服务读取的
+// 全部变量，免得文档落后于实现。
+func TestDocsDescribeDesktopUpdateKeys(t *testing.T) {
+	for _, path := range []string{
+		"../../docs/configuration.en.md",
+		"../../docs/configuration.zh-CN.md",
+		"../../docs/update-service.md",
+	} {
+		t.Run(path, func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range desktopUpdateKeys {
+				if !strings.Contains(string(data), "`"+key+"`") {
+					t.Errorf("%s does not document `%s`", path, key)
+				}
+			}
+		})
+	}
+}

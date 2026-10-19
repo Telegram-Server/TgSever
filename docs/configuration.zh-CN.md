@@ -80,8 +80,11 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | `TELESRV_BRAND_WEB_K_APP_NAME` | string / `Telesrv Web K` | `tweb` / `webk` 授权列表显示名；持久化检测 token 不变。 |
 | `TELESRV_BRAND_PREMIUM_NAME` | string / `Telesrv Premium` | Premium 状态与相关客户端可见文案中的产品名；校验规则同产品名。 |
 | `TELESRV_BRAND_STARS_NAME` | string / `Telesrv Stars` | Stars 支付 label 与相关客户端可见文案中的产品名；校验规则同产品名。 |
-| `TELESRV_UPDATE_PUBLIC_URL` | nullable HTTP(S) URL / 空 | 客户端可见的 `cmd/telesrv-update` 根地址，通过 `help.getConfig.autoupdate_url_prefix` 下发；空值关闭 desktop 原生更新。详见 `docs/update-service.md`。 |
-| `TELESRV_UPDATE_SERVICE_URL` | nullable HTTP(S) URL / `TELESRV_UPDATE_PUBLIC_URL` | `help.getAppUpdate` 使用的内部 resolver 地址，可指向 loopback/private route；空值回退到公开更新地址。 |
+| `TELESRV_UPDATE_MANIFEST` | path / 空 | desktop/原生客户端更新的发布清单。非空即启用进程内更新服务：公开链接监听在 `/_updates/` 下提供 `/current4` 与 `/files/*`，`help.getAppUpdate` 在进程内解析。启动时清单无法加载则启动失败；运行中替换为坏清单只记录日志，继续提供上一份正常清单。空值关闭更新（或通过 `TELESRV_UPDATE_SERVICE_URL` 使用独立 `telesrv-update`）。详见 `docs/update-service.md`。 |
+| `TELESRV_UPDATE_FILES_DIR` | path / 清单所在目录下的 `files` | 已发布 desktop 更新包（`td-update-{os}-{arch}-{base}[-beta]`）所在目录。仅进程内模式读取。 |
+| `TELESRV_UPDATE_ROOT_PUBLIC_KEY` | PEM 文件路径 / 空 | 更新根 Ed25519 公钥（`PUBLIC KEY` PEM）；每个启用的 desktop 包所携带的密钥清单都必须由它签名。清单中存在启用的 desktop 条目时必填；只在启动时读取一次。仅进程内模式读取。 |
+| `TELESRV_UPDATE_PUBLIC_URL` | nullable HTTP(S) URL / 空；设置 `TELESRV_UPDATE_MANIFEST` 时为 `<TELESRV_PUBLIC_BASE_URL>/_updates` | 通过 `help.getConfig.autoupdate_url_prefix` 下发的更新前缀。进程内模式下留空则自动取 `<TELESRV_PUBLIC_BASE_URL>/_updates`（此时必须配置 `TELESRV_PUBLIC_LINK_WEB_ADDR`），显式值优先（例如 CDN）；独立模式下为客户端可见的 `cmd/telesrv-update` 根地址。未配置清单且为空时关闭 desktop 原生更新。客户端会持久化收到的前缀，应选择长期不变的地址。 |
+| `TELESRV_UPDATE_SERVICE_URL` | nullable HTTP(S) URL / `TELESRV_UPDATE_PUBLIC_URL` | `help.getAppUpdate` 访问独立 `telesrv-update` 的内部地址，可指向 loopback/private route；空值回退到公开更新地址。设置 `TELESRV_UPDATE_MANIFEST` 时必须为空，两者同时配置会启动失败。 |
 | `TELESRV_UPDATE_REQUEST_TIMEOUT` | duration / `2s` | application update resolver 调用超时，必须大于零且不超过 `30s`；resolver 故障返回 `help.noAppUpdate`，不会转成 RPC 500。 |
 | `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `telesrv` | 落地页自动唤起客户端的 scheme，必须与 patched 客户端注册值一致；禁止 `tg`、`http`、`https`。 |
 | `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / 空 | 多服务客户端可选的 host-based 根，例如 `owpg://example.com`。配置后生成 `owpg://example.com/oauth`、`owpg://example.com/<username>` 等；只允许精确 `<custom-scheme>://<host>`，禁止端口、path、query、fragment。`TELESRV_PUBLIC_APP_SCHEME` 仍作为旧链接输入兼容。 |
