@@ -9,60 +9,56 @@ import (
 	"telesrv/internal/domain"
 )
 
-// forwardGroupedIDs 的期望值是字面量：派生分组 = sha256(userID || 该组第一条的 random_id)
-// 前 8 字节去掉符号位，算法变了这里必须跟着显式更新。
+// forwardGroupedIDs 的契约是分组之间的关系，不是某个具体的哈希值：同一源相册共享一个新分组、
+// 不同源相册互不相同、非相册为 0、新分组为正、同样的输入（重试）得到同样的结果、
+// 已重放条目的分组（inherited）优先于派生。断言关系而不是抄实现算出的数，换派生算法不该让它坏。
 func TestForwardGroupedIDs(t *testing.T) {
-	const (
-		user42Rid1001 = int64(4175778989593976167)
-		user42Rid1003 = int64(8668281499685509150)
-		user42Rid2002 = int64(806772489254850963)
-	)
 	albumA := forwardSource{groupedID: 100}
 	albumB := forwardSource{groupedID: 200}
 	single := forwardSource{}
 
-	for _, tc := range []struct {
-		name      string
-		userID    int64
-		randomIDs []int64
-		sources   []forwardSource
-		inherited map[int64]int64
-		want      []int64
-	}{
-		{
-			name:      "same source album shares, different albums differ, non-album is 0",
-			userID:    42,
-			randomIDs: []int64{1001, 1002, 1003, 1004, 1005},
-			sources:   []forwardSource{albumA, albumA, albumB, single, albumB},
-			want:      []int64{user42Rid1001, user42Rid1001, user42Rid1003, 0, user42Rid1003},
-		},
-		{
-			name:      "inherited group wins over derivation",
-			userID:    42,
-			randomIDs: []int64{2001, 2002, 2003},
-			sources:   []forwardSource{albumA, albumB, albumA},
-			inherited: map[int64]int64{100: 777},
-			want:      []int64{777, user42Rid2002, 777},
-		},
-		{
-			name:      "no albums",
-			userID:    42,
-			randomIDs: []int64{3001, 3002},
-			sources:   []forwardSource{single, single},
-			want:      []int64{0, 0},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := forwardGroupedIDs(tc.userID, tc.randomIDs, tc.sources, tc.inherited)
-			if !slices.Equal(got, tc.want) {
-				t.Fatalf("forwardGroupedIDs = %v, want %v", got, tc.want)
-			}
-			// 同样的输入（重试）得到同样的分组。
-			if again := forwardGroupedIDs(tc.userID, tc.randomIDs, tc.sources, tc.inherited); !slices.Equal(again, got) {
-				t.Fatalf("retry = %v, want %v", again, got)
-			}
-		})
-	}
+	t.Run("albums share within, differ across, non-album is 0", func(t *testing.T) {
+		got := forwardGroupedIDs(42, []int64{1001, 1002, 1003, 1004, 1005},
+			[]forwardSource{albumA, albumA, albumB, single, albumB}, nil)
+		if got[0] <= 0 || got[2] <= 0 {
+			t.Fatalf("groups = %v, want positive ids for albums", got)
+		}
+		if got[0] != got[1] || got[2] != got[4] {
+			t.Fatalf("groups = %v, want each source album to share one id", got)
+		}
+		if got[0] == got[2] {
+			t.Fatalf("groups = %v, want different albums to get different ids", got)
+		}
+		if got[3] != 0 {
+			t.Fatalf("groups = %v, want 0 for the non-album message", got)
+		}
+	})
+
+	t.Run("a retry yields the same groups", func(t *testing.T) {
+		randomIDs := []int64{1001, 1002, 1003}
+		sources := []forwardSource{albumA, albumA, albumB}
+		first := forwardGroupedIDs(42, randomIDs, sources, nil)
+		if again := forwardGroupedIDs(42, randomIDs, sources, nil); !slices.Equal(again, first) {
+			t.Fatalf("retry = %v, want %v", again, first)
+		}
+	})
+
+	t.Run("an inherited group wins over derivation", func(t *testing.T) {
+		got := forwardGroupedIDs(42, []int64{2001, 2002, 2003},
+			[]forwardSource{albumA, albumB, albumA}, map[int64]int64{100: 777})
+		if got[0] != 777 || got[2] != 777 {
+			t.Fatalf("groups = %v, want album A to keep the inherited 777", got)
+		}
+		if got[1] <= 0 || got[1] == 777 {
+			t.Fatalf("groups = %v, want album B derived on its own", got)
+		}
+	})
+
+	t.Run("no albums", func(t *testing.T) {
+		if got := forwardGroupedIDs(42, []int64{3001, 3002}, []forwardSource{single, single}, nil); !slices.Equal(got, []int64{0, 0}) {
+			t.Fatalf("groups = %v, want all 0", got)
+		}
+	})
 }
 
 func TestDropForwardMediaCaptions(t *testing.T) {

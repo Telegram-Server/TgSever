@@ -70,6 +70,10 @@ func TestChannelAdminProtectionMapsUserAdminInvalid(t *testing.T) {
 	if err := f.router.BotAPIBanChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, 0, false); !tgerr.Is(err, "USER_ADMIN_INVALID") {
 		t.Fatalf("bot bans foreign admin = %v, want USER_ADMIN_INVALID", err)
 	}
+	// 降级走的是 channels.editAdmin，与封禁不是同一条处理器路径。
+	if err := f.router.BotAPIPromoteChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, domain.ChannelAdminRights{}); !tgerr.Is(err, "USER_ADMIN_INVALID") {
+		t.Fatalf("bot demotes foreign admin = %v, want USER_ADMIN_INVALID", err)
+	}
 	_, err := f.router.onChannelsEditBanned(WithUserID(f.ctx, f.member.ID), &tg.ChannelsEditBannedRequest{
 		Channel:      f.inputChannel(),
 		Participant:  &tg.InputPeerUser{UserID: f.bot.ID, AccessHash: f.bot.AccessHash},
