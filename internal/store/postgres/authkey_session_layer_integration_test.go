@@ -41,9 +41,12 @@ func TestAuthKeySessionLayerTransactionAndRestartPostgres(t *testing.T) {
 	newerMsgID := authKeySessionLayerTestMsgID(now, 3)
 	concurrentLowMsgID := authKeySessionLayerTestMsgID(now, 4)
 	concurrentHighMsgID := authKeySessionLayerTestMsgID(now, 5)
+	// msg_id 只有整秒精度：now+31s 取整后比检查时刻只领先 30.x 秒，测试用时加上 now 的
+	// 小数秒一过 1 秒就落回 30 秒容忍窗口内，用例约六次挂一次。给足余量。
+	futureMsgID := authKeySessionLayerTestMsgID(now.Add(40*time.Second), 1)
 	for _, invalidMsgID := range []int64{
 		authKeySessionLayerTestMsgID(now.Add(-302*time.Second), 1),
-		authKeySessionLayerTestMsgID(now.Add(31*time.Second), 1),
+		futureMsgID,
 		firstMsgID + 1,
 	} {
 		if _, _, err := keys.AdvanceSessionLayer(ctx, temp, sessionID, 220, invalidMsgID); !errors.Is(err, store.ErrAuthKeySessionLayerInvalid) {
@@ -73,8 +76,7 @@ func TestAuthKeySessionLayerTransactionAndRestartPostgres(t *testing.T) {
 			t.Fatalf("bound default %x = (%+v,%v,%v)", id, got, found, err)
 		}
 	}
-	futureSameLayerMsgID := authKeySessionLayerTestMsgID(now.Add(31*time.Second), 1)
-	if _, _, err := NewAuthKeyStore(pool).AdvanceSessionLayer(ctx, temp, sessionID, 220, futureSameLayerMsgID); !errors.Is(err, store.ErrAuthKeySessionLayerInvalid) {
+	if _, _, err := NewAuthKeyStore(pool).AdvanceSessionLayer(ctx, temp, sessionID, 220, futureMsgID); !errors.Is(err, store.ErrAuthKeySessionLayerInvalid) {
 		t.Fatalf("future same-Layer fast advance err = %v", err)
 	}
 	if got, found, err := NewAuthKeyStore(pool).GetSessionLayer(ctx, temp, sessionID); err != nil || !found || got.MessageID != firstMsgID || got.ObservationID != first.ObservationID {
