@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -20,19 +19,8 @@ import (
 // silent: the row exists, the log says queued, and getUpdates never shows the bot
 // anything, which looks exactly like a bot that ignored the question.
 func TestBotAPIUpdatesDeliversPreCheckoutPostgres(t *testing.T) {
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run")
-	}
+	pool := testPostgresPool(t)
 	ctx := context.Background()
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	pool, err := postgres.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(pool.Close)
 
 	// Unique per run: the test database is shared and phones are unique per user.
 	suffix := int64(time.Now().UnixNano()%100000000) + 1

@@ -3,8 +3,6 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,31 +17,12 @@ import (
 	"telesrv/internal/store/postgres"
 )
 
-// testPremiumPostgresPool 连接 TELESRV_TEST_POSTGRES_DSN 指向的库（迁移到最新），未设则跳过。
-// 与 internal/store/postgres.testPool 同一套门禁，但放在 rpc 包内，以便把真实
-// PremiumStore 接进 Router 验证支付表单路径。
+// testPremiumPostgresPool 打开本包共享克隆库的连接池（testPostgresPool），未设
+// TELESRV_TEST_POSTGRES_DSN 则跳过；放在 rpc 包内，以便把真实 PremiumStore 接进 Router
+// 验证支付表单路径。
 func testPremiumPostgresPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
-	}
-	parsed, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatalf("parse TELESRV_TEST_POSTGRES_DSN: %v", err)
-	}
-	if !strings.Contains(strings.ToLower(parsed.ConnConfig.Database), "test") {
-		t.Fatalf("TELESRV_TEST_POSTGRES_DSN must name a dedicated test database, got %q", parsed.ConnConfig.Database)
-	}
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	pool, err := postgres.Open(context.Background(), dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+	return testPostgresPool(t)
 }
 
 // 被拒绝的 fiat Premium 结账返回 NOT_IMPLEMENTED，并且不得留下任何 durable 支付意图，

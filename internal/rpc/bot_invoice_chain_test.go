@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -43,18 +42,9 @@ type invoiceChain struct {
 func newInvoiceChain(t *testing.T) *invoiceChain {
 	t.Helper()
 	ctx := context.Background()
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to exercise the atomic PostgreSQL invoice aggregate")
-	}
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatal(err)
-	}
-	pool, err := postgres.Open(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	// Skips unless TELESRV_TEST_POSTGRES_DSN is set: this exercises the atomic
+	// PostgreSQL invoice aggregate.
+	pool := testPostgresPool(t)
 	suffix := time.Now().UnixNano()
 	users := postgres.NewUserStore(pool)
 	botStore := postgres.NewBotStore(pool)

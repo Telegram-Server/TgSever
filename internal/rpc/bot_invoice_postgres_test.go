@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -25,19 +24,8 @@ import (
 // that keeps the two boxes in lockstep. Postgres is the backend that runs in
 // production, so the chain has to hold there rather than in a stand-in.
 func TestBotInvoiceChainPostgres(t *testing.T) {
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run")
-	}
+	pool := testPostgresPool(t)
 	ctx := context.Background()
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	pool, err := postgres.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(pool.Close)
 
 	users := postgres.NewUserStore(pool)
 	dialogs := postgres.NewDialogStore(pool)

@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,26 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/store"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
-// testPool 连接 TELESRV_TEST_POSTGRES_DSN 指向的库（迁移到最新），未设则跳过。
+// testPool 为当前测试打开一个连接池，指向本包共享的克隆库（模板库已迁移到最新，见
+// main_test.go 与 pgtest）；未设 TELESRV_TEST_POSTGRES_DSN 则跳过。同包测试共享这个库：
+// 依赖全表状态的测试改用 pgtest.NewDatabase(t) 独占一个库。
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
-	}
-	parsed, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatalf("parse TELESRV_TEST_POSTGRES_DSN: %v", err)
-	}
-	if !strings.Contains(strings.ToLower(parsed.ConnConfig.Database), "test") {
-		t.Fatalf("TELESRV_TEST_POSTGRES_DSN must name a dedicated test database, got %q", parsed.ConnConfig.Database)
-	}
-	if err := Migrate(dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	pool, err := Open(context.Background(), dsn)
+	pool, err := Open(context.Background(), pgtest.DSN(t))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

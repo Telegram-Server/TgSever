@@ -1,13 +1,14 @@
 package postgres
 
 import (
-	"os"
+	"context"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
 	"telesrv/deploy"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 // knownMigrationGaps 是历史遗留的空号：0123 从来没有存在过。golang-migrate 只保存一个
@@ -88,44 +89,71 @@ func TestEmbeddedMigrationsAreContiguousAndReversible(t *testing.T) {
 		t.Fatalf("migration series starts at %q, want version 1", ups[versions[0]])
 	}
 
+	// 编号链在 lastNumberedMigration 结束，之后改用时间戳版本。时间戳之间本来就不连续，
+	// 逐号检查不适用；改为钉住"已发布"的有序前缀：实际的时间戳序列必须以它开头，
+	// 新加的迁移只能排在它最后一项之后。追加迁移不用改这里；把一条插到已发布版本之间
+	// （部署过的库永远不会执行它）会让前缀对不上而失败。
+	// 想把新版本也钉住时，按顺序追加到 publishedTimestampVersions 末尾即可。
+	const lastNumberedMigration = uint(223)
+	publishedTimestampVersions := []uint{
+		20260924140000,
+		20260924150000,
+		20260926010000,
+		20260927010000,
+		20260928010000,
+		20260928020000,
+		20260928030000,
+		20261012010000,
+		20261013010000,
+		20261015010000,
+		20261016010000,
+		20261017010000,
+		20261018010000,
+		20261019010000,
+		20261020010000,
+		20261021010000,
+		20261021020000,
+		20261022010000,
+	}
+	numbered := versions
+	var timestamps []uint
+	for index, version := range versions {
+		if version > lastNumberedMigration {
+			numbered, timestamps = versions[:index], versions[index:]
+			break
+		}
+	}
+	// versions[0] == 1 已检查，numbered 非空。第一条时间戳版本的前驱必须是 223。
+	if last := numbered[len(numbered)-1]; last != lastNumberedMigration {
+		t.Fatalf("numbered migration chain ends at %d, want %d right before the first timestamp version", last, lastNumberedMigration)
+	}
+	if len(timestamps) < len(publishedTimestampVersions) {
+		t.Fatalf("timestamp migrations = %v, want the published prefix %v", timestamps, publishedTimestampVersions)
+	}
+	for index, want := range publishedTimestampVersions {
+		if timestamps[index] != want {
+			t.Fatalf("timestamp migration #%d = %q (%d), want published version %d: a migration was inserted "+
+				"among or removed from the published versions; deployed databases would never run it",
+				index, ups[timestamps[index]], timestamps[index], want)
+		}
+	}
+	lastPublished := publishedTimestampVersions[len(publishedTimestampVersions)-1]
+	for _, version := range timestamps[len(publishedTimestampVersions):] {
+		if version <= lastPublished {
+			t.Fatalf("new migration %q must sort after the last published version %d", ups[version], lastPublished)
+		}
+	}
+
 	for index, version := range versions {
 		if _, ok := downs[version]; !ok {
 			t.Fatalf("migration %q has no down script", ups[version])
 		}
 
-		if index == 0 {
+		if index == 0 || version > lastNumberedMigration {
 			continue
 		}
 
 		previous := versions[index-1]
-		// These published timestamp versions follow the original numbered chain.
-		// Pin every predecessor so future additions cannot silently fill a gap.
-		timestampPredecessors := map[uint]uint{
-			20260924140000: 223,
-			20260924150000: 20260924140000,
-			20260926010000: 20260924150000,
-			20260927010000: 20260926010000,
-			20260928010000: 20260927010000,
-			20260928020000: 20260928010000,
-			20260928030000: 20260928020000,
-			20261012010000: 20260928030000,
-			20261013010000: 20261012010000,
-			20261015010000: 20261013010000,
-			20261016010000: 20261015010000,
-			20261017010000: 20261016010000,
-			20261018010000: 20261017010000,
-			20261019010000: 20261018010000,
-			20261020010000: 20261019010000,
-			20261021010000: 20261020010000,
-			20261021020000: 20261021010000,
-			20261022010000: 20261021020000,
-		}
-		if expected, ok := timestampPredecessors[version]; ok {
-			if previous != expected {
-				t.Fatalf("migration %d predecessor = %d, want %d", version, previous, expected)
-			}
-			continue
-		}
 		for missing := previous + 1; missing < version; missing++ {
 			if _, allowed := knownMigrationGaps[missing]; allowed {
 				continue
@@ -150,19 +178,29 @@ func TestEmbeddedMigrationsAreContiguousAndReversible(t *testing.T) {
 	}
 }
 
+// "从空库迁移到最新"由 pgtest 承担：模板库按迁移内容哈希命名，迁移内容一变就新建一个，
+// 从空库跑 MigrateAndStatus 到 head 并断言版本，失败则本包所有 Postgres 测试都拿不到库。
+// 这里核对本包的克隆库（模板的副本）停在 head 且不脏，再迁移一次也只是空操作。
 func TestStarGiftLifecycleMigrationsApply(t *testing.T) {
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
-	}
-
+	pool := testPool(t)
 	head := headMigrationVersion(t)
-
-	status, err := MigrateAndStatus(dsn)
-	if err != nil {
-		t.Fatalf("migrate star gift lifecycle schema: %v", err)
+	if pgHead, err := pgtest.HeadVersion(); err != nil || pgHead != head {
+		t.Fatalf("pgtest head = %d (%v), want %d", pgHead, err, head)
 	}
 
+	var version int64
+	var dirty bool
+	if err := pool.QueryRow(context.Background(), `SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty); err != nil {
+		t.Fatalf("read schema_migrations: %v", err)
+	}
+	if dirty || version != int64(head) {
+		t.Fatalf("cloned schema version = %d (dirty=%v), want clean version %d", version, dirty, head)
+	}
+
+	status, err := MigrateAndStatus(pgtest.DSN(t))
+	if err != nil {
+		t.Fatalf("re-migrate cloned schema: %v", err)
+	}
 	if status.Dirty || status.Empty || status.Version != head {
 		t.Fatalf("migration status = %+v, want clean version %d", status, head)
 	}

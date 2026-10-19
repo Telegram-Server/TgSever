@@ -14,6 +14,7 @@ import (
 	filesapp "telesrv/internal/app/files"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/postgres"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 // TestMediaDownloadRangeBaseline 用真实 PostgreSQL 元数据 + localfs blob backend
@@ -23,15 +24,10 @@ func TestMediaDownloadRangeBaseline(t *testing.T) {
 	if os.Getenv("TELESRV_MEDIA_DOWNLOAD_LOAD") != "1" {
 		t.Skip("set TELESRV_MEDIA_DOWNLOAD_LOAD=1 to run media download baseline")
 	}
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run media download baseline")
-	}
+	// 未设 TELESRV_TEST_POSTGRES_DSN 时 Skip；库是本包从模板克隆的独立库。
+	dsn := pgtest.DSN(t)
 
 	ctx := context.Background()
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	pool, err := postgres.Open(ctx, dsn, postgres.WithMaxConns(envInt("TELESRV_MEDIA_LOAD_POOL_CONNS", 16)))
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
