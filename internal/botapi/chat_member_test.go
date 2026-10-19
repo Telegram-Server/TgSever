@@ -24,10 +24,6 @@ func TestAPIChatMemberStatuses(t *testing.T) {
 		{"guest", domain.ChannelMember{Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, Guest: true}, "left"},
 		{"kicked", domain.ChannelMember{Role: domain.ChannelRoleMember, Status: domain.ChannelMemberKicked,
 			BannedRights: domain.ChannelBannedRights{ViewMessages: true}}, "kicked"},
-		{"view ban", domain.ChannelMember{Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
-			BannedRights: domain.ChannelBannedRights{ViewMessages: true}}, "kicked"},
-		{"restricted outside", domain.ChannelMember{Role: domain.ChannelRoleMember, Status: domain.ChannelMemberBanned,
-			BannedRights: domain.ChannelBannedRights{SendMessages: true}}, "restricted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := apiChatMember(tc.member, memberTestUser, false)

@@ -49,6 +49,9 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	for userID, existing := range existingMembers {
+		existingMembers[userID] = existing.EffectiveAt(restrictionNow(date))
+	}
 	for _, userID := range requested {
 		if existing, ok := existingMembers[userID]; ok {
 			if existing.Status == domain.ChannelMemberActive {
@@ -57,7 +60,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 				}
 				continue
 			}
-			if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+			if existing.IsKicked() {
 				if !canRestoreKicked {
 					if inviteOne {
 						return domain.CreateChannelResult{}, domain.ErrUserKicked
@@ -79,6 +82,9 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 			AvailableMinID:  channelInitialAvailableMinID(channel),
 			AvailableMinPts: channelInitialAvailableMinPts(channel),
 			ReadInboxMaxID:  channel.TopMessageID,
+		}
+		if existing, ok := existingMembers[userID]; ok {
+			member.BannedRights = rejoinBannedRights(existing, date)
 		}
 		members = append(members, member)
 		invitedIDs = append(invitedIDs, userID)

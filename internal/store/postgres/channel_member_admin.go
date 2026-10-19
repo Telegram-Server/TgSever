@@ -36,6 +36,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 		return domain.EditChannelAdminResult{}, domain.ErrChannelAdminRequired
 	}
 	previous, err := s.getChannelMember(ctx, tx, req.ChannelID, req.MemberID)
+	previous = previous.EffectiveAt(restrictionNow(req.Date))
 	membershipActivated := err != nil && errors.Is(err, domain.ErrChannelPrivate)
 	if err != nil {
 		if !errors.Is(err, domain.ErrChannelPrivate) {
@@ -93,7 +94,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 		recipients = append(recipients, req.MemberID)
 		return domain.EditChannelAdminResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date}, nil
 	}
-	if err := checkManageChannelAdmin(actor, previous); err != nil {
+	if err := domain.CheckManageChannelAdmin(actor, previous); err != nil {
 		return domain.EditChannelAdminResult{}, err
 	}
 	if actor.Role != domain.ChannelRoleCreator && !adminRightsSubset(req.AdminRights, actor.AdminRights) {
@@ -331,6 +332,7 @@ func (s *ChannelStore) EditChannelMemberRank(ctx context.Context, req domain.Edi
 		return domain.EditChannelAdminResult{}, err
 	}
 	previous, err := s.getChannelMember(ctx, tx, req.ChannelID, req.MemberID)
+	previous = previous.EffectiveAt(restrictionNow(req.Date))
 	if err != nil {
 		if errors.Is(err, domain.ErrChannelPrivate) {
 			return domain.EditChannelAdminResult{}, domain.ErrUserNotParticipant
@@ -398,6 +400,7 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 		return domain.EditChannelBannedResult{}, domain.ErrChannelAdminRequired
 	}
 	previous, err := s.getChannelMember(ctx, tx, req.ChannelID, req.Participant.ID)
+	previous = previous.EffectiveAt(restrictionNow(req.Date))
 	if err != nil {
 		if !errors.Is(err, domain.ErrChannelPrivate) {
 			return domain.EditChannelBannedResult{}, err
@@ -413,7 +416,7 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	if previous.Role == domain.ChannelRoleCreator {
 		return domain.EditChannelBannedResult{}, domain.ErrChannelUserCreator
 	}
-	if err := checkManageChannelAdmin(actor, previous); err != nil {
+	if err := domain.CheckManageChannelAdmin(actor, previous); err != nil {
 		return domain.EditChannelBannedResult{}, err
 	}
 	member := previous

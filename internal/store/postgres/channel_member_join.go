@@ -38,10 +38,11 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	}
 	existing, existingErr := s.getChannelMember(ctx, tx, channelID, userID)
 	if existingErr == nil {
+		existing = existing.EffectiveAt(restrictionNow(date))
 		switch {
 		case existing.Status == domain.ChannelMemberActive:
 			return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
-		case existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages:
+		case existing.IsKicked():
 			return domain.CreateChannelResult{}, domain.ErrChannelUserBanned
 		}
 	}
@@ -67,9 +68,9 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	var previous map[int64]domain.ChannelMember
 	if existingErr == nil {
 		previous = map[int64]domain.ChannelMember{userID: existing}
-		// 重进是全新 participant，但部分限制名单独立于在群与否、重进后仍生效；
+		// 重进是全新 participant，但部分限制名单独立于在群与否、重进后仍生效（期限已过的除外）；
 		// 只有 channel 当前 owner 仍是该账号时，才保留 creator 身份。
-		member.BannedRights = existing.BannedRights
+		member.BannedRights = rejoinBannedRights(existing, date)
 		if existing.Role == domain.ChannelRoleCreator && channel.CreatorUserID == userID {
 			member.Role = domain.ChannelRoleCreator
 			member.AdminRights = existing.AdminRights

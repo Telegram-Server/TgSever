@@ -2,7 +2,10 @@ package rpc
 
 import (
 	"context"
+
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
+
 	"telesrv/internal/domain"
 )
 
@@ -202,6 +205,7 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 		NoForwards:           p.noforwards,
 		ReplyTo:              replyTo,
 		SendAs:               sendAs,
+		GroupedID:            p.groupedID,
 		ScheduleDate:         scheduleDate,
 		ScheduleRepeatPeriod: repeatPeriod,
 		Date:                 date,
@@ -231,15 +235,7 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 	deletedIDs := make([]int, 0, len(claimed))
 	sentIDs := make([]int, 0, len(claimed))
 	for _, scheduled := range claimed {
-		updates, _, err := r.sendOutgoing(ctx, userID, scheduled.Peer, outgoingSend{
-			randomID:    scheduled.RandomID,
-			message:     scheduled.Message,
-			entities:    tgInputMessageEntities(scheduled.Entities),
-			media:       scheduled.Media,
-			richMessage: scheduled.RichMessage,
-			silent:      scheduled.Silent,
-			noforwards:  scheduled.NoForwards,
-		})
+		updates, err := r.sendScheduledMessage(ctx, userID, scheduled)
 		if err != nil {
 			if scheduledSvc, ok := r.deps.Messages.(scheduledMessagesService); ok {
 				_ = scheduledSvc.ReleaseScheduledMessage(ctx, scheduled.OwnerUserID, scheduled.ID, err.Error())
@@ -270,6 +266,46 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 	combined.Chats = mergeTGChats(combined.Chats, deleteUpdate.Chats)
 	r.pushUserUpdates(ctx, userID, deleteUpdate)
 	return combined, nil
+}
+
+// sendScheduledMessage 把一条已认领的定时消息按排程时持久化的内容发出：回复目标、
+// send_as、相册分组都沿用定时行上保存的值。
+func (r *Router) sendScheduledMessage(ctx context.Context, userID int64, scheduled domain.ScheduledMessage) (tg.UpdatesClass, error) {
+	sendAs := scheduled.SendAs
+	if sendAs != nil {
+		// 与立即发送一致：发出时已无权以该身份发言即 SEND_AS_PEER_INVALID，不发出（行释放回
+		// pending，权限恢复后可再发），绝不退化为以本人身份发出——那会暴露匿名管理员。
+		checked, err := r.checkSendAsPeer(ctx, userID, scheduled.Peer, *sendAs)
+		if err != nil {
+			return nil, err
+		}
+		sendAs = checked
+	}
+	p := outgoingSend{
+		randomID:    scheduled.RandomID,
+		message:     scheduled.Message,
+		entities:    tgInputMessageEntities(scheduled.Entities),
+		media:       scheduled.Media,
+		richMessage: scheduled.RichMessage,
+		silent:      scheduled.Silent,
+		noforwards:  scheduled.NoForwards,
+		// 回复目标已在排程时解析校验并持久化，发出时直接沿用。
+		replyTo:      scheduled.ReplyTo,
+		replyToReady: true,
+		sendAs:       sendAs,
+		sendAsReady:  true,
+		forward:      scheduled.Forward,
+		// 同组定时消息无论一次还是分批发出，都沿用排程时持久化的同一 grouped_id。
+		groupedID: scheduled.GroupedID,
+	}
+	updates, _, err := r.sendOutgoing(ctx, userID, scheduled.Peer, p)
+	if err != nil && p.replyTo != nil && tgerr.Is(err, "REPLY_MESSAGE_ID_INVALID") {
+		// 回复目标在排程后被删除：按官方行为照常发出、不带回复引用，不能让这条定时消息
+		// 因一个已不存在的引用永远卡在重试里。
+		p.replyTo = nil
+		updates, _, err = r.sendOutgoing(ctx, userID, scheduled.Peer, p)
+	}
+	return updates, err
 }
 
 func (r *Router) tgScheduledMessages(ctx context.Context, userID int64, peer domain.Peer, list domain.ScheduledMessageList) tg.MessagesMessagesClass {
@@ -349,6 +385,7 @@ func scheduledMessageAsDomainMessage(msg domain.ScheduledMessage, viewerUserID i
 		Forward:     msg.Forward,
 		Media:       msg.Media,
 		RichMessage: msg.RichMessage,
+		GroupedID:   msg.GroupedID,
 	}
 }
 
@@ -392,10 +429,20 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 		Seq:     0,
 	}
 	domainMessages := make([]domain.Message, 0, len(sources))
+	// 定时转发不查重放，sources 与 req.ID 一一对应；同一源相册得到同一个新 grouped_id，
+	// 持久化在定时行上，到点发出时原样沿用。
+	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources, nil)
 	for i, source := range sources {
 		forward := source.forward
 		if req.DropAuthor {
 			forward = nil
+		}
+		if forward != nil && toPeer.Type == domain.PeerTypeUser && toPeer.ID == userID {
+			// 与立即转发一致：转发进收藏夹记下来源会话与原消息，收藏夹据此按来源分组。
+			saved := *forward
+			saved.SavedFrom = fromPeer
+			saved.SavedFromMsgID = req.ID[i]
+			forward = &saved
 		}
 		msg, err := scheduledSvc.ScheduleMessage(ctx, userID, domain.ScheduleMessageRequest{
 			OwnerUserID:          userID,
@@ -409,6 +456,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 			ReplyTo:              replyTo,
 			Forward:              forward,
 			SendAs:               sendAs,
+			GroupedID:            groupedIDs[i],
 			ScheduleDate:         req.ScheduleDate,
 			ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
 			Date:                 date,

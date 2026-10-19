@@ -448,6 +448,10 @@ func (f *fakeChatlistChannels) GetChannel(_ context.Context, userID, channelID i
 	}, nil
 }
 
+func (f *fakeChatlistChannels) GetParticipant(context.Context, int64, int64, int64) (domain.ChannelMember, error) {
+	return domain.ChannelMember{}, domain.ErrUserNotParticipant
+}
+
 func (f *fakeChatlistChannels) InviteToChannel(_ context.Context, userID, channelID int64, userIDs []int64, date int) (domain.CreateChannelResult, error) {
 	f.inviteIDs = append(f.inviteIDs, channelID)
 	if len(userIDs) == 0 {

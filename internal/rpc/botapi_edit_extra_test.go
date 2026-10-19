@@ -15,7 +15,7 @@ func botAPITestKeyboard(text string) *domain.MessageReplyMarkup {
 }
 
 // sendBotPhoto 让机器人往 chatID 发一张带 caption 和按钮的照片，作为编辑测试的目标。
-func (f botAPISendEditFixture) sendBotPhoto(t *testing.T, chatID int64, caption string) domain.Message {
+func (f botAPIBridgeFixture) sendBotPhoto(t *testing.T, chatID int64, caption string) domain.Message {
 	t.Helper()
 	msg, err := f.router.BotAPISendMedia(f.ctx, f.bot.ID, chatID, "photo", "", "", "a.png", "image/png", []byte("png"), caption, nil, botAPITestKeyboard("Old"), false, 0)
 	if err != nil {
@@ -25,7 +25,7 @@ func (f botAPISendEditFixture) sendBotPhoto(t *testing.T, chatID int64, caption 
 }
 
 // sendOwnerText 让群主在群里发一条文本，作为"别人的消息"。
-func (f botAPISendEditFixture) sendOwnerText(t *testing.T) domain.Message {
+func (f botAPIBridgeFixture) sendOwnerText(t *testing.T) domain.Message {
 	t.Helper()
 	input, peer, err := f.router.botAPIInputPeer(f.ctx, f.owner.ID, f.chatID)
 	if err != nil {
@@ -43,7 +43,7 @@ func (f botAPISendEditFixture) sendOwnerText(t *testing.T) domain.Message {
 }
 
 func TestBotAPIEditMessageCaptionInGroupAndPrivate(t *testing.T) {
-	f := newBotAPISendEditFixture(t)
+	f := newBotAPIBridgeFixture(t)
 	for _, chatID := range []int64{f.chatID, f.member.ID} {
 		sent := f.sendBotPhoto(t, chatID, "old caption")
 
@@ -64,60 +64,60 @@ func TestBotAPIEditMessageCaptionInGroupAndPrivate(t *testing.T) {
 }
 
 func TestBotAPIEditMessageReplyMarkupKeepsCaption(t *testing.T) {
-	f := newBotAPISendEditFixture(t)
-	for _, chatID := range []int64{f.chatID, f.member.ID} {
-		sent := f.sendBotPhoto(t, chatID, "keep me")
+	f := newBotAPIBridgeFixture(t)
+	sent := f.sendBotPhoto(t, f.chatID, "keep me")
 
-		edited, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, chatID, sent.ID, botAPITestKeyboard("New"))
-		if err != nil {
-			t.Fatalf("chat %d: BotAPIEditMessageReplyMarkup: %v", chatID, err)
-		}
-		if edited.Body != "keep me" || edited.Media == nil || edited.Media.Photo == nil || edited.ReplyMarkup == nil ||
-			edited.ReplyMarkup.Inline[0][0].Text != "New" {
-			t.Fatalf("chat %d: edited = %+v markup = %+v", chatID, edited, edited.ReplyMarkup)
-		}
+	edited, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, f.chatID, sent.ID, botAPITestKeyboard("New"))
+	if err != nil {
+		t.Fatalf("BotAPIEditMessageReplyMarkup: %v", err)
+	}
+	if edited.Body != "keep me" || edited.Media == nil || edited.Media.Photo == nil || edited.ReplyMarkup == nil ||
+		edited.ReplyMarkup.Inline[0][0].Text != "New" {
+		t.Fatalf("edited = %+v markup = %+v", edited, edited.ReplyMarkup)
+	}
 
-		cleared, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, chatID, sent.ID, nil)
-		if err != nil {
-			t.Fatalf("chat %d: clear markup: %v", chatID, err)
-		}
-		if cleared.Body != "keep me" || (cleared.ReplyMarkup != nil && !cleared.ReplyMarkup.IsZero()) {
-			t.Fatalf("chat %d: cleared = %+v markup = %+v", chatID, cleared, cleared.ReplyMarkup)
-		}
+	cleared, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, f.chatID, sent.ID, nil)
+	if err != nil {
+		t.Fatalf("clear markup: %v", err)
+	}
+	if cleared.Body != "keep me" || (cleared.ReplyMarkup != nil && !cleared.ReplyMarkup.IsZero()) {
+		t.Fatalf("cleared = %+v markup = %+v", cleared, cleared.ReplyMarkup)
 	}
 }
 
-func TestBotAPIEditMessageReplyMarkupRejectsOthersMessages(t *testing.T) {
-	f := newBotAPISendEditFixture(t)
+// 机器人不能改别人的消息：改说明文字与改键盘都返回 MESSAGE_AUTHOR_REQUIRED。
+func TestBotAPIEditRejectsOthersMessages(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
 	owner := f.sendOwnerText(t)
 
-	if _, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, f.chatID, owner.ID, botAPITestKeyboard("X")); err == nil {
-		t.Fatal("bot changed the keyboard of the owner's message")
+	if _, err := f.router.BotAPIEditMessageCaption(f.ctx, f.bot.ID, f.chatID, owner.ID, "hijack", nil, false, nil); !containsErr(err, "MESSAGE_AUTHOR_REQUIRED") {
+		t.Fatalf("edit caption of owner's message err = %v, want MESSAGE_AUTHOR_REQUIRED", err)
+	}
+	if _, err := f.router.BotAPIEditMessageReplyMarkup(f.ctx, f.bot.ID, f.chatID, owner.ID, botAPITestKeyboard("X")); !containsErr(err, "MESSAGE_AUTHOR_REQUIRED") {
+		t.Fatalf("edit keyboard of owner's message err = %v, want MESSAGE_AUTHOR_REQUIRED", err)
 	}
 }
 
 func TestBotAPIEditMessageMediaReplacesPhoto(t *testing.T) {
-	f := newBotAPISendEditFixture(t)
-	for _, chatID := range []int64{f.chatID, f.member.ID} {
-		sent := f.sendBotPhoto(t, chatID, "old")
-		item := BotAPIInputMediaItem{Kind: "document", File: domain.BotAPIFileInput{Bytes: []byte("pdf"), FileName: "a.pdf", MimeType: "application/pdf"}, Caption: "a document"}
+	f := newBotAPIBridgeFixture(t)
+	sent := f.sendBotPhoto(t, f.chatID, "old")
+	item := BotAPIInputMediaItem{Kind: "document", File: domain.BotAPIFileInput{Bytes: []byte("pdf"), FileName: "a.pdf", MimeType: "application/pdf"}, Caption: "a document"}
 
-		edited, err := f.router.BotAPIEditMessageMedia(f.ctx, f.bot.ID, chatID, sent.ID, item, false, nil)
-		if err != nil {
-			t.Fatalf("chat %d: BotAPIEditMessageMedia: %v", chatID, err)
-		}
-		if edited.ID != sent.ID || edited.Body != "a document" || edited.Media == nil || edited.Media.Document == nil ||
-			edited.Media.Photo != nil || edited.EditDate == 0 {
-			t.Fatalf("chat %d: edited = %+v media = %+v", chatID, edited, edited.Media)
-		}
-		if edited.ReplyMarkup == nil || len(edited.ReplyMarkup.Inline) != 1 {
-			t.Fatalf("chat %d: markup = %+v, want the original keyboard kept", chatID, edited.ReplyMarkup)
-		}
+	edited, err := f.router.BotAPIEditMessageMedia(f.ctx, f.bot.ID, f.chatID, sent.ID, item, false, nil)
+	if err != nil {
+		t.Fatalf("BotAPIEditMessageMedia: %v", err)
+	}
+	if edited.ID != sent.ID || edited.Body != "a document" || edited.Media == nil || edited.Media.Document == nil ||
+		edited.Media.Photo != nil || edited.EditDate == 0 {
+		t.Fatalf("edited = %+v media = %+v", edited, edited.Media)
+	}
+	if edited.ReplyMarkup == nil || len(edited.ReplyMarkup.Inline) != 1 {
+		t.Fatalf("markup = %+v, want the original keyboard kept", edited.ReplyMarkup)
 	}
 }
 
 func TestBotAPIEditMessageMediaRejectsTextMessages(t *testing.T) {
-	f := newBotAPISendEditFixture(t)
+	f := newBotAPIBridgeFixture(t)
 	sent, err := f.router.BotAPISendMessage(f.ctx, f.bot.ID, f.member.ID, "plain", nil, nil, false, false, 0)
 	if err != nil {
 		t.Fatalf("send text: %v", err)
@@ -129,7 +129,7 @@ func TestBotAPIEditMessageMediaRejectsTextMessages(t *testing.T) {
 }
 
 func TestBotAPIStopPollClosesAndReportsVotes(t *testing.T) {
-	f := newBotAPISendEditFixture(t)
+	f := newBotAPIBridgeFixture(t)
 	sent, err := f.router.BotAPISendPoll(f.ctx, f.bot.ID, f.chatID, botAPITestPoll("Lunch?", "pizza", "sushi"), nil, "", nil, nil, false, false, 0)
 	if err != nil {
 		t.Fatalf("send poll: %v", err)
@@ -162,7 +162,7 @@ func TestBotAPIStopPollClosesAndReportsVotes(t *testing.T) {
 }
 
 func TestBotAPIEditInlineVariantsRejectUnknownInlineMessages(t *testing.T) {
-	f := newBotAPISendEditFixture(t)
+	f := newBotAPIBridgeFixture(t)
 	unknown := domain.BotInlineMessageID{DCID: 2, OwnerID: f.member.ID, ID: 999, AccessHash: 1}
 
 	if _, err := f.router.BotAPIEditInlineMessageCaption(f.ctx, f.bot.ID, unknown, "x", nil, false, nil); !containsErr(err, "MESSAGE_ID_INVALID") {
@@ -174,14 +174,5 @@ func TestBotAPIEditInlineVariantsRejectUnknownInlineMessages(t *testing.T) {
 	item := BotAPIInputMediaItem{Kind: "photo", File: domain.BotAPIFileInput{Bytes: []byte("png")}}
 	if _, err := f.router.BotAPIEditInlineMessageMedia(f.ctx, f.bot.ID, unknown, item, false, nil); !containsErr(err, "MESSAGE_ID_INVALID") {
 		t.Fatalf("media err = %v", err)
-	}
-}
-
-func TestBotAPIEditMessageCaptionRejectsOthersMessages(t *testing.T) {
-	f := newBotAPISendEditFixture(t)
-	owner := f.sendOwnerText(t)
-
-	if _, err := f.router.BotAPIEditMessageCaption(f.ctx, f.bot.ID, f.chatID, owner.ID, "hijack", nil, false, nil); err == nil {
-		t.Fatal("bot edited the owner's message")
 	}
 }

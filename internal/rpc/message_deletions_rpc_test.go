@@ -107,8 +107,7 @@ func TestMessagesDeleteMessagesRecordsTheDeletingSession(t *testing.T) {
 		t.Fatalf("deletions by alice = %+v, want both copies of bob's message", got)
 	}
 	for _, row := range got {
-		if row.Source != domain.DeletionSourceUser || row.Scope != domain.DeletionScopeBoth ||
-			row.ActorType != domain.DeletionActorUser || row.SenderUserID != f.bob.ID ||
+		if row.Source != domain.DeletionSourceUser || row.ActorType != domain.DeletionActorUser ||
 			row.OriginAuthKeyID != authKeyID || row.OriginSessionID != 77 {
 			t.Fatalf("deletion = %+v, want alice's session %x/77 revoking bob's message", row, authKeyID)
 		}

@@ -796,6 +796,7 @@ type ScheduledMessage struct {
 	ReplyTo              *MessageReply
 	Forward              *MessageForward
 	SendAs               *Peer
+	GroupedID            int64 // 相册分组 id：同组共享非零值，列表投影与到点发出都沿用；单条恒 0
 	ScheduleDate         int
 	ScheduleRepeatPeriod int
 	CreatedAt            int
@@ -825,6 +826,7 @@ type ScheduleMessageRequest struct {
 	ReplyTo              *MessageReply
 	Forward              *MessageForward
 	SendAs               *Peer
+	GroupedID            int64 // 相册分组 id（定时 sendMultiMedia / 定时转发相册）；单条恒 0
 	ScheduleDate         int
 	ScheduleRepeatPeriod int
 	Date                 int

@@ -18,7 +18,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	if err != nil {
 		return domain.EditChannelMessageResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	idx, ok := s.findMessageIndexLocked(req.ChannelID, req.ID)
 	if !ok || s.messages[req.ChannelID][idx].Deleted || s.messages[req.ChannelID][idx].Action != nil {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageIDInvalid
@@ -270,7 +270,7 @@ func (s *ChannelStore) UpdatePinnedMessage(_ context.Context, req domain.UpdateC
 	if err != nil {
 		return domain.UpdateChannelPinnedMessageResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	if !canPinChannelMessages(channel, member) {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelAdminRequired
 	}
@@ -343,7 +343,7 @@ func (s *ChannelStore) UnpinAllChannelMessages(_ context.Context, req domain.Unp
 	if err != nil {
 		return domain.UpdateChannelPinnedMessageResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	if !canPinChannelMessages(channel, member) {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelAdminRequired
 	}

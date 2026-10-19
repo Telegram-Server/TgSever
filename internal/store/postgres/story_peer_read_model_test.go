@@ -2,12 +2,12 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 type fakeStoryReadModelCache struct {
@@ -235,7 +235,7 @@ func TestReadModelChangeListenerRoutesLogicalUserDeletionAsCoarseInvalidation(t 
 // story_hidden_peers → story_peer bump → 统一 read-model NOTIFY → 按 owner peer 失效故事投影。
 func TestStoryPeerReadModelNotifyInvalidatesOnStoryWrite(t *testing.T) {
 	pool := testPool(t)
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
+	dsn := pgtest.TestDSN(t)
 	ctx := context.Background()
 
 	const ownerID int64 = 913500777

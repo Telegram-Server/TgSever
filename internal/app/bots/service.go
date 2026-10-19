@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -847,24 +846,9 @@ func (s *Service) GetBotInfo(ctx context.Context, botUserID int64) (name, about,
 
 // SetBotMenuButton 设置 bot 的 menu button（per-bot 全局），返回新 bot_info_version。
 func (s *Service) SetBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (int, error) {
-	switch button.Type {
-	case domain.BotMenuButtonDefault, domain.BotMenuButtonCommands:
-		button.Text, button.URL = "", ""
-	case domain.BotMenuButtonWebView:
-		button.Text = strings.TrimSpace(button.Text)
-		button.URL = strings.TrimSpace(button.URL)
-		if button.Text == "" || len(button.Text) > domain.MaxBotMenuButtonTextLen ||
-			button.URL == "" || len(button.URL) > domain.MaxBotMenuButtonURLLen {
-			return 0, domain.ErrBotMenuButtonInvalid
-		}
-		// 强制 https（对齐官方 BUTTON_URL_INVALID）：menu button URL 经
-		// userFull.bot_info.menu_button 下发给所有交互用户的客户端 webview 入口，
-		// 拒绝 javascript:/file:/intent: 等非 https scheme，防 bot 投毒。
-		if u, err := url.Parse(button.URL); err != nil || u.Scheme != "https" || u.Host == "" {
-			return 0, domain.ErrBotMenuButtonInvalid
-		}
-	default:
-		return 0, domain.ErrBotMenuButtonInvalid
+	button, err := normalizeBotMenuButton(button)
+	if err != nil {
+		return 0, err
 	}
 	version, err := s.bots.UpdateBotMenuButton(ctx, botUserID, button)
 	if err != nil {

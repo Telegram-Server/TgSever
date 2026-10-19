@@ -190,6 +190,7 @@ SELECT EXISTS (
 		Media:            req.Media,
 		ReplyTo:          req.ReplyTo,
 		Forward:          req.Forward,
+		GroupedID:        req.GroupedID,
 		Pts:              pts,
 	}
 	event := domain.ChannelUpdateEvent{

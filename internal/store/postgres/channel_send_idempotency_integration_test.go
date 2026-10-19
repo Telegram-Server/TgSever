@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +15,7 @@ import (
 	"telesrv/deploy"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 func TestChannelSendFingerprintReplayPostgres(t *testing.T) {
@@ -298,10 +298,7 @@ func TestChannelSendFingerprintConcurrentRacePostgres(t *testing.T) {
 }
 
 func TestChannelSendFingerprintSingleConnectionConflictLookupPostgres(t *testing.T) {
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
-	}
+	dsn := pgtest.TestDSN(t)
 	setupPool := testPool(t)
 	setupCtx := context.Background()
 	suffix := randomSuffix(t)

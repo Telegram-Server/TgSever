@@ -11,43 +11,47 @@ import (
 
 func TestMessageDeletionsPostgres(t *testing.T) {
 	pool := testPool(t)
-	ctx := context.Background()
-	users := NewUserStore(pool)
-	suffix := randomSuffix(t)
-	sender, err := users.Create(ctx, domain.User{AccessHash: 1201, Phone: "+178" + suffix + "01", FirstName: "DeletionSender"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	recipient, err := users.Create(ctx, domain.User{AccessHash: 1202, Phone: "+178" + suffix + "02", FirstName: "DeletionRecipient"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE owner_user_id=ANY($1::bigint[])`, []int64{sender.ID, recipient.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{sender.ID, recipient.ID})
+	storetest.MessageDeletions(t, func(t *testing.T) storetest.MessageDeletionFixture {
+		ctx := context.Background()
+		users := NewUserStore(pool)
+		suffix := randomSuffix(t)
+		sender, err := users.Create(ctx, domain.User{AccessHash: 1201, Phone: "+178" + suffix + "01", FirstName: "DeletionSender"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recipient, err := users.Create(ctx, domain.User{AccessHash: 1202, Phone: "+178" + suffix + "02", FirstName: "DeletionRecipient"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE owner_user_id=ANY($1::bigint[])`, []int64{sender.ID, recipient.ID})
+			_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{sender.ID, recipient.ID})
+		})
+		return storetest.MessageDeletionFixture{Messages: NewMessageStore(pool), Deletions: NewMessageDeletionStore(pool), Sender: sender.ID, Recipient: recipient.ID}
 	})
-	storetest.MessageDeletions(t, NewMessageStore(pool), NewMessageDeletionStore(pool), sender.ID, recipient.ID)
 }
 
 func TestChannelMessageDeletionsPostgres(t *testing.T) {
 	pool := testPool(t)
-	ctx := context.Background()
-	users := NewUserStore(pool)
-	suffix := randomSuffix(t)
-	owner, err := users.Create(ctx, domain.User{AccessHash: 1205, Phone: "+178" + suffix + "05", FirstName: "ChannelDeletionOwner"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	member, err := users.Create(ctx, domain.User{AccessHash: 1206, Phone: "+178" + suffix + "06", FirstName: "ChannelDeletionMember"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE peer_type='channel' AND peer_id IN (SELECT id FROM channels WHERE creator_user_id=$1)`, owner.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE creator_user_id=$1`, owner.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{owner.ID, member.ID})
+	storetest.ChannelMessageDeletions(t, func(t *testing.T) storetest.ChannelMessageDeletionFixture {
+		ctx := context.Background()
+		users := NewUserStore(pool)
+		suffix := randomSuffix(t)
+		owner, err := users.Create(ctx, domain.User{AccessHash: 1205, Phone: "+178" + suffix + "05", FirstName: "ChannelDeletionOwner"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		member, err := users.Create(ctx, domain.User{AccessHash: 1206, Phone: "+178" + suffix + "06", FirstName: "ChannelDeletionMember"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE peer_type='channel' AND peer_id IN (SELECT id FROM channels WHERE creator_user_id=$1)`, owner.ID)
+			_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE creator_user_id=$1`, owner.ID)
+			_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{owner.ID, member.ID})
+		})
+		return storetest.ChannelMessageDeletionFixture{Channels: NewChannelStore(pool), Deletions: NewMessageDeletionStore(pool), Owner: owner.ID, Member: member.ID}
 	})
-	storetest.ChannelMessageDeletions(t, NewChannelStore(pool), NewMessageDeletionStore(pool), owner.ID, member.ID)
 }
 
 func TestModerationChannelDeletionRecordsTheModeratorPostgres(t *testing.T) {
@@ -120,6 +124,9 @@ func TestMessageDeletionKeepsDeviceAfterLogoutPostgres(t *testing.T) {
 	if err := NewAuthKeyStore(pool).Save(ctx, store.AuthKeyData{ID: authKeyID, Value: authKey}); err != nil {
 		t.Fatalf("save auth key: %v", err)
 	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM auth_keys WHERE auth_key_id = $1`, authKeyIDToInt64(authKeyID))
+	})
 	authorizations := NewAuthorizationStore(pool)
 	if err := authorizations.Bind(ctx, domain.Authorization{
 		AuthKeyID:   authKeyID,

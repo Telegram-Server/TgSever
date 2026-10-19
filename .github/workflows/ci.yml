@@ -53,6 +53,15 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
+      # The committed sqlc output once fell behind the migrations for months:
+      # every later regeneration dragged unrelated diffs into whoever ran it, so
+      # people stopped regenerating and wrote SQL by hand instead. Fail the
+      # moment the generated code no longer matches schema and queries.
+      - name: Check sqlc output is current
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+          "$(go env GOPATH)/bin/sqlc" diff
+
       - name: Test
         run: go test ./... -count=1
 
@@ -61,6 +70,11 @@ jobs:
           TELESRV_RUN_COMPOSE_INTEGRATION: '1'
         run: go test ./deploy -run '^TestLegacyComposeCredentialsIntegration$' -count=1 -timeout=5m
 
+      # TELESRV_TEST_POSTGRES_DSN is only the entry point: pgtest builds a
+      # template database (telesrv_tmpl_<migrations hash>_test) from it and every
+      # test package runs in its own clone, dropped when the package finishes.
+      # That needs CREATEDB; the service's POSTGRES_USER is a superuser, so it
+      # has it. The second step reuses the template the first one built.
       - name: Verify gift inventory and Stars ledger against PostgreSQL
         env:
           TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable

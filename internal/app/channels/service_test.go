@@ -2572,9 +2572,9 @@ func TestChannelBanAndDeletePermissions(t *testing.T) {
 	banned, err := service.EditBanned(ctx, 1001, domain.EditChannelBannedRequest{
 		ChannelID:   created.Channel.ID,
 		Participant: domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
+		// 永久踢出：期限按真实时钟换算，这里的虚拟时间戳（100）早已过期。
 		BannedRights: domain.ChannelBannedRights{
 			ViewMessages: true,
-			UntilDate:    100,
 		},
 		Date: 12,
 	})
@@ -2637,7 +2637,7 @@ func TestChannelInviteCannotBypassKickedMemberWithoutBanRight(t *testing.T) {
 		Participant: domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
 		BannedRights: domain.ChannelBannedRights{
 			ViewMessages: true,
-			UntilDate:    100,
+			UntilDate:    0, // 永久：不让测试依赖限制到期的判定时钟。
 		},
 		Date: 11,
 	}); err != nil {

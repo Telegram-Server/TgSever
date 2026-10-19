@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgx/v5"
 
 	"telesrv/deploy"
 	"telesrv/internal/store/postgres"

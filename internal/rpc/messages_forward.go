@@ -206,7 +206,8 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	for i, originalIndex := range absentIndexes {
 		sources[originalIndex] = absent[i]
 	}
-	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources)
+	inherited := r.forwardInheritedGroups(ctx, userID, fromPeer, req.ID, replayedForwardGroupedIDs(replays, toPeer.Type == domain.PeerTypeChannel))
+	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources, inherited)
 	if toPeer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
@@ -450,6 +451,8 @@ func (r *Router) forwardMessagesToMonoforum(
 	for i, originalIndex := range absentIndexes {
 		sources[originalIndex] = absent[i]
 	}
+	inherited := r.forwardInheritedGroups(ctx, userID, fromPeer, req.ID, replayedForwardGroupedIDs(replays, true))
+	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources, inherited)
 
 	results := make([]tg.UpdatesClass, 0, len(req.ID))
 	for i, source := range sources {
@@ -478,6 +481,7 @@ func (r *Router) forwardMessagesToMonoforum(
 			Silent:                 req.Silent,
 			NoForwards:             req.Noforwards,
 			SuggestedPost:          suggestedPost,
+			GroupedID:              groupedIDs[i],
 			AllowPaidStars:         req.AllowPaidStars,
 		})
 		if err != nil {
@@ -543,8 +547,10 @@ func normalizeForwardMessageVectors(ids []int, randomIDs []int64) ([]int, []int6
 }
 
 // forwardGroupedIDs 为本次转发分配新的相册分组 id：同一源相册的各条共享一个新值，不同源相册
-// 互不相同，非相册为 0。新值由该组在请求里第一条的 random_id 派生，同一请求重试得到相同结果。
-func forwardGroupedIDs(userID int64, randomIDs []int64, sources []forwardSource) []int64 {
+// 互不相同，非相册为 0。inherited 把源相册分组映射到该组已重放条目所在的分组（部分重放时，
+// 同组未发条目沿用它，相册不会被拆成两组）；没有已重放条目的组由该组在请求里第一条的
+// random_id 派生——这样的组首次请求时整组都未发，第一条即整批里的第一条，重试得到相同结果。
+func forwardGroupedIDs(userID int64, randomIDs []int64, sources []forwardSource, inherited map[int64]int64) []int64 {
 	out := make([]int64, len(sources))
 	fresh := make(map[int64]int64)
 	for i, src := range sources {
@@ -554,6 +560,9 @@ func forwardGroupedIDs(userID int64, randomIDs []int64, sources []forwardSource)
 		}
 		id, ok := fresh[source]
 		if !ok {
+			id, ok = inherited[source]
+		}
+		if !ok {
 			var buf [16]byte
 			binary.BigEndian.PutUint64(buf[:8], uint64(userID))
 			binary.BigEndian.PutUint64(buf[8:], uint64(randomIDs[i]))
@@ -562,9 +571,80 @@ func forwardGroupedIDs(userID int64, randomIDs []int64, sources []forwardSource)
 			if id == 0 {
 				id = 1
 			}
-			fresh[source] = id
 		}
+		fresh[source] = id
 		out[i] = id
+	}
+	return out
+}
+
+// replayedForwardGroupedIDs 取各条已重放转发所在的分组（未重放或非相册为 0）。
+func replayedForwardGroupedIDs(replays []outgoingReplayLookup, toChannel bool) []int64 {
+	out := make([]int64, len(replays))
+	for i, replay := range replays {
+		if !replay.found {
+			continue
+		}
+		if toChannel {
+			out[i] = replay.channel.Message.GroupedID
+		} else {
+			out[i] = replay.private.SenderMessage.GroupedID
+		}
+	}
+	return out
+}
+
+// forwardInheritedGroups 为部分重放的转发找回各源相册已发出的分组：已重放条目不再加载源消息，
+// 这里尽力按 id 读一次它们的源分组（读不到的忽略——源消息可能已被删除，此时退回派生规则），
+// 返回 源分组 → 该组已重放条目所在的分组。
+func (r *Router) forwardInheritedGroups(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int, replayed []int64) map[int64]int64 {
+	lookup := make([]int, 0, len(ids))
+	for i, group := range replayed {
+		if group != 0 {
+			lookup = append(lookup, ids[i])
+		}
+	}
+	if len(lookup) == 0 {
+		return nil
+	}
+	sourceGroups := make(map[int]int64, len(lookup))
+	switch fromPeer.Type {
+	case domain.PeerTypeUser:
+		if r.deps.Messages == nil {
+			return nil
+		}
+		list, err := r.deps.Messages.GetMessages(ctx, userID, lookup)
+		if err != nil {
+			return nil
+		}
+		for _, msg := range list.Messages {
+			if msg.Peer == fromPeer {
+				sourceGroups[msg.ID] = msg.GroupedID
+			}
+		}
+	case domain.PeerTypeChannel:
+		if r.deps.Channels == nil {
+			return nil
+		}
+		history, err := r.deps.Channels.GetMessages(ctx, userID, fromPeer.ID, lookup)
+		if err != nil {
+			return nil
+		}
+		for _, msg := range history.Messages {
+			sourceGroups[msg.ID] = msg.GroupedID
+		}
+	default:
+		return nil
+	}
+	out := make(map[int64]int64)
+	for i, group := range replayed {
+		source := sourceGroups[ids[i]]
+		if group == 0 || source == 0 {
+			continue
+		}
+		if _, ok := out[source]; !ok {
+			out[source] = group
+		}
 	}
 	return out
 }

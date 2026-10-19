@@ -38,6 +38,12 @@ func TestChannelMemberPreviousStatesPostgres(t *testing.T) {
 	storetest.ChannelMemberPreviousStates(t, NewChannelStore(pool), [5]int64{ids[0], ids[1], ids[2], ids[3], ids[4]})
 }
 
+func TestChannelOwnerLeavePreviousPostgres(t *testing.T) {
+	pool := testPool(t)
+	ids := memberRulesUsers(t, pool, 3)
+	storetest.ChannelOwnerLeavePrevious(t, NewChannelStore(pool), [3]int64{ids[0], ids[1], ids[2]})
+}
+
 func TestChannelAdminProtectionPostgres(t *testing.T) {
 	pool := testPool(t)
 	ids := memberRulesUsers(t, pool, 4)

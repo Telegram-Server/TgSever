@@ -7,6 +7,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	"github.com/iamxvbaba/td/tlprofile"
+	"telesrv/internal/app/users"
 	"telesrv/internal/domain"
 )
 
@@ -19,7 +20,8 @@ import (
 //
 // P2 范围：仅 default scope、单语言（非 default scope 与非空 lang_code 一律接受
 // 但不存储，避免覆盖全局——见各 handler 的 isDefaultBotCommandScope/lang_code 闸门）；
-// menu button 为 per-bot 全局（per-user 维度记 todo）。元数据写入由 service 在事务内
+// menu button 有全局默认与按用户专属两层（专属按钮见 setBotMenuButtonForUser，
+// 不 bump bot_info_version）。元数据写入由 service 在事务内
 // bump bot_info_version；命令变更后 bots_hooks.PushBotCommandsChanged 给在线相关用户
 // 推 updateBotCommands（扇出封顶 100，无 pts），离线/超界用户靠 version bump 在下次
 // getFullUser 重拉兜底。
@@ -429,27 +431,106 @@ func (r *Router) onBotsSetBotMenuButton(ctx context.Context, req *tg.BotsSetBotM
 	if err != nil {
 		return false, err
 	}
-	// 只存一份全局默认按钮；带 user_id 的专属按钮会被写成全局的，所以在支持之前明确拒绝。
-	// inputUserEmpty 与机器人自己（客户端常用的写法）都表示默认按钮。
-	switch target := req.UserID.(type) {
-	case nil, *tg.InputUserEmpty, *tg.InputUserSelf:
-	case *tg.InputUser:
-		if target.UserID != botID {
-			return false, menuButtonPerChatUnsupportedErr()
-		}
-	default:
-		return false, menuButtonPerChatUnsupportedErr()
+	userID, err := r.botMenuButtonTargetUser(ctx, botID, req.UserID)
+	if err != nil {
+		return false, err
 	}
 	button, err := domainBotMenuButton(req.Button)
 	if err != nil {
 		return false, err
 	}
-	if _, err := r.deps.Bots.SetBotMenuButton(ctx, botID, button); err != nil {
-		return false, setBotMenuButtonErr(err)
+	if userID == 0 {
+		if _, err := r.deps.Bots.SetBotMenuButton(ctx, botID, button); err != nil {
+			return false, setBotMenuButtonErr(err)
+		}
+		r.invalidateChannelFullBotInfoCache()
+		r.invalidateRPCProjectionForUser(botID)
+		return true, nil
 	}
-	r.invalidateChannelFullBotInfoCache()
-	r.invalidateRPCProjectionForUser(botID)
+	if err := r.setBotMenuButtonForUser(ctx, botID, userID, button); err != nil {
+		return false, err
+	}
 	return true, nil
+}
+
+// setBotMenuButtonForUser 写入单个用户的专属按钮（default = 删除），只让这一个用户
+// 看到的机器人资料失效，并把生效后的按钮以 updateBotMenuButton 推给该用户。
+// 不 bump 共享的 bot_info_version（那会让所有人的机器人资料失效）；跨实例由
+// bot_user_menu_buttons 上的 trigger 发 (user, bot) 维度的 dialog_light 事件。
+// 群/频道的 bot_info 只用全局默认，channelFull 缓存不受影响。
+func (r *Router) setBotMenuButtonForUser(ctx context.Context, botID, userID int64, button domain.BotMenuButton) error {
+	if err := r.deps.Bots.SetBotMenuButtonForUser(ctx, botID, userID, button); err != nil {
+		return setBotMenuButtonErr(err)
+	}
+	r.invalidateRPCProjectionForPeer(userID, domain.Peer{Type: domain.PeerTypeUser, ID: botID})
+	effective, err := r.deps.Bots.BotMenuButtonForUser(ctx, botID, userID)
+	if err != nil {
+		return nil
+	}
+	r.pushUserMessage(ctx, userID, "push bot menu button", &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateBotMenuButton{BotID: botID, Button: tgBotMenuButton(effective)}},
+		Date:    int(r.clock.Now().Unix()),
+	})
+	return nil
+}
+
+// BotAPISetChatMenuButton 是 Bot API setChatMenuButton(chat_id = 私聊用户 id) 的网关：
+// 组装带 user_id 的 bots.setBotMenuButton，校验、缓存失效与推送都继承 MTProto 处理器。
+func (r *Router) BotAPISetChatMenuButton(ctx context.Context, botID, userID int64, button domain.BotMenuButton) error {
+	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
+		return errors.New("BOT_INVALID")
+	}
+	// userID 0 是全局默认按钮。
+	var target tg.InputUserClass = &tg.InputUserEmpty{}
+	if userID != 0 {
+		target = &tg.InputUser{UserID: userID}
+	}
+	_, err := r.onBotsSetBotMenuButton(WithUserID(ctx, botID), &tg.BotsSetBotMenuButtonRequest{
+		UserID: target,
+		Button: tgBotMenuButton(button),
+	})
+	return err
+}
+
+// BotAPIGetChatMenuButton 是 Bot API getChatMenuButton(chat_id) 的网关，返回该用户生效的按钮。
+func (r *Router) BotAPIGetChatMenuButton(ctx context.Context, botID, userID int64) (domain.BotMenuButton, error) {
+	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
+		return domain.BotMenuButton{}, errors.New("BOT_INVALID")
+	}
+	ctx = WithUserID(ctx, botID)
+	target, err := r.botMenuButtonTargetUser(ctx, botID, &tg.InputUser{UserID: userID})
+	if err != nil {
+		return domain.BotMenuButton{}, err
+	}
+	return r.deps.Bots.BotMenuButtonForUser(ctx, botID, target)
+}
+
+// botMenuButtonTargetUser 解析 bots.{set,get}BotMenuButton 的 user_id：返回 0 表示
+// 全局默认按钮（缺省、inputUserEmpty、inputUserSelf 或机器人自己的 id，客户端常这样传），
+// 否则返回目标用户 id。
+func (r *Router) botMenuButtonTargetUser(ctx context.Context, botID int64, input tg.InputUserClass) (int64, error) {
+	switch target := input.(type) {
+	case nil, *tg.InputUserEmpty, *tg.InputUserSelf:
+		return 0, nil
+	case *tg.InputUser:
+		if target.UserID == botID {
+			return 0, nil
+		}
+	}
+	if r.deps.Users == nil {
+		return 0, userIDInvalidErr()
+	}
+	u, found, err := r.userFromInput(ctx, botID, input)
+	if err != nil {
+		if errors.Is(err, users.ErrNotAuthorized) {
+			return 0, userIDInvalidErr()
+		}
+		return 0, internalErr()
+	}
+	if !found || u.Bot || u.Deleted {
+		return 0, userIDInvalidErr()
+	}
+	return u.ID, nil
 }
 
 func (r *Router) onBotsGetBotMenuButton(ctx context.Context, userid tg.InputUserClass) (tg.BotMenuButtonClass, error) {
@@ -457,7 +538,11 @@ func (r *Router) onBotsGetBotMenuButton(ctx context.Context, userid tg.InputUser
 	if err != nil {
 		return nil, err
 	}
-	button, err := r.deps.Bots.GetBotMenuButton(ctx, botID)
+	userID, err := r.botMenuButtonTargetUser(ctx, botID, userid)
+	if err != nil {
+		return nil, err
+	}
+	button, err := r.deps.Bots.BotMenuButtonForUser(ctx, botID, userID)
 	if err != nil {
 		return nil, internalErr()
 	}

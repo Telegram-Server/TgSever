@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 func TestMessageStorePrivateRandomIDConflictMatrix(t *testing.T) {
@@ -365,7 +365,7 @@ func (row privatePreflightRow) Scan(dest ...any) error {
 }
 
 func TestMessageStorePrivateRandomIDConflictFallbackUsesTransactionConnection(t *testing.T) {
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
+	dsn := pgtest.TestDSN(t)
 	if dsn == "" {
 		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
 	}

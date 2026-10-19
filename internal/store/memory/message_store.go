@@ -32,6 +32,8 @@ type MessageStore struct {
 	privateNoForwards         map[privateNoForwardsPair]domain.PrivateNoForwardsState
 	privateNoForwardsRequests map[int64]memoryNoForwardsRequest
 	deletions                 *MessageDeletionStore
+	// scheduled 是账号定时消息队列（scheduled_message.go），零值可用，自带锁。
+	scheduled scheduledMessageQueue
 }
 
 // AttachDeletionStore 注入删除记录（与 ChannelStore 共用同一实例）。

@@ -13,11 +13,11 @@ import (
 // The Stars ledger is read with hand-written SQL, so the only thing that can
 // prove the joins, the keyset ordering and the search widening are right is
 // running them against the real schema. Gated on TELESRV_TEST_POSTGRES_DSN via
-// verificationReadStore, like every other read-model integration test.
+// isolatedReadStore.
 //
-// Usernames and ids are unique per run (verificationReadStore follows the same
-// convention), so leftover rows from an earlier run never collide with a fresh
-// fixture.
+// The leaderboard reads the whole Stars ledger, so each test gets a database of
+// its own (pgtest.NewDatabase) instead of truncating a ledger other tests in the
+// package may be writing to.
 
 type starsFixture struct {
 	alice int64
@@ -36,12 +36,8 @@ func seedStarsFixture(t *testing.T, pool *pgxpool.Pool) starsFixture {
 	now := time.Now().UTC()
 	base := now.UnixNano() & 0x7fffffff
 
-	// The test DB is shared and reused across runs, so start from a clean
-	// Stars ledger every time; paid_reactions and premium refund rows reference
-	// stars_transactions, hence CASCADE.
-	if _, err := pool.Exec(ctx, `TRUNCATE stars_transactions, stars_balances CASCADE`); err != nil {
-		t.Fatalf("truncate stars ledger: %v", err)
-	}
+	// The database is the test's own (isolatedReadStore), so the Stars ledger
+	// starts empty without truncating anything.
 	alicePhone := strconv.FormatInt(base, 10)
 	bobPhone := strconv.FormatInt(base+1, 10)
 	drainedPhone := strconv.FormatInt(base+2, 10)
@@ -85,7 +81,7 @@ RETURNING id`, userID, amount, reason, title, int64(now.Unix())).Scan(&id); err 
 	// Alice holds the largest balance with two credits; Bob holds a smaller one
 	// with a single credit. "Drained" had stars but spent them down to zero, so
 	// it must disappear from the leaderboard yet stay findable by search.
-fx.alice = insert("Alice", aliceUser, alicePhone)
+	fx.alice = insert("Alice", aliceUser, alicePhone)
 	fx.alicePhone = alicePhone
 	setBalance(fx.alice, 5000, true)
 	// aliceTxn1 is the newest entry on Alice's ledger (the 2000 grant was the
@@ -105,7 +101,7 @@ fx.alice = insert("Alice", aliceUser, alicePhone)
 }
 
 func TestStarsTopLeaderboardAndSearch(t *testing.T) {
-	s, pool := verificationReadStore(t)
+	s, pool := isolatedReadStore(t)
 	ctx := context.Background()
 	fx := seedStarsFixture(t, pool)
 
@@ -123,7 +119,7 @@ func TestStarsTopLeaderboardAndSearch(t *testing.T) {
 	}
 	if rows[0].Balance != 5000 || rows[0].TxnCount != 2 {
 		t.Errorf("alice position wrong: balance=%d txn_count=%d (want 5000/2)", rows[0].Balance, rows[0].TxnCount)
-}
+	}
 	if !rows[0].Granted || rows[0].Phone != fx.alicePhone && rows[0].Phone != "" {
 		t.Errorf("alice flags wrong: granted=%v phone=%q", rows[0].Granted, rows[0].Phone)
 	}
@@ -141,7 +137,7 @@ func TestStarsTopLeaderboardAndSearch(t *testing.T) {
 		t.Errorf("drained balance = %d, want 0 (still findable after spending)", rows[0].Balance)
 	}
 
-// Searches by phone and by numeric user id resolve the same account.
+	// Searches by phone and by numeric user id resolve the same account.
 	rows, _, err = s.ListStarsTopAccounts(ctx, 0, 50, fx.alicePhone)
 	if err != nil {
 		t.Fatalf("search by phone: %v", err)
@@ -160,7 +156,7 @@ func TestStarsTopLeaderboardAndSearch(t *testing.T) {
 }
 
 func TestStarsLeaderboardKeysetPaging(t *testing.T) {
-	s, pool := verificationReadStore(t)
+	s, pool := isolatedReadStore(t)
 	ctx := context.Background()
 	fx := seedStarsFixture(t, pool)
 
@@ -183,7 +179,7 @@ func TestStarsLeaderboardKeysetPaging(t *testing.T) {
 }
 
 func TestStarsLedgerHistory(t *testing.T) {
-	s, pool := verificationReadStore(t)
+	s, pool := isolatedReadStore(t)
 	ctx := context.Background()
 	fx := seedStarsFixture(t, pool)
 

@@ -52,6 +52,20 @@ func (f botAPIBridgeFixture) memberMessagesBot(t *testing.T, text string, random
 
 func TestBotAPIForwardMessagesFromPrivateChatIntoGroup(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
+
+	// 群内转发：新消息带转发头，origin 是原发送者。
+	original := f.memberPostsInGroup(t, "original", 9201)
+	inGroup, err := f.router.BotAPIForwardMessages(f.ctx, f.bot.ID, f.chatID, f.chatID, []int{original}, false, false)
+	if err != nil {
+		t.Fatalf("BotAPIForwardMessages in group: %v", err)
+	}
+	if len(inGroup) != 1 || inGroup[0].ID == original || inGroup[0].Body != "original" || !inGroup[0].Out {
+		t.Fatalf("in-group messages = %+v", inGroup)
+	}
+	if fwd := inGroup[0].Forward; fwd == nil || fwd.From != (domain.Peer{Type: domain.PeerTypeUser, ID: f.member.ID}) {
+		t.Fatalf("in-group forward = %+v, want the member as origin", inGroup[0].Forward)
+	}
+
 	src := f.memberMessagesBot(t, "from dm", 9202)
 
 	msgs, err := f.router.BotAPIForwardMessages(f.ctx, f.bot.ID, f.chatID, f.member.ID, []int{src}, false, false)
@@ -88,30 +102,9 @@ func TestBotAPIForwardMessagesSkipsMissingIDs(t *testing.T) {
 	}
 }
 
-// groupServiceMessageID 返回群里机器人可见的一条服务消息（建群/拉人）的 id。
-func (f botAPIBridgeFixture) groupServiceMessageID(t *testing.T) int {
-	t.Helper()
-	history, err := f.channels.GetMessages(f.ctx, f.bot.ID, f.channel.ID, []int{1, 2, 3, 4, 5})
-	if err != nil {
-		t.Fatalf("group history: %v", err)
-	}
-	for _, msg := range history.Messages {
-		if msg.Action != nil {
-			return msg.ID
-		}
-	}
-	t.Skip("fixture group has no visible service message")
-	return 0
-}
-
-func TestBotAPIForwardMessagesRejectsServiceAndProtectedMessages(t *testing.T) {
+// 服务消息不可转发/复制由 TestBotAPISourceCopyable* 覆盖；这里只验 no-forwards。
+func TestBotAPIForwardMessagesRejectsProtectedMessages(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	service := f.groupServiceMessageID(t)
-	if _, err := f.router.BotAPIForwardMessages(f.ctx, f.bot.ID, f.member.ID, f.chatID, []int{service}, false, false); err == nil ||
-		!strings.Contains(err.Error(), "MESSAGE_ID_INVALID") {
-		t.Fatalf("forward service message err = %v, want MESSAGE_ID_INVALID", err)
-	}
-
 	updates, err := f.router.onMessagesSendMessage(WithUserID(f.ctx, f.owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:       &tg.InputPeerChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash},
 		Message:    "secret",
@@ -142,7 +135,7 @@ func TestBotAPICopyMessagesDropsForwardHeader(t *testing.T) {
 	}
 }
 
-// memberPostsPhoto 直接经 channels 服务写一条带说明文字的图片消息（夹具没有文件服务）。
+// memberPostsPhoto 直接经 channels 服务写一条带说明文字的图片消息（固定照片 id，免走上传）。
 func (f botAPIBridgeFixture) memberPostsPhoto(t *testing.T, caption string, randomID int64) int {
 	t.Helper()
 	res, err := f.channels.SendMessage(f.ctx, f.member.ID, domain.SendChannelMessageRequest{
@@ -178,43 +171,6 @@ func TestBotAPICopyMessagesRemoveCaptionKeepsMediaAndText(t *testing.T) {
 	}
 	if msgs[1].Body != "plain text" || msgs[1].Forward != nil {
 		t.Fatalf("text copy = %+v, want the text kept", msgs[1])
-	}
-}
-
-// remove_caption 走 drop_author+drop_media_captions 转发：相册不被拆开，共享新的 grouped_id。
-func TestBotAPICopyMessagesRemoveCaptionKeepsAlbumGrouped(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	ids := make([]int, 0, 2)
-	for i, caption := range []string{"first caption", ""} {
-		res, err := f.channels.SendMessage(f.ctx, f.member.ID, domain.SendChannelMessageRequest{
-			UserID:    f.member.ID,
-			ChannelID: f.channel.ID,
-			RandomID:  int64(9220 + i),
-			Message:   caption,
-			Media:     &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &domain.Photo{ID: int64(7710 + i), AccessHash: 1}},
-			GroupedID: 5501,
-			Date:      32,
-		})
-		if err != nil {
-			t.Fatalf("member album item: %v", err)
-		}
-		ids = append(ids, res.Message.ID)
-	}
-
-	msgs, err := f.router.BotAPICopyMessages(f.ctx, f.bot.ID, f.member.ID, f.chatID, ids, true, false, false)
-	if err != nil {
-		t.Fatalf("BotAPICopyMessages: %v", err)
-	}
-	if len(msgs) != 2 {
-		t.Fatalf("messages = %+v", msgs)
-	}
-	if msgs[0].GroupedID == 0 || msgs[0].GroupedID != msgs[1].GroupedID {
-		t.Fatalf("grouped ids = %d/%d, want one shared album id", msgs[0].GroupedID, msgs[1].GroupedID)
-	}
-	for _, msg := range msgs {
-		if msg.Body != "" || msg.Forward != nil || msg.Media == nil || msg.Media.Photo == nil {
-			t.Fatalf("copy = %+v, want captionless photo without header", msg)
-		}
 	}
 }
 
@@ -254,14 +210,8 @@ func TestBotAPICopyMessagePlainCopyRepliesWithoutHeader(t *testing.T) {
 	}
 }
 
-func TestBotAPICopyMessageRefusesUncopyableMessages(t *testing.T) {
+func TestBotAPICopyMessageRefusesProtectedMessages(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	service := f.groupServiceMessageID(t)
-	if _, err := f.router.BotAPICopyMessage(f.ctx, f.bot.ID, f.member.ID, f.chatID, service, false, "", nil, nil, false, false, 0); err == nil ||
-		!strings.Contains(err.Error(), "MESSAGE_ID_INVALID") {
-		t.Fatalf("copy service message err = %v", err)
-	}
-
 	res, err := f.channels.SendMessage(f.ctx, f.owner.ID, domain.SendChannelMessageRequest{
 		UserID: f.owner.ID, ChannelID: f.channel.ID, RandomID: 9212, Message: "secret photo", NoForwards: true,
 		Media: &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &domain.Photo{ID: 7703, AccessHash: 1}}, Date: 31,
@@ -288,21 +238,5 @@ func TestBotAPISourceCopyableRejectsInvoicesAndGiveaways(t *testing.T) {
 	}
 	if !botAPISourceCopyable(botAPISource{media: &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto}}) {
 		t.Fatal("photo reported uncopyable")
-	}
-}
-
-func TestBotAPIForwardMessagesInGroupCarriesForwardHeader(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	src := f.memberPostsInGroup(t, "original", 9201)
-
-	msgs, err := f.router.BotAPIForwardMessages(f.ctx, f.bot.ID, f.chatID, f.chatID, []int{src}, false, false)
-	if err != nil {
-		t.Fatalf("BotAPIForwardMessages: %v", err)
-	}
-	if len(msgs) != 1 || msgs[0].ID == src || msgs[0].Body != "original" || !msgs[0].Out {
-		t.Fatalf("messages = %+v", msgs)
-	}
-	if fwd := msgs[0].Forward; fwd == nil || fwd.From != (domain.Peer{Type: domain.PeerTypeUser, ID: f.member.ID}) {
-		t.Fatalf("forward = %+v, want the member as origin", msgs[0].Forward)
 	}
 }

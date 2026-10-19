@@ -12,7 +12,7 @@ func apiChatMember(member domain.ChannelMember, user domain.User, canBeEdited bo
 	out := map[string]any{"user": apiUser(user)}
 	banned := member.BannedRights
 	switch {
-	case member.Status == domain.ChannelMemberKicked || banned.ViewMessages:
+	case member.IsKicked():
 		out["status"] = "kicked"
 		out["until_date"] = banned.UntilDate
 	case member.Status == domain.ChannelMemberLeft || member.Guest:

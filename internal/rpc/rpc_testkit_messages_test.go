@@ -2,7 +2,11 @@ package rpc
 
 import (
 	"context"
+	"testing"
+
+	appmessages "telesrv/internal/app/messages"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 )
 
 type captureMessages struct {
@@ -45,17 +49,31 @@ type captureMessages struct {
 	mediaReq          domain.MediaSearchRequest
 }
 
+// scheduledCaptureMessages 是 captureMessages（记录普通发送请求）加一个真实的内存定时
+// 队列：定时方法全部委托给 appmessages 服务 + memory.MessageStore，不在测试里另写一份。
 type scheduledCaptureMessages struct {
 	*captureMessages
-	scheduled          []domain.ScheduledMessage
-	scheduleReq        domain.ScheduleMessageRequest
-	editScheduledReq   domain.EditScheduledMessageRequest
-	claimScheduledReq  domain.ScheduledMessageClaim
-	deletedScheduled   domain.ScheduledMessageFilter
-	markedScheduledID  int
-	markedSentID       int
-	releasedScheduled  int
-	releasedErrMessage string
+	scheduledMessagesService
+}
+
+func newScheduledCaptureMessages() *scheduledCaptureMessages {
+	return &scheduledCaptureMessages{
+		captureMessages:          &captureMessages{},
+		scheduledMessagesService: appmessages.NewService(memory.NewMessageStore(), memory.NewDialogStore()),
+	}
+}
+
+// scheduledRow 读回 owner 在 peer 下仍在队列里的定时行 id；不在队列里时 ok=false。
+func (s *scheduledCaptureMessages) scheduledRow(t *testing.T, owner int64, peer domain.Peer, id int) (domain.ScheduledMessage, bool) {
+	t.Helper()
+	got, err := s.GetScheduledMessages(context.Background(), owner, domain.ScheduledMessageFilter{Peer: peer, IDs: []int{id}})
+	if err != nil {
+		t.Fatalf("get scheduled %d: %v", id, err)
+	}
+	if len(got.Messages) != 1 {
+		return domain.ScheduledMessage{}, false
+	}
+	return got.Messages[0], true
 }
 
 type ttlCaptureMessages struct {
@@ -92,156 +110,6 @@ func (s *ttlCaptureMessages) SetDefaultHistoryTTL(_ context.Context, userID int6
 
 func (s *ttlCaptureMessages) ClaimExpiredPrivateMessages(context.Context, int, int) ([]domain.DeleteMessagesRequest, error) {
 	return append([]domain.DeleteMessagesRequest(nil), s.expiredPrivateClaims...), nil
-}
-
-func (s *scheduledCaptureMessages) ScheduleMessage(_ context.Context, userID int64, req domain.ScheduleMessageRequest) (domain.ScheduledMessage, error) {
-	s.scheduleReq = req
-	if req.OwnerUserID == 0 {
-		req.OwnerUserID = userID
-	}
-	msg := domain.ScheduledMessage{
-		OwnerUserID:          req.OwnerUserID,
-		ID:                   len(s.scheduled) + 41,
-		Peer:                 req.Peer,
-		RandomID:             req.RandomID,
-		Message:              req.Message,
-		Entities:             append([]domain.MessageEntity(nil), req.Entities...),
-		Media:                req.Media,
-		Silent:               req.Silent,
-		NoForwards:           req.NoForwards,
-		ReplyTo:              req.ReplyTo,
-		Forward:              req.Forward,
-		SendAs:               req.SendAs,
-		ScheduleDate:         req.ScheduleDate,
-		ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
-		CreatedAt:            req.Date,
-		UpdatedAt:            req.Date,
-		State:                "pending",
-	}
-	s.scheduled = append(s.scheduled, msg)
-	return msg, nil
-}
-
-func (s *scheduledCaptureMessages) EditScheduledMessage(_ context.Context, userID int64, req domain.EditScheduledMessageRequest) (domain.ScheduledMessage, error) {
-	s.editScheduledReq = req
-	if req.OwnerUserID == 0 {
-		req.OwnerUserID = userID
-	}
-	for i := range s.scheduled {
-		if s.scheduled[i].OwnerUserID == req.OwnerUserID && s.scheduled[i].Peer == req.Peer && s.scheduled[i].ID == req.ID {
-			if req.SetMessage {
-				s.scheduled[i].Message = req.Message
-				s.scheduled[i].Entities = append([]domain.MessageEntity(nil), req.Entities...)
-			}
-			s.scheduled[i].ScheduleDate = req.ScheduleDate
-			s.scheduled[i].UpdatedAt = req.Date
-			return s.scheduled[i], nil
-		}
-	}
-	return domain.ScheduledMessage{}, domain.ErrMessageIDInvalid
-}
-
-func (s *scheduledCaptureMessages) ListScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
-	if filter.OwnerUserID == 0 {
-		filter.OwnerUserID = userID
-	}
-	items := s.matchScheduled(filter)
-	return domain.ScheduledMessageList{Messages: items, Count: len(items)}, nil
-}
-
-func (s *scheduledCaptureMessages) GetScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
-	if filter.OwnerUserID == 0 {
-		filter.OwnerUserID = userID
-	}
-	items := s.matchScheduled(filter)
-	return domain.ScheduledMessageList{Messages: items, Count: len(items)}, nil
-}
-
-func (s *scheduledCaptureMessages) DeleteScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter, _ int) ([]domain.ScheduledMessage, error) {
-	if filter.OwnerUserID == 0 {
-		filter.OwnerUserID = userID
-	}
-	s.deletedScheduled = filter
-	deleted := s.matchScheduled(filter)
-	s.removeScheduled(filter)
-	return deleted, nil
-}
-
-func (s *scheduledCaptureMessages) ClaimScheduledMessages(_ context.Context, userID int64, claim domain.ScheduledMessageClaim) ([]domain.ScheduledMessage, error) {
-	if claim.OwnerUserID == 0 {
-		claim.OwnerUserID = userID
-	}
-	s.claimScheduledReq = claim
-	return s.matchScheduled(domain.ScheduledMessageFilter{OwnerUserID: claim.OwnerUserID, Peer: claim.Peer, IDs: claim.IDs}), nil
-}
-
-func (s *scheduledCaptureMessages) ClaimDueScheduledMessages(context.Context, int, int, int) ([]domain.ScheduledMessage, error) {
-	return nil, nil
-}
-
-func (s *scheduledCaptureMessages) MarkScheduledMessageSent(_ context.Context, _ int64, id, sentMessageID, _ int) error {
-	s.markedScheduledID = id
-	s.markedSentID = sentMessageID
-	s.removeScheduled(domain.ScheduledMessageFilter{OwnerUserID: s.scheduleReq.OwnerUserID, Peer: s.scheduleReq.Peer, IDs: []int{id}})
-	return nil
-}
-
-func (s *scheduledCaptureMessages) ReleaseScheduledMessage(_ context.Context, _ int64, id int, errText string) error {
-	s.releasedScheduled = id
-	s.releasedErrMessage = errText
-	return nil
-}
-
-func (s *scheduledCaptureMessages) HasScheduledMessages(_ context.Context, userID int64, peer domain.Peer) (bool, error) {
-	return len(s.matchScheduled(domain.ScheduledMessageFilter{OwnerUserID: userID, Peer: peer})) > 0, nil
-}
-
-func (s *scheduledCaptureMessages) matchScheduled(filter domain.ScheduledMessageFilter) []domain.ScheduledMessage {
-	idSet := make(map[int]struct{}, len(filter.IDs))
-	for _, id := range filter.IDs {
-		idSet[id] = struct{}{}
-	}
-	out := make([]domain.ScheduledMessage, 0, len(s.scheduled))
-	for _, msg := range s.scheduled {
-		if filter.OwnerUserID != 0 && msg.OwnerUserID != filter.OwnerUserID {
-			continue
-		}
-		if filter.Peer.ID != 0 && msg.Peer != filter.Peer {
-			continue
-		}
-		if len(idSet) > 0 {
-			if _, ok := idSet[msg.ID]; !ok {
-				continue
-			}
-		}
-		out = append(out, msg)
-	}
-	return out
-}
-
-func (s *scheduledCaptureMessages) removeScheduled(filter domain.ScheduledMessageFilter) {
-	idSet := make(map[int]struct{}, len(filter.IDs))
-	for _, id := range filter.IDs {
-		idSet[id] = struct{}{}
-	}
-	kept := s.scheduled[:0]
-	for _, msg := range s.scheduled {
-		if filter.OwnerUserID != 0 && msg.OwnerUserID != filter.OwnerUserID {
-			kept = append(kept, msg)
-			continue
-		}
-		if filter.Peer.ID != 0 && msg.Peer != filter.Peer {
-			kept = append(kept, msg)
-			continue
-		}
-		if len(idSet) > 0 {
-			if _, ok := idSet[msg.ID]; ok {
-				continue
-			}
-		}
-		kept = append(kept, msg)
-	}
-	s.scheduled = kept
 }
 
 func (s *captureMessages) SendPrivateText(_ context.Context, userID int64, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {

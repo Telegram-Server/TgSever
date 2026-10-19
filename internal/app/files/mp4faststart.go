@@ -67,10 +67,10 @@ func faststartMP4(data []byte) ([]byte, bool) {
 // mp4Layout 是只读 box 头得出的顶层结构信息，用于在不读取整段媒体的前提下判断是否需要
 // faststart 以及如何流式重写。
 type mp4Layout struct {
-	needsFaststart       bool  // moov 在 mdat 之后
-	moovIsLast           bool  // moov 是最后一个顶层 box（可走流式重写）
-	ftypStart, ftypEnd   int64
-	moovStart, moovEnd   int64
+	needsFaststart     bool // moov 在 mdat 之后
+	moovIsLast         bool // moov 是最后一个顶层 box（可走流式重写）
+	ftypStart, ftypEnd int64
+	moovStart, moovEnd int64
 }
 
 // inspectMP4Layout 只读顶层 box 头（每个 ≤16 字节，跳过 box 负载）来判定结构，避免为了

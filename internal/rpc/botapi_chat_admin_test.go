@@ -20,20 +20,6 @@ func (f botAPIBridgeFixture) participant(t *testing.T, userID int64) domain.Chan
 	return member
 }
 
-// grantBot 由群主把机器人提为管理员（不依赖 fixture 的 promoteBot）。
-func (f botAPIBridgeFixture) grantBot(t *testing.T, rights domain.ChannelAdminRights) {
-	t.Helper()
-	if _, err := f.channels.EditAdmin(f.ctx, f.owner.ID, domain.EditChannelAdminRequest{
-		UserID:      f.owner.ID,
-		ChannelID:   f.channel.ID,
-		MemberID:    f.bot.ID,
-		AdminRights: rights,
-		Date:        20,
-	}); err != nil {
-		t.Fatalf("promote bot: %v", err)
-	}
-}
-
 func wantBotAPIError(t *testing.T, err error, code string) {
 	t.Helper()
 	if err == nil || !strings.Contains(err.Error(), code) {
@@ -53,30 +39,19 @@ func TestBotAPIBanChatMemberRequiresBanRight(t *testing.T) {
 
 func TestBotAPIBanChatMemberKicksAndNotifiesMembers(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true})
+	f.promoteBot(t, domain.ChannelAdminRights{BanUsers: true})
 	f.sessions.clearMessages()
-
-	if err := f.router.BotAPIBanChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, 0, false); err != nil {
-		t.Fatalf("BotAPIBanChatMember: %v", err)
-	}
-	got := f.participant(t, f.member.ID)
-	if got.Status != domain.ChannelMemberKicked || !got.BannedRights.ViewMessages || !got.BannedRights.SendMessages {
-		t.Fatalf("member = %+v, want kicked with every right banned", got)
-	}
-	if !slices.Contains(f.sessions.pushedUserIDs(), f.owner.ID) {
-		t.Fatalf("pushed to %v, want the owner to see the ban", f.sessions.pushedUserIDs())
-	}
-}
-
-func TestBotAPIBanChatMemberKeepsUntilDate(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true})
 
 	if err := f.router.BotAPIBanChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, 1_900_000_000, false); err != nil {
 		t.Fatalf("BotAPIBanChatMember: %v", err)
 	}
-	if got := f.participant(t, f.member.ID).BannedRights.UntilDate; got != 1_900_000_000 {
-		t.Fatalf("until_date = %d, want 1900000000", got)
+	got := f.participant(t, f.member.ID)
+	if got.Status != domain.ChannelMemberKicked || !got.BannedRights.ViewMessages || !got.BannedRights.SendMessages ||
+		got.BannedRights.UntilDate != 1_900_000_000 {
+		t.Fatalf("member = %+v, want kicked with every right banned until 1900000000", got)
+	}
+	if !slices.Contains(f.sessions.pushedUserIDs(), f.owner.ID) {
+		t.Fatalf("pushed to %v, want the owner to see the ban", f.sessions.pushedUserIDs())
 	}
 }
 
@@ -92,52 +67,45 @@ func (f botAPIBridgeFixture) kickMember(t *testing.T) {
 	}
 }
 
-func TestBotAPIUnbanChatMemberLiftsABan(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true})
-	f.kickMember(t)
+// unbanChatMember 的官方语义：被踢的人解封后不在群里但可以再加入；默认对正常成员也会把他
+// 移出（同样可再加入），only_if_banned 时不动正常成员；没有封禁权报 CHAT_ADMIN_REQUIRED。
+func TestBotAPIUnbanChatMember(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		botCanBan    bool
+		kicked       bool
+		onlyIfBanned bool
+		wantErr      string
+		wantStatus   domain.ChannelMemberStatus
+	}{
+		{name: "lifts a ban", botCanBan: true, kicked: true, onlyIfBanned: true, wantStatus: domain.ChannelMemberLeft},
+		{name: "requires the ban right", kicked: true, wantErr: "CHAT_ADMIN_REQUIRED", wantStatus: domain.ChannelMemberKicked},
+		{name: "removes an active member", botCanBan: true, wantStatus: domain.ChannelMemberLeft},
+		{name: "only_if_banned leaves members alone", botCanBan: true, onlyIfBanned: true, wantStatus: domain.ChannelMemberActive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBotAPIBridgeFixture(t)
+			if tc.botCanBan {
+				f.promoteBot(t, domain.ChannelAdminRights{BanUsers: true})
+			}
+			if tc.kicked {
+				f.kickMember(t)
+			}
 
-	if err := f.router.BotAPIUnbanChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, true); err != nil {
-		t.Fatalf("BotAPIUnbanChatMember: %v", err)
-	}
-	if got := f.participant(t, f.member.ID); got.Status != domain.ChannelMemberLeft || got.BannedRights.ViewMessages {
-		t.Fatalf("member = %+v, want left without a ban", got)
-	}
-}
-
-func TestBotAPIUnbanChatMemberRequiresBanRight(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	f.kickMember(t)
-
-	err := f.router.BotAPIUnbanChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, false)
-	wantBotAPIError(t, err, "CHAT_ADMIN_REQUIRED")
-	if got := f.participant(t, f.member.ID); got.Status != domain.ChannelMemberKicked {
-		t.Fatalf("member status = %s, want still kicked", got.Status)
-	}
-}
-
-// 官方默认语义：调用后用户不在群里但可以再加入——正常成员会被移出。
-func TestBotAPIUnbanChatMemberRemovesAnActiveMember(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true})
-
-	if err := f.router.BotAPIUnbanChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, false); err != nil {
-		t.Fatalf("BotAPIUnbanChatMember: %v", err)
-	}
-	if got := f.participant(t, f.member.ID); got.Status != domain.ChannelMemberLeft || got.BannedRights.ViewMessages {
-		t.Fatalf("member = %+v, want removed but free to rejoin", got)
-	}
-}
-
-func TestBotAPIUnbanChatMemberOnlyIfBannedLeavesMembersAlone(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true})
-
-	if err := f.router.BotAPIUnbanChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, true); err != nil {
-		t.Fatalf("BotAPIUnbanChatMember: %v", err)
-	}
-	if got := f.participant(t, f.member.ID); got.Status != domain.ChannelMemberActive {
-		t.Fatalf("member status = %s, want still active", got.Status)
+			err := f.router.BotAPIUnbanChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, tc.onlyIfBanned)
+			if tc.wantErr != "" {
+				wantBotAPIError(t, err, tc.wantErr)
+			} else if err != nil {
+				t.Fatalf("BotAPIUnbanChatMember: %v", err)
+			}
+			got := f.participant(t, f.member.ID)
+			if got.Status != tc.wantStatus {
+				t.Fatalf("member = %+v, want status %s", got, tc.wantStatus)
+			}
+			if tc.wantErr == "" && got.BannedRights.ViewMessages {
+				t.Fatalf("member = %+v, want no view_messages ban left", got)
+			}
+		})
 	}
 }
 
@@ -150,7 +118,7 @@ func TestBotAPIRestrictChatMemberRequiresBanRight(t *testing.T) {
 
 func TestBotAPIRestrictChatMemberAppliesRights(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true})
+	f.promoteBot(t, domain.ChannelAdminRights{BanUsers: true})
 	rights := domain.ChannelBannedRights{SendMedia: true, SendPhotos: true, UntilDate: 1_900_000_000}
 
 	if err := f.router.BotAPIRestrictChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, rights); err != nil {
@@ -164,7 +132,7 @@ func TestBotAPIRestrictChatMemberAppliesRights(t *testing.T) {
 
 func TestBotAPIPromoteChatMemberRequiresAddAdminsRight(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true})
+	f.promoteBot(t, domain.ChannelAdminRights{BanUsers: true})
 
 	err := f.router.BotAPIPromoteChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, domain.ChannelAdminRights{PinMessages: true})
 	if err == nil {
@@ -177,7 +145,7 @@ func TestBotAPIPromoteChatMemberRequiresAddAdminsRight(t *testing.T) {
 
 func TestBotAPIPromoteChatMemberGrantsAndRevokes(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{AddAdmins: true, PinMessages: true, DeleteMessages: true})
+	f.promoteBot(t, domain.ChannelAdminRights{AddAdmins: true, PinMessages: true, DeleteMessages: true})
 
 	rights := domain.ChannelAdminRights{PinMessages: true}
 	if err := f.router.BotAPIPromoteChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, rights); err != nil {
@@ -198,7 +166,7 @@ func TestBotAPIPromoteChatMemberGrantsAndRevokes(t *testing.T) {
 
 func TestBotAPISetChatAdministratorCustomTitleKeepsRights(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{AddAdmins: true, PinMessages: true, InviteUsers: true})
+	f.promoteBot(t, domain.ChannelAdminRights{AddAdmins: true, PinMessages: true, InviteUsers: true})
 	granted := domain.ChannelAdminRights{PinMessages: true, InviteUsers: true}
 	if err := f.router.BotAPIPromoteChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID, granted); err != nil {
 		t.Fatalf("promote: %v", err)
@@ -216,7 +184,7 @@ func TestBotAPISetChatAdministratorCustomTitleKeepsRights(t *testing.T) {
 
 func TestBotAPISetChatAdministratorCustomTitleNeedsAnAdmin(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{AddAdmins: true})
+	f.promoteBot(t, domain.ChannelAdminRights{AddAdmins: true})
 
 	err := f.router.BotAPISetChatAdministratorCustomTitle(f.ctx, f.bot.ID, f.chatID, f.member.ID, "Moderator")
 	wantBotAPIError(t, err, "USER_NOT_ADMIN")
@@ -234,7 +202,7 @@ func TestBotAPISetChatPermissionsRequiresBanRight(t *testing.T) {
 
 func TestBotAPISetChatPermissionsUpdatesDefaults(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true})
+	f.promoteBot(t, domain.ChannelAdminRights{BanUsers: true})
 	rights := domain.ChannelBannedRights{SendPolls: true, PinMessages: true}
 
 	if err := f.router.BotAPISetChatPermissions(f.ctx, f.bot.ID, f.chatID, rights); err != nil {
@@ -275,7 +243,7 @@ func TestBotAPIPinChatMessageRequiresPinRight(t *testing.T) {
 
 func TestBotAPIPinAndUnpinChannelMessages(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{PinMessages: true})
+	f.promoteBot(t, domain.ChannelAdminRights{PinMessages: true})
 	first := f.sendAs(t, f.owner.ID, "rules", 611)
 	second := f.sendAs(t, f.owner.ID, "news", 612)
 
@@ -376,7 +344,7 @@ func TestBotAPISetChatTitleAndDescriptionRequireChangeInfo(t *testing.T) {
 
 func TestBotAPISetChatTitleAndDescription(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{ChangeInfo: true})
+	f.promoteBot(t, domain.ChannelAdminRights{ChangeInfo: true})
 	f.sessions.clearMessages()
 
 	if err := f.router.BotAPISetChatTitle(f.ctx, f.bot.ID, f.chatID, "Renamed Group"); err != nil {
@@ -396,7 +364,6 @@ func TestBotAPISetChatTitleAndDescription(t *testing.T) {
 
 func TestBotAPISetChatPhotoRequiresChangeInfo(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.router.deps.Files = &fakeFiles{}
 	f.setDefaultBannedRights(t, domain.ChannelBannedRights{ChangeInfo: true})
 
 	if err := f.router.BotAPISetChatPhoto(f.ctx, f.bot.ID, f.chatID, "a.jpg", "image/jpeg", []byte("jpeg")); err == nil {
@@ -409,17 +376,15 @@ func TestBotAPISetChatPhotoRequiresChangeInfo(t *testing.T) {
 
 func TestBotAPISetAndDeleteChatPhoto(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	files := &fakeFiles{}
-	f.router.deps.Files = files
-	f.grantBot(t, domain.ChannelAdminRights{ChangeInfo: true})
+	f.promoteBot(t, domain.ChannelAdminRights{ChangeInfo: true})
 	f.sessions.clearMessages()
 
 	if err := f.router.BotAPISetChatPhoto(f.ctx, f.bot.ID, f.chatID, "a.jpg", "image/jpeg", []byte("jpeg")); err != nil {
 		t.Fatalf("setChatPhoto: %v", err)
 	}
 	got := f.channelState(t).PhotoID
-	if _, stored := files.photos[got]; got == 0 || !stored {
-		t.Fatalf("channel photo = %d, want the uploaded photo (stored %v)", got, files.photos)
+	if _, stored := f.files.photos[got]; got == 0 || !stored {
+		t.Fatalf("channel photo = %d, want the uploaded photo (stored %v)", got, f.files.photos)
 	}
 	if !slices.Contains(f.sessions.pushedUserIDs(), f.member.ID) {
 		t.Fatalf("pushed to %v, want members to see the new photo", f.sessions.pushedUserIDs())
@@ -496,7 +461,7 @@ func (f botAPIBridgeFixture) visibleMessageIDs(t *testing.T, ids []int) []int {
 
 func TestBotAPIBanChatMemberRevokesMessages(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.grantBot(t, domain.ChannelAdminRights{BanUsers: true, DeleteMessages: true})
+	f.promoteBot(t, domain.ChannelAdminRights{BanUsers: true, DeleteMessages: true})
 	spam := []int{f.sendAs(t, f.member.ID, "spam 1", 501), f.sendAs(t, f.member.ID, "spam 2", 502)}
 	keep := f.sendAs(t, f.owner.ID, "owner note", 503)
 

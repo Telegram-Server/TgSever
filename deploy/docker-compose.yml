@@ -44,6 +44,45 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # 集成测试专用的 Postgres：数据放 tmpfs、关掉 fsync 等持久化保证，只在 test profile 下启动：
+  #   docker compose --profile test up -d postgres-test
+  #   TELESRV_TEST_POSTGRES_DSN=postgres://telesrv:telesrv@127.0.0.1:5433/telesrv_test?sslmode=disable
+  # 测试每个用例从模板库克隆一个库、用完删除（见 internal/store/postgres/pgtest）；落盘实例上
+  # CREATE/DROP DATABASE 写 WAL、触发 checkpoint，整包测试被磁盘卡住。内存实例把
+  # store/postgres 整包从约 380 秒降到约 110 秒。容器重启即清空，不要指向它跑开发服务。
+  postgres-test:
+    image: postgres:17-alpine
+    container_name: telesrv-postgres-test
+    profiles: ["test"]
+    command:
+      - "postgres"
+      - "-c"
+      - "fsync=off"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "full_page_writes=off"
+      - "-c"
+      - "max_connections=300"
+      - "-c"
+      - "max_locks_per_transaction=512"
+      - "-c"
+      - "shared_buffers=512MB"
+    environment:
+      POSTGRES_DB: telesrv_test
+      POSTGRES_USER: telesrv
+      POSTGRES_PASSWORD: telesrv
+      TZ: UTC
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,size=8g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telesrv -d telesrv_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   redis:
     image: redis:7-alpine
     container_name: telesrv-redis

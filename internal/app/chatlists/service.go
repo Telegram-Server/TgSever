@@ -27,6 +27,7 @@ type Option func(*Service)
 // peer membership side effects.
 type ChannelService interface {
 	GetChannel(ctx context.Context, userID, channelID int64) (domain.ChannelView, error)
+	GetParticipant(ctx context.Context, userID, channelID, participantUserID int64) (domain.ChannelMember, error)
 	InviteToChannel(ctx context.Context, userID, channelID int64, userIDs []int64, date int) (domain.CreateChannelResult, error)
 	JoinChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
 	LeaveChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
@@ -288,9 +289,12 @@ func (s *Service) JoinInvite(ctx context.Context, userID int64, slug string, pee
 	if count >= s.joinedLimit(ctx, userID) {
 		return domain.ChatlistJoinResult{}, domain.ErrChatlistsTooMuch
 	}
-	channelResults, err := s.joinChannelPeers(ctx, invite.OwnerUserID, userID, selected, date)
+	channelResults, skipped, err := s.joinChannelPeers(ctx, invite.OwnerUserID, userID, selected, date)
 	if err != nil {
 		return domain.ChatlistJoinResult{}, err
+	}
+	if selected = peersDifference(selected, skipped); len(selected) == 0 {
+		return domain.ChatlistJoinResult{}, domain.ErrChannelUserBanned
 	}
 	filterID, err := s.nextLocalFilterID(ctx, userID)
 	if err != nil {
@@ -355,9 +359,12 @@ func (s *Service) JoinUpdates(ctx context.Context, userID int64, localFilterID i
 	if _, err := s.chatlists.SetMembershipHidden(ctx, userID, membership.LocalFilterID, false); err != nil {
 		return domain.ChatlistJoinResult{}, err
 	}
-	channelResults, err := s.joinChannelPeers(ctx, membership.OwnerUserID, userID, selected, date)
+	channelResults, skipped, err := s.joinChannelPeers(ctx, membership.OwnerUserID, userID, selected, date)
 	if err != nil {
 		return domain.ChatlistJoinResult{}, err
+	}
+	if selected = peersDifference(selected, skipped); len(selected) == 0 {
+		return domain.ChatlistJoinResult{}, domain.ErrChannelUserBanned
 	}
 	folder.IncludePeers = mergeFolderPeers(folder.IncludePeers, selected)
 	folder.IsChatlist = true
@@ -577,9 +584,14 @@ func channelPublicJoinableForChatlist(view domain.ChannelView) bool {
 	return view.Channel.Username != "" && !view.Channel.JoinRequest
 }
 
-func (s *Service) joinChannelPeers(ctx context.Context, ownerUserID, userID int64, peers []domain.DialogFolderPeer, date int) ([]domain.CreateChannelResult, error) {
+// joinChannelPeers 让 userID 加入 chatlist 里的频道，返回加入结果与被跳过的 peer。
+// 官方语义：经 chatlist 加入等同用户自己加入——用户被踢出/封禁的频道不可加入，
+// 跳过它（不解封、不出现在结果和导入的文件夹里），其余频道照常加入。
+// 有邀请权的所有者走 InviteToChannel，而它对有封禁权的邀请人等于解封，所以先按
+// 目标用户的成员状态过滤。
+func (s *Service) joinChannelPeers(ctx context.Context, ownerUserID, userID int64, peers []domain.DialogFolderPeer, date int) ([]domain.CreateChannelResult, []domain.DialogFolderPeer, error) {
 	if s.channels == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	type joinPlan struct {
 		peer      domain.DialogFolderPeer
@@ -590,18 +602,27 @@ func (s *Service) joinChannelPeers(ctx context.Context, ownerUserID, userID int6
 	for _, item := range channelPeers {
 		view, err := s.channels.GetChannel(ctx, ownerUserID, item.Peer.ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !channelShareableForChatlist(view) {
-			return nil, domain.ErrChatlistNotShareable
+			return nil, nil, domain.ErrChatlistNotShareable
 		}
 		plans = append(plans, joinPlan{peer: item, useInvite: channelCanInviteForChatlist(view)})
 	}
 	results := make([]domain.CreateChannelResult, 0, len(plans))
+	var skipped []domain.DialogFolderPeer
 	for _, plan := range plans {
 		var res domain.CreateChannelResult
 		var err error
 		if plan.useInvite {
+			banned, banErr := s.userBannedInChannel(ctx, ownerUserID, plan.peer.Peer.ID, userID)
+			if banErr != nil {
+				return results, skipped, banErr
+			}
+			if banned {
+				skipped = append(skipped, plan.peer)
+				continue
+			}
 			res, err = s.channels.InviteToChannel(ctx, ownerUserID, plan.peer.Peer.ID, []int64{userID}, date)
 		} else {
 			res, err = s.channels.JoinChannel(ctx, userID, plan.peer.Peer.ID, date)
@@ -610,11 +631,30 @@ func (s *Service) joinChannelPeers(ctx context.Context, ownerUserID, userID int6
 			if errors.Is(err, domain.ErrUserAlreadyParticipant) {
 				continue
 			}
-			return results, err
+			if errors.Is(err, domain.ErrChannelUserBanned) || errors.Is(err, domain.ErrUserKicked) {
+				skipped = append(skipped, plan.peer)
+				continue
+			}
+			return results, skipped, err
 		}
 		results = append(results, res)
 	}
-	return results, nil
+	return results, skipped, nil
+}
+
+// userBannedInChannel 以所有者（有邀请权的成员）视角读取 userID 的成员记录，
+// 判断其是否被踢出/封禁（kicked、banned 或 view_messages 被禁）。
+func (s *Service) userBannedInChannel(ctx context.Context, ownerUserID, channelID, userID int64) (bool, error) {
+	member, err := s.channels.GetParticipant(ctx, ownerUserID, channelID, userID)
+	if err != nil {
+		if errors.Is(err, domain.ErrUserNotParticipant) {
+			return false, nil
+		}
+		return false, err
+	}
+	return member.Status == domain.ChannelMemberKicked ||
+		member.Status == domain.ChannelMemberBanned ||
+		member.BannedRights.ViewMessages, nil
 }
 
 func (s *Service) leaveChannelPeers(ctx context.Context, userID int64, peers []domain.DialogFolderPeer, date int) ([]domain.CreateChannelResult, error) {

@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -10,13 +9,14 @@ import (
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 // TestChannelMemberCacheInvalidatesOnReadModelNotify 验证：channel_members 触发器(0120)
 // → 统一 read-model LISTEN/NOTIFY → ChannelMemberCache 失效 → 下一次读回填新成员态。
 func TestChannelMemberCacheInvalidatesOnReadModelNotify(t *testing.T) {
 	pool := testPool(t)
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
+	dsn := pgtest.TestDSN(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -115,7 +115,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, owner.ID, newRank); err != n
 
 func TestChannelDialogLightInvalidatesOnChannelMemberAndDialogNotify(t *testing.T) {
 	pool := testPool(t)
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
+	dsn := pgtest.TestDSN(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -195,7 +195,7 @@ WHERE channel_id = $1 AND user_id = $2`, created.Channel.ID, owner.ID, "dialog-l
 // 的 account/profile 投影触发器能穿过统一 listener 分发到对应缓存。
 func TestReadModelChangeListenerInvalidatesProjectionCachesFromNotify(t *testing.T) {
 	pool := testPool(t)
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
+	dsn := pgtest.TestDSN(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

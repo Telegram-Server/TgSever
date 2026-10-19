@@ -13,10 +13,10 @@ import (
 
 type captureAuditService struct {
 	fakeService
-	limit  int
-	actor  string
-	cmds   []domain.AdminCommand
-	err    error
+	limit int
+	actor string
+	cmds  []domain.AdminCommand
+	err   error
 }
 
 func (s *captureAuditService) ListRecentAdminCommands(_ context.Context, limit int, actor string) ([]domain.AdminCommand, error) {

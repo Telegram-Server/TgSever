@@ -178,7 +178,7 @@ func (s *ChannelStore) GetLinkedDiscussionChannel(_ context.Context, viewerUserI
 		return domain.ChannelView{}, guestErr
 	}
 	if !guest {
-		if member, ok := s.members[linked.ID][viewerUserID]; ok {
+		if member, ok := s.effectiveMemberLocked(linked.ID, viewerUserID, restrictionNow(0)); ok {
 			self = member
 		} else {
 			return domain.ChannelView{}, domain.ErrChannelPrivate
@@ -225,7 +225,7 @@ func (s *ChannelStore) GetChannels(_ context.Context, viewerUserID int64, channe
 				if banned, ok := s.channels[channelID]; ok && !banned.Deleted {
 					out = append(out, domain.ChannelView{
 						Channel:   cloneChannel(banned),
-						Self:      s.members[channelID][viewerUserID],
+						Self:      s.members[channelID][viewerUserID].EffectiveAt(restrictionNow(0)),
 						Forbidden: true,
 					})
 				}

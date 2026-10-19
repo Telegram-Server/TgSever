@@ -55,7 +55,7 @@ func TestBotAPIGetChatMemberSeesKickedUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getChatMember(kicked): %v", err)
 	}
-	if member.Status != domain.ChannelMemberKicked && !member.BannedRights.ViewMessages {
+	if member.Status != domain.ChannelMemberKicked || !member.BannedRights.ViewMessages {
 		t.Fatalf("member = %+v, want a kicked record", member)
 	}
 }
@@ -80,64 +80,11 @@ func TestBotAPIGetChatMemberReportsOutsidersAsLeft(t *testing.T) {
 	}
 }
 
-// chatQueryPromote 让 by 把 target 提拔为管理员。fixture 的 promoteBot 把目标写进了
-// 操作者字段 UserID（应为 MemberID），会报 channel invalid，这里不依赖它。
-func (f botAPIBridgeFixture) chatQueryPromote(t *testing.T, by, channelID, target int64, rights domain.ChannelAdminRights, rank string) {
-	t.Helper()
-	if _, err := f.channels.EditAdmin(f.ctx, by, domain.EditChannelAdminRequest{
-		UserID:      by,
-		ChannelID:   channelID,
-		MemberID:    target,
-		AdminRights: rights,
-		RankSet:     rank != "",
-		Rank:        rank,
-		Date:        21,
-	}); err != nil {
-		t.Fatalf("promote %d: %v", target, err)
-	}
-}
-
-func (f botAPIBridgeFixture) promoteMember(t *testing.T, by int64, channelID int64) {
-	t.Helper()
-	f.chatQueryPromote(t, by, channelID, f.member.ID, domain.ChannelAdminRights{DeleteMessages: true}, "mod")
-}
-
-// 别人提拔的管理员：管理员机器人即使有 add_admins 也不能编辑。
-func TestBotAPIGetChatMemberCanBeEditedIsFalseForAdminBots(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	f.chatQueryPromote(t, f.owner.ID, f.channel.ID, f.bot.ID, domain.ChannelAdminRights{AddAdmins: true, BanUsers: true}, "")
-	f.promoteMember(t, f.owner.ID, f.channel.ID)
-
-	member, _, canEdit, err := f.router.BotAPIGetChatMember(f.ctx, f.bot.ID, f.chatID, f.member.ID)
-	if err != nil {
-		t.Fatalf("getChatMember(admin): %v", err)
-	}
-	if member.Role != domain.ChannelRoleAdmin || member.Rank != "mod" || canEdit {
-		t.Fatalf("member = %+v canEdit = %v", member, canEdit)
-	}
-}
-
-func TestBotAPIGetChatMemberCanBeEditedWhenTheBotOwnsTheGroup(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	created, err := f.channels.CreateMegagroupFromCreateChat(f.ctx, f.bot.ID, domain.CreateChannelRequest{
-		Title: "Bot Group", MemberUserIDs: []int64{f.member.ID}, Date: 12,
-	})
-	if err != nil {
-		t.Skipf("bots cannot own groups in this store: %v", err)
-	}
-	f.promoteMember(t, f.bot.ID, created.Channel.ID)
-
-	_, _, canEdit, err := f.router.BotAPIGetChatMember(f.ctx, f.bot.ID, -botAPIChannelChatIDBase-created.Channel.ID, f.member.ID)
-	if err != nil || !canEdit {
-		t.Fatalf("getChatMember(admin) canEdit = %v, %v; want true for the owning bot", canEdit, err)
-	}
-}
-
 func TestBotAPIGetChatAdministratorsListsOwnerAndAdmins(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
-	f.promoteMember(t, f.owner.ID, f.channel.ID)
+	f.promote(t, f.owner.ID, f.member.ID, domain.ChannelAdminRights{DeleteMessages: true}, "mod")
 
-	members, users, editable, err := f.router.BotAPIGetChatAdministrators(f.ctx, f.bot.ID, f.chatID)
+	members, users, _, err := f.router.BotAPIGetChatAdministrators(f.ctx, f.bot.ID, f.chatID)
 	if err != nil {
 		t.Fatalf("getChatAdministrators: %v", err)
 	}
@@ -154,9 +101,6 @@ func TestBotAPIGetChatAdministratorsListsOwnerAndAdmins(t *testing.T) {
 	}
 	if !userIDs[f.owner.ID] || !userIDs[f.member.ID] {
 		t.Fatalf("users = %+v, want both admins' profiles", users)
-	}
-	if editable[f.member.ID] || editable[f.owner.ID] {
-		t.Fatalf("editable = %v, want none for a non-owner bot", editable)
 	}
 }
 

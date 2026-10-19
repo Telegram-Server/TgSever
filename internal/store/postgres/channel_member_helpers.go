@@ -15,6 +15,7 @@ func (s *ChannelStore) getChannelForMember(ctx context.Context, db sqlcgen.DBTX,
 	if err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, err
 	}
+	member = member.EffectiveAt(restrictionNow(0))
 	if err := validateChannelMemberVisible(member); err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, err
 	}
@@ -54,7 +55,8 @@ func (s *ChannelStore) getLinkedDiscussionGuest(ctx context.Context, db sqlcgen.
 	}
 	existing, err := s.getChannelMember(ctx, db, target.ID, viewerUserID)
 	if err == nil {
-		if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+		existing = existing.EffectiveAt(restrictionNow(0))
+		if existing.IsKicked() {
 			return domain.ChannelMember{}, false, domain.ErrChannelUserBanned
 		}
 		if existing.Status == domain.ChannelMemberActive {
@@ -80,6 +82,7 @@ func (s *ChannelStore) getLinkedDiscussionGuest(ctx context.Context, db sqlcgen.
 		}
 		return domain.ChannelMember{}, false, err
 	}
+	sourceMember = sourceMember.EffectiveAt(restrictionNow(0))
 	if err := validateChannelMemberVisible(sourceMember); err != nil {
 		return domain.ChannelMember{}, false, err
 	}
@@ -101,8 +104,10 @@ func (s *ChannelStore) getLinkedDiscussionGuest(ctx context.Context, db sqlcgen.
 // channel rows so messages.getPeerDialogs can materialize linked discussion
 // histories without an N+1 query per requested peer.
 //
-// The target membership predicate deliberately excludes active, kicked,
-// banned and view-messages-banned rows. Active members were projected by the
+// The target membership predicate deliberately excludes active rows and rows
+// whose kick (status kicked or a view_messages ban) is still in force; an
+// expired kick, like a restricted non-member (status banned), is no denial.
+// Active members were projected by the
 // primary GetChannels query; explicit target denial must always win over the
 // source broadcast membership. Returned members are transient and are never
 // persisted to channel_members/channel_dialogs.
@@ -134,11 +139,14 @@ WHERE target.id = ANY($2::bigint[])
   AND (
     target_member.user_id IS NULL
     OR (
-      target_member.status NOT IN ('active', 'banned', 'kicked')
-      AND NOT COALESCE((target_member.banned_rights->>'ViewMessages')::boolean, false)
+      target_member.status <> 'active'
+      AND NOT (
+        (target_member.status = 'kicked' OR COALESCE((target_member.banned_rights->>'ViewMessages')::boolean, false))
+        AND `+channelRestrictionActiveSQL("target_member", "$3")+`
+      )
     )
   )
-ORDER BY target.id`, viewerUserID, targetIDs)
+ORDER BY target.id`, viewerUserID, targetIDs, nowUnix())
 	if err != nil {
 		return nil, fmt.Errorf("list linked discussion guests: %w", err)
 	}
@@ -170,7 +178,8 @@ func (s *ChannelStore) getPublicPreviewMember(ctx context.Context, db sqlcgen.DB
 		}
 		return domain.ChannelMember{}, err
 	}
-	if member.Status == domain.ChannelMemberBanned || member.Status == domain.ChannelMemberKicked || member.BannedRights.ViewMessages {
+	member = member.EffectiveAt(restrictionNow(0))
+	if member.IsKicked() {
 		return domain.ChannelMember{}, domain.ErrChannelUserBanned
 	}
 	return publicPreviewMember(ch, viewerUserID, member, true), nil
@@ -408,6 +417,22 @@ func scanChannelMemberWithCount(row rowScanner) (domain.ChannelMember, int, erro
 	return member, count, nil
 }
 
+// restrictionNow 返回换算限制期限用的当前时刻：操作带请求 Date 时用它（与同一操作里写入的
+// 时间一致），没有时用真实时钟。
+func restrictionNow(date int) int {
+	if date > 0 {
+		return date
+	}
+	return nowUnix()
+}
+
+// channelRestrictionActiveSQL 是 SQL 侧的期限判断：alias 行的限制在 nowPlaceholder 时刻仍生效
+// （UntilDate 为 0 表示永久）。与 domain.ChannelMember.EffectiveAt 同口径。
+func channelRestrictionActiveSQL(alias, nowPlaceholder string) string {
+	until := "COALESCE((" + alias + ".banned_rights->>'UntilDate')::bigint, 0)"
+	return "(" + until + " <= 0 OR " + until + " > " + nowPlaceholder + ")"
+}
+
 func validateChannelMemberVisible(member domain.ChannelMember) error {
 	switch member.Status {
 	case domain.ChannelMemberActive:
@@ -415,7 +440,7 @@ func validateChannelMemberVisible(member domain.ChannelMember) error {
 			return domain.ErrChannelUserBanned
 		}
 		return nil
-	case domain.ChannelMemberBanned, domain.ChannelMemberKicked:
+	case domain.ChannelMemberKicked:
 		return domain.ErrChannelUserBanned
 	default:
 		return domain.ErrChannelPrivate
@@ -521,6 +546,18 @@ func zeroChannelAdminRights(rights domain.ChannelAdminRights) bool {
 
 func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
 	return rights == domain.ChannelBannedRights{}
+}
+
+// rejoinBannedRights 返回旧成员记录重新入群后应带的限制：退群不解除限制，
+// 否则"先退群再让人拉回来"就能绕过；不在群里时被限制的人（Status banned）同样带着限制入群。
+// 被踢出者（IsKicked）能重新入群只可能是被有封禁权的管理员拉回，等同解封。
+// 期限（UntilDate，0 为永久）在入群时刻 date 已过的限制视为无限制。
+func rejoinBannedRights(existing domain.ChannelMember, date int) domain.ChannelBannedRights {
+	existing = existing.EffectiveAt(restrictionNow(date))
+	if existing.IsKicked() {
+		return domain.ChannelBannedRights{}
+	}
+	return existing.BannedRights
 }
 
 func creatorChannelMember(channelID, userID int64, date int) domain.ChannelMember {

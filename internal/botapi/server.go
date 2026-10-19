@@ -1438,14 +1438,28 @@ func (h *handler) setChatMenuButton(w http.ResponseWriter, r *http.Request, botI
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	// 只存一份全局默认按钮；按聊天设置会被写成全局的，所以在支持之前明确拒绝。
-	if chatID := strings.TrimSpace(values["chat_id"]); chatID != "" && chatID != "0" {
-		writeAPIError(w, http.StatusBadRequest, "MENU_BUTTON_PER_CHAT_UNSUPPORTED")
+	userID, err := menuButtonChatID(values["chat_id"], botID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
 		return
 	}
 	button, err := menuButtonFromAPI(values["menu_button"])
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "BUTTON_INVALID")
+		return
+	}
+	// 全局默认（userID 0）也优先走网关：网关复用 bots.setBotMenuButton，本进程的资料缓存
+	// 随即失效；直接写 store 只能等数据库监听器，纯内存部署下会陈旧到缓存过期。
+	if gateway, ok := h.gateway.(MenuButtonGateway); ok {
+		if err := gateway.BotAPISetChatMenuButton(r.Context(), botID, userID, button); err != nil {
+			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+			return
+		}
+		writeAPIOK(w, true)
+		return
+	}
+	if userID != 0 {
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
 		return
 	}
 	if _, err := h.bots.SetBotMenuButton(r.Context(), botID, button); err != nil {
@@ -1460,12 +1474,62 @@ func (h *handler) getChatMenuButton(w http.ResponseWriter, r *http.Request, botI
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
 		return
 	}
+	values, err := requestValues(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
+		return
+	}
+	userID, err := menuButtonChatID(values["chat_id"], botID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+		return
+	}
+	if userID != 0 {
+		gateway, ok := h.gateway.(MenuButtonGateway)
+		if !ok {
+			writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
+			return
+		}
+		button, err := gateway.BotAPIGetChatMenuButton(r.Context(), botID, userID)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+			return
+		}
+		writeAPIOK(w, apiMenuButton(button))
+		return
+	}
 	button, err := h.bots.GetBotMenuButton(r.Context(), botID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
 		return
 	}
 	writeAPIOK(w, apiMenuButton(button))
+}
+
+// MenuButtonGateway 读写机器人对单个私聊（chat_id = 用户 id）的专属菜单按钮。生产里由
+// rpc.Router 实现，复用 bots.setBotMenuButton / getBotMenuButton 的校验、缓存失效与
+// updateBotMenuButton 推送；default 按钮表示删除专属按钮。
+type MenuButtonGateway interface {
+	BotAPISetChatMenuButton(ctx context.Context, botID, userID int64, button domain.BotMenuButton) error
+	BotAPIGetChatMenuButton(ctx context.Context, botID, userID int64) (domain.BotMenuButton, error)
+}
+
+// menuButtonChatID 解析 setChatMenuButton / getChatMenuButton 的 chat_id：缺省、0 或机器人
+// 自己的 id 表示全局默认（返回 0）；正数是私聊对方的用户 id；群/频道（负数）、@username
+// 与非数字都不是私聊，报错。
+func menuButtonChatID(raw string, botID int64) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id < 0 {
+		return 0, errors.New("CHAT_ID_INVALID")
+	}
+	if id == botID {
+		return 0, nil
+	}
+	return id, nil
 }
 
 func (h *handler) setUserEmojiStatus(w http.ResponseWriter, r *http.Request, botID int64) {

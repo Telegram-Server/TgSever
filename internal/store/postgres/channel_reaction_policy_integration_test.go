@@ -3,11 +3,11 @@ package postgres
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 func TestChannelTopReactionPresenceNegativeCacheInvalidatesOnReaction(t *testing.T) {
@@ -22,7 +22,7 @@ func TestChannelTopReactionPresenceNegativeCacheInvalidatesOnReaction(t *testing
 	topCache.reactionPresence.Store(key, channelTopReactionPresence{Normal: true})
 	lctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	listener := NewReadModelChangeListener(os.Getenv("TELESRV_TEST_POSTGRES_DSN"), ReadModelCacheSet{
+	listener := NewReadModelChangeListener(pgtest.TestDSN(t), ReadModelCacheSet{
 		ChannelTopMessages: topCache,
 	}, nil)
 	go listener.Run(lctx)

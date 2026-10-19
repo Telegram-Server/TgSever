@@ -152,9 +152,9 @@ func (s *ChannelStore) ChannelPollFanoutViews(ctx context.Context, channelID int
 		}
 		// agg.Counts/RecentVoters 与 tmpl 共享（ResolvePollResults 只读、RecentVoters 内部再 copy），安全。
 		agg := domain.PollAggregates{
-			Counts:       tmpl.Counts,
-			TotalVoters:  tmpl.TotalVoters,
-			RecentVoters: tmpl.RecentVoters,
+			Counts:        tmpl.Counts,
+			TotalVoters:   tmpl.TotalVoters,
+			RecentVoters:  tmpl.RecentVoters,
 			ViewerOptions: viewerOpts[viewer],
 		}
 		results := domain.ResolvePollResults(def, agg, viewer, now)
