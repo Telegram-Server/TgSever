@@ -125,10 +125,20 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		t.Fatalf("upgrade star gift: %v", err)
 	}
 	if upgraded.Duplicate || upgraded.Unique.Num != 1 || upgraded.Unique.Slug != "comet-"+suffix+"-1" ||
-		upgraded.Unique.Model.Name != "Aurora" || upgraded.Unique.Pattern.Name != "Orbit" ||
-		upgraded.Unique.Backdrop.Name != "Midnight" || upgraded.Balance.Balance != 900 ||
+		upgraded.Balance.Balance != 900 ||
 		upgraded.Saved.ID != savedID || upgraded.Saved.UniqueGiftID != upgraded.Unique.ID || upgraded.Saved.UpgradeMsgID <= 0 {
 		t.Fatalf("upgrade result = %+v", upgraded)
+	}
+	// 属性按稀有度用 crypto/rand 抽取（Aurora 922‰、Solar 78‰ 等），断言具体某一个会有约 9% 的
+	// 概率失败；这里只断言抽中的是已发布的、非合成的候选。
+	if model := upgraded.Unique.Model.Name; model != "Aurora" && model != "Solar" {
+		t.Fatalf("upgraded model = %q, want a published non-crafted model", model)
+	}
+	if pattern := upgraded.Unique.Pattern.Name; pattern != "Orbit" && pattern != "Rings" {
+		t.Fatalf("upgraded pattern = %q, want a published pattern", pattern)
+	}
+	if backdrop := upgraded.Unique.Backdrop.Name; backdrop != "Midnight" && backdrop != "Daylight" {
+		t.Fatalf("upgraded backdrop = %q, want a published backdrop", backdrop)
 	}
 	ownerMessage := upgraded.Send.RecipientMessage
 	if ownerMessage.OwnerUserID != owner.ID || ownerMessage.Pts <= 0 || ownerMessage.Media == nil ||
