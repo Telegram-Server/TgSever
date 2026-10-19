@@ -135,3 +135,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	rsc.io/qr v0.2.0
 )
+
+// telesrv.* 扩展协议只在 Telegram-Server/td 发布；td 改用新模块路径后由 #58 去掉这一行。
+replace github.com/iamxvbaba/td => github.com/Telegram-Server/td v1.5.0
