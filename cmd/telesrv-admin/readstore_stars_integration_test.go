@@ -13,11 +13,11 @@ import (
 // The Stars ledger is read with hand-written SQL, so the only thing that can
 // prove the joins, the keyset ordering and the search widening are right is
 // running them against the real schema. Gated on TELESRV_TEST_POSTGRES_DSN via
-// verificationReadStore, like every other read-model integration test.
+// isolatedReadStore.
 //
-// Usernames and ids are unique per run (verificationReadStore follows the same
-// convention), so leftover rows from an earlier run never collide with a fresh
-// fixture.
+// The leaderboard reads the whole Stars ledger, so each test gets a database of
+// its own (pgtest.NewDatabase) instead of truncating a ledger other tests in the
+// package may be writing to.
 
 type starsFixture struct {
 	alice int64
@@ -36,12 +36,8 @@ func seedStarsFixture(t *testing.T, pool *pgxpool.Pool) starsFixture {
 	now := time.Now().UTC()
 	base := now.UnixNano() & 0x7fffffff
 
-	// The test DB is shared and reused across runs, so start from a clean
-	// Stars ledger every time; paid_reactions and premium refund rows reference
-	// stars_transactions, hence CASCADE.
-	if _, err := pool.Exec(ctx, `TRUNCATE stars_transactions, stars_balances CASCADE`); err != nil {
-		t.Fatalf("truncate stars ledger: %v", err)
-	}
+	// The database is the test's own (isolatedReadStore), so the Stars ledger
+	// starts empty without truncating anything.
 	alicePhone := strconv.FormatInt(base, 10)
 	bobPhone := strconv.FormatInt(base+1, 10)
 	drainedPhone := strconv.FormatInt(base+2, 10)
@@ -105,7 +101,7 @@ RETURNING id`, userID, amount, reason, title, int64(now.Unix())).Scan(&id); err 
 }
 
 func TestStarsTopLeaderboardAndSearch(t *testing.T) {
-	s, pool := verificationReadStore(t)
+	s, pool := isolatedReadStore(t)
 	ctx := context.Background()
 	fx := seedStarsFixture(t, pool)
 
@@ -160,7 +156,7 @@ func TestStarsTopLeaderboardAndSearch(t *testing.T) {
 }
 
 func TestStarsLeaderboardKeysetPaging(t *testing.T) {
-	s, pool := verificationReadStore(t)
+	s, pool := isolatedReadStore(t)
 	ctx := context.Background()
 	fx := seedStarsFixture(t, pool)
 
@@ -183,7 +179,7 @@ func TestStarsLeaderboardKeysetPaging(t *testing.T) {
 }
 
 func TestStarsLedgerHistory(t *testing.T) {
-	s, pool := verificationReadStore(t)
+	s, pool := isolatedReadStore(t)
 	ctx := context.Background()
 	fx := seedStarsFixture(t, pool)
 

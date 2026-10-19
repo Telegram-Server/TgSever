@@ -43,7 +43,10 @@ func TestAuthKeySessionLayerTransactionAndRestartPostgres(t *testing.T) {
 	concurrentHighMsgID := authKeySessionLayerTestMsgID(now, 5)
 	// msg_id 只有整秒精度：now+31s 取整后比检查时刻只领先 30.x 秒，测试用时加上 now 的
 	// 小数秒一过 1 秒就落回 30 秒容忍窗口内，用例约六次挂一次。给足余量。
-	futureMsgID := authKeySessionLayerTestMsgID(now.Add(40*time.Second), 1)
+	// now 取自 Go 时钟，而"来自未来"由 SQL 用 PG 的时钟判断，两个时钟之间还有偏差，
+	// 所以领先量给到 10 分钟而不是贴着 30 秒窗口。Go 侧 AuthKeySessionLayerExpiry 不看
+	// 当前时间，这个 msg_id 仍然走 SQL 快速路径被拒，测的还是同一条路径。
+	futureMsgID := authKeySessionLayerTestMsgID(now.Add(10*time.Minute), 1)
 	for _, invalidMsgID := range []int64{
 		authKeySessionLayerTestMsgID(now.Add(-302*time.Second), 1),
 		futureMsgID,

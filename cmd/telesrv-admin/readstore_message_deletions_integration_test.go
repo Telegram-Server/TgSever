@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 )
 
 // ListMessageDeletions and MessageDeletionDetail are hand-written SQL over
@@ -14,8 +13,9 @@ func TestReadStoreMessageDeletions(t *testing.T) {
 	store, pool := verificationReadStore(t)
 	ctx := context.Background()
 	// actor/owner/sender ids unique to this run, so other rows in the shared
-	// test database never match the filters below.
-	base := 3_800_000_000 + time.Now().UnixNano()%1_000_000*10
+	// test database never match the filters below. crypto-random over a wide
+	// range: a clock-derived id modulo 1e6 collides between close runs.
+	base := int64(1<<40) + randomBelow(t, 1<<50)*10
 	alice, bob := base+1, base+2
 	channelID := base + 4
 	t.Cleanup(func() {
@@ -83,6 +83,27 @@ INSERT INTO message_deletions (
 		}
 		if len(rows) != 1 || rows[0].SenderUserID != bob {
 			t.Fatalf("rows = %+v, want group message 6", rows)
+		}
+	})
+
+	t.Run("message id range narrows to a page", func(t *testing.T) {
+		rows, err := store.ListMessageDeletions(ctx, MessageDeletionQuery{
+			OwnerUserID: bob, PeerType: "user", PeerID: alice, MinMessageID: 12, MaxMessageID: 12, Limit: 10,
+		})
+		if err != nil || len(rows) != 1 || rows[0].MessageID != 12 {
+			t.Fatalf("range = %+v err %v, want bob's copy 12", rows, err)
+		}
+		rows, err = store.ListMessageDeletions(ctx, MessageDeletionQuery{
+			OwnerUserID: bob, PeerType: "user", PeerID: alice, MaxMessageID: 11, Limit: 10,
+		})
+		if err != nil || len(rows) != 0 {
+			t.Fatalf("range below = %+v err %v, want nothing", rows, err)
+		}
+		rows, err = store.ListMessageDeletions(ctx, MessageDeletionQuery{
+			PeerType: "channel", PeerID: channelID, MinMessageID: 6, Limit: 10,
+		})
+		if err != nil || len(rows) != 1 || rows[0].MessageID != 6 {
+			t.Fatalf("range above = %+v err %v, want group message 6", rows, err)
 		}
 	})
 
