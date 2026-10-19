@@ -111,7 +111,7 @@ const (
 	BotMenuButtonWebView BotMenuButtonType = 2
 )
 
-// BotMenuButton 是 bot 的菜单按钮（per-bot 全局；per-user 维度 P2 不做）。
+// BotMenuButton 是 bot 的菜单按钮：bots 表存全局默认，bot_user_menu_buttons 存按用户的专属按钮。
 type BotMenuButton struct {
 	Type BotMenuButtonType
 	Text string

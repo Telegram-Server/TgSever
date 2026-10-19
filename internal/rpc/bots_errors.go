@@ -70,13 +70,12 @@ func setBotInfoErr(err error) error {
 	return internalErr()
 }
 
-func menuButtonPerChatUnsupportedErr() error {
-	return tgerr.New(400, "MENU_BUTTON_PER_CHAT_UNSUPPORTED")
-}
-
 func setBotMenuButtonErr(err error) error {
 	if errors.Is(err, domain.ErrBotMenuButtonInvalid) {
 		return botMenuButtonInvalidErr()
+	}
+	if errors.Is(err, domain.ErrUserNotFound) {
+		return userIDInvalidErr()
 	}
 	if errors.Is(err, domain.ErrBotNotFound) {
 		return userBotRequiredErr()

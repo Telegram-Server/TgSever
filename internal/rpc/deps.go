@@ -350,6 +350,10 @@ type BotsService interface {
 	GetBotInfo(ctx context.Context, botUserID int64) (name, about, description string, err error)
 	SetBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (int, error)
 	GetBotMenuButton(ctx context.Context, botUserID int64) (domain.BotMenuButton, error)
+	// SetBotMenuButtonForUser 设置单个用户的专属菜单按钮（default = 删除，回落到全局默认）。
+	SetBotMenuButtonForUser(ctx context.Context, botUserID, userID int64, button domain.BotMenuButton) error
+	// BotMenuButtonForUser 返回 userID 看到的菜单按钮：专属按钮优先，否则全局默认。
+	BotMenuButtonForUser(ctx context.Context, botUserID, userID int64) (domain.BotMenuButton, error)
 	SetInlinePlaceholder(ctx context.Context, botUserID int64, placeholder string) (int, error)
 	CanSendMessage(ctx context.Context, userID, botUserID int64) (bool, error)
 	AllowSendMessage(ctx context.Context, userID, botUserID int64, fromRequest bool) (bool, error)

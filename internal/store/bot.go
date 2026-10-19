@@ -25,6 +25,12 @@ type BotStore interface {
 	UpdateBotCommands(ctx context.Context, botUserID int64, commands []domain.BotCommand) (newVersion int, err error)
 	UpdateBotInfo(ctx context.Context, botUserID int64, upd domain.BotInfoUpdate) (newVersion int, err error)
 	UpdateBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (newVersion int, err error)
+	// SetBotUserMenuButton 写入 bot 对单个用户的专属菜单按钮；Type 为 default 表示删除
+	// 专属按钮（回落到全局默认）。不 bump bot_info_version（那是所有用户共享的版本号）；
+	// bot 不存在返回 domain.ErrBotNotFound。
+	SetBotUserMenuButton(ctx context.Context, botUserID, userID int64, button domain.BotMenuButton) error
+	// GetBotUserMenuButton 返回该用户的专属按钮；未设置时 found=false（调用方回落到全局默认）。
+	GetBotUserMenuButton(ctx context.Context, botUserID, userID int64) (button domain.BotMenuButton, found bool, err error)
 	SetBotInlinePlaceholder(ctx context.Context, botUserID int64, placeholder string) (newVersion int, err error)
 	SetBotInlineGeo(ctx context.Context, botUserID int64, inlineGeo bool) (newVersion int, err error)
 	SetBotNochats(ctx context.Context, botUserID int64, nochats bool) (newVersion int, err error)

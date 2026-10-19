@@ -347,7 +347,7 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 		full.VoiceMessagesForbidden = !voiceAllowed
 	}
 	if u.Bot {
-		full.SetBotInfo(r.tgBotInfo(ctx, u))
+		full.SetBotInfo(r.tgBotInfo(ctx, currentUserID, u))
 	}
 	if r.deps.Dialogs != nil && u.ID != currentUserID {
 		list, err := r.deps.Dialogs.GetPeerDialogs(ctx, currentUserID, []domain.Peer{{Type: domain.PeerTypeUser, ID: u.ID}})
@@ -856,10 +856,14 @@ func (r *Router) fillUserFullPhotos(ctx context.Context, viewerUserID, ownerUser
 // tgBotInfo 构造 userFull.bot_info。bot 用户必须携带（哪怕命令为空）：缺失时
 // TDesktop 的 botInfo.inited 永不置位，每次开聊/输 "/" 都会重拉 getFullUser；
 // user_id 必填且必须等于该 bot 的 id，不匹配会被客户端整体静默忽略。
-func (r *Router) tgBotInfo(ctx context.Context, u domain.User) tg.BotInfo {
+// menu_button 按查看者取：有专属按钮用专属的（结果进 per-(viewer,target) 的 userFull 缓存）。
+func (r *Router) tgBotInfo(ctx context.Context, viewerUserID int64, u domain.User) tg.BotInfo {
 	info := tgBotInfoFromProfile(u.ID, domain.BotProfile{}, false)
 	if r.deps.Bots != nil {
 		if profile, found, err := r.deps.Bots.BotInfo(ctx, u.ID); err == nil && found {
+			if button, err := r.deps.Bots.BotMenuButtonForUser(ctx, u.ID, viewerUserID); err == nil {
+				profile.MenuButton = button
+			}
 			info = tgBotInfoFromProfile(u.ID, profile, true)
 		}
 	}
