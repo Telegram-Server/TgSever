@@ -477,7 +477,20 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 	if target.ID != currentUserID && target.Deleted {
 		// tombstone: empty album
 	} else {
-		photos, total, err = r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, req.MaxID)
+		visible, err := r.canSeeProfilePhotoAlbum(ctx, currentUserID, target.ID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		if visible {
+			photos, total, err = r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, req.MaxID)
+			// 没有任何 profile 头像时他人看到的 user.photo 是 fallback，相册也给 fallback，
+			// 否则可见的联系人反而比陌生人看到的少。本人的 fallback 由 userFull 单独展示。
+			if err == nil && total == 0 && target.ID != currentUserID {
+				photos, total, err = r.hiddenProfilePhotoAlbum(ctx, target.ID, offset, limit, req.MaxID)
+			}
+		} else {
+			photos, total, err = r.hiddenProfilePhotoAlbum(ctx, target.ID, offset, limit, req.MaxID)
+		}
 		if err != nil {
 			return nil, internalErr()
 		}
@@ -502,6 +515,40 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 		return &tg.PhotosPhotosSlice{Count: total, Photos: tgPhotos, Users: users}, nil
 	}
 	return &tg.PhotosPhotos{Photos: tgPhotos, Users: users}, nil
+}
+
+// canSeeProfilePhotoAlbum 按头像隐私（PrivacyKeyProfilePhoto）判断 viewer 能否看
+// owner 的头像相册，与 users.getFullUser / user.photo 投影用同一条规则；本人恒可见。
+func (r *Router) canSeeProfilePhotoAlbum(ctx context.Context, viewerUserID, ownerUserID int64) (bool, error) {
+	if viewerUserID == ownerUserID || r.deps.Privacy == nil {
+		return true, nil
+	}
+	return r.deps.Privacy.CanSee(ctx, ownerUserID, viewerUserID, domain.PrivacyKeyProfilePhoto)
+}
+
+// hiddenProfilePhotoAlbum 是头像隐私不可见（或 owner 没有 profile 头像）时的相册视图：只含当前 fallback（公开）
+// 头像，没有就是空相册。offset/max_id 按与存储层相同的语义作用在这张虚拟相册上，
+// total 是虚拟相册大小，分页与总数都不泄露真实相册。
+func (r *Router) hiddenProfilePhotoAlbum(ctx context.Context, ownerUserID int64, offset, limit int, maxID int64) ([]domain.Photo, int, error) {
+	fallback, found, err := r.deps.Files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, ownerUserID, domain.ProfilePhotoKindFallback)
+	if err != nil || !found {
+		return nil, 0, err
+	}
+	const total = 1
+	if limit <= 0 {
+		return nil, total, nil
+	}
+	if offset < 0 && maxID > 0 {
+		// 客户端按 id 刷新单张照片（offset=-1, max_id=photo_id）。
+		if fallback.ID == maxID {
+			return []domain.Photo{fallback}, total, nil
+		}
+		return nil, total, nil
+	}
+	if offset > 0 || (maxID > 0 && fallback.ID >= maxID) {
+		return nil, total, nil
+	}
+	return []domain.Photo{fallback}, total, nil
 }
 
 func (r *Router) onPhotosDeletePhotos(ctx context.Context, id []tg.InputPhotoClass) ([]int64, error) {
