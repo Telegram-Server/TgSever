@@ -2701,6 +2701,22 @@ func TestChannelLeaveAndRejoinRestoresParticipantCountAndNotifiesLeaver(t *testi
 	}
 }
 
+// 接线测试：频道设置用户名路径接入了保留用户名规则（规则细节见 domain.ReservedUsername 的测试）。
+func TestChannelUpdateUsernameRejectsReservedUsername(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(memory.NewChannelStore())
+	created, err := service.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{Title: "Feed", Date: 10})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
+	}
+	if _, err := service.UpdateUsername(ctx, 1001, domain.UpdateChannelUsernameRequest{
+		ChannelID: created.Channel.ID,
+		Username:  "tdhbcfeed4",
+	}); !errors.Is(err, domain.ErrUsernameInvalid) {
+		t.Fatalf("UpdateUsername reserved err = %v, want ErrUsernameInvalid", err)
+	}
+}
+
 func TestChannelUsernameAndSignatures(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(memory.NewChannelStore())
