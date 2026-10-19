@@ -2,7 +2,10 @@ package rpc
 
 import (
 	"context"
+
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
+
 	"telesrv/internal/domain"
 )
 
@@ -232,17 +235,7 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 	deletedIDs := make([]int, 0, len(claimed))
 	sentIDs := make([]int, 0, len(claimed))
 	for _, scheduled := range claimed {
-		updates, _, err := r.sendOutgoing(ctx, userID, scheduled.Peer, outgoingSend{
-			randomID:    scheduled.RandomID,
-			message:     scheduled.Message,
-			entities:    tgInputMessageEntities(scheduled.Entities),
-			media:       scheduled.Media,
-			richMessage: scheduled.RichMessage,
-			silent:      scheduled.Silent,
-			noforwards:  scheduled.NoForwards,
-			// 同组定时消息无论一次还是分批发出，都沿用排程时持久化的同一 grouped_id。
-			groupedID: scheduled.GroupedID,
-		})
+		updates, err := r.sendScheduledMessage(ctx, userID, scheduled)
 		if err != nil {
 			if scheduledSvc, ok := r.deps.Messages.(scheduledMessagesService); ok {
 				_ = scheduledSvc.ReleaseScheduledMessage(ctx, scheduled.OwnerUserID, scheduled.ID, err.Error())
@@ -273,6 +266,45 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 	combined.Chats = mergeTGChats(combined.Chats, deleteUpdate.Chats)
 	r.pushUserUpdates(ctx, userID, deleteUpdate)
 	return combined, nil
+}
+
+// sendScheduledMessage 把一条已认领的定时消息按排程时持久化的内容发出：回复目标、
+// send_as、相册分组都沿用定时行上保存的值。
+func (r *Router) sendScheduledMessage(ctx context.Context, userID int64, scheduled domain.ScheduledMessage) (tg.UpdatesClass, error) {
+	sendAs := scheduled.SendAs
+	if sendAs != nil {
+		// 与立即发送一致：发出时已无权以该身份发言即 SEND_AS_PEER_INVALID，不发出（行释放回
+		// pending，权限恢复后可再发），绝不退化为以本人身份发出——那会暴露匿名管理员。
+		checked, err := r.checkSendAsPeer(ctx, userID, scheduled.Peer, *sendAs)
+		if err != nil {
+			return nil, err
+		}
+		sendAs = checked
+	}
+	p := outgoingSend{
+		randomID:    scheduled.RandomID,
+		message:     scheduled.Message,
+		entities:    tgInputMessageEntities(scheduled.Entities),
+		media:       scheduled.Media,
+		richMessage: scheduled.RichMessage,
+		silent:      scheduled.Silent,
+		noforwards:  scheduled.NoForwards,
+		// 回复目标已在排程时解析校验并持久化，发出时直接沿用。
+		replyTo:      scheduled.ReplyTo,
+		replyToReady: true,
+		sendAs:       sendAs,
+		sendAsReady:  true,
+		// 同组定时消息无论一次还是分批发出，都沿用排程时持久化的同一 grouped_id。
+		groupedID: scheduled.GroupedID,
+	}
+	updates, _, err := r.sendOutgoing(ctx, userID, scheduled.Peer, p)
+	if err != nil && p.replyTo != nil && tgerr.Is(err, "REPLY_MESSAGE_ID_INVALID") {
+		// 回复目标在排程后被删除：按官方行为照常发出、不带回复引用，不能让这条定时消息
+		// 因一个已不存在的引用永远卡在重试里。
+		p.replyTo = nil
+		updates, _, err = r.sendOutgoing(ctx, userID, scheduled.Peer, p)
+	}
+	return updates, err
 }
 
 func (r *Router) tgScheduledMessages(ctx context.Context, userID int64, peer domain.Peer, list domain.ScheduledMessageList) tg.MessagesMessagesClass {
