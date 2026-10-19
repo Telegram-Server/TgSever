@@ -195,9 +195,63 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 				"invoice_payload": query.Payload,
 			},
 		}, "pre_checkout_query", true
+	case domain.UpdateEventBotMyChatMember, domain.UpdateEventBotChatMember:
+		body, ok := apiChatMemberUpdated(event)
+		if !ok {
+			return nil, "", false
+		}
+		kind := string(domain.BotAPIUpdateChatMember)
+		if event.Type == domain.UpdateEventBotMyChatMember {
+			kind = string(domain.BotAPIUpdateMyChatMember)
+		}
+		return map[string]any{"update_id": updateID, kind: body}, kind, true
 	default:
 		return nil, "", false
 	}
+}
+
+// apiChatMemberUpdated 投影官方 ChatMemberUpdated。can_be_edited 按收件机器人入队时的
+// 成员状态（Viewer）算：它是群主，或有 add_admins 且是该管理员的提拔人；旧行没有 Viewer 时为 false。
+func apiChatMemberUpdated(event domain.UpdateEvent) (map[string]any, bool) {
+	update := event.BotChatMember
+	if update == nil || update.Chat.Type != domain.PeerTypeChannel || update.Chat.ID <= 0 ||
+		update.New.UserID <= 0 || update.ActorUserID <= 0 {
+		return nil, false
+	}
+	users := make(map[int64]domain.User, len(event.Users))
+	for _, user := range event.Users {
+		users[user.ID] = user
+	}
+	userOf := func(id int64) domain.User {
+		if user, ok := users[id]; ok && user.ID != 0 {
+			return user
+		}
+		return domain.User{ID: id}
+	}
+	chat := apiChat(update.Chat, users)
+	for _, channel := range event.Channels {
+		if channel.ID == update.Chat.ID {
+			describeChannelChat(chat, channel)
+			break
+		}
+	}
+	subject := userOf(update.New.UserID)
+	viewer := update.Viewer.ChannelMember(update.Chat.ID)
+	old, updated := update.Old.ChannelMember(update.Chat.ID), update.New.ChannelMember(update.Chat.ID)
+	out := map[string]any{
+		"chat":            chat,
+		"from":            apiUser(userOf(update.ActorUserID)),
+		"date":            update.Date,
+		"old_chat_member": apiChatMember(old, subject, domain.CanEditChannelAdmin(viewer, old)),
+		"new_chat_member": apiChatMember(updated, subject, domain.CanEditChannelAdmin(viewer, updated)),
+	}
+	if update.ViaJoinRequest {
+		out["via_join_request"] = true
+	}
+	if update.ViaChatFolderInviteLink {
+		out["via_chat_folder_invite_link"] = true
+	}
+	return out, true
 }
 
 func apiEphemeralMessage(message domain.EphemeralMessage, users []domain.User, channels []domain.Channel) (map[string]any, bool) {
@@ -282,6 +336,10 @@ func apiMessageProjectable(msg domain.Message) bool {
 	if apiSuccessfulPayment(msg.Media) != nil {
 		return true
 	}
+	// 骰子的投影在 send_extra.go 的扩展里，apiMessageMedia 看不到它。
+	if msg.Media != nil && msg.Media.Kind == domain.MessageMediaKindDice && msg.Media.Dice != nil {
+		return true
+	}
 	return msg.Body != "" || (msg.RichMessage != nil && len(msg.RichMessage.BotAPIProjection) > 0) || len(apiMessageMedia(msg.Media, nil, nil)) > 0
 }
 
@@ -319,6 +377,11 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 		"message_id": msg.ID,
 		"date":       msg.Date,
 		"chat":       apiChat(msg.Peer, userByID),
+	}
+	if msg.Peer.Type == domain.PeerTypeChannel {
+		if channel, ok := channelByID[msg.Peer.ID]; ok {
+			describeChannelChat(out["chat"].(map[string]any), channel)
+		}
 	}
 	if msg.From.Type == domain.PeerTypeUser && msg.From.ID != 0 {
 		from := userByID[msg.From.ID]
@@ -378,6 +441,9 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 			out[k] = v
 		}
 	}
+	for _, extend := range messageProjectionExtensions {
+		extend(msg, out)
+	}
 	return out
 }
 
@@ -388,6 +454,20 @@ func apiMediaUsesCaption(media map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// describeChannelChat 用频道资料补全 apiChat 的超级群默认形状：标题、用户名，以及
+// 广播频道的 type=channel。
+func describeChannelChat(chat map[string]any, channel domain.Channel) {
+	if channel.Title != "" {
+		chat["title"] = channel.Title
+	}
+	if channel.Username != "" {
+		chat["username"] = channel.Username
+	}
+	if channel.Broadcast && !channel.Megagroup {
+		chat["type"] = "channel"
+	}
 }
 
 func apiChat(peer domain.Peer, users map[int64]domain.User) map[string]any {

@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"strings"
 
@@ -163,7 +165,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 		absentIDs[i] = req.ID[originalIndex]
 		absentRandomIDs[i] = req.RandomID[originalIndex]
 	}
-	fromPeer, preloadedSources, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
+	fromPeer, preloaded, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -191,17 +193,20 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			}
 		}
 	}
-	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
-		return r.scheduleForwardMessages(ctx, userID, fromPeer, toPeer, req, replyTo, sendAs, preloadedSources)
-	}
-	absentSources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, absentIDs, preloadedSources)
+	absent, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, absentIDs, preloaded)
 	if err != nil {
 		return nil, messageForwardErr(err)
 	}
+	dropForwardMediaCaptions(req, absent)
+	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
+		// 定时转发不查重放，absentIDs 即 req.ID。
+		return r.scheduleForwardMessages(ctx, userID, fromPeer, toPeer, req, replyTo, sendAs, absent)
+	}
 	sources := make([]forwardSource, len(req.ID))
 	for i, originalIndex := range absentIndexes {
-		sources[originalIndex] = absentSources[i]
+		sources[originalIndex] = absent[i]
 	}
+	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources)
 	if toPeer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
@@ -235,6 +240,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				NoForwards:             req.Noforwards,
 				ReplyTo:                replyTo,
 				Forward:                forward,
+				GroupedID:              groupedIDs[i],
 				SendAs:                 sendAs,
 				Date:                   int(r.clock.Now().Unix()),
 			})
@@ -321,6 +327,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				NoForwards:             req.Noforwards,
 				ReplyTo:                replyTo,
 				Forward:                forward,
+				GroupedID:              groupedIDs[i],
 				Date:                   int(r.clock.Now().Unix()),
 				OriginAuthKeyID:        authKeyID,
 				OriginSessionID:        sessionID,
@@ -423,7 +430,7 @@ func (r *Router) forwardMessagesToMonoforum(
 		absentIDs[i] = req.ID[originalIndex]
 		absentRandomIDs[i] = req.RandomID[originalIndex]
 	}
-	fromPeer, preloadedSources, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
+	fromPeer, preloaded, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -434,13 +441,14 @@ func (r *Router) forwardMessagesToMonoforum(
 			return nil, peerIDInvalidErr()
 		}
 	}
-	absentSources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, absentIDs, preloadedSources)
+	absent, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, absentIDs, preloaded)
 	if err != nil {
 		return nil, messageForwardErr(err)
 	}
+	dropForwardMediaCaptions(req, absent)
 	sources := make([]forwardSource, len(req.ID))
 	for i, originalIndex := range absentIndexes {
-		sources[originalIndex] = absentSources[i]
+		sources[originalIndex] = absent[i]
 	}
 
 	results := make([]tg.UpdatesClass, 0, len(req.ID))
@@ -480,6 +488,31 @@ func (r *Router) forwardMessagesToMonoforum(
 	return combineSendUpdates(results), nil
 }
 
+// dropForwardMediaCaptions 实现 drop_media_captions：只在 drop_author 同时为 true 时生效，
+// 去掉带媒体消息的说明文字（正文与 entities）；纯文本消息不受影响。
+func dropForwardMediaCaptions(req *tg.MessagesForwardMessagesRequest, sources []forwardSource) {
+	if !req.DropAuthor || !req.DropMediaCaptions {
+		return
+	}
+	for i := range sources {
+		if forwardMediaHasCaption(sources[i].media) {
+			sources[i].body, sources[i].entities = "", nil
+		}
+	}
+}
+
+// forwardMediaHasCaption 对应官方带 caption 的消息类型（图片、视频、文件、音频等）。
+func forwardMediaHasCaption(media *domain.MessageMedia) bool {
+	if media == nil {
+		return false
+	}
+	switch media.Kind {
+	case domain.MessageMediaKindPhoto, domain.MessageMediaKindDocument:
+		return true
+	}
+	return false
+}
+
 func normalizeForwardMessageVectors(ids []int, randomIDs []int64) ([]int, []int64, bool) {
 	if len(ids) == 0 || len(randomIDs) == 0 {
 		return nil, nil, false
@@ -507,6 +540,33 @@ func normalizeForwardMessageVectors(ids []int, randomIDs []int64) ([]int, []int6
 		return nil, nil, false
 	}
 	return compact, randomIDs, true
+}
+
+// forwardGroupedIDs 为本次转发分配新的相册分组 id：同一源相册的各条共享一个新值，不同源相册
+// 互不相同，非相册为 0。新值由该组在请求里第一条的 random_id 派生，同一请求重试得到相同结果。
+func forwardGroupedIDs(userID int64, randomIDs []int64, sources []forwardSource) []int64 {
+	out := make([]int64, len(sources))
+	fresh := make(map[int64]int64)
+	for i, src := range sources {
+		source := src.groupedID
+		if source == 0 {
+			continue
+		}
+		id, ok := fresh[source]
+		if !ok {
+			var buf [16]byte
+			binary.BigEndian.PutUint64(buf[:8], uint64(userID))
+			binary.BigEndian.PutUint64(buf[8:], uint64(randomIDs[i]))
+			sum := sha256.Sum256(buf[:])
+			id = int64(binary.BigEndian.Uint64(sum[:8]) &^ (1 << 63))
+			if id == 0 {
+				id = 1
+			}
+			fresh[source] = id
+		}
+		out[i] = id
+	}
+	return out
 }
 
 func (r *Router) forwardFromPeerAndSources(ctx context.Context, userID int64, input tg.InputPeerClass, ids []int, randomIDs []int64) (domain.Peer, []forwardSource, error) {
@@ -615,7 +675,6 @@ func mergeForwardTopMsgID(toPeer domain.Peer, replyTo *domain.MessageReply, topM
 }
 
 func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int) ([]forwardSource, error) {
-	out := make([]forwardSource, 0, len(ids))
 	switch fromPeer.Type {
 	case domain.PeerTypeUser:
 		if r.deps.Messages == nil {
@@ -625,11 +684,7 @@ func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer doma
 		if err != nil {
 			return nil, domain.ErrMessageIDInvalid
 		}
-		sources, err := r.forwardSourcesFromPrivateMessages(ctx, userID, fromPeer, ids, list.Messages)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, sources...)
+		return r.forwardSourcesFromPrivateMessages(ctx, userID, fromPeer, ids, list.Messages)
 	case domain.PeerTypeChannel:
 		if r.deps.Channels == nil {
 			return nil, domain.ErrMessageIDInvalid
@@ -642,6 +697,7 @@ func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer doma
 		for _, msg := range history.Messages {
 			byID[msg.ID] = msg
 		}
+		out := make([]forwardSource, 0, len(ids))
 		for _, id := range ids {
 			msg, ok := byID[id]
 			if !ok {
@@ -672,16 +728,17 @@ func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer doma
 				body: msg.Body,
 				entities: append([]domain.MessageEntity(nil),
 					msg.Entities...),
-				media:   msg.Media,
-				forward: forward,
-				from:    from,
-				date:    msg.Date,
+				media:     msg.Media,
+				forward:   forward,
+				from:      from,
+				date:      msg.Date,
+				groupedID: msg.GroupedID,
 			})
 		}
+		return out, nil
 	default:
 		return nil, domain.ErrMessageIDInvalid
 	}
-	return out, nil
 }
 
 func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int, messages []domain.Message) ([]forwardSource, error) {
@@ -724,10 +781,11 @@ func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID i
 			body: msg.Body,
 			entities: append([]domain.MessageEntity(nil),
 				msg.Entities...),
-			media:   msg.Media,
-			forward: forward,
-			from:    msg.From,
-			date:    msg.Date,
+			media:     msg.Media,
+			forward:   forward,
+			from:      msg.From,
+			date:      msg.Date,
+			groupedID: msg.GroupedID,
 		})
 	}
 	return out, nil

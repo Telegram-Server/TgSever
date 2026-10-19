@@ -180,8 +180,10 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 		seenUserIDs[id] = struct{}{}
 		userIDs = append(userIDs, id)
 	}
+	viewer := r.channelViewerMemberForAdmins(ctx, userID, ref.ID, list.Participants)
 	for _, member := range list.Participants {
 		participant := tgChannelParticipant(userID, member)
+		setChannelParticipantCanEdit(participant, viewer, member)
 		participants = append(participants, participant)
 		for _, id := range channelParticipantUserRefs(participant) {
 			addUserID(id)
@@ -223,6 +225,35 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 	}, nil
 }
 
+// channelViewerMemberForAdmins 返回查看者自己的成员记录，供计算 can_edit；列表里没有在任
+// 管理员时不需要，直接返回零值以免多一次查询。
+func (r *Router) channelViewerMemberForAdmins(ctx context.Context, viewerID, channelID int64, members []domain.ChannelMember) domain.ChannelMember {
+	needed := false
+	for _, member := range members {
+		if member.UserID == viewerID {
+			return member
+		}
+		if member.Role == domain.ChannelRoleAdmin && member.Status == domain.ChannelMemberActive {
+			needed = true
+		}
+	}
+	if !needed || r.deps.Channels == nil {
+		return domain.ChannelMember{}
+	}
+	viewer, err := r.deps.Channels.GetParticipant(ctx, viewerID, channelID, viewerID)
+	if err != nil {
+		return domain.ChannelMember{}
+	}
+	return viewer
+}
+
+// setChannelParticipantCanEdit 按官方规则填 channelParticipantAdmin.can_edit。
+func setChannelParticipantCanEdit(participant tg.ChannelParticipantClass, viewer, target domain.ChannelMember) {
+	if admin, ok := participant.(*tg.ChannelParticipantAdmin); ok {
+		admin.CanEdit = domain.CanEditChannelAdmin(viewer, target)
+	}
+}
+
 func (r *Router) onChannelsGetParticipant(ctx context.Context, req *tg.ChannelsGetParticipantRequest) (*tg.ChannelsChannelParticipant, error) {
 	if r.deps.Channels == nil {
 		return &tg.ChannelsChannelParticipant{}, nil
@@ -244,6 +275,7 @@ func (r *Router) onChannelsGetParticipant(ctx context.Context, req *tg.ChannelsG
 		return nil, channelParticipantErr(err)
 	}
 	participant := tgChannelParticipant(userID, member)
+	setChannelParticipantCanEdit(participant, r.channelViewerMemberForAdmins(ctx, userID, channelID, []domain.ChannelMember{member}), member)
 	users := r.tgUsersForIDs(ctx, userID, channelParticipantUserRefs(participant))
 	r.applyPeerReadModels(ctx, userID, users, nil)
 	return &tg.ChannelsChannelParticipant{
@@ -353,6 +385,7 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, nil, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, res, cache)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: missingInvitees}, nil
 }
 
@@ -377,7 +410,8 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 			return nil, channelInvalidErr(domain.ErrChannelPrivate)
 		}
 	}
-	res, err := r.deps.Channels.JoinChannel(ctx, userID, ref.ID, int(r.clock.Now().Unix()))
+	date := int(r.clock.Now().Unix())
+	res, err := r.deps.Channels.JoinChannel(ctx, userID, ref.ID, date)
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
@@ -390,6 +424,7 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	// Layer 227：channels.joinChannel 返回 messages.ChatInviteJoinResult；
 	// 正常加入即 chatInviteJoinResultOk 包裹本次操作的 updates。
 	return &tg.MessagesChatInviteJoinResultOk{Updates: updates}, nil
@@ -407,7 +442,8 @@ func (r *Router) onChannelsLeaveChannel(ctx context.Context, input tg.InputChann
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.deps.Channels.LeaveChannel(ctx, userID, channelID, int(r.clock.Now().Unix()))
+	date := int(r.clock.Now().Unix())
+	res, err := r.deps.Channels.LeaveChannel(ctx, userID, channelID, date)
 	if err != nil {
 		return nil, channelAdminErr(err)
 	}
@@ -418,6 +454,7 @@ func (r *Router) onChannelsLeaveChannel(ctx context.Context, input tg.InputChann
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPILeftMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 
@@ -514,6 +551,9 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
 	})
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
+		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
+	})
 	return updates, nil
 }
 
@@ -569,6 +609,9 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	}
 	updates := build(userID)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
+		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
+	})
 	return updates, nil
 }
 
@@ -655,12 +698,13 @@ func (r *Router) onMessagesHideChatJoinRequest(ctx context.Context, req *tg.Mess
 	if len(targets) == 0 {
 		return nil, userIDInvalidErr()
 	}
+	date := int(r.clock.Now().Unix())
 	res, err := r.deps.Channels.HideChatJoinRequest(ctx, userID, domain.HideChannelJoinRequestRequest{
 		UserID:       userID,
 		ChannelID:    view.Channel.ID,
 		TargetUserID: targets[0],
 		Approved:     req.Approved,
-		Date:         int(r.clock.Now().Unix()),
+		Date:         date,
 	})
 	if err != nil {
 		return nil, channelInviteErr(err)
@@ -673,6 +717,7 @@ func (r *Router) onMessagesHideChatJoinRequest(ctx context.Context, req *tg.Mess
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinRequestMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 
@@ -692,13 +737,14 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 			return nil, err
 		}
 	}
+	date := int(r.clock.Now().Unix())
 	res, err := r.deps.Channels.HideAllChatJoinRequests(ctx, userID, domain.HideChannelJoinRequestsRequest{
 		UserID:    userID,
 		ChannelID: view.Channel.ID,
 		Hash:      hash,
 		Approved:  req.Approved,
 		Limit:     domain.MaxChannelHideJoinRequests,
-		Date:      int(r.clock.Now().Unix()),
+		Date:      date,
 	})
 	if err != nil {
 		return nil, channelInviteErr(err)
@@ -711,6 +757,7 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinRequestMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 
@@ -962,6 +1009,8 @@ func channelAdminErr(err error) error {
 		return tgerr.New(403, "RIGHT_FORBIDDEN")
 	case errors.Is(err, domain.ErrChannelUserCreator):
 		return tgerr400("USER_CREATOR")
+	case errors.Is(err, domain.ErrUserAdminInvalid):
+		return tgerr400("USER_ADMIN_INVALID")
 	case errors.Is(err, domain.ErrUserNotParticipant):
 		return tgerr400("USER_NOT_PARTICIPANT")
 	case errors.Is(err, domain.ErrMegagroupIDInvalid):

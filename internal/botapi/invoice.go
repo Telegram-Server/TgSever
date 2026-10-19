@@ -24,9 +24,9 @@ func (h *handler) sendInvoice(w http.ResponseWriter, r *http.Request, botID int6
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	chatID, err := strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
-	if err != nil || chatID == 0 {
-		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+	chatID, err := h.chatIDParam(r.Context(), botID, values["chat_id"])
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
 	}
 	currency := strings.TrimSpace(values["currency"])

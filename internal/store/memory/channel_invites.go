@@ -30,8 +30,10 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 	added := make([]int64, 0, len(requested))
 	members := make([]domain.ChannelMember, 0, len(requested))
 	restoredKicked := 0
+	previous := make(map[int64]domain.ChannelMember)
 	for _, userID := range requested {
-		if existing, ok := s.members[channelID][userID]; ok {
+		existing, hadRecord := s.members[channelID][userID]
+		if hadRecord {
 			if existing.Status == domain.ChannelMemberActive {
 				if inviteOne {
 					return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
@@ -66,6 +68,9 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 		if !channel.PreHistoryHidden && member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
 			member.AvailableMinID = 0
 		}
+		if hadRecord {
+			previous[userID] = existing
+		}
 		s.members[channelID][userID] = member
 		members = append(members, member)
 		added = append(added, userID)
@@ -99,6 +104,7 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 	return domain.CreateChannelResult{
 		Channel:    channel,
 		Members:    cloneChannelMembers(members),
+		Previous:   previous,
 		Message:    cloneChannelMessage(msg),
 		Event:      cloneChannelEvent(event),
 		Recipients: s.activeMemberIDsLocked(channelID, 0, 0),
@@ -693,10 +699,11 @@ func (s *ChannelStore) HideAllChatJoinRequests(_ context.Context, req domain.Hid
 			result = domain.CreateChannelResult{Channel: channel, Recipients: s.activeMemberIDsLocked(req.ChannelID, importer.UserID, 0)}
 			continue
 		}
-		result, err = s.approveInviteImporterLocked(channel, invite, importer.UserID, req.UserID, req.Date)
+		next, err := s.approveInviteImporterLocked(channel, invite, importer.UserID, req.UserID, req.Date)
 		if err != nil {
 			return domain.CreateChannelResult{}, err
 		}
+		result = result.MergeJoined(next)
 		channel = result.Channel
 	}
 	if result.Channel.ID == 0 {
@@ -713,6 +720,7 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 	if channelID == 0 {
 		channelID = invite.ChannelID
 	}
+	var previous map[int64]domain.ChannelMember
 	if existing, ok := s.members[channelID][userID]; ok {
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
@@ -720,6 +728,7 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 		if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
 			return domain.CreateChannelResult{}, domain.ErrInviteHashInvalid
 		}
+		previous = map[int64]domain.ChannelMember{userID: existing}
 	}
 	preJoinTopID := channel.TopMessageID
 	minID := channelInitialAvailableMinID(channel)
@@ -801,6 +810,7 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 	return domain.CreateChannelResult{
 		Channel:    channel,
 		Members:    []domain.ChannelMember{member},
+		Previous:   previous,
 		Message:    cloneChannelMessage(msg),
 		Event:      cloneChannelEvent(event),
 		Recipients: s.activeMemberIDsLocked(channelID, 0, 0),

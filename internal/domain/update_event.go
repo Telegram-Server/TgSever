@@ -118,6 +118,8 @@ type UpdateEvent struct {
 	BotCallbackQuery  *BotCallbackQuery
 	// BotPreCheckout 携带付款前询问本身；该事件没有消息，Peer/MessageID 为零。
 	BotPreCheckout *BotPreCheckoutQuery
+	// BotChatMember 携带 my_chat_member / chat_member 载荷；Peer 是群/频道。
+	BotChatMember *BotChatMemberUpdated
 	// BotAPIUpdateID is the HTTP Bot API update_id. It is intentionally separate
 	// from MTProto Pts: Bot API ephemeral envelopes never advance account state.
 	BotAPIUpdateID   int64

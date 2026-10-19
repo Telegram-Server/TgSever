@@ -310,6 +310,7 @@ type BotApiUpdate struct {
 	CallbackInlineMessageID  int32
 	CallbackInlineAccessHash int64
 	EphemeralPayload         []byte
+	MemberPayload            []byte
 }
 
 type BotApiUpdateState struct {

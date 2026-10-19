@@ -459,11 +459,18 @@ func (r *Router) chatlistOperationUpdates(ctx context.Context, userID int64, fil
 			continue
 		}
 		r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
+		date := int(r.clock.Now().Unix())
 		if leaving {
 			r.removeOnlineChannelMemberships(res.Channel.ID, userID)
 			r.recordChannelStateForUser(ctx, userID, res.Channel.ID, true)
+			r.enqueueBotAPIMemberUpdates(ctx, botAPILeftMemberChanges(userID, res, date)...)
 		} else {
 			r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
+			changes := botAPIJoinedMemberChanges(userID, res, date)
+			for i := range changes {
+				changes[i].ViaChatFolderInviteLink = true
+			}
+			r.enqueueBotAPIMemberUpdates(ctx, changes...)
 		}
 		channelUpdates := r.channelOperationUpdates(ctx, userID, res)
 		out = mergeUpdates(out, channelUpdates)

@@ -323,6 +323,10 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request) {
 		// only, so there is no shipping step to answer.
 		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
 	default:
+		if fn, ok := registeredMethods[strings.ToLower(method)]; ok {
+			fn(h, w, r, botID)
+			return
+		}
 		writeAPIError(w, http.StatusNotFound, "METHOD_NOT_FOUND")
 	}
 }
@@ -420,12 +424,18 @@ func (h *handler) sendGift(w http.ResponseWriter, r *http.Request, botID int64) 
 		return
 	}
 	userID, userErr := botAPIOptionalInt64(values["user_id"])
-	chatID, chatErr := botAPIOptionalInt64(values["chat_id"])
+	rawChatID := strings.TrimSpace(values["chat_id"])
 	// 两者都没给或都给都不是合法请求：官方模型里它们互斥，缺失时无法决定收礼人。
-	if userErr != nil || chatErr != nil ||
-		(userID == 0 && chatID == 0) || (userID != 0 && chatID != 0) {
+	if userErr != nil || (userID == 0 && rawChatID == "") || (userID != 0 && rawChatID != "") {
 		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
 		return
+	}
+	var chatID int64
+	if rawChatID != "" {
+		if chatID, err = h.chatIDParam(r.Context(), botID, rawChatID); err != nil {
+			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+			return
+		}
 	}
 	text, entities, err := botAPIFormattedTextRaw(
 		values["text"], values["text_parse_mode"], values["text_entities"],
@@ -792,9 +802,9 @@ func (h *handler) sendMessage(w http.ResponseWriter, r *http.Request, botID int6
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	chatID, err := strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
-	if err != nil || chatID == 0 {
-		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+	chatID, err := h.chatIDParam(r.Context(), botID, values["chat_id"])
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
 	}
 	text, entities, err := botAPIFormattedTextRaw(values["text"], values["parse_mode"], values["entities"], domain.MaxMessageTextLength, true)
@@ -860,9 +870,9 @@ func (h *handler) sendRichMessage(w http.ResponseWriter, r *http.Request, botID 
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	chatID, err := strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
-	if err != nil || chatID == 0 {
-		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+	chatID, err := h.chatIDParam(r.Context(), botID, values["chat_id"])
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
 	}
 	if strings.TrimSpace(values["business_connection_id"]) != "" {
@@ -925,9 +935,9 @@ func (h *handler) sendMedia(w http.ResponseWriter, r *http.Request, botID int64,
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
 	}
-	chatID, err := strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
-	if err != nil || chatID == 0 {
-		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+	chatID, err := h.chatIDParam(r.Context(), botID, values["chat_id"])
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
 	}
 	caption, entities, err := botAPIFormattedTextRaw(values["caption"], values["parse_mode"], values["caption_entities"], domain.MaxEphemeralCaptionLength, false)
@@ -1019,9 +1029,9 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 	var chatID int64
 	messageID := 0
 	if rawInlineID == "" {
-		chatID, err = strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
-		if err != nil || chatID == 0 {
-			writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+		chatID, err = h.chatIDParam(r.Context(), botID, values["chat_id"])
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 			return
 		}
 		messageID = apiInt(values["message_id"], 0)
@@ -1112,9 +1122,9 @@ func (h *handler) deleteMessage(w http.ResponseWriter, r *http.Request, botID in
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	chatID, err := strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
-	if err != nil || chatID == 0 {
-		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+	chatID, err := h.chatIDParam(r.Context(), botID, values["chat_id"])
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
 	}
 	messageID := apiInt(values["message_id"], 0)
@@ -1428,6 +1438,11 @@ func (h *handler) setChatMenuButton(w http.ResponseWriter, r *http.Request, botI
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
+	// 只存一份全局默认按钮；按聊天设置会被写成全局的，所以在支持之前明确拒绝。
+	if chatID := strings.TrimSpace(values["chat_id"]); chatID != "" && chatID != "0" {
+		writeAPIError(w, http.StatusBadRequest, "MENU_BUTTON_PER_CHAT_UNSUPPORTED")
+		return
+	}
 	button, err := menuButtonFromAPI(values["menu_button"])
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "BUTTON_INVALID")
@@ -1730,7 +1745,7 @@ func apiErrorDescription(err error) string {
 		return ""
 	}
 	text := strings.ToUpper(err.Error())
-	for _, marker := range []string{
+	builtin := []string{
 		"QUERY_ID_INVALID",
 		"USER_ID_INVALID",
 		"RESULT_ID_INVALID",
@@ -1791,10 +1806,17 @@ func apiErrorDescription(err error) string {
 		"PAYLOAD_INVALID",
 		"CHARGE_ID_INVALID",
 		"CHARGE_ID_NOT_FOUND",
-	} {
-		if strings.Contains(text, marker) {
-			return marker
+	}
+	// 取最长的匹配：MESSAGE_ID_INVALID 是 REPLY_MESSAGE_ID_INVALID 的子串，
+	// 按列表顺序取第一个会把更具体的错误码吞掉。
+	best := ""
+	for _, marker := range append(builtin, registeredErrorMarkers...) {
+		if len(marker) > len(best) && strings.Contains(text, marker) {
+			best = marker
 		}
+	}
+	if best != "" {
+		return best
 	}
 	return "BAD_REQUEST"
 }

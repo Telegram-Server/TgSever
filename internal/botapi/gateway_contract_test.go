@@ -14,6 +14,7 @@ var (
 	_ StarGiftGatewayService  = (*rpc.Router)(nil)
 	_ PremiumGatewayService   = (*rpc.Router)(nil)
 	_ EphemeralGatewayService = (*rpc.Router)(nil)
+	_ ChatRefGateway          = (*rpc.Router)(nil)
 )
 
 func TestProductionRouterExposesStarGiftSurface(t *testing.T) {
