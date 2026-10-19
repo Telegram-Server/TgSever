@@ -2054,6 +2054,7 @@ func (v *channelDialogProjectionValues) result() (int64, domain.Dialog, *domain.
 	}
 	_ = json.Unmarshal([]byte(v.memberAdminRights), &member.AdminRights)
 	_ = json.Unmarshal([]byte(v.memberBannedRights), &member.BannedRights)
+	member = member.EffectiveAt(restrictionNow(0))
 	dialog.ChannelMember = &member
 	return v.channelID, dialog, defaultSendAs, v.topMentioned, v.topMediaUnread
 }

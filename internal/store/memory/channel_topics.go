@@ -18,7 +18,7 @@ func (s *ChannelStore) SetForum(_ context.Context, userID, channelID int64, enab
 	if err != nil {
 		return domain.Channel{}, err
 	}
-	member := s.members[channelID][userID]
+	member, _ := s.effectiveMemberLocked(channelID, userID, restrictionNow(0))
 	if !channel.Megagroup || channel.Broadcast {
 		return domain.Channel{}, domain.ErrChannelNotModified
 	}
@@ -83,7 +83,7 @@ func (s *ChannelStore) CreateForumTopic(ctx context.Context, req domain.CreateCh
 		s.mu.Unlock()
 		return domain.CreateChannelForumTopicResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	if !channel.Forum || channel.Broadcast || !channel.Megagroup {
 		s.mu.Unlock()
 		return domain.CreateChannelForumTopicResult{}, domain.ErrChannelForumMissing
@@ -186,7 +186,7 @@ func (s *ChannelStore) EditForumTopic(ctx context.Context, req domain.EditChanne
 		s.mu.Unlock()
 		return domain.EditChannelForumTopicResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	topic, ok := s.topics[req.ChannelID][req.TopicID]
 	if !channel.Forum {
 		s.mu.Unlock()
@@ -286,7 +286,7 @@ func (s *ChannelStore) UpdatePinnedForumTopic(_ context.Context, req domain.Upda
 	if err != nil {
 		return domain.UpdateChannelForumTopicPinnedResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	topic, ok := s.topics[req.ChannelID][req.TopicID]
 	if !channel.Forum {
 		return domain.UpdateChannelForumTopicPinnedResult{}, domain.ErrChannelForumMissing
@@ -325,7 +325,7 @@ func (s *ChannelStore) ReorderPinnedForumTopics(_ context.Context, req domain.Re
 	if err != nil {
 		return domain.ReorderChannelPinnedForumTopicsResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	if !channel.Forum {
 		return domain.ReorderChannelPinnedForumTopicsResult{}, domain.ErrChannelForumMissing
 	}
@@ -373,7 +373,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(_ context.Context, req domain.Del
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	topic, ok := s.topics[req.ChannelID][req.TopicID]
 	if !channel.Forum {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelForumMissing

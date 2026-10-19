@@ -41,6 +41,12 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
 	}
 	where := []string{"m.channel_id = $1"}
 	args := []any{channelID}
+	now := nowUnix()
+	// 被踢/受限名单只列限制仍生效的记录：期限已到的限制在读取时视为解除（见 EffectiveAt）。
+	activeRestriction := func() string {
+		args = append(args, now)
+		return channelRestrictionActiveSQL("m", fmt.Sprintf("$%d", len(args)))
+	}
 	joinUsers := false
 	query := strings.TrimSpace(filter.Query)
 	switch filter.Kind {
@@ -56,13 +62,13 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
 		if !isChannelAdmin(viewer) {
 			return domain.ChannelParticipantList{Channel: channel, Count: channel.KickedCount}, nil
 		}
-		where = append(where, "(m.status = 'kicked' OR (m.banned_rights->>'ViewMessages')::boolean IS TRUE)")
+		where = append(where, "(m.status = 'kicked' OR (m.banned_rights->>'ViewMessages')::boolean IS TRUE)", activeRestriction())
 	case domain.ChannelParticipantsBanned:
 		count = channel.BannedCount
 		if !isChannelAdmin(viewer) {
 			return domain.ChannelParticipantList{Channel: channel, Count: channel.BannedCount}, nil
 		}
-		where = append(where, "m.status <> 'kicked'", `(
+		where = append(where, "m.status <> 'kicked'", activeRestriction(), `(
     m.status = 'banned' OR
     (m.banned_rights->>'SendMessages')::boolean IS TRUE OR
     (m.banned_rights->>'SendMedia')::boolean IS TRUE OR
@@ -145,7 +151,7 @@ OFFSET `+offsetArg+` LIMIT `+limitArg, args...)
 		if err != nil {
 			return domain.ChannelParticipantList{}, err
 		}
-		out.Participants = append(out.Participants, member)
+		out.Participants = append(out.Participants, member.EffectiveAt(now))
 	}
 	if err := rows.Err(); err != nil {
 		return domain.ChannelParticipantList{}, err
@@ -184,6 +190,7 @@ func (s *ChannelStore) GetParticipant(ctx context.Context, viewerUserID, channel
 	if errors.Is(err, domain.ErrChannelPrivate) {
 		return domain.ChannelMember{}, domain.ErrUserNotParticipant
 	}
+	member = member.EffectiveAt(nowUnix())
 	if err == nil && participantUserID == viewerUserID && member.Status == domain.ChannelMemberLeft {
 		return domain.ChannelMember{}, domain.ErrUserNotParticipant
 	}

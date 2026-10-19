@@ -38,6 +38,7 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	}
 	existing, existingErr := s.getChannelMember(ctx, tx, channelID, userID)
 	if existingErr == nil {
+		existing = existing.EffectiveAt(restrictionNow(date))
 		switch {
 		case existing.Status == domain.ChannelMemberActive:
 			return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant

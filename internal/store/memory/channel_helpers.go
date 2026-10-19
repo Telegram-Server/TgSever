@@ -433,7 +433,7 @@ func (s *ChannelStore) channelForViewerLocked(userID, channelID int64) (domain.C
 	if !ok || channel.Deleted {
 		return domain.Channel{}, domain.ChannelMember{}, false, domain.ErrChannelInvalid
 	}
-	existing, found := s.members[channelID][userID]
+	existing, found := s.effectiveMemberLocked(channelID, userID, restrictionNow(0))
 	if found && (existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages) {
 		return domain.Channel{}, domain.ChannelMember{}, false, domain.ErrChannelUserBanned
 	}

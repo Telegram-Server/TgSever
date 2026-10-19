@@ -15,6 +15,7 @@ func (s *ChannelStore) getChannelForMember(ctx context.Context, db sqlcgen.DBTX,
 	if err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, err
 	}
+	member = member.EffectiveAt(restrictionNow(0))
 	if err := validateChannelMemberVisible(member); err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, err
 	}
@@ -54,6 +55,7 @@ func (s *ChannelStore) getLinkedDiscussionGuest(ctx context.Context, db sqlcgen.
 	}
 	existing, err := s.getChannelMember(ctx, db, target.ID, viewerUserID)
 	if err == nil {
+		existing = existing.EffectiveAt(restrictionNow(0))
 		if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
 			return domain.ChannelMember{}, false, domain.ErrChannelUserBanned
 		}
@@ -80,6 +82,7 @@ func (s *ChannelStore) getLinkedDiscussionGuest(ctx context.Context, db sqlcgen.
 		}
 		return domain.ChannelMember{}, false, err
 	}
+	sourceMember = sourceMember.EffectiveAt(restrictionNow(0))
 	if err := validateChannelMemberVisible(sourceMember); err != nil {
 		return domain.ChannelMember{}, false, err
 	}
@@ -170,6 +173,7 @@ func (s *ChannelStore) getPublicPreviewMember(ctx context.Context, db sqlcgen.DB
 		}
 		return domain.ChannelMember{}, err
 	}
+	member = member.EffectiveAt(restrictionNow(0))
 	if member.Status == domain.ChannelMemberBanned || member.Status == domain.ChannelMemberKicked || member.BannedRights.ViewMessages {
 		return domain.ChannelMember{}, domain.ErrChannelUserBanned
 	}
@@ -408,6 +412,22 @@ func scanChannelMemberWithCount(row rowScanner) (domain.ChannelMember, int, erro
 	return member, count, nil
 }
 
+// restrictionNow 返回换算限制期限用的当前时刻：操作带请求 Date 时用它（与同一操作里写入的
+// 时间一致），没有时用真实时钟。
+func restrictionNow(date int) int {
+	if date > 0 {
+		return date
+	}
+	return nowUnix()
+}
+
+// channelRestrictionActiveSQL 是 SQL 侧的期限判断：alias 行的限制在 nowPlaceholder 时刻仍生效
+// （UntilDate 为 0 表示永久）。与 domain.ChannelMember.EffectiveAt 同口径。
+func channelRestrictionActiveSQL(alias, nowPlaceholder string) string {
+	until := "COALESCE((" + alias + ".banned_rights->>'UntilDate')::bigint, 0)"
+	return "(" + until + " <= 0 OR " + until + " > " + nowPlaceholder + ")"
+}
+
 func validateChannelMemberVisible(member domain.ChannelMember) error {
 	switch member.Status {
 	case domain.ChannelMemberActive:
@@ -527,13 +547,8 @@ func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
 // 否则"先退群再让人拉回来"就能绕过；被踢/封禁者能重新入群只可能是被有封禁权的管理员拉回，等同解封。
 // 期限（UntilDate，0 为永久）在入群时刻 date 已过的限制视为无限制。
 func rejoinBannedRights(existing domain.ChannelMember, date int) domain.ChannelBannedRights {
+	existing = existing.EffectiveAt(restrictionNow(date))
 	if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
-		return domain.ChannelBannedRights{}
-	}
-	if date <= 0 {
-		date = nowUnix()
-	}
-	if until := existing.BannedRights.UntilDate; until > 0 && until <= date {
 		return domain.ChannelBannedRights{}
 	}
 	return existing.BannedRights

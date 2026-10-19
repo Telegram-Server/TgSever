@@ -307,7 +307,7 @@ func (s *ChannelStore) GetLinkedDiscussionChannel(ctx context.Context, viewerUse
 	}
 	if !guest {
 		if member, memberErr := s.getChannelMember(ctx, s.db, linked.ID, viewerUserID); memberErr == nil {
-			self = member
+			self = member.EffectiveAt(restrictionNow(0))
 		} else {
 			return domain.ChannelView{}, memberErr
 		}
@@ -369,6 +369,7 @@ WHERE c.id = ANY($2::bigint[]) AND NOT c.deleted`, viewerUserID, ids)
 			rows.Close()
 			return nil, err
 		}
+		member = member.EffectiveAt(restrictionNow(0))
 		if err := validateChannelMemberVisible(member); err != nil {
 			if errors.Is(err, domain.ErrChannelUserBanned) {
 				views[channel.ID] = domain.ChannelView{Channel: channel, Self: member, Forbidden: true}
@@ -576,11 +577,13 @@ WHERE channel_id = $1`, channel.ID)
 		return domain.Channel{}, fmt.Errorf("list channel members for counts: %w", err)
 	}
 	defer rows.Close()
+	now := restrictionNow(0)
 	for rows.Next() {
 		member, err := scanChannelMember(rows)
 		if err != nil {
 			return domain.Channel{}, err
 		}
+		member = member.EffectiveAt(now)
 		if member.Status == domain.ChannelMemberKicked {
 			kicked++
 		}

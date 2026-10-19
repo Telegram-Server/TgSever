@@ -49,6 +49,9 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	for userID, existing := range existingMembers {
+		existingMembers[userID] = existing.EffectiveAt(restrictionNow(date))
+	}
 	for _, userID := range requested {
 		if existing, ok := existingMembers[userID]; ok {
 			if existing.Status == domain.ChannelMemberActive {

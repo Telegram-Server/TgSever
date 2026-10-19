@@ -92,6 +92,7 @@ func (s *ChannelStore) SetJoinRequest(ctx context.Context, userID, channelID int
 
 func (s *ChannelStore) recordPublicJoinRequestTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, userID int64, date int) error {
 	if existing, err := s.getChannelMember(ctx, tx, channel.ID, userID); err == nil {
+		existing = existing.EffectiveAt(restrictionNow(date))
 		if existing.Status == domain.ChannelMemberActive {
 			return domain.ErrUserAlreadyParticipant
 		}
