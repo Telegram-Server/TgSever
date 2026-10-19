@@ -168,6 +168,54 @@ func TestTelegramLoginWidgetRoutesReachProvider(t *testing.T) {
 	}
 }
 
+func TestUpdatesRoutesReachHandlerWithoutPrefix(t *testing.T) {
+	var gotPath string
+	updates := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	})
+	h, err := NewHandler(Config{StickerSets: fakeResolver{}, PublicBaseURL: "https://links.example.test", Updates: updates})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	for _, tc := range []struct{ method, path, want string }{
+		{http.MethodGet, "/_updates/current4", "/current4"},
+		{http.MethodHead, "/_updates/files/td-update-win-x64-7007000", "/files/td-update-win-x64-7007000"},
+	} {
+		gotPath = ""
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.path, nil))
+		if recorder.Code != http.StatusNoContent || gotPath != tc.want {
+			t.Fatalf("%s %s: status=%d handler path=%q, want 204 at %q", tc.method, tc.path, recorder.Code, gotPath, tc.want)
+		}
+	}
+
+	// 公开地址带路径前缀时，下发的前缀是 <PublicBaseURL>/_updates；反向代理不剥离
+	// 路径前缀时监听上看到的是完整路径（同 bearer 提现路由）。
+	rooted, err := NewHandler(Config{StickerSets: fakeResolver{}, PublicBaseURL: "https://links.example.test/root/", Updates: updates})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	gotPath = ""
+	recorder := httptest.NewRecorder()
+	rooted.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/root/_updates/current4", nil))
+	if recorder.Code != http.StatusNoContent || gotPath != "/current4" {
+		t.Fatalf("GET /root/_updates/current4: status=%d handler path=%q, want 204 at /current4", recorder.Code, gotPath)
+	}
+}
+
+func TestUpdatesRoutesAbsentWithoutHandler(t *testing.T) {
+	h, err := NewHandler(Config{StickerSets: fakeResolver{}, PublicBaseURL: "https://links.example.test"})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/_updates/current4", nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("GET /_updates/current4 without an update handler status=%d, want 404", recorder.Code)
+	}
+}
+
 func TestDevStarsCheckoutEmitsFormBoundTelegramCredentials(t *testing.T) {
 	h, err := NewHandler(Config{StickerSets: fakeResolver{}, PublicBaseURL: "https://links.example.test", AllowDevPayments: true})
 	if err != nil {

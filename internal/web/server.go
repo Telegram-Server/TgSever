@@ -19,6 +19,7 @@ import (
 	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
+	"telesrv/internal/updatecdn"
 )
 
 type Config struct {
@@ -49,7 +50,16 @@ type Config struct {
 	// the listener so discovery/auth/token and public links share the exact
 	// externally registered origin behind one reverse proxy.
 	TelegramLogin http.Handler
+	// Updates 是可选的桌面/移动端更新服务（updatecdn.Handler）。非空时
+	// updatecdn.PublicWebPrefix（/_updates/）下的请求剥离该前缀后转发给它；为空时不
+	// 注册任何路由。用户名不能以下划线开头，所以该前缀不会遮蔽 /{username} 落地页
+	// （同 /_public/avatar）。
+	Updates http.Handler
 }
+
+// updatesWriteTimeout 放宽更新请求的写超时：公开 Web 默认 15 秒写超时对整包下载
+// 太短。与独立 telesrv-update 的 5 分钟一致；更大的包靠客户端 Range 续传完成。
+const updatesWriteTimeout = 5 * time.Minute
 
 type StickerSetResolver interface {
 	ResolveStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error)
@@ -291,6 +301,9 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	}
 	mux.HandleFunc("GET /{username}", h.usernameLink)
 	mux.HandleFunc("GET /{username}/{$}", h.usernameLink)
+	if cfg.Updates != nil {
+		return publicSecurityHeaders(withUpdatesRoutes(mux, cfg.Updates, publicRoutePrefix)), nil
+	}
 	return publicSecurityHeaders(mux), nil
 }
 
@@ -311,6 +324,32 @@ func publicBaseRoutePrefix(publicBaseURL string) (string, error) {
 		return "", fmt.Errorf("path must be absolute")
 	}
 	return prefix, nil
+}
+
+// withUpdatesRoutes 把 /_updates/ 下的请求剥离前缀后转发给更新服务，其余请求交给
+// mux，并为更新下载放宽写超时。PublicBaseURL 带路径前缀（basePrefix）时，
+// <basePrefix>/_updates/ 也转发：下发的 autoupdate_url_prefix 是
+// <PublicBaseURL>/_updates，反向代理可能剥离也可能保留路径前缀（bearer 提现路由
+// 按保留注册，其余路由按剥离注册），两种都要能到达。
+//
+// 分流放在 mux 之前：子树模式 /_updates/ 与 GET /{username}/{$} 在 ServeMux 中互相
+// 冲突，无法同时注册。方法校验交给更新服务自己（它只接受 GET/HEAD）。
+func withUpdatesRoutes(mux, updates http.Handler, basePrefix string) http.Handler {
+	prefixes := []string{updatecdn.PublicWebPrefix}
+	if basePrefix != "" {
+		prefixes = append(prefixes, basePrefix+updatecdn.PublicWebPrefix)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(r.URL.Path, prefix+"/") {
+				// 测试用的 ResponseRecorder 不支持写超时，忽略 ErrNotSupported。
+				_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(updatesWriteTimeout))
+				http.StripPrefix(prefix, updates).ServeHTTP(w, r)
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func registerBearerCapabilityRoute(mux *http.ServeMux, method, pattern string, handler http.HandlerFunc) {

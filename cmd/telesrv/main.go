@@ -1758,7 +1758,41 @@ func run(logger *zap.Logger) error {
 	botVerificationService.SetApplicantNotifier(botsService)
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
 	var appUpdateResolver updatecdn.Resolver
-	if cfg.UpdateServiceURL != "" {
+	// 进程内更新服务：清单与包由公开 Web 的 /_updates/ 提供，help.getAppUpdate 直接
+	// 读同一个 Store。保持 nil 接口（而不是 nil *Handler），未启用时公开 Web 不注册路由。
+	var appUpdateHandler http.Handler
+	if cfg.UpdateManifest != "" {
+		var catalogOpts updatecdn.CatalogOptions
+		if cfg.UpdateRootPublicKey != "" {
+			rootKey, err := updatecdn.LoadRootPublicKey(cfg.UpdateRootPublicKey)
+			if err != nil {
+				return fmt.Errorf("load update root public key (TELESRV_UPDATE_ROOT_PUBLIC_KEY): %w", err)
+			}
+			catalogOpts.RootPublicKey = rootKey
+		}
+		updateLog := logger.Named("update-catalog")
+		updateStore, err := updatecdn.NewStore(cfg.UpdateManifest, cfg.UpdateFilesDir, catalogOpts,
+			updatecdn.WithReloadErrorHandler(func(err error) {
+				updateLog.Error("update manifest reload failed; serving the previous catalog",
+					zap.String("manifest", cfg.UpdateManifest), zap.Error(err))
+			}))
+		if err != nil {
+			return fmt.Errorf("load update manifest %q (TELESRV_UPDATE_MANIFEST): %w", cfg.UpdateManifest, err)
+		}
+		handler, err := updatecdn.NewHandler(updateStore)
+		if err != nil {
+			return fmt.Errorf("initialize update handler: %w", err)
+		}
+		appUpdateResolver, appUpdateHandler = updateStore, handler
+		if strings.TrimSpace(cfg.PublicLinkWebAddr) == "" {
+			updateLog.Warn("in-process updates are enabled but the public Web listener is disabled; /_updates/ is not served")
+		}
+		updateLog.Info("in-process update service enabled",
+			zap.String("manifest", cfg.UpdateManifest),
+			zap.String("files", cfg.UpdateFilesDir),
+			zap.String("root_public_key", cfg.UpdateRootPublicKey),
+			zap.String("autoupdate_url_prefix", cfg.UpdatePublicURL))
+	} else if cfg.UpdateServiceURL != "" {
 		client, err := updatecdn.NewClient(cfg.UpdateServiceURL, cfg.UpdateRequestTimeout)
 		if err != nil {
 			return fmt.Errorf("initialize update service client: %w", err)
@@ -2229,6 +2263,7 @@ func run(logger *zap.Logger) error {
 		}),
 		ModerationAppeals: moderationService,
 		TelegramLogin:     telegramLoginHTTPHandler,
+		Updates:           appUpdateHandler,
 	}, logger.Named("public-web")); err != nil {
 		return fmt.Errorf("start public Web: %w", err)
 	}
