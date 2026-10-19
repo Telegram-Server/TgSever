@@ -435,6 +435,13 @@ func (r *Router) webViewBotFromInput(ctx context.Context, userID int64, input tg
 	if !found {
 		return domain.User{}, domain.BotProfile{}, botInvalidErr()
 	}
+	// 菜单按钮按当前用户取（专属按钮优先）。返回的 profile 只用于本次请求，
+	// 不能写进共享的 bot app（见 webViewBotAppOwnerFromInput / ensureMenuBackedBotApp）。
+	button, err := r.deps.Bots.BotMenuButtonForUser(ctx, bot.ID, userID)
+	if err != nil {
+		return domain.User{}, domain.BotProfile{}, internalErr()
+	}
+	profile.MenuButton = button
 	return bot, profile, nil
 }
 

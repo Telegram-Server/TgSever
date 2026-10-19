@@ -547,6 +547,16 @@ type BotStarsTransaction struct {
 	Date        int32
 }
 
+type BotUserMenuButton struct {
+	BotUserID      int64
+	UserID         int64
+	MenuButtonType int16
+	MenuButtonText string
+	MenuButtonUrl  string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type BotUserPermission struct {
 	BotUserID   int64
 	UserID      int64
