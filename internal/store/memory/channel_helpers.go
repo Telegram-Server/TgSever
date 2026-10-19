@@ -705,19 +705,6 @@ func checkEditMemberRank(channel domain.Channel, actor, target domain.ChannelMem
 	return nil
 }
 
-// checkManageChannelAdmin 实现官方管理员保护：群主可编辑/封禁任何管理员；非群主管理员只能动
-// 由自己提拔的在任管理员（在任管理员的 InviterUserID 即提拔人），否则 USER_ADMIN_INVALID。
-// 目标不是在任管理员、或操作者编辑自己时不受此约束。
-func checkManageChannelAdmin(actor, target domain.ChannelMember) error {
-	if target.Role != domain.ChannelRoleAdmin || target.Status != domain.ChannelMemberActive {
-		return nil
-	}
-	if actor.Role == domain.ChannelRoleCreator || actor.UserID == target.UserID || target.InviterUserID == actor.UserID {
-		return nil
-	}
-	return domain.ErrUserAdminInvalid
-}
-
 func adminLogBanType(previous, next domain.ChannelMember) domain.ChannelAdminLogEventType {
 	if next.Status == domain.ChannelMemberKicked || next.BannedRights.ViewMessages {
 		return domain.ChannelAdminLogParticipantKick

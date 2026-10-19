@@ -93,7 +93,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 		recipients = append(recipients, req.MemberID)
 		return domain.EditChannelAdminResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date}, nil
 	}
-	if err := checkManageChannelAdmin(actor, previous); err != nil {
+	if err := domain.CheckManageChannelAdmin(actor, previous); err != nil {
 		return domain.EditChannelAdminResult{}, err
 	}
 	if actor.Role != domain.ChannelRoleCreator && !adminRightsSubset(req.AdminRights, actor.AdminRights) {
@@ -413,7 +413,7 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	if previous.Role == domain.ChannelRoleCreator {
 		return domain.EditChannelBannedResult{}, domain.ErrChannelUserCreator
 	}
-	if err := checkManageChannelAdmin(actor, previous); err != nil {
+	if err := domain.CheckManageChannelAdmin(actor, previous); err != nil {
 		return domain.EditChannelBannedResult{}, err
 	}
 	member := previous
