@@ -1687,7 +1687,10 @@ func run(logger *zap.Logger) error {
 		}))
 	// 手机号 + 密码登录（telesrv 扩展协议）。总开关默认关闭；关闭时服务照常构造，
 	// telesrv. 方法由服务自己返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
-	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool), authService,
+	// 密码登录的 SRP challenge 只存进程内存（与 passkey 挑战、QR 登录 token 相同，单体
+	// 部署不跨实例），不写进用户记录。
+	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool),
+		memory.NewLoginPasswordChallengeStore(nil), authService,
 		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled))
 	if cfg.PasswordLoginEnabled {
 		logger.Warn("手机号 + 密码登录已启用：任何人都可以不经验证码用任意号码注册")

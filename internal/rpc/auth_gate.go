@@ -39,6 +39,7 @@ func rpcAllowedWithoutAuthorization(id uint32) bool {
 		// 手机号 + 密码登录（telesrv 扩展）里登录前就要调用的方法。
 		tg.TelesrvGetLoginPasswordRequestTypeID,
 		tg.TelesrvSignUpWithPasswordRequestTypeID,
+		tg.TelesrvSignInWithPasswordRequestTypeID,
 		tg.AccountGetPasswordRequestTypeID,
 		// deleteAccount may complete the narrow password_pending login path when
 		// the user forgot 2FA. The handler resolves only that bound identity.

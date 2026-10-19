@@ -1170,6 +1170,22 @@ func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, e
 	return existing, domain.Message{}, false, nil
 }
 
+// FinishVerifiedSignIn 是"凭据已由调用方验证、用户已存在"的登录收尾，供不经验证码的
+// 登录路径（手机号 + 登录密码）复用验证码登录的 finishSignIn：系统账号和已注销账号
+// 拒绝（ErrSystemUserLoginForbidden）；开了 2FA 的账号以 password_pending 绑定并返回
+// domain.ErrSessionPasswordNeeded（同时返回用户，供 RPC 层把 session 置为未授权）；
+// 否则绑定授权并写欢迎消息。bot 账号不走手机号登录，这里同样拒绝。
+func (s *Service) FinishVerifiedSignIn(ctx context.Context, auth domain.Authorization, existing domain.User) (domain.User, error) {
+	if s == nil || existing.ID == 0 {
+		return domain.User{}, errors.New("auth: verified sign-in without user")
+	}
+	if existing.Bot {
+		return domain.User{}, ErrSystemUserLoginForbidden
+	}
+	u, _, _, err := s.finishSignIn(ctx, auth, existing)
+	return u, err
+}
+
 // SignUp 在 SignIn 判定需注册后创建用户并绑定授权。
 // signUp 的 TL 请求不带验证码，因此只消费由正确 SignIn/email setup 原子
 // 标记过的 hash。直接 SendCode→SignUp 永远不能创建账号。
