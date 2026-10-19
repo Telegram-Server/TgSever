@@ -480,8 +480,13 @@ func (r *Router) BotAPISetChatMenuButton(ctx context.Context, botID, userID int6
 	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
 		return errors.New("BOT_INVALID")
 	}
+	// userID 0 是全局默认按钮。
+	var target tg.InputUserClass = &tg.InputUserEmpty{}
+	if userID != 0 {
+		target = &tg.InputUser{UserID: userID}
+	}
 	_, err := r.onBotsSetBotMenuButton(WithUserID(ctx, botID), &tg.BotsSetBotMenuButtonRequest{
-		UserID: &tg.InputUser{UserID: userID},
+		UserID: target,
 		Button: tgBotMenuButton(button),
 	})
 	return err

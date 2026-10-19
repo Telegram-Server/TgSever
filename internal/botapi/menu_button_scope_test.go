@@ -108,8 +108,22 @@ func TestChatMenuButtonPerPrivateChat(t *testing.T) {
 		t.Fatalf("rejected per-chat sets touched the default button (%d calls)", bots.setCalls)
 	}
 
-	// 不带 chat_id（或 0）= 全局默认。
+	// 不带 chat_id（或 0）= 全局默认，同样走网关（用户 0），由网关负责缓存失效。
 	rec = callMethod(t, h, "setChatMenuButton", `{"menu_button":{"type":"commands"}}`)
+	if got := gateway.perUser[0]; rec.Code != http.StatusOK || got.Type != domain.BotMenuButtonCommands {
+		t.Fatalf("status = %d default = %+v, want the default button set through the gateway", rec.Code, got)
+	}
+	if bots.setCalls != 0 {
+		t.Fatalf("default set bypassed the gateway (%d direct calls)", bots.setCalls)
+	}
+}
+
+// 网关不支持菜单按钮时，全局默认仍可直接设置。
+func TestChatMenuButtonDefaultWithoutGateway(t *testing.T) {
+	bots := &recordingMenuBots{fakeBotAPIBots: &fakeBotAPIBots{profile: testBotProfile}}
+	h := (&handler{bots: bots, gateway: &fakeBotAPIGateway{}}).routes()
+
+	rec := callMethod(t, h, "setChatMenuButton", `{"menu_button":{"type":"commands"}}`)
 	if rec.Code != http.StatusOK || bots.setCalls != 1 || bots.set.Type != domain.BotMenuButtonCommands {
 		t.Fatalf("status = %d calls = %d, want the default button set", rec.Code, bots.setCalls)
 	}

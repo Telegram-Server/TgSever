@@ -1448,17 +1448,18 @@ func (h *handler) setChatMenuButton(w http.ResponseWriter, r *http.Request, botI
 		writeAPIError(w, http.StatusBadRequest, "BUTTON_INVALID")
 		return
 	}
-	if userID != 0 {
-		gateway, ok := h.gateway.(MenuButtonGateway)
-		if !ok {
-			writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
-			return
-		}
+	// 全局默认（userID 0）也优先走网关：网关复用 bots.setBotMenuButton，本进程的资料缓存
+	// 随即失效；直接写 store 只能等数据库监听器，纯内存部署下会陈旧到缓存过期。
+	if gateway, ok := h.gateway.(MenuButtonGateway); ok {
 		if err := gateway.BotAPISetChatMenuButton(r.Context(), botID, userID, button); err != nil {
 			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 			return
 		}
 		writeAPIOK(w, true)
+		return
+	}
+	if userID != 0 {
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
 		return
 	}
 	if _, err := h.bots.SetBotMenuButton(r.Context(), botID, button); err != nil {
