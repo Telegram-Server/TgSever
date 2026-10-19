@@ -75,7 +75,7 @@ release is represented as:
   "win64": {
     "stable": {
       "released": 7000007,
-      "link": "/files/tx64upd7000007"
+      "link": "/files/td-update-win-x64-7000007"
     }
   }
 }
@@ -101,14 +101,14 @@ Packer.exe `
 It produces `tx64upd7000007` and must report `Signature verified!` before the
 artifact is published.
 
-| Platform | `/current4` key | Typical package name |
+| Platform | `/current4` key | Required package name (`beta` channel adds `-beta`) |
 |---|---|---|
-| Windows x64 | `win64` | `tx64upd<build>` |
-| Windows ARM64 | `winarm` | `tarm64upd<build>` |
-| Windows x86 | `win` | `tupdate<build>` |
-| macOS Intel | `mac` | `tmacupd<build>` |
-| macOS Apple Silicon | `armac` | `tarmacupd<build>` |
-| Linux | `linux` | `tlinuxupd<build>` |
+| Windows x64 | `win64` | `td-update-win-x64-<build>` |
+| Windows ARM64 | `winarm` | `td-update-win-arm-<build>` |
+| Windows x86 | `win` | `td-update-win-x86-<build>` |
+| macOS Intel | `mac` | `td-update-mac-x64-<build>` |
+| macOS Apple Silicon | `armac` | `td-update-mac-arm-<build>` |
+| Linux | `linux` | `td-update-linux-x64-<build>` |
 
 ## Update signing
 
@@ -171,5 +171,6 @@ matching installer/store source is configured.
 - `can_not_skip`: whether the client may dismiss the application update.
 - `disabled`: keep a valid entry as a draft without publishing it.
 
-Supported channels are `stable`, `beta`, and `alpha`. See
+Desktop channels are `stable` and `beta` (Telegram Desktop v2 has no `alpha`);
+`apps` channels are `stable`, `beta`, and `alpha`. See
 `deploy/update/manifest.example.json` for a complete disabled example.

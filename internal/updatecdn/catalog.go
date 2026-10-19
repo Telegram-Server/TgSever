@@ -23,6 +23,10 @@ const ManifestSchemaVersion = 1
 var (
 	sha256RE  = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 	versionRE = regexp.MustCompile(`\d+(?:\.\d+)*`)
+	// desktopFileRE 是 v2 客户端查找更新包所用文件名的服务端子集：客户端会把下载
+	// URL 里的文件名过滤成只剩 [a-zA-Z0-9_-] 再按此格式匹配，不匹配就静默当作
+	// 没有更新。服务端不提供 canary 通道，因此只允许可选的 -beta 后缀。
+	desktopFileRE = regexp.MustCompile(`^td-update-(win|mac|linux)-(x86|x64|arm)-([0-9]+)(-beta)?$`)
 )
 
 // Manifest is the operator-managed update catalog. Desktop entries feed the
@@ -143,18 +147,21 @@ func (c *Catalog) validateDesktop(filesDir string) error {
 			return fmt.Errorf("desktop platform %q is unsupported", platform)
 		}
 		for channel, release := range channels {
-			if !validChannel(channel) {
-				return fmt.Errorf("desktop.%s channel %q is unsupported", platform, channel)
+			prefix := fmt.Sprintf("desktop.%s.%s", platform, channel)
+			if err := validateDesktopChannel(channel); err != nil {
+				return fmt.Errorf("%s: %w", prefix, err)
 			}
 			if release.Disabled {
 				continue
 			}
-			prefix := fmt.Sprintf("desktop.%s.%s", platform, channel)
 			if release.Build == 0 {
 				return fmt.Errorf("%s.build must be positive", prefix)
 			}
 			if release.File == "" || filepath.Base(release.File) != release.File || strings.ContainsAny(release.File, `/\\`) {
 				return fmt.Errorf("%s.file must be a single file name", prefix)
+			}
+			if err := validateDesktopFileName(platform, channel, release); err != nil {
+				return fmt.Errorf("%s.file %q %w", prefix, release.File, err)
 			}
 			if !sha256RE.MatchString(release.SHA256) {
 				return fmt.Errorf("%s.sha256 must contain 64 hexadecimal characters", prefix)
@@ -173,6 +180,30 @@ func (c *Catalog) validateDesktop(filesDir string) error {
 			}
 			c.files[release.File] = record
 		}
+	}
+	return nil
+}
+
+// validateDesktopFileName 检查文件名符合 v2 客户端约定 td-update-{os}-{arch}-{base}[-beta]，
+// 且 {os}-{arch} 与平台键对应、{base} 等于 build、-beta 后缀当且仅当通道为 beta。
+func validateDesktopFileName(platform, channel string, release DesktopRelease) error {
+	match := desktopFileRE.FindStringSubmatch(release.File)
+	if match == nil {
+		return fmt.Errorf("must match td-update-{os}-{arch}-{base}[-beta]")
+	}
+	target := match[1] + "-" + match[2]
+	if want := desktopPlatformTargets[platform]; target != want {
+		return fmt.Errorf("targets %s, want %s for platform %s", target, want, platform)
+	}
+	// 按字符串比较，前导零之类的写法与 /current4 宣告的 released 对不上，一并拒绝。
+	if base := match[3]; base != strconv.FormatUint(release.Build, 10) {
+		return fmt.Errorf("base %s must equal build %d", base, release.Build)
+	}
+	if hasBeta := match[4] != ""; hasBeta != (channel == "beta") {
+		if hasBeta {
+			return fmt.Errorf("must not have the -beta suffix on the %s channel", channel)
+		}
+		return fmt.Errorf("must have the -beta suffix on the beta channel")
 	}
 	return nil
 }
@@ -217,7 +248,7 @@ func (c *Catalog) validateApps() error {
 			return fmt.Errorf("apps platform %q is unsupported", platform)
 		}
 		for channel, release := range channels {
-			if !validChannel(channel) {
+			if !validAppChannel(channel) {
 				return fmt.Errorf("apps.%s channel %q is unsupported", platform, channel)
 			}
 			if release.Disabled {
@@ -267,13 +298,19 @@ func validateDownloadURL(raw string) error {
 	return nil
 }
 
+// desktopPlatformTargets 把 /current4 的平台键映射到 v2 包文件名中的 {os}-{arch}。
+var desktopPlatformTargets = map[string]string{
+	"win":    "win-x86",
+	"win64":  "win-x64",
+	"winarm": "win-arm",
+	"mac":    "mac-x64",
+	"armac":  "mac-arm",
+	"linux":  "linux-x64",
+}
+
 func validDesktopPlatform(platform string) bool {
-	switch platform {
-	case "win", "win64", "winarm", "mac", "armac", "linux":
-		return true
-	default:
-		return false
-	}
+	_, ok := desktopPlatformTargets[platform]
+	return ok
 }
 
 func validAppPlatform(platform string) bool {
@@ -285,8 +322,22 @@ func validAppPlatform(platform string) bool {
 	}
 }
 
-func validChannel(channel string) bool {
+// validAppChannel 是移动端 apps 条目的通道集合。
+func validAppChannel(channel string) bool {
 	return channel == "stable" || channel == "beta" || channel == "alpha"
+}
+
+// validateDesktopChannel 只接受 v2 桌面客户端会请求的 stable 与 beta；
+// alpha 是 v1 的通道，v2 客户端不再识别，单独给出说明。
+func validateDesktopChannel(channel string) error {
+	switch channel {
+	case "stable", "beta":
+		return nil
+	case "alpha":
+		return fmt.Errorf("channel %q is unsupported: Telegram Desktop v2 updates only use stable and beta", channel)
+	default:
+		return fmt.Errorf("channel %q is unsupported", channel)
+	}
 }
 
 // DesktopMap returns the exact JSON object consumed by TDesktop's current4

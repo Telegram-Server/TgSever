@@ -20,7 +20,7 @@ func TestHandlerServesCurrentResolveAndRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	packageData := []byte("0123456789abcdef")
-	packageName := "tx64upd7007000"
+	packageName := "td-update-win-x64-7007000"
 	if err := os.WriteFile(filepath.Join(filesDir, packageName), packageData, 0o600); err != nil {
 		t.Fatal(err)
 	}
