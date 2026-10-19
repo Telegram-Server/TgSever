@@ -14,21 +14,21 @@ func TestIsBlockedExternalIP(t *testing.T) {
 		ip      string
 		blocked bool
 	}{
-		{"127.0.0.1", true},      // loopback
-		{"::1", true},            // loopback v6
-		{"10.0.0.5", true},       // private
-		{"172.16.3.4", true},     // private
-		{"192.168.1.1", true},    // private
-		{"169.254.1.1", true},    // link-local
-		{"fe80::1", true},        // link-local v6
-		{"0.0.0.0", true},        // unspecified
-		{"100.64.0.1", true},     // CGNAT
-		{"100.127.255.1", true},  // CGNAT 上界
-		{"224.0.0.1", true},      // multicast
-		{"8.8.8.8", false},       // 公网
-		{"1.1.1.1", false},       // 公网
-		{"100.63.255.1", false},  // CGNAT 下界外（公网）
-		{"100.128.0.1", false},   // CGNAT 上界外（公网）
+		{"127.0.0.1", true},             // loopback
+		{"::1", true},                   // loopback v6
+		{"10.0.0.5", true},              // private
+		{"172.16.3.4", true},            // private
+		{"192.168.1.1", true},           // private
+		{"169.254.1.1", true},           // link-local
+		{"fe80::1", true},               // link-local v6
+		{"0.0.0.0", true},               // unspecified
+		{"100.64.0.1", true},            // CGNAT
+		{"100.127.255.1", true},         // CGNAT 上界
+		{"224.0.0.1", true},             // multicast
+		{"8.8.8.8", false},              // 公网
+		{"1.1.1.1", false},              // 公网
+		{"100.63.255.1", false},         // CGNAT 下界外（公网）
+		{"100.128.0.1", false},          // CGNAT 上界外（公网）
 		{"2606:4700:4700::1111", false}, // 公网 v6
 	}
 	for _, c := range cases {

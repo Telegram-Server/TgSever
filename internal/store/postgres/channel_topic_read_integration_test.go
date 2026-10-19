@@ -71,10 +71,10 @@ func TestChannelTopicReadIsolation(t *testing.T) {
 		return res.Message
 	}
 	// 交错发送：topicB 两条都在 topicA 最新一条之前，id 更小。
-	_ = send(222003, topicA.Topic.TopicID, 1700002103)        // A1
-	_ = send(222004, topicB.Topic.TopicID, 1700002104)        // B1
-	_ = send(222005, topicB.Topic.TopicID, 1700002105)        // B2
-	a2 := send(222006, topicA.Topic.TopicID, 1700002106)      // A2（全局最大 id）
+	_ = send(222003, topicA.Topic.TopicID, 1700002103)   // A1
+	_ = send(222004, topicB.Topic.TopicID, 1700002104)   // B1
+	_ = send(222005, topicB.Topic.TopicID, 1700002105)   // B2
+	a2 := send(222006, topicA.Topic.TopicID, 1700002106) // A2（全局最大 id）
 
 	if u := topicUnread(t, channels, ctx, member.ID, channelID, topicA.Topic.TopicID); u != 2 {
 		t.Fatalf("before read: topicA unread = %d, want 2", u)
