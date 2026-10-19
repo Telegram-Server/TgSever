@@ -2320,6 +2320,7 @@ type ScheduledMessage struct {
 	LastError            string
 	CreatedAt            int32
 	UpdatedAt            int32
+	GroupedID            int64
 }
 
 type SecretChat struct {

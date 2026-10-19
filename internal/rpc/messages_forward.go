@@ -450,6 +450,7 @@ func (r *Router) forwardMessagesToMonoforum(
 	for i, originalIndex := range absentIndexes {
 		sources[originalIndex] = absent[i]
 	}
+	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources)
 
 	results := make([]tg.UpdatesClass, 0, len(req.ID))
 	for i, source := range sources {
@@ -478,6 +479,7 @@ func (r *Router) forwardMessagesToMonoforum(
 			Silent:                 req.Silent,
 			NoForwards:             req.Noforwards,
 			SuggestedPost:          suggestedPost,
+			GroupedID:              groupedIDs[i],
 			AllowPaidStars:         req.AllowPaidStars,
 		})
 		if err != nil {

@@ -511,6 +511,15 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 			IntentHash: intentHash,
 		})
 	}
+	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
+		mono, monoforumAdmin, err := r.deps.Channels.ResolveMonoforumSend(ctx, userID, peer.ID)
+		switch {
+		case err == nil:
+			return r.sendMultiMediaToMonoforum(ctx, userID, peer, mono, monoforumAdmin, req, reservationItems)
+		case !errors.Is(err, domain.ErrChannelInvalid):
+			return nil, internalErr()
+		}
+	}
 	replays := make([]outgoingReplayLookup, len(req.MultiMedia))
 	absentCount := 0
 	for i, item := range req.MultiMedia {
@@ -621,6 +630,108 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 			clearDraftPending = false
 		}
 		results = append(results, result)
+	}
+	return combineSendUpdates(results), nil
+}
+
+// sendMultiMediaToMonoforum 向频道私信(monoforum)发相册：saved_peer 推导、重放与单条
+// sendMedia 的 monoforum 分支一致；grouped_id 与普通相册一样在解析媒体前持久预留，
+// 部分失败后只重试子集仍沿用同一分组。monoforum 不支持定时发送。
+func (r *Router) sendMultiMediaToMonoforum(ctx context.Context, userID int64, peer domain.Peer, mono domain.Channel, monoforumAdmin bool, req *tg.MessagesSendMultiMediaRequest, reservationItems []domain.AlbumGroupReservationItem) (tg.UpdatesClass, error) {
+	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
+		return nil, scheduleDateInvalidErr()
+	}
+	savedPeer, err := r.monoforumSavedPeerForSender(userID, monoforumAdmin, req.ReplyTo)
+	if err != nil {
+		return nil, err
+	}
+	replyTo, err := r.monoforumMessageReplyFromInput(ctx, userID, peer, req.ReplyTo)
+	if err != nil {
+		return nil, err
+	}
+	replays := make([]outgoingReplayLookup, len(req.MultiMedia))
+	absentCount := 0
+	for i, item := range req.MultiMedia {
+		replay, err := r.lookupChannelSendReplay(ctx, userID, peer.ID, savedPeer, item.RandomID, reservationItems[i].IntentHash)
+		if err != nil {
+			return nil, err
+		}
+		replays[i] = replay
+		if !replay.found {
+			absentCount++
+		}
+	}
+	if absentCount == 0 {
+		results := make([]tg.UpdatesClass, 0, len(replays))
+		for _, replay := range replays {
+			updates, err := r.monoforumSendUpdatesStrict(ctx, userID, mono, savedPeer, replay.channel)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, updates)
+		}
+		return combineSendUpdates(results), nil
+	}
+	if err := r.checkSendRateLimit(ctx, userID, absentCount); err != nil {
+		return nil, err
+	}
+	checkedPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	if err != nil {
+		return nil, err
+	}
+	if checkedPeer != peer {
+		return nil, peerIDInvalidErr()
+	}
+	groupedID, err := r.reserveAlbumGroup(ctx, userID, peer, reservationItems)
+	if err != nil {
+		return nil, err
+	}
+	for _, replay := range replays {
+		if replay.found && replay.channel.Message.GroupedID != groupedID {
+			return nil, internalErr()
+		}
+	}
+	// allow_paid_stars 是整组授权上限；store 按条与频道价格比较，故按待发条数均分，
+	// 保证整组实际扣款不超过客户端授权。
+	allowPaidStarsPerItem := req.AllowPaidStars / int64(absentCount)
+	results := make([]tg.UpdatesClass, 0, len(req.MultiMedia))
+	clearDraftPending := req.ClearDraft
+	for i, item := range req.MultiMedia {
+		if replays[i].found {
+			updates, err := r.monoforumSendUpdatesStrict(ctx, userID, mono, savedPeer, replays[i].channel)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, updates)
+			continue
+		}
+		media, err := r.resolveInputMedia(ctx, userID, item.Media)
+		if err != nil {
+			return nil, err
+		}
+		if media == nil {
+			return nil, mediaInvalidErr()
+		}
+		updates, err := r.sendMonoforumMessage(ctx, userID, checkedPeer, mono, monoforumAdmin, domain.SendMonoforumMessageRequest{
+			SavedPeer:              savedPeer,
+			RandomID:               item.RandomID,
+			IdempotencyFingerprint: reservationItems[i].IntentHash,
+			IdempotencyPreflighted: replays[i].checked,
+			Message:                item.Message,
+			Entities:               domainMessageEntities(r.augmentAutoEntities(item.Message, item.Entities)),
+			Media:                  media,
+			ReplyTo:                replyTo,
+			Silent:                 req.Silent,
+			NoForwards:             req.Noforwards,
+			GroupedID:              groupedID,
+			AllowPaidStars:         allowPaidStarsPerItem,
+			ClearDraft:             clearDraftPending,
+		})
+		if err != nil {
+			return nil, err
+		}
+		clearDraftPending = false
+		results = append(results, updates)
 	}
 	return combineSendUpdates(results), nil
 }

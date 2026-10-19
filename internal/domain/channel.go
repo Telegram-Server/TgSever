@@ -1708,6 +1708,9 @@ type SendMonoforumMessageRequest struct {
 	Silent                 bool
 	NoForwards             bool
 	SuggestedPost          *SuggestedPost
+	// GroupedID 是相册分组 id：同一次 sendMultiMedia 或同一源相册转发的各条共享一个非零值；
+	// 单条发送恒 0。
+	GroupedID int64
 	// AllowPaidStars 是客户端授权的最高可扣金额；实际扣款取频道当前价格，绝不按授权上限扣款。
 	AllowPaidStars int64
 	ClearDraft     bool

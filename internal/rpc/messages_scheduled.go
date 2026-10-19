@@ -202,6 +202,7 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 		NoForwards:           p.noforwards,
 		ReplyTo:              replyTo,
 		SendAs:               sendAs,
+		GroupedID:            p.groupedID,
 		ScheduleDate:         scheduleDate,
 		ScheduleRepeatPeriod: repeatPeriod,
 		Date:                 date,
@@ -239,6 +240,8 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 			richMessage: scheduled.RichMessage,
 			silent:      scheduled.Silent,
 			noforwards:  scheduled.NoForwards,
+			// 同组定时消息无论一次还是分批发出，都沿用排程时持久化的同一 grouped_id。
+			groupedID: scheduled.GroupedID,
 		})
 		if err != nil {
 			if scheduledSvc, ok := r.deps.Messages.(scheduledMessagesService); ok {
@@ -349,6 +352,7 @@ func scheduledMessageAsDomainMessage(msg domain.ScheduledMessage, viewerUserID i
 		Forward:     msg.Forward,
 		Media:       msg.Media,
 		RichMessage: msg.RichMessage,
+		GroupedID:   msg.GroupedID,
 	}
 }
 
@@ -392,6 +396,9 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 		Seq:     0,
 	}
 	domainMessages := make([]domain.Message, 0, len(sources))
+	// 定时转发不查重放，sources 与 req.ID 一一对应；同一源相册得到同一个新 grouped_id，
+	// 持久化在定时行上，到点发出时原样沿用。
+	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources)
 	for i, source := range sources {
 		forward := source.forward
 		if req.DropAuthor {
@@ -409,6 +416,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 			ReplyTo:              replyTo,
 			Forward:              forward,
 			SendAs:               sendAs,
+			GroupedID:            groupedIDs[i],
 			ScheduleDate:         req.ScheduleDate,
 			ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
 			Date:                 date,

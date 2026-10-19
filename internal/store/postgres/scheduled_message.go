@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 const maxScheduledMessagePage = 100
@@ -19,6 +20,9 @@ const maxScheduledMessagePage = 100
 // pending 行（last_error 非空）在该退避窗口内不再被 ClaimDueScheduledMessages
 // 认领，避免对端注销等永久失败的到期消息每秒被反复 claim+send。
 const scheduledRetryBackoffSeconds = 30
+
+// 定时消息的 SQL 全部在 queries/scheduled_message.sql（sqlc）；读出统一返回整行
+// sqlcgen.ScheduledMessage，经 scheduledMessageFromRow 解码。
 
 func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.ScheduleMessageRequest) (domain.ScheduledMessage, error) {
 	if req.OwnerUserID == 0 || req.Peer.ID == 0 || req.ScheduleDate <= 0 {
@@ -63,11 +67,12 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	q := sqlcgen.New(tx)
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID); err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("lock scheduled owner: %w", err)
 	}
 	if req.RandomID != 0 {
-		existing, ok, err := getPendingScheduledByRandomID(ctx, tx, req.OwnerUserID, req.RandomID)
+		existing, ok, err := getPendingScheduledByRandomID(ctx, q, req.OwnerUserID, req.RandomID)
 		if err != nil {
 			return domain.ScheduledMessage{}, err
 		}
@@ -79,7 +84,7 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 			return existing, nil
 		}
 	}
-	nextID, err := nextScheduledMessageID(ctx, tx, req.OwnerUserID)
+	nextID, err := nextScheduledMessageID(ctx, q, req.OwnerUserID)
 	if err != nil {
 		return domain.ScheduledMessage{}, err
 	}
@@ -88,41 +93,45 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 		sendAsType = string(req.SendAs.Type)
 		sendAsID = req.SendAs.ID
 	}
-	if _, err := tx.Exec(ctx, `
-INSERT INTO scheduled_messages (
-  owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date,
-  body, entities, media, rich_message, silent, noforwards,
-  reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
-  quote_text, quote_entities, quote_offset,
-  fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
-  send_as_peer_type, send_as_peer_id,
-  schedule_date, schedule_repeat_period, state, created_at, updated_at
-) VALUES (
-  $1, $2, $3, $4, $5, $6,
-  $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12,
-  $13, $14, $15, $16,
-  $17, $18::jsonb, $19,
-  $20, $21, $22, $23,
-  $24, $25,
-  $26, $27, 'pending', $28, $28
-)`, req.OwnerUserID, nextID, string(req.Peer.Type), req.Peer.ID, req.RandomID, req.Date,
-		req.Message, entities, media, richMessage, req.Silent, req.NoForwards,
-		meta.ReplyToMsgID, meta.ReplyToPeerType, meta.ReplyToPeerID, meta.ReplyToTopID,
-		meta.QuoteText, meta.QuoteEntitiesJSON, meta.QuoteOffset,
-		meta.FwdFromPeerType, meta.FwdFromPeerID, meta.FwdFromName, meta.FwdDate,
-		sendAsType, sendAsID,
-		req.ScheduleDate, req.ScheduleRepeatPeriod, req.Date); err != nil {
+	row, err := q.InsertScheduledMessage(ctx, sqlcgen.InsertScheduledMessageParams{
+		OwnerUserID:          req.OwnerUserID,
+		ScheduledID:          int32(nextID),
+		PeerType:             string(req.Peer.Type),
+		PeerID:               req.Peer.ID,
+		RandomID:             req.RandomID,
+		MessageDate:          int32(req.Date),
+		Body:                 req.Message,
+		Entities:             entities,
+		Media:                media,
+		RichMessage:          richMessage,
+		Silent:               req.Silent,
+		Noforwards:           req.NoForwards,
+		ReplyToMsgID:         meta.ReplyToMsgID,
+		ReplyToPeerType:      meta.ReplyToPeerType,
+		ReplyToPeerID:        meta.ReplyToPeerID,
+		ReplyToTopID:         meta.ReplyToTopID,
+		QuoteText:            meta.QuoteText,
+		QuoteEntities:        meta.QuoteEntitiesJSON,
+		QuoteOffset:          meta.QuoteOffset,
+		FwdFromPeerType:      meta.FwdFromPeerType,
+		FwdFromPeerID:        meta.FwdFromPeerID,
+		FwdFromName:          meta.FwdFromName,
+		FwdDate:              meta.FwdDate,
+		SendAsPeerType:       sendAsType,
+		SendAsPeerID:         sendAsID,
+		GroupedID:            req.GroupedID,
+		ScheduleDate:         int32(req.ScheduleDate),
+		ScheduleRepeatPeriod: int32(req.ScheduleRepeatPeriod),
+	})
+	if err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("insert scheduled message: %w", err)
 	}
-	if err := setHasScheduledTx(ctx, tx, req.OwnerUserID, req.Peer, true); err != nil {
-		return domain.ScheduledMessage{}, err
-	}
-	msg, ok, err := getScheduledByID(ctx, tx, req.OwnerUserID, nextID)
+	msg, err := scheduledMessageFromRow(row)
 	if err != nil {
 		return domain.ScheduledMessage{}, err
 	}
-	if !ok {
-		return domain.ScheduledMessage{}, fmt.Errorf("create scheduled message: inserted row missing")
+	if err := setHasScheduledTx(ctx, q, req.OwnerUserID, req.Peer, true); err != nil {
+		return domain.ScheduledMessage{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("commit create scheduled message: %w", err)
@@ -132,7 +141,7 @@ INSERT INTO scheduled_messages (
 }
 
 func (s *MessageStore) ListScheduledMessages(ctx context.Context, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
-	return listScheduledMessages(ctx, s.db, filter, false)
+	return listScheduledMessages(ctx, s.q, filter, false)
 }
 
 func (s *MessageStore) EditScheduledMessage(ctx context.Context, req domain.EditScheduledMessageRequest) (domain.ScheduledMessage, error) {
@@ -159,10 +168,11 @@ func (s *MessageStore) EditScheduledMessage(ctx context.Context, req domain.Edit
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	q := sqlcgen.New(tx)
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID); err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("lock scheduled edit owner: %w", err)
 	}
-	current, ok, err := getPendingScheduledForEdit(ctx, tx, req.OwnerUserID, req.Peer, req.ID)
+	current, ok, err := getPendingScheduledForEdit(ctx, q, req.OwnerUserID, req.Peer, req.ID)
 	if err != nil {
 		return domain.ScheduledMessage{}, err
 	}
@@ -190,24 +200,25 @@ func (s *MessageStore) EditScheduledMessage(ctx context.Context, req domain.Edit
 	if err != nil {
 		return domain.ScheduledMessage{}, err
 	}
-	row := tx.QueryRow(ctx, `
-UPDATE scheduled_messages
-SET body = $5,
-    entities = $6::jsonb,
-    rich_message = $7::jsonb,
-    schedule_date = $8,
-    updated_at = $9
-WHERE owner_user_id = $1
-  AND peer_type = $2
-  AND peer_id = $3
-  AND scheduled_id = $4
-  AND state = 'pending'
-RETURNING `+scheduledMessageSelectColumns(), req.OwnerUserID, string(req.Peer.Type), req.Peer.ID, req.ID, message, encodedEntities, encodedRichMessage, req.ScheduleDate, req.Date)
-	msg, err := scanScheduledMessage(row)
+	row, err := q.UpdateScheduledMessageContent(ctx, sqlcgen.UpdateScheduledMessageContentParams{
+		Body:         message,
+		Entities:     encodedEntities,
+		RichMessage:  encodedRichMessage,
+		ScheduleDate: int32(req.ScheduleDate),
+		UpdatedAt:    int32(req.Date),
+		OwnerUserID:  req.OwnerUserID,
+		PeerType:     string(req.Peer.Type),
+		PeerID:       req.Peer.ID,
+		ScheduledID:  int32(req.ID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ScheduledMessage{}, domain.ErrMessageIDInvalid
 		}
+		return domain.ScheduledMessage{}, fmt.Errorf("edit scheduled message: %w", err)
+	}
+	msg, err := scheduledMessageFromRow(row)
+	if err != nil {
 		return domain.ScheduledMessage{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -218,7 +229,7 @@ RETURNING `+scheduledMessageSelectColumns(), req.OwnerUserID, string(req.Peer.Ty
 }
 
 func (s *MessageStore) GetScheduledMessages(ctx context.Context, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
-	return listScheduledMessages(ctx, s.db, filter, true)
+	return listScheduledMessages(ctx, s.q, filter, true)
 }
 
 func (s *MessageStore) DeleteScheduledMessages(ctx context.Context, filter domain.ScheduledMessageFilter, date int) ([]domain.ScheduledMessage, error) {
@@ -239,27 +250,25 @@ func (s *MessageStore) DeleteScheduledMessages(ctx context.Context, filter domai
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	q := sqlcgen.New(tx)
 	if err := lockUsersForUpdate(ctx, tx, filter.OwnerUserID); err != nil {
 		return nil, fmt.Errorf("lock scheduled delete owner: %w", err)
 	}
-	rows, err := tx.Query(ctx, `
-UPDATE scheduled_messages
-SET state = 'deleted',
-    updated_at = $5
-WHERE owner_user_id = $1
-  AND peer_type = $2
-  AND peer_id = $3
-  AND scheduled_id = ANY($4::int[])
-  AND state IN ('pending', 'dispatching')
-RETURNING `+scheduledMessageSelectColumns(), filter.OwnerUserID, string(filter.Peer.Type), filter.Peer.ID, intSliceToInt32(filter.IDs), date)
+	rows, err := q.MarkScheduledMessagesDeleted(ctx, sqlcgen.MarkScheduledMessagesDeletedParams{
+		UpdatedAt:   int32(date),
+		OwnerUserID: filter.OwnerUserID,
+		PeerType:    string(filter.Peer.Type),
+		PeerID:      filter.Peer.ID,
+		Ids:         intSliceToInt32(filter.IDs),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("delete scheduled messages: %w", err)
 	}
-	deleted, err := scanScheduledMessages(rows)
+	deleted, err := scheduledMessagesFromRows(rows)
 	if err != nil {
 		return nil, err
 	}
-	if err := refreshHasScheduledTx(ctx, tx, filter.OwnerUserID, filter.Peer); err != nil {
+	if err := refreshHasScheduledTx(ctx, q, filter.OwnerUserID, filter.Peer); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -279,22 +288,18 @@ func (s *MessageStore) ClaimScheduledMessages(ctx context.Context, claim domain.
 	if claim.LeaseUntil == 0 {
 		claim.LeaseUntil = claim.Now + 60
 	}
-	rows, err := s.db.Query(ctx, `
-UPDATE scheduled_messages
-SET state = 'dispatching',
-    lease_until = $6,
-    updated_at = $5,
-    last_error = ''
-WHERE owner_user_id = $1
-  AND peer_type = $2
-  AND peer_id = $3
-  AND scheduled_id = ANY($4::int[])
-  AND (state = 'pending' OR (state = 'dispatching' AND lease_until <= $5))
-RETURNING `+scheduledMessageSelectColumns(), claim.OwnerUserID, string(claim.Peer.Type), claim.Peer.ID, intSliceToInt32(claim.IDs), claim.Now, claim.LeaseUntil)
+	rows, err := s.q.ClaimScheduledMessagesByIDs(ctx, sqlcgen.ClaimScheduledMessagesByIDsParams{
+		LeaseUntil:  int32(claim.LeaseUntil),
+		NowUnix:     int32(claim.Now),
+		OwnerUserID: claim.OwnerUserID,
+		PeerType:    string(claim.Peer.Type),
+		PeerID:      claim.Peer.ID,
+		Ids:         intSliceToInt32(claim.IDs),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("claim scheduled messages: %w", err)
 	}
-	return scanScheduledMessages(rows)
+	return scheduledMessagesFromRows(rows)
 }
 
 func (s *MessageStore) ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int) ([]domain.ScheduledMessage, error) {
@@ -314,32 +319,16 @@ func (s *MessageStore) ClaimDueScheduledMessages(ctx context.Context, now, limit
 	// 投递且 has_scheduled 永远为真。重投由 random_id 幂等兜底（命中 Duplicate
 	// 仍会 MarkScheduledMessageSent 清状态）。
 	retryFloor := now - scheduledRetryBackoffSeconds
-	rows, err := s.db.Query(ctx, `
-WITH due AS (
-  SELECT sm.owner_user_id, sm.scheduled_id
-  FROM scheduled_messages sm
-  WHERE sm.schedule_date <= $1
-    AND (
-      (sm.state = 'pending' AND (sm.last_error = '' OR sm.updated_at <= $4))
-      OR (sm.state = 'dispatching' AND sm.lease_until <= $1)
-    )
-  ORDER BY sm.schedule_date ASC, sm.owner_user_id ASC, sm.scheduled_id ASC
-  LIMIT $2
-  FOR UPDATE SKIP LOCKED
-)
-UPDATE scheduled_messages sm
-SET state = 'dispatching',
-    lease_until = $1 + $3,
-    updated_at = $1,
-    last_error = ''
-FROM due
-WHERE sm.owner_user_id = due.owner_user_id
-  AND sm.scheduled_id = due.scheduled_id
-RETURNING `+scheduledMessageSelectColumnsFor("sm"), now, limit, leaseSeconds, retryFloor)
+	rows, err := s.q.ClaimDueScheduledMessages(ctx, sqlcgen.ClaimDueScheduledMessagesParams{
+		NowUnix:      int32(now),
+		LeaseSeconds: int32(leaseSeconds),
+		RetryFloor:   int32(retryFloor),
+		LimitCount:   int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("claim due scheduled messages: %w", err)
 	}
-	return scanScheduledMessages(rows)
+	return scheduledMessagesFromRows(rows)
 }
 
 func (s *MessageStore) MarkScheduledMessageSent(ctx context.Context, ownerUserID int64, id, sentMessageID, date int) error {
@@ -360,27 +349,23 @@ func (s *MessageStore) MarkScheduledMessageSent(ctx context.Context, ownerUserID
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	q := sqlcgen.New(tx)
 	if err := lockUsersForUpdate(ctx, tx, ownerUserID); err != nil {
 		return fmt.Errorf("lock scheduled sent owner: %w", err)
 	}
-	row := tx.QueryRow(ctx, `
-UPDATE scheduled_messages
-SET state = 'sent',
-    sent_message_id = $3,
-    lease_until = 0,
-    updated_at = $4
-WHERE owner_user_id = $1
-  AND scheduled_id = $2
-RETURNING peer_type, peer_id`, ownerUserID, id, sentMessageID, date)
-	var peerType string
-	var peerID int64
-	if err := row.Scan(&peerType, &peerID); err != nil {
-		if err == pgx.ErrNoRows {
+	sent, err := q.MarkScheduledMessageSent(ctx, sqlcgen.MarkScheduledMessageSentParams{
+		SentMessageID: int32(sentMessageID),
+		UpdatedAt:     int32(date),
+		OwnerUserID:   ownerUserID,
+		ScheduledID:   int32(id),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		return fmt.Errorf("mark scheduled sent: %w", err)
 	}
-	if err := refreshHasScheduledTx(ctx, tx, ownerUserID, domain.Peer{Type: domain.PeerType(peerType), ID: peerID}); err != nil {
+	if err := refreshHasScheduledTx(ctx, q, ownerUserID, domain.Peer{Type: domain.PeerType(sent.PeerType), ID: sent.PeerID}); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -394,16 +379,11 @@ func (s *MessageStore) ReleaseScheduledMessage(ctx context.Context, ownerUserID 
 	if ownerUserID == 0 || id <= 0 {
 		return nil
 	}
-	_, err := s.db.Exec(ctx, `
-UPDATE scheduled_messages
-SET state = 'pending',
-    lease_until = 0,
-    last_error = $3,
-    updated_at = EXTRACT(EPOCH FROM now())::int
-WHERE owner_user_id = $1
-  AND scheduled_id = $2
-  AND state = 'dispatching'`, ownerUserID, id, errText)
-	if err != nil {
+	if err := s.q.ReleaseScheduledMessage(ctx, sqlcgen.ReleaseScheduledMessageParams{
+		LastError:   errText,
+		OwnerUserID: ownerUserID,
+		ScheduledID: int32(id),
+	}); err != nil {
 		return fmt.Errorf("release scheduled message: %w", err)
 	}
 	return nil
@@ -413,25 +393,18 @@ func (s *MessageStore) HasScheduledMessages(ctx context.Context, ownerUserID int
 	if ownerUserID == 0 || peer.ID == 0 {
 		return false, nil
 	}
-	var exists bool
-	if err := s.db.QueryRow(ctx, `
-SELECT EXISTS (
-  SELECT 1
-  FROM scheduled_messages
-  WHERE owner_user_id = $1
-    AND peer_type = $2
-    AND peer_id = $3
-    AND state IN ('pending', 'dispatching')
-  LIMIT 1
-)::boolean`, ownerUserID, string(peer.Type), peer.ID).Scan(&exists); err != nil {
+	exists, err := s.q.HasActiveScheduledMessages(ctx, sqlcgen.HasActiveScheduledMessagesParams{
+		OwnerUserID: ownerUserID,
+		PeerType:    string(peer.Type),
+		PeerID:      peer.ID,
+	})
+	if err != nil {
 		return false, fmt.Errorf("has scheduled messages: %w", err)
 	}
 	return exists, nil
 }
 
-func listScheduledMessages(ctx context.Context, db interface {
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-}, filter domain.ScheduledMessageFilter, exact bool) (domain.ScheduledMessageList, error) {
+func listScheduledMessages(ctx context.Context, q *sqlcgen.Queries, filter domain.ScheduledMessageFilter, exact bool) (domain.ScheduledMessageList, error) {
 	if filter.OwnerUserID == 0 || filter.Peer.ID == 0 {
 		return domain.ScheduledMessageList{}, nil
 	}
@@ -440,38 +413,32 @@ func listScheduledMessages(ctx context.Context, db interface {
 		limit = maxScheduledMessagePage
 	}
 	var (
-		rows pgx.Rows
+		rows []sqlcgen.ScheduledMessage
 		err  error
 	)
 	if exact {
 		if len(filter.IDs) == 0 {
 			return domain.ScheduledMessageList{}, nil
 		}
-		rows, err = db.Query(ctx, `
-SELECT `+scheduledMessageSelectColumns()+`
-FROM scheduled_messages
-WHERE owner_user_id = $1
-  AND peer_type = $2
-  AND peer_id = $3
-  AND scheduled_id = ANY($4::int[])
-  AND state IN ('pending', 'dispatching')
-ORDER BY schedule_date ASC, scheduled_id ASC
-LIMIT $5`, filter.OwnerUserID, string(filter.Peer.Type), filter.Peer.ID, intSliceToInt32(filter.IDs), limit)
+		rows, err = q.ListScheduledMessagesByIDs(ctx, sqlcgen.ListScheduledMessagesByIDsParams{
+			OwnerUserID: filter.OwnerUserID,
+			PeerType:    string(filter.Peer.Type),
+			PeerID:      filter.Peer.ID,
+			Ids:         intSliceToInt32(filter.IDs),
+			LimitCount:  int32(limit),
+		})
 	} else {
-		rows, err = db.Query(ctx, `
-SELECT `+scheduledMessageSelectColumns()+`
-FROM scheduled_messages
-WHERE owner_user_id = $1
-  AND peer_type = $2
-  AND peer_id = $3
-  AND state IN ('pending', 'dispatching')
-ORDER BY schedule_date ASC, scheduled_id ASC
-LIMIT $4`, filter.OwnerUserID, string(filter.Peer.Type), filter.Peer.ID, limit)
+		rows, err = q.ListScheduledMessagesByPeer(ctx, sqlcgen.ListScheduledMessagesByPeerParams{
+			OwnerUserID: filter.OwnerUserID,
+			PeerType:    string(filter.Peer.Type),
+			PeerID:      filter.Peer.ID,
+			LimitCount:  int32(limit),
+		})
 	}
 	if err != nil {
 		return domain.ScheduledMessageList{}, fmt.Errorf("list scheduled messages: %w", err)
 	}
-	msgs, err := scanScheduledMessages(rows)
+	msgs, err := scheduledMessagesFromRows(rows)
 	if err != nil {
 		return domain.ScheduledMessageList{}, err
 	}
@@ -483,92 +450,46 @@ LIMIT $4`, filter.OwnerUserID, string(filter.Peer.Type), filter.Peer.ID, limit)
 	return out, nil
 }
 
-func scheduledMessageSelectColumns() string {
-	return `owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date,
-body, entities::text, media::text, rich_message::text, silent, noforwards,
-reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
-quote_text, quote_entities::text, quote_offset,
-fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
-send_as_peer_type, send_as_peer_id,
-schedule_date, schedule_repeat_period, state, sent_message_id, created_at, updated_at`
-}
-
-func scheduledMessageSelectColumnsFor(alias string) string {
-	if alias == "" {
-		return scheduledMessageSelectColumns()
-	}
-	prefix := alias + "."
-	return prefix + `owner_user_id, ` + prefix + `scheduled_id, ` + prefix + `peer_type, ` + prefix + `peer_id, ` + prefix + `random_id, ` + prefix + `message_date,
-` + prefix + `body, ` + prefix + `entities::text, ` + prefix + `media::text, ` + prefix + `rich_message::text, ` + prefix + `silent, ` + prefix + `noforwards,
-` + prefix + `reply_to_msg_id, ` + prefix + `reply_to_peer_type, ` + prefix + `reply_to_peer_id, ` + prefix + `reply_to_top_id,
-` + prefix + `quote_text, ` + prefix + `quote_entities::text, ` + prefix + `quote_offset,
-` + prefix + `fwd_from_peer_type, ` + prefix + `fwd_from_peer_id, ` + prefix + `fwd_from_name, ` + prefix + `fwd_date,
-` + prefix + `send_as_peer_type, ` + prefix + `send_as_peer_id,
-` + prefix + `schedule_date, ` + prefix + `schedule_repeat_period, ` + prefix + `state, ` + prefix + `sent_message_id, ` + prefix + `created_at, ` + prefix + `updated_at`
-}
-
-func scanScheduledMessages(rows pgx.Rows) ([]domain.ScheduledMessage, error) {
-	defer rows.Close()
-	out := make([]domain.ScheduledMessage, 0)
-	for rows.Next() {
-		msg, err := scanScheduledMessage(rows)
+func scheduledMessagesFromRows(rows []sqlcgen.ScheduledMessage) ([]domain.ScheduledMessage, error) {
+	out := make([]domain.ScheduledMessage, 0, len(rows))
+	for _, row := range rows {
+		msg, err := scheduledMessageFromRow(row)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, msg)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate scheduled messages: %w", err)
-	}
 	return out, nil
 }
 
-func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.ScheduledMessage, error) {
-	var (
-		msg                  domain.ScheduledMessage
-		peerType             string
-		entitiesJSON         string
-		mediaJSON            string
-		richMessageJSON      string
-		replyToMsgID         int32
-		replyToPeerType      string
-		replyToPeerID        int64
-		replyToTopID         int32
-		quoteText            string
-		quoteEntitiesJSON    string
-		quoteOffset          int32
-		fwdFromPeerType      string
-		fwdFromPeerID        int64
-		fwdFromName          string
-		fwdDate              int32
-		sendAsPeerType       string
-		sendAsPeerID         int64
-		scheduleRepeatPeriod int32
-	)
-	if err := scanner.Scan(
-		&msg.OwnerUserID, &msg.ID, &peerType, &msg.Peer.ID, &msg.RandomID, &msg.CreatedAt,
-		&msg.Message, &entitiesJSON, &mediaJSON, &richMessageJSON, &msg.Silent, &msg.NoForwards,
-		&replyToMsgID, &replyToPeerType, &replyToPeerID, &replyToTopID,
-		&quoteText, &quoteEntitiesJSON, &quoteOffset,
-		&fwdFromPeerType, &fwdFromPeerID, &fwdFromName, &fwdDate,
-		&sendAsPeerType, &sendAsPeerID,
-		&msg.ScheduleDate, &scheduleRepeatPeriod, &msg.State, &msg.SentMessageID, &msg.CreatedAt, &msg.UpdatedAt,
-	); err != nil {
-		return domain.ScheduledMessage{}, fmt.Errorf("scan scheduled message: %w", err)
+func scheduledMessageFromRow(row sqlcgen.ScheduledMessage) (domain.ScheduledMessage, error) {
+	msg := domain.ScheduledMessage{
+		OwnerUserID:          row.OwnerUserID,
+		ID:                   int(row.ScheduledID),
+		Peer:                 domain.Peer{Type: domain.PeerType(row.PeerType), ID: row.PeerID},
+		RandomID:             row.RandomID,
+		Message:              row.Body,
+		Silent:               row.Silent,
+		NoForwards:           row.Noforwards,
+		GroupedID:            row.GroupedID,
+		ScheduleDate:         int(row.ScheduleDate),
+		ScheduleRepeatPeriod: int(row.ScheduleRepeatPeriod),
+		CreatedAt:            int(row.CreatedAt),
+		UpdatedAt:            int(row.UpdatedAt),
+		State:                row.State,
+		SentMessageID:        int(row.SentMessageID),
 	}
-	msg.Peer.Type = domain.PeerType(peerType)
-	msg.ScheduleRepeatPeriod = int(scheduleRepeatPeriod)
-	entities, err := decodeMessageEntities(entitiesJSON)
+	entities, err := decodeMessageEntities(string(row.Entities))
 	if err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled entities: %w", err)
 	}
 	msg.Entities = entities
-	media, err := decodeMessageMedia(mediaJSON)
+	media, err := decodeMessageMedia(string(row.Media))
 	if err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled media: %w", err)
 	}
 	msg.Media = media
-	richMessage, err := decodeRichMessage(richMessageJSON)
+	richMessage, err := decodeRichMessage(string(row.RichMessage))
 	if err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled rich message: %w", err)
 	}
@@ -576,10 +497,10 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 	// scheduled_messages 不存 saved_from：到点投递经 SendPrivateText 实时
 	// 重算 saved 语义（self-chat 直发归 self），fwd saved 维度恒空。
 	_, _, reply, forward, err := messageMetadataFromFields(
-		msg.Silent, msg.NoForwards, replyToMsgID, replyToPeerType, replyToPeerID, replyToTopID,
+		msg.Silent, msg.NoForwards, row.ReplyToMsgID, row.ReplyToPeerType, row.ReplyToPeerID, row.ReplyToTopID,
 		0, // scheduled_messages 不持久化 story 回复（定时回复 story 是边角，恒 0）
-		quoteText, quoteEntitiesJSON, quoteOffset, "{}",
-		fwdFromPeerType, fwdFromPeerID, fwdFromName, fwdDate,
+		row.QuoteText, string(row.QuoteEntities), row.QuoteOffset, "{}",
+		row.FwdFromPeerType, row.FwdFromPeerID, row.FwdFromName, row.FwdDate,
 		"", 0, 0,
 	)
 	if err != nil {
@@ -587,104 +508,79 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 	}
 	msg.ReplyTo = reply
 	msg.Forward = forward
-	if sendAsPeerType != "" && sendAsPeerID != 0 {
-		msg.SendAs = &domain.Peer{Type: domain.PeerType(sendAsPeerType), ID: sendAsPeerID}
+	if row.SendAsPeerType != "" && row.SendAsPeerID != 0 {
+		msg.SendAs = &domain.Peer{Type: domain.PeerType(row.SendAsPeerType), ID: row.SendAsPeerID}
 	}
 	return msg, nil
 }
 
-func getPendingScheduledByRandomID(ctx context.Context, db pgx.Tx, ownerUserID, randomID int64) (domain.ScheduledMessage, bool, error) {
-	row := db.QueryRow(ctx, `
-SELECT `+scheduledMessageSelectColumns()+`
-FROM scheduled_messages
-WHERE owner_user_id = $1
-  AND random_id = $2
-  AND random_id <> 0
-  AND state IN ('pending', 'dispatching')
-ORDER BY scheduled_id ASC
-LIMIT 1`, ownerUserID, randomID)
-	msg, err := scanScheduledMessage(row)
-	if err == nil {
-		return msg, true, nil
-	}
+func getPendingScheduledByRandomID(ctx context.Context, q *sqlcgen.Queries, ownerUserID, randomID int64) (domain.ScheduledMessage, bool, error) {
+	row, err := q.GetPendingScheduledMessageByRandomID(ctx, sqlcgen.GetPendingScheduledMessageByRandomIDParams{
+		OwnerUserID: ownerUserID,
+		RandomID:    randomID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ScheduledMessage{}, false, nil
 	}
-	return domain.ScheduledMessage{}, false, err
+	if err != nil {
+		return domain.ScheduledMessage{}, false, fmt.Errorf("get scheduled by random_id: %w", err)
+	}
+	msg, err := scheduledMessageFromRow(row)
+	if err != nil {
+		return domain.ScheduledMessage{}, false, err
+	}
+	return msg, true, nil
 }
 
-func getScheduledByID(ctx context.Context, db pgx.Tx, ownerUserID int64, id int) (domain.ScheduledMessage, bool, error) {
-	row := db.QueryRow(ctx, `
-SELECT `+scheduledMessageSelectColumns()+`
-FROM scheduled_messages
-WHERE owner_user_id = $1
-  AND scheduled_id = $2
-LIMIT 1`, ownerUserID, id)
-	msg, err := scanScheduledMessage(row)
-	if err == nil {
-		return msg, true, nil
-	}
+func getPendingScheduledForEdit(ctx context.Context, q *sqlcgen.Queries, ownerUserID int64, peer domain.Peer, id int) (domain.ScheduledMessage, bool, error) {
+	row, err := q.GetPendingScheduledMessageForEdit(ctx, sqlcgen.GetPendingScheduledMessageForEditParams{
+		OwnerUserID: ownerUserID,
+		PeerType:    string(peer.Type),
+		PeerID:      peer.ID,
+		ScheduledID: int32(id),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ScheduledMessage{}, false, nil
 	}
-	return domain.ScheduledMessage{}, false, err
+	if err != nil {
+		return domain.ScheduledMessage{}, false, fmt.Errorf("get scheduled for edit: %w", err)
+	}
+	msg, err := scheduledMessageFromRow(row)
+	if err != nil {
+		return domain.ScheduledMessage{}, false, err
+	}
+	return msg, true, nil
 }
 
-func getPendingScheduledForEdit(ctx context.Context, db pgx.Tx, ownerUserID int64, peer domain.Peer, id int) (domain.ScheduledMessage, bool, error) {
-	row := db.QueryRow(ctx, `
-SELECT `+scheduledMessageSelectColumns()+`
-FROM scheduled_messages
-WHERE owner_user_id = $1
-  AND peer_type = $2
-  AND peer_id = $3
-  AND scheduled_id = $4
-  AND state = 'pending'
-FOR UPDATE`, ownerUserID, string(peer.Type), peer.ID, id)
-	msg, err := scanScheduledMessage(row)
-	if err == nil {
-		return msg, true, nil
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.ScheduledMessage{}, false, nil
-	}
-	return domain.ScheduledMessage{}, false, err
-}
-
-func nextScheduledMessageID(ctx context.Context, db pgx.Tx, ownerUserID int64) (int, error) {
-	var id int
-	if err := db.QueryRow(ctx, `
-SELECT COALESCE(MAX(scheduled_id), 0)::int + 1
-FROM scheduled_messages
-WHERE owner_user_id = $1`, ownerUserID).Scan(&id); err != nil {
+func nextScheduledMessageID(ctx context.Context, q *sqlcgen.Queries, ownerUserID int64) (int, error) {
+	next, err := q.NextScheduledMessageID(ctx, ownerUserID)
+	if err != nil {
 		return 0, fmt.Errorf("next scheduled message id: %w", err)
 	}
+	id := int(next)
 	if id <= 0 || id > domain.MaxMessageBoxID {
 		return 0, domain.ErrMessageIDInvalid
 	}
 	return id, nil
 }
 
-func setHasScheduledTx(ctx context.Context, db pgx.Tx, ownerUserID int64, peer domain.Peer, has bool) error {
+func setHasScheduledTx(ctx context.Context, q *sqlcgen.Queries, ownerUserID int64, peer domain.Peer, has bool) error {
 	switch peer.Type {
 	case domain.PeerTypeUser:
-		_, err := db.Exec(ctx, `
-INSERT INTO dialogs (user_id, peer_type, peer_id, has_scheduled)
-VALUES ($1, 'user', $2, $3)
-ON CONFLICT (user_id, peer_type, peer_id) DO UPDATE SET
-  has_scheduled = EXCLUDED.has_scheduled,
-  updated_at = now()`, ownerUserID, peer.ID, has)
-		if err != nil {
+		if err := q.UpsertPrivateDialogHasScheduled(ctx, sqlcgen.UpsertPrivateDialogHasScheduledParams{
+			UserID:       ownerUserID,
+			PeerID:       peer.ID,
+			HasScheduled: has,
+		}); err != nil {
 			return fmt.Errorf("set private has_scheduled: %w", err)
 		}
 		return nil
 	case domain.PeerTypeChannel:
-		_, err := db.Exec(ctx, `
-UPDATE channel_dialogs
-SET has_scheduled = $3,
-    updated_at = now()
-WHERE user_id = $1
-  AND channel_id = $2`, ownerUserID, peer.ID, has)
-		if err != nil {
+		if err := q.SetChannelDialogHasScheduled(ctx, sqlcgen.SetChannelDialogHasScheduledParams{
+			HasScheduled: has,
+			UserID:       ownerUserID,
+			ChannelID:    peer.ID,
+		}); err != nil {
 			return fmt.Errorf("set channel has_scheduled: %w", err)
 		}
 		return nil
@@ -693,21 +589,16 @@ WHERE user_id = $1
 	}
 }
 
-func refreshHasScheduledTx(ctx context.Context, db pgx.Tx, ownerUserID int64, peer domain.Peer) error {
-	var exists bool
-	if err := db.QueryRow(ctx, `
-SELECT EXISTS (
-  SELECT 1
-  FROM scheduled_messages
-  WHERE owner_user_id = $1
-    AND peer_type = $2
-    AND peer_id = $3
-    AND state IN ('pending', 'dispatching')
-  LIMIT 1
-)::boolean`, ownerUserID, string(peer.Type), peer.ID).Scan(&exists); err != nil {
+func refreshHasScheduledTx(ctx context.Context, q *sqlcgen.Queries, ownerUserID int64, peer domain.Peer) error {
+	exists, err := q.HasActiveScheduledMessages(ctx, sqlcgen.HasActiveScheduledMessagesParams{
+		OwnerUserID: ownerUserID,
+		PeerType:    string(peer.Type),
+		PeerID:      peer.ID,
+	})
+	if err != nil {
 		return fmt.Errorf("refresh scheduled flag: %w", err)
 	}
-	return setHasScheduledTx(ctx, db, ownerUserID, peer, exists)
+	return setHasScheduledTx(ctx, q, ownerUserID, peer, exists)
 }
 
 func intSliceToInt32(ids []int) []int32 {
