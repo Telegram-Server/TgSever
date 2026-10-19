@@ -1174,17 +1174,13 @@ func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, e
 // signUp 的 TL 请求不带验证码，因此只消费由正确 SignIn/email setup 原子
 // 标记过的 hash。直接 SendCode→SignUp 永远不能创建账号。
 func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, firstName, lastName string) (domain.User, domain.Message, error) {
-	phone = normalizePhone(phone)
-	if !validPhone(phone) {
-		return domain.User{}, domain.Message{}, ErrPhoneNumberInvalid
+	phone, err := NormalizeSignUpPhone(phone)
+	if err != nil {
+		return domain.User{}, domain.Message{}, err
 	}
-	if systemLoginPhoneForbidden(phone) {
-		return domain.User{}, domain.Message{}, ErrSystemUserLoginForbidden
-	}
-	firstName = strings.TrimSpace(firstName)
-	lastName = strings.TrimSpace(lastName)
-	if firstName == "" || utf8.RuneCountInString(firstName) > 64 || utf8.RuneCountInString(lastName) > 64 {
-		return domain.User{}, domain.Message{}, domain.ErrFirstNameInvalid
+	firstName, lastName, err = NormalizeSignUpName(firstName, lastName)
+	if err != nil {
+		return domain.User{}, domain.Message{}, err
 	}
 	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
 	if err != nil {
@@ -1236,9 +1232,91 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 
-	accessHash, err := randomInt64()
+	create := func(ctx context.Context, newUser domain.User) (domain.User, error) {
+		u, err := s.users.Create(ctx, newUser)
+		if err != nil {
+			return domain.User{}, err
+		}
+		if rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) != "" && s.loginEmails != nil {
+			if err := s.loginEmails.SetLoginEmail(ctx, u.ID, rec.PendingEmail); err != nil {
+				return domain.User{}, err
+			}
+		}
+		return u, nil
+	}
+	loginMessage := domain.Message{}
+	afterBind := func(ctx context.Context, u domain.User) error {
+		// A new account has no owner/dialog at issuance time. Only the development
+		// phone/App registration path creates its bootstrap 777000 message here;
+		// external SMS and email setup registration retain only their verified fact.
+		if rec.Channel != codeChannelPhone {
+			return nil
+		}
+		var err error
+		loginMessage, err = s.recordLoginMessage(ctx, u.ID, rec.Code)
+		return err
+	}
+	u, err := s.signUpAccount(ctx, auth, phone, firstName, lastName, create, afterBind)
 	if err != nil {
 		return domain.User{}, domain.Message{}, err
+	}
+	return u, loginMessage, nil
+}
+
+// CreateAccountFunc 把新账号写入存储，返回带 ID 的用户。注册后半段的建号这一步由调用方
+// 提供：验证码注册是普通建号（外加写入已验证的登录邮箱），密码注册是"建号并写入登录密码"
+// 的单事务操作。号码已被占用时应返回 domain.ErrPhoneNumberOccupied。
+type CreateAccountFunc func(ctx context.Context, u domain.User) (domain.User, error)
+
+// NormalizeSignUpPhone 规范化并校验注册/登录用的手机号：格式不合法返回 ErrPhoneNumberInvalid，
+// 系统账号号段返回 ErrSystemUserLoginForbidden。规则与 auth.signUp 一致。
+func NormalizeSignUpPhone(phone string) (string, error) {
+	phone = normalizePhone(phone)
+	if !validPhone(phone) {
+		return "", ErrPhoneNumberInvalid
+	}
+	if systemLoginPhoneForbidden(phone) {
+		return "", ErrSystemUserLoginForbidden
+	}
+	return phone, nil
+}
+
+// NormalizeSignUpName 去掉名字首尾空白并校验：first_name 必填，两者各不超过 64 个字符，
+// 不合法返回 domain.ErrFirstNameInvalid。规则与 auth.signUp 一致。
+func NormalizeSignUpName(firstName, lastName string) (string, string, error) {
+	firstName = strings.TrimSpace(firstName)
+	lastName = strings.TrimSpace(lastName)
+	if firstName == "" || utf8.RuneCountInString(firstName) > 64 || utf8.RuneCountInString(lastName) > 64 {
+		return "", "", domain.ErrFirstNameInvalid
+	}
+	return firstName, lastName, nil
+}
+
+// SignUpWithAccountCreator 用调用方提供的建号步骤完成一次不经验证码的注册（密码注册），
+// 号码和名字按 auth.signUp 的规则校验。建号之后的流程与验证码注册完全一致：
+// 生成 access_hash、按配置赠送会员、绑定授权、写欢迎消息。
+func (s *Service) SignUpWithAccountCreator(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create CreateAccountFunc) (domain.User, error) {
+	if s == nil || create == nil {
+		return domain.User{}, errors.New("auth: sign up without account creator")
+	}
+	phone, err := NormalizeSignUpPhone(phone)
+	if err != nil {
+		return domain.User{}, err
+	}
+	firstName, lastName, err = NormalizeSignUpName(firstName, lastName)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return s.signUpAccount(ctx, auth, phone, firstName, lastName, create, nil)
+}
+
+// signUpAccount 是各条注册路径共用的后半段：生成 access_hash、按配置赠送会员、经 create
+// 建号、绑定授权，然后（afterBind 成功后）写欢迎消息。phone 和名字必须已经校验过。
+// afterBind 用于验证码注册在欢迎消息之前写入的 bootstrap 登录码消息，可以为 nil。
+func (s *Service) signUpAccount(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create CreateAccountFunc, afterBind func(context.Context, domain.User) error) (domain.User, error) {
+	accessHash, err := randomInt64()
+	if err != nil {
+		return domain.User{}, err
 	}
 	newUser := domain.User{
 		AccessHash: accessHash,
@@ -1251,30 +1329,20 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	if s.premiumGrantMonths > 0 {
 		newUser.PremiumUntil = int(time.Now().AddDate(0, s.premiumGrantMonths, 0).Unix())
 	}
-	u, err := s.users.Create(ctx, newUser)
+	u, err := create(ctx, newUser)
 	if err != nil {
-		return domain.User{}, domain.Message{}, err
-	}
-	if rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) != "" && s.loginEmails != nil {
-		if err := s.loginEmails.SetLoginEmail(ctx, u.ID, rec.PendingEmail); err != nil {
-			return domain.User{}, domain.Message{}, err
-		}
+		return domain.User{}, err
 	}
 	if err := s.bind(ctx, auth, u.ID); err != nil {
-		return domain.User{}, domain.Message{}, err
+		return domain.User{}, err
 	}
-	loginMessage := domain.Message{}
-	// A new account has no owner/dialog at issuance time. Only the development
-	// phone/App registration path creates its bootstrap 777000 message here;
-	// external SMS and email setup registration retain only their verified fact.
-	if rec.Channel == codeChannelPhone {
-		loginMessage, err = s.recordLoginMessage(ctx, u.ID, rec.Code)
-		if err != nil {
-			return domain.User{}, domain.Message{}, err
+	if afterBind != nil {
+		if err := afterBind(ctx, u); err != nil {
+			return domain.User{}, err
 		}
 	}
 	s.recordWelcomeMessage(ctx, u)
-	return u, loginMessage, nil
+	return u, nil
 }
 
 // SignInBot 处理 auth.importBotAuthorization：校验 bot token 并把当前 auth_key
