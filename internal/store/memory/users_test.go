@@ -5,7 +5,14 @@ import (
 	"testing"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/storetest"
 )
+
+func TestUserCreatePhoneConflicts(t *testing.T) {
+	storetest.UserCreatePhoneConflicts(t, func(t *testing.T) storetest.UserCreatePhoneFixture {
+		return storetest.UserCreatePhoneFixture{Store: NewUserStore(), Phone: "15550003390"}
+	})
+}
 
 func TestUserStoreUpdateColorRoundTrip(t *testing.T) {
 	ctx := context.Background()

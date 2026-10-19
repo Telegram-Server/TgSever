@@ -448,6 +448,9 @@ func signInErr(err error) error {
 		return tgerr.New(401, "AUTH_KEY_PERM_EMPTY")
 	case errors.Is(err, domain.ErrFirstNameInvalid):
 		return firstNameInvalidErr()
+	case errors.Is(err, domain.ErrPhoneNumberOccupied):
+		// 并发注册中后到的一方：号码在通过"无主"检查后被另一个请求抢先建号。
+		return phoneNumberOccupiedErr()
 	case errors.Is(err, domain.ErrSessionPasswordNeeded):
 		return sessionPasswordNeededErr()
 	default:
