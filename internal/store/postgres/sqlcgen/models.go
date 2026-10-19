@@ -2331,6 +2331,10 @@ type ScheduledMessage struct {
 	CreatedAt            int32
 	UpdatedAt            int32
 	GroupedID            int64
+	FwdChannelPost       int32
+	FwdSavedFromPeerType string
+	FwdSavedFromPeerID   int64
+	FwdSavedFromMsgID    int32
 }
 
 type SecretChat struct {

@@ -68,6 +68,16 @@ func (r *Router) sendAsPeerFromInput(ctx context.Context, userID int64, to domai
 	if err != nil {
 		return nil, sendAsPeerInvalidErr()
 	}
+	return r.checkSendAsPeer(ctx, userID, to, sendAs)
+}
+
+// checkSendAsPeer 按当前权限校验 userID 能否在 to 里以 sendAs 身份发言，返回实际写入消息的
+// send_as（以自己在群里发言为 nil）。立即发送解析客户端输入后走这里；定时消息到点发出时用
+// 排程时保存的 send_as 再走一次，权限在排程之后被收回的同样拒绝。
+func (r *Router) checkSendAsPeer(ctx context.Context, userID int64, to, sendAs domain.Peer) (*domain.Peer, error) {
+	if to.Type != domain.PeerTypeChannel {
+		return nil, sendAsPeerInvalidErr()
+	}
 	switch sendAs.Type {
 	case domain.PeerTypeUser:
 		if sendAs.ID != userID {

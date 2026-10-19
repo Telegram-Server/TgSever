@@ -45,6 +45,9 @@ type outgoingSend struct {
 	// groupedID 是相册分组 id：sendMultiMedia 同组各条共享一个非零值（客户端据此渲染
 	// 成一个相册组）；单条发送恒 0。
 	groupedID int64
+	// forward 是转发头：仅定时转发到点发出时非 nil（排程时已按源消息与 drop_author 定好），
+	// 立即转发走 messages.forwardMessages 自己的发送路径。
+	forward *domain.MessageForward
 	// effect 是消息特效 id（私聊专属，0 表无特效）。调用方已对 catalog 校验合法性；
 	// 频道侧忽略（官方群/频道不渲染特效）。
 	effect         int64
@@ -93,6 +96,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			Silent:                 p.silent,
 			NoForwards:             p.noforwards,
 			ReplyTo:                replyTo,
+			Forward:                p.forward,
 			ViaBotID:               p.viaBotID,
 			GroupedID:              p.groupedID,
 			ReplyMarkup:            p.replyMarkup,
@@ -178,6 +182,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		Silent:                 p.silent,
 		NoForwards:             p.noforwards,
 		ReplyTo:                replyTo,
+		Forward:                p.forward,
 		Date:                   int(r.clock.Now().Unix()),
 		OriginAuthKeyID:        authKeyID,
 		OriginSessionID:        sessionID,

@@ -461,9 +461,16 @@ func TestSendPaidMonoforumMessageLedgerPostgres(t *testing.T) {
 	}
 	monoID := enabled.Channel.LinkedMonoforumID
 	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM channel_stars_balances WHERE channel_id = ANY($1::bigint[])", []int64{broadcast.Channel.ID, monoID})
 		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", []int64{broadcast.Channel.ID, monoID})
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, sub.ID, other.ID})
 	})
+	// 频道 id 可能复用上一轮已删除频道的 id，而 channel_stars_balances 不随频道删除；
+	// 频道余额一律按本测试开始前的基线断言增量，同一库重复运行也成立。
+	var channelBase int64
+	if err := pool.QueryRow(ctx, `SELECT COALESCE((SELECT balance FROM channel_stars_balances WHERE channel_id=$1), 0)`, broadcast.Channel.ID).Scan(&channelBase); err != nil {
+		t.Fatalf("load channel balance baseline: %v", err)
+	}
 	stars := NewStarsStore(pool)
 	if _, _, err := stars.EnsureGrant(ctx, sub.ID, 25, 1700002000); err != nil {
 		t.Fatalf("grant subscriber stars: %v", err)
@@ -504,8 +511,8 @@ func TestSendPaidMonoforumMessageLedgerPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT paid_message_stars FROM channel_messages WHERE channel_id=$1 AND id=$2`, monoID, paid.Message.ID).Scan(&persistedPaid); err != nil {
 		t.Fatalf("load persisted paid stars: %v", err)
 	}
-	if senderBalance != 15 || channelBalance != 8 || persistedPaid != 10 {
-		t.Fatalf("persisted sender/channel/message = %d/%d/%d, want 15/8/10", senderBalance, channelBalance, persistedPaid)
+	if senderBalance != 15 || channelBalance-channelBase != 8 || persistedPaid != 10 {
+		t.Fatalf("persisted sender/channel delta/message = %d/%d/%d, want 15/8/10", senderBalance, channelBalance-channelBase, persistedPaid)
 	}
 
 	replay, err := channels.SendMonoforumMessage(ctx, paidReq)
@@ -518,8 +525,8 @@ func TestSendPaidMonoforumMessageLedgerPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT balance FROM stars_balances WHERE user_id=$1`, sub.ID).Scan(&senderBalance); err != nil || senderBalance != 15 {
 		t.Fatalf("paid replay sender balance = %d/%v, want 15", senderBalance, err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT balance FROM channel_stars_balances WHERE channel_id=$1`, broadcast.Channel.ID).Scan(&channelBalance); err != nil || channelBalance != 8 {
-		t.Fatalf("paid replay channel balance = %d/%v, want 8", channelBalance, err)
+	if err := pool.QueryRow(ctx, `SELECT balance FROM channel_stars_balances WHERE channel_id=$1`, broadcast.Channel.ID).Scan(&channelBalance); err != nil || channelBalance-channelBase != 8 {
+		t.Fatalf("paid replay channel balance delta = %d/%v, want 8", channelBalance-channelBase, err)
 	}
 
 	admin, err := channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{
@@ -542,7 +549,7 @@ func TestSendPaidMonoforumMessageLedgerPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT balance FROM stars_balances WHERE user_id=$1`, other.ID).Scan(&otherBalance); err != nil || otherBalance != 5 {
 		t.Fatalf("insufficient sender balance = %d/%v, want 5", otherBalance, err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT balance FROM channel_stars_balances WHERE channel_id=$1`, broadcast.Channel.ID).Scan(&channelBalance); err != nil || channelBalance != 8 {
-		t.Fatalf("insufficient channel balance = %d/%v, want 8", channelBalance, err)
+	if err := pool.QueryRow(ctx, `SELECT balance FROM channel_stars_balances WHERE channel_id=$1`, broadcast.Channel.ID).Scan(&channelBalance); err != nil || channelBalance-channelBase != 8 {
+		t.Fatalf("insufficient channel balance delta = %d/%v, want 8", channelBalance-channelBase, err)
 	}
 }
