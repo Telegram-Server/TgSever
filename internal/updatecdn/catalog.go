@@ -3,6 +3,7 @@
 package updatecdn
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -37,9 +38,10 @@ type Manifest struct {
 	Apps          map[string]map[string]ApplicationRelease `json:"apps,omitempty"`
 }
 
-// DesktopRelease points at a package produced by TDesktop's Packer target.
-// The package has its own client-verified RSA signature; SHA256 additionally
-// prevents publishing a truncated or accidentally replaced file.
+// DesktopRelease points at a v2 package produced by TDesktop's Packer target.
+// The package is verified at load time exactly as the client verifies it
+// (see VerifyDesktopPackage); SHA256 additionally pins the published bytes so
+// the file cannot be swapped for another validly signed package.
 type DesktopRelease struct {
 	Build    uint64 `json:"build"`
 	Version  string `json:"version,omitempty"`
@@ -85,6 +87,24 @@ type fileRecord struct {
 	sha256  string
 	size    int64
 	modTime time.Time
+	pkg     VerifiedPackage
+}
+
+// CatalogOptions 是清单加载（LoadCatalog / NewStore）的可选参数。
+type CatalogOptions struct {
+	// RootPublicKey 是更新根公钥（Ed25519，见 LoadRootPublicKey），用于验证每个启用的
+	// 桌面包。清单中有启用的桌面条目而它为空时加载失败；只有移动端条目或停用的桌面
+	// 草稿时可以为空。
+	RootPublicKey ed25519.PublicKey
+	// Now 返回判断签名密钥是否过期所用的当前时间，为空时使用 time.Now。
+	Now func() time.Time
+}
+
+func (o CatalogOptions) now() time.Time {
+	if o.Now != nil {
+		return o.Now()
+	}
+	return time.Now()
 }
 
 // Catalog is an immutable, validated manifest snapshot.
@@ -95,8 +115,10 @@ type Catalog struct {
 
 // LoadCatalog parses and fully validates a manifest and all enabled desktop
 // packages. Unknown JSON fields fail closed so operator typos cannot silently
-// publish an incomplete update.
-func LoadCatalog(manifestPath, filesDir string) (*Catalog, error) {
+// publish an incomplete update. Every enabled desktop package must pass v2
+// verification against opts.RootPublicKey and match its entry's platform,
+// channel and build.
+func LoadCatalog(manifestPath, filesDir string, opts CatalogOptions) (*Catalog, error) {
 	f, err := os.Open(manifestPath)
 	if err != nil {
 		return nil, fmt.Errorf("open manifest: %w", err)
@@ -122,7 +144,7 @@ func LoadCatalog(manifestPath, filesDir string) (*Catalog, error) {
 	}
 
 	catalog := &Catalog{manifest: manifest, files: make(map[string]fileRecord)}
-	if err := catalog.validateDesktop(filesDir); err != nil {
+	if err := catalog.validateDesktop(filesDir, opts); err != nil {
 		return nil, err
 	}
 	if err := catalog.validateApps(); err != nil {
@@ -141,7 +163,8 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 	return fmt.Errorf("manifest contains more than one JSON value")
 }
 
-func (c *Catalog) validateDesktop(filesDir string) error {
+func (c *Catalog) validateDesktop(filesDir string, opts CatalogOptions) error {
+	now := opts.now()
 	for platform, channels := range c.manifest.Desktop {
 		if !validDesktopPlatform(platform) {
 			return fmt.Errorf("desktop platform %q is unsupported", platform)
@@ -166,19 +189,25 @@ func (c *Catalog) validateDesktop(filesDir string) error {
 			if !sha256RE.MatchString(release.SHA256) {
 				return fmt.Errorf("%s.sha256 must contain 64 hexadecimal characters", prefix)
 			}
-			if existing, ok := c.files[release.File]; ok {
-				if !strings.EqualFold(existing.sha256, release.SHA256) {
+			if len(opts.RootPublicKey) == 0 {
+				return fmt.Errorf("%s: an update root public key is required to verify desktop packages (TELESRV_UPDATE_ROOT_PUBLIC_KEY)", prefix)
+			}
+			record, ok := c.files[release.File]
+			if ok {
+				if !strings.EqualFold(record.sha256, release.SHA256) {
 					return fmt.Errorf("%s.file %q is reused with another SHA256", prefix, release.File)
 				}
-				continue
+			} else {
+				var err error
+				record, err = verifyDesktopFile(filepath.Join(filesDir, release.File), release, opts.RootPublicKey, now)
+				if err != nil {
+					return fmt.Errorf("%s: %w", prefix, err)
+				}
+				c.files[release.File] = record
 			}
-
-			path := filepath.Join(filesDir, release.File)
-			record, err := verifyDesktopFile(path, release)
-			if err != nil {
+			if err := matchDesktopPackage(platform, channel, release, record.pkg); err != nil {
 				return fmt.Errorf("%s: %w", prefix, err)
 			}
-			c.files[release.File] = record
 		}
 	}
 	return nil
@@ -208,7 +237,22 @@ func validateDesktopFileName(platform, channel string, release DesktopRelease) e
 	return nil
 }
 
-func verifyDesktopFile(path string, release DesktopRelease) (fileRecord, error) {
+// matchDesktopPackage 核对已验签包内声明的目标、通道与版本和清单条目一致：
+// 改名伪装成其他平台或通道的包、版本与 /current4 宣告的 build 不符的包都被拒绝。
+func matchDesktopPackage(platform, channel string, release DesktopRelease, pkg VerifiedPackage) error {
+	if target, want := pkg.Target.String(), desktopPlatformTargets[platform]; target != want {
+		return fmt.Errorf("package %q targets %s, want %s for platform %s", release.File, target, want, platform)
+	}
+	if pkg.Channel.String() != channel {
+		return fmt.Errorf("package %q channel %s, want %s", release.File, pkg.Channel, channel)
+	}
+	if base := uint64(pkg.Base()); base != release.Build {
+		return fmt.Errorf("package %q version base %d, want build %d", release.File, base, release.Build)
+	}
+	return nil
+}
+
+func verifyDesktopFile(path string, release DesktopRelease, root ed25519.PublicKey, now time.Time) (fileRecord, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return fileRecord{}, fmt.Errorf("open package %q: %w", release.File, err)
@@ -225,13 +269,26 @@ func verifyDesktopFile(path string, release DesktopRelease) (fileRecord, error) 
 	if release.Size > 0 && release.Size != info.Size() {
 		return fileRecord{}, fmt.Errorf("package %q size = %d, want %d", release.File, info.Size(), release.Size)
 	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, f); err != nil {
-		return fileRecord{}, fmt.Errorf("hash package %q: %w", release.File, err)
+	if info.Size() > MaxDesktopPackageSize {
+		return fileRecord{}, fmt.Errorf("package %q size %d exceeds the v2 package limit of %d bytes", release.File, info.Size(), int64(MaxDesktopPackageSize))
 	}
-	actual := hex.EncodeToString(hash.Sum(nil))
+	// 验签需要整个包在内存中（签名输入包含负载的 SHA256，清单在包内），上限由
+	// MaxDesktopPackageSize 保证；多读一个字节用来发现文件在 Stat 之后被追加。
+	data, err := io.ReadAll(io.LimitReader(f, MaxDesktopPackageSize+1))
+	if err != nil {
+		return fileRecord{}, fmt.Errorf("read package %q: %w", release.File, err)
+	}
+	if int64(len(data)) != info.Size() {
+		return fileRecord{}, fmt.Errorf("package %q changed while it was being read", release.File)
+	}
+	hash := sha256.Sum256(data)
+	actual := hex.EncodeToString(hash[:])
 	if !strings.EqualFold(actual, release.SHA256) {
 		return fileRecord{}, fmt.Errorf("package %q SHA256 = %s, want %s", release.File, actual, strings.ToLower(release.SHA256))
+	}
+	pkg, err := VerifyDesktopPackage(data, root, now)
+	if err != nil {
+		return fileRecord{}, fmt.Errorf("package %q: %w", release.File, err)
 	}
 	return fileRecord{
 		path:    path,
@@ -239,6 +296,7 @@ func verifyDesktopFile(path string, release DesktopRelease) (fileRecord, error) 
 		sha256:  actual,
 		size:    info.Size(),
 		modTime: info.ModTime(),
+		pkg:     pkg,
 	}, nil
 }
 

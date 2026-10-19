@@ -19,7 +19,7 @@ func TestHandlerServesCurrentResolveAndRange(t *testing.T) {
 	if err := os.Mkdir(filesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	packageData := []byte("0123456789abcdef")
+	packageData := testDesktopPackage(t, "win64", "stable", 7007000)
 	packageName := "td-update-win-x64-7007000"
 	if err := os.WriteFile(filepath.Join(filesDir, packageName), packageData, 0o600); err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestHandlerServesCurrentResolveAndRange(t *testing.T) {
 			"ios": {"stable": {ID: 8, Version: "12.9.1", URL: "https://apps.apple.com/app/id1", Notes: map[string]string{"en": "Update available"}}},
 		},
 	})
-	store, err := NewStore(manifestPath, filesDir)
+	store, err := NewStore(manifestPath, filesDir, testCatalogOptions(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestHandlerServesCurrentResolveAndRange(t *testing.T) {
 	}
 	rangeBody, _ := io.ReadAll(rangeResp.Body)
 	rangeResp.Body.Close()
-	if rangeResp.StatusCode != http.StatusPartialContent || string(rangeBody) != "2345" {
+	if rangeResp.StatusCode != http.StatusPartialContent || string(rangeBody) != string(packageData[2:6]) {
 		t.Fatalf("range = %d %q", rangeResp.StatusCode, rangeBody)
 	}
 }

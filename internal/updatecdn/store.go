@@ -12,6 +12,7 @@ import (
 type Store struct {
 	manifestPath string
 	filesDir     string
+	opts         CatalogOptions
 
 	mu       sync.RWMutex
 	catalog  *Catalog
@@ -19,8 +20,10 @@ type Store struct {
 	fileSize int64
 }
 
-func NewStore(manifestPath, filesDir string) (*Store, error) {
-	store := &Store{manifestPath: manifestPath, filesDir: filesDir}
+// NewStore loads the catalog once and reloads it with the same opts (including
+// the update root public key) whenever the manifest changes.
+func NewStore(manifestPath, filesDir string, opts CatalogOptions) (*Store, error) {
+	store := &Store{manifestPath: manifestPath, filesDir: filesDir, opts: opts}
 	if _, err := store.Snapshot(); err != nil {
 		return nil, err
 	}
@@ -49,7 +52,7 @@ func (s *Store) Snapshot() (*Catalog, error) {
 	if s.catalog != nil && info.ModTime().Equal(s.modTime) && info.Size() == s.fileSize {
 		return s.catalog, nil
 	}
-	catalog, err := LoadCatalog(s.manifestPath, s.filesDir)
+	catalog, err := LoadCatalog(s.manifestPath, s.filesDir, s.opts)
 	if err != nil {
 		return nil, err
 	}

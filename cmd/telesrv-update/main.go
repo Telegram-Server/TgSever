@@ -34,10 +34,21 @@ func run() error {
 	listenAddr := flag.String("listen", listenDefault, "HTTP listen address")
 	manifestPath := flag.String("manifest", manifestDefault, "release manifest path")
 	filesDir := flag.String("files", filesDefault, "desktop update package directory")
+	rootKeyPath := flag.String("root-public-key", os.Getenv("TELESRV_UPDATE_ROOT_PUBLIC_KEY"),
+		"update root public key PEM file (Ed25519); required when the manifest has enabled desktop entries")
 	check := flag.Bool("check", false, "validate the catalog and exit")
 	flag.Parse()
 
-	store, err := updatecdn.NewStore(*manifestPath, *filesDir)
+	// 未配置根公钥时仍可只提供移动端条目；一旦清单有启用的桌面条目，加载会失败。
+	var opts updatecdn.CatalogOptions
+	if *rootKeyPath != "" {
+		rootKey, err := updatecdn.LoadRootPublicKey(*rootKeyPath)
+		if err != nil {
+			return err
+		}
+		opts.RootPublicKey = rootKey
+	}
+	store, err := updatecdn.NewStore(*manifestPath, *filesDir, opts)
 	if err != nil {
 		return fmt.Errorf("load update catalog: %w", err)
 	}
@@ -76,7 +87,8 @@ func run() error {
 	logger.Info("update service started",
 		zap.String("listen", listener.Addr().String()),
 		zap.String("manifest", *manifestPath),
-		zap.String("files", *filesDir))
+		zap.String("files", *filesDir),
+		zap.String("root_public_key", *rootKeyPath))
 
 	stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -1,13 +1,17 @@
 package updatecdn
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCatalogDesktopMapAndResolve(t *testing.T) {
@@ -16,7 +20,7 @@ func TestCatalogDesktopMapAndResolve(t *testing.T) {
 	if err := os.Mkdir(filesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	packageData := []byte("signed-tdesktop-update-package")
+	packageData := testDesktopPackage(t, "win64", "stable", 7007000)
 	packageName := "td-update-win-x64-7007000"
 	if err := os.WriteFile(filepath.Join(filesDir, packageName), packageData, 0o600); err != nil {
 		t.Fatal(err)
@@ -39,7 +43,7 @@ func TestCatalogDesktopMapAndResolve(t *testing.T) {
 		},
 	}
 	manifestPath := writeTestManifest(t, dir, manifest)
-	catalog, err := LoadCatalog(manifestPath, filesDir)
+	catalog, err := LoadCatalog(manifestPath, filesDir, testCatalogOptions(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +76,8 @@ func TestLoadCatalogRejectsPackageHashMismatch(t *testing.T) {
 	if err := os.Mkdir(filesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(filesDir, "td-update-win-x64-7007000"), []byte("package"), 0o600); err != nil {
+	data := testDesktopPackage(t, "win64", "stable", 7007000)
+	if err := os.WriteFile(filepath.Join(filesDir, "td-update-win-x64-7007000"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manifestPath := writeTestManifest(t, dir, Manifest{
@@ -81,9 +86,21 @@ func TestLoadCatalogRejectsPackageHashMismatch(t *testing.T) {
 			"win64": {"stable": {Build: 7007000, File: "td-update-win-x64-7007000", SHA256: strings.Repeat("0", 64)}},
 		},
 	})
-	if _, err := LoadCatalog(manifestPath, filesDir); err == nil {
-		t.Fatal("hash mismatch accepted")
-	}
+	_, err := LoadCatalog(manifestPath, filesDir, testCatalogOptions(t))
+	assertLoadError(t, err, "SHA256 = ")
+}
+
+func TestLoadCatalogRejectsPackageSizeMismatch(t *testing.T) {
+	data := testDesktopPackage(t, "win64", "stable", 7007000)
+	release := DesktopRelease{Build: 7007000, File: "td-update-win-x64-7007000", Size: int64(len(data)) + 1}
+	err := loadDesktopPackage(t, "win64", "stable", release, data, testCatalogOptions(t))
+	assertLoadError(t, err, fmt.Sprintf("size = %d, want %d", len(data), len(data)+1))
+}
+
+// testCatalogOptions 返回带测试根公钥的加载选项。
+func testCatalogOptions(t *testing.T) CatalogOptions {
+	t.Helper()
+	return CatalogOptions{RootPublicKey: testKeys(t).rootPub, Now: func() time.Time { return testNow }}
 }
 
 func writeTestManifest(t *testing.T, dir string, manifest Manifest) string {
@@ -99,9 +116,17 @@ func writeTestManifest(t *testing.T, dir string, manifest Manifest) string {
 	return path
 }
 
-// loadDesktopEntry 写入只含单个桌面条目的清单和对应包文件，返回 LoadCatalog 的结果。
-// 启用条目的 SHA256 与大小按写入的包内容自动填写。
+// loadDesktopEntry 写入只含单个桌面条目的清单和一个与该条目（平台、通道、build）
+// 一致的合法签名包，用测试根公钥加载并返回 LoadCatalog 的结果。
 func loadDesktopEntry(t *testing.T, platform, channel string, release DesktopRelease) error {
+	t.Helper()
+	data := testDesktopPackage(t, platform, channel, release.Build)
+	return loadDesktopPackage(t, platform, channel, release, data, testCatalogOptions(t))
+}
+
+// loadDesktopPackage 写入只含单个桌面条目的清单和给定内容的包文件，按 opts 加载。
+// 启用条目的 SHA256 按包内容自动填写，大小未指定时也自动填写。
+func loadDesktopPackage(t *testing.T, platform, channel string, release DesktopRelease, data []byte, opts CatalogOptions) error {
 	t.Helper()
 	dir := t.TempDir()
 	filesDir := filepath.Join(dir, "files")
@@ -109,19 +134,20 @@ func loadDesktopEntry(t *testing.T, platform, channel string, release DesktopRel
 		t.Fatal(err)
 	}
 	if !release.Disabled {
-		data := []byte("package-" + release.File)
 		if err := os.WriteFile(filepath.Join(filesDir, release.File), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		hash := sha256.Sum256(data)
 		release.SHA256 = hex.EncodeToString(hash[:])
-		release.Size = int64(len(data))
+		if release.Size == 0 {
+			release.Size = int64(len(data))
+		}
 	}
 	manifestPath := writeTestManifest(t, dir, Manifest{
 		SchemaVersion: ManifestSchemaVersion,
 		Desktop:       map[string]map[string]DesktopRelease{platform: {channel: release}},
 	})
-	_, err := LoadCatalog(manifestPath, filesDir)
+	_, err := LoadCatalog(manifestPath, filesDir, opts)
 	return err
 }
 
@@ -286,7 +312,8 @@ func TestLoadCatalogDisabledDesktopEntrySkipsFileNameRules(t *testing.T) {
 // 示例清单是运营者复制的起点：原样必须能加载，桌面条目启用后也必须满足 v2 规则。
 func TestExampleManifestFollowsV2Contract(t *testing.T) {
 	examplePath := filepath.Join("..", "..", "deploy", "update", "manifest.example.json")
-	if _, err := LoadCatalog(examplePath, t.TempDir()); err != nil {
+	// 示例里的桌面条目是停用的草稿，原样加载不需要根公钥。
+	if _, err := LoadCatalog(examplePath, t.TempDir(), CatalogOptions{}); err != nil {
 		t.Fatalf("example manifest: %v", err)
 	}
 	data, err := os.ReadFile(examplePath)
@@ -318,7 +345,128 @@ func TestLoadCatalogAppsKeepAlphaChannel(t *testing.T) {
 			"android": {"alpha": {ID: 1, Version: "12.9.1", Notes: map[string]string{"en": "New version"}}},
 		},
 	})
-	if _, err := LoadCatalog(manifestPath, dir); err != nil {
+	if _, err := LoadCatalog(manifestPath, dir, CatalogOptions{}); err != nil {
 		t.Fatalf("apps alpha channel rejected: %v", err)
+	}
+}
+
+func TestLoadCatalogVerifiesDesktopPackages(t *testing.T) {
+	keys := testKeys(t)
+	otherRoot, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const build = 7000007
+	tests := []struct {
+		name     string
+		platform string
+		channel  string
+		file     string
+		data     func(t *testing.T) []byte
+		opts     func(t *testing.T) CatalogOptions
+		wantErr  string
+	}{
+		{name: "matching stable package", platform: "linux", channel: "stable", file: "td-update-linux-x64-7000007",
+			data: func(t *testing.T) []byte { return testDesktopPackage(t, "linux", "stable", build) }},
+		{name: "matching beta package", platform: "winarm", channel: "beta", file: "td-update-win-arm-7000007-beta",
+			data: func(t *testing.T) []byte { return testDesktopPackage(t, "winarm", "beta", build) }},
+		{name: "beta build with a non-zero counter", platform: "win64", channel: "beta", file: "td-update-win-x64-7000007-beta",
+			data: func(t *testing.T) []byte {
+				return buildTestPackage(t, func(s *testPackageSpec) { s.channel = 1; s.version = build<<32 | 2 })
+			}},
+		{name: "not a v2 package", platform: "win64", channel: "stable", file: "td-update-win-x64-7000007",
+			data:    func(t *testing.T) []byte { return []byte("TDU1-legacy-rsa-package") },
+			wantErr: "desktop.win64.stable: package \"td-update-win-x64-7000007\": v2 package: bad magic"},
+		{name: "signed under another root key", platform: "win64", channel: "stable", file: "td-update-win-x64-7000007",
+			data: func(t *testing.T) []byte { return testDesktopPackage(t, "win64", "stable", build) },
+			opts: func(t *testing.T) CatalogOptions {
+				return CatalogOptions{RootPublicKey: otherRoot}
+			},
+			wantErr: "desktop.win64.stable: package \"td-update-win-x64-7000007\": v2 package: bad manifest root signature"},
+		{name: "package signature missing", platform: "win64", channel: "stable", file: "td-update-win-x64-7000007",
+			data: func(t *testing.T) []byte {
+				return buildTestPackage(t, func(s *testPackageSpec) { s.signers = []testSigner{keys.ed2} })
+			},
+			wantErr: "no valid signature for stable signing group 1"},
+		{name: "renamed package for another target", platform: "win64", channel: "stable", file: "td-update-win-x64-7000007",
+			data:    func(t *testing.T) []byte { return testDesktopPackage(t, "win", "stable", build) },
+			wantErr: "desktop.win64.stable: package \"td-update-win-x64-7000007\" targets win-x86, want win-x64"},
+		{name: "renamed package for another os", platform: "mac", channel: "stable", file: "td-update-mac-x64-7000007",
+			data:    func(t *testing.T) []byte { return testDesktopPackage(t, "linux", "stable", build) },
+			wantErr: "targets linux-x64, want mac-x64"},
+		{name: "stable package on the beta channel", platform: "linux", channel: "beta", file: "td-update-linux-x64-7000007-beta",
+			data:    func(t *testing.T) []byte { return testDesktopPackage(t, "linux", "stable", build) },
+			wantErr: "desktop.linux.beta: package \"td-update-linux-x64-7000007-beta\" channel stable, want beta"},
+		{name: "beta package on the stable channel", platform: "linux", channel: "stable", file: "td-update-linux-x64-7000007",
+			data:    func(t *testing.T) []byte { return testDesktopPackage(t, "linux", "beta", build) },
+			wantErr: "channel beta, want stable"},
+		{name: "canary package on the stable channel", platform: "linux", channel: "stable", file: "td-update-linux-x64-7000007",
+			data: func(t *testing.T) []byte {
+				return buildTestPackage(t, func(s *testPackageSpec) {
+					s.manifestDoc["channels"] = map[string]any{"canary-public": []any{[]any{"ed-test"}}}
+					s.channel, s.os = 2, 2
+					s.version = build<<32 | 7
+				})
+			},
+			wantErr: "channel canary-public, want stable"},
+		{name: "package version base differs from build", platform: "armac", channel: "stable", file: "td-update-mac-arm-7000007",
+			data:    func(t *testing.T) []byte { return testDesktopPackage(t, "armac", "stable", build+1) },
+			wantErr: "desktop.armac.stable: package \"td-update-mac-arm-7000007\" version base 7000008, want build 7000007"},
+		{name: "expired signing key", platform: "win64", channel: "stable", file: "td-update-win-x64-7000007",
+			data: func(t *testing.T) []byte {
+				return buildTestPackage(t, func(s *testPackageSpec) {
+					s.version = build << 32
+					setKeyField(s, "ed-test", "expires", testNow.Unix()-1)
+				})
+			},
+			wantErr: "no valid signature"},
+		{name: "missing root key", platform: "win64", channel: "stable", file: "td-update-win-x64-7000007",
+			data:    func(t *testing.T) []byte { return testDesktopPackage(t, "win64", "stable", build) },
+			opts:    func(t *testing.T) CatalogOptions { return CatalogOptions{} },
+			wantErr: "desktop.win64.stable: an update root public key is required to verify desktop packages"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := testCatalogOptions(t)
+			if tt.opts != nil {
+				opts = tt.opts(t)
+			}
+			release := DesktopRelease{Build: build, File: tt.file}
+			err := loadDesktopPackage(t, tt.platform, tt.channel, release, tt.data(t), opts)
+			assertLoadError(t, err, tt.wantErr)
+		})
+	}
+}
+
+// 没有启用的桌面条目时不需要根公钥：只发布移动端或只有停用草稿的部署照常加载。
+func TestLoadCatalogWithoutRootKeyAllowsNoEnabledDesktopEntries(t *testing.T) {
+	err := loadDesktopPackage(t, "win64", "stable",
+		DesktopRelease{Build: 7000007, File: "td-update-win-x64-7000007", Disabled: true}, nil, CatalogOptions{})
+	assertLoadError(t, err, "")
+}
+
+func TestStoreUsesCatalogOptions(t *testing.T) {
+	dir := t.TempDir()
+	filesDir := filepath.Join(dir, "files")
+	if err := os.Mkdir(filesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := testDesktopPackage(t, "win64", "stable", 7000007)
+	if err := os.WriteFile(filepath.Join(filesDir, "td-update-win-x64-7000007"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(data)
+	manifestPath := writeTestManifest(t, dir, Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		Desktop: map[string]map[string]DesktopRelease{
+			"win64": {"stable": {Build: 7000007, File: "td-update-win-x64-7000007", SHA256: hex.EncodeToString(hash[:])}},
+		},
+	})
+	if _, err := NewStore(manifestPath, filesDir, CatalogOptions{}); err == nil ||
+		!strings.Contains(err.Error(), "update root public key is required") {
+		t.Fatalf("NewStore() without root key error = %v", err)
+	}
+	if _, err := NewStore(manifestPath, filesDir, testCatalogOptions(t)); err != nil {
+		t.Fatalf("NewStore() with root key error = %v", err)
 	}
 }
