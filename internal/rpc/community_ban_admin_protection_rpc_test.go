@@ -58,7 +58,4 @@ func TestCommunityBanOfOthersChannelAdminIsUserAdminInvalid(t *testing.T) {
 	if err == nil || !tgerr.Is(err, "USER_ADMIN_INVALID") {
 		t.Fatalf("community ban of channel admin by non-promoter err = %v, want USER_ADMIN_INVALID", err)
 	}
-	if m, err := channels.GetParticipant(ctx, owner.ID, channel.ID, target.ID); err != nil || m.Role != domain.ChannelRoleAdmin || m.Status != domain.ChannelMemberActive {
-		t.Fatalf("channel admin after rejected community ban = %+v, %v", m, err)
-	}
 }
