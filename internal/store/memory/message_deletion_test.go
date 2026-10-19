@@ -1,14 +1,17 @@
 package memory_test
 
 import (
+	"testing"
+
 	"telesrv/internal/store/memory"
 	"telesrv/internal/store/storetest"
-	"testing"
 )
 
 func TestMessageDeletions(t *testing.T) {
-	deletions := memory.NewMessageDeletionStore()
-	messages := memory.NewMessageStore(memory.NewDialogStore())
-	messages.AttachDeletionStore(deletions)
-	storetest.MessageDeletions(t, messages, deletions, 101, 102)
+	storetest.MessageDeletions(t, func(t *testing.T) storetest.MessageDeletionFixture {
+		deletions := memory.NewMessageDeletionStore()
+		messages := memory.NewMessageStore(memory.NewDialogStore())
+		messages.AttachDeletionStore(deletions)
+		return storetest.MessageDeletionFixture{Messages: messages, Deletions: deletions, Sender: 101, Recipient: 102}
+	})
 }

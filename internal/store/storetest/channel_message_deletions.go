@@ -8,61 +8,91 @@ import (
 	"telesrv/internal/store"
 )
 
+// ChannelMessageDeletionFixture 是新建的群主、成员与对应的存储；每个子测试各要一份。
+type ChannelMessageDeletionFixture struct {
+	Channels      store.ChannelStore
+	Deletions     store.MessageDeletionStore
+	Owner, Member int64
+}
+
 // ChannelMessageDeletions 校验两种实现对群/频道删除记录的同一契约：群消息没有
-// 逐人副本，每条被删消息留一行，范围是 everyone，peer 是频道本身。
-func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletions store.MessageDeletionStore, owner, member int64) {
+// 逐人副本，每条被删消息留一行，范围是 everyone，peer 是频道本身。每个子测试经
+// newFixture 取得自己的用户并新建自己的群，可以单独运行。
+func ChannelMessageDeletions(t *testing.T, newFixture func(t *testing.T) ChannelMessageDeletionFixture) {
 	t.Helper()
 	ctx := context.Background()
 	now := baseNow()
-	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
-		CreatorUserID: owner,
-		Title:         "Deletion log contract",
-		Megagroup:     true,
-		MemberUserIDs: []int64{member},
-		Date:          now,
-	})
-	if err != nil {
-		t.Fatalf("CreateChannel: %v", err)
+	type env struct {
+		ChannelMessageDeletionFixture
+		channel     domain.Channel
+		channelPeer domain.Peer
+		nextRandom  func() int64
+		send        func(t *testing.T, from int64, body string) domain.ChannelMessage
+		list        func(t *testing.T, filter domain.MessageDeletionFilter) []domain.MessageDeletion
+		latest      func(t *testing.T, actor int64) []domain.MessageDeletion
 	}
-	channel := created.Channel
-	channelPeer := domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}
-	nextRandom := int64(now) * 10
-	send := func(t *testing.T, from int64, body string) domain.ChannelMessage {
+	setup := func(t *testing.T) env {
 		t.Helper()
-		nextRandom++
-		res, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
-			UserID:    from,
-			ChannelID: channel.ID,
-			RandomID:  nextRandom,
-			Message:   body,
-			Date:      now,
+		f := newFixture(t)
+		created, err := f.Channels.CreateChannel(ctx, domain.CreateChannelRequest{
+			CreatorUserID: f.Owner,
+			Title:         "Deletion log contract",
+			Megagroup:     true,
+			MemberUserIDs: []int64{f.Member},
+			Date:          now,
 		})
 		if err != nil {
-			t.Fatalf("SendChannelMessage: %v", err)
+			t.Fatalf("CreateChannel: %v", err)
 		}
-		return res.Message
-	}
-	latest := func(t *testing.T, actor int64) []domain.MessageDeletion {
-		t.Helper()
-		got, err := deletions.ListMessageDeletions(ctx, domain.MessageDeletionFilter{ActorUserID: actor, Limit: 50})
-		if err != nil {
-			t.Fatalf("ListMessageDeletions: %v", err)
+		e := env{ChannelMessageDeletionFixture: f, channel: created.Channel, channelPeer: domain.Peer{Type: domain.PeerTypeChannel, ID: created.Channel.ID}}
+		random := int64(deletionRandomBase)
+		e.nextRandom = func() int64 {
+			random++
+			return random
 		}
-		return latestBatch(got)
+		e.send = func(t *testing.T, from int64, body string) domain.ChannelMessage {
+			t.Helper()
+			res, err := f.Channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+				UserID:    from,
+				ChannelID: e.channel.ID,
+				RandomID:  e.nextRandom(),
+				Message:   body,
+				Date:      now,
+			})
+			if err != nil {
+				t.Fatalf("SendChannelMessage: %v", err)
+			}
+			return res.Message
+		}
+		e.list = func(t *testing.T, filter domain.MessageDeletionFilter) []domain.MessageDeletion {
+			t.Helper()
+			got, err := f.Deletions.ListMessageDeletions(ctx, filter)
+			if err != nil {
+				t.Fatalf("ListMessageDeletions: %v", err)
+			}
+			return got
+		}
+		e.latest = func(t *testing.T, actor int64) []domain.MessageDeletion {
+			t.Helper()
+			return latestBatch(e.list(t, domain.MessageDeletionFilter{ActorUserID: actor, Limit: 50}))
+		}
+		return e
 	}
 
 	t.Run("a member deleting their own message records one row for everyone", func(t *testing.T) {
-		msg := send(t, member, "my mistake")
-		if _, err := channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
+		e := setup(t)
+		member := e.Member
+		msg := e.send(t, member, "my mistake")
+		if _, err := e.Channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
 			UserID:    member,
-			ChannelID: channel.ID,
+			ChannelID: e.channel.ID,
 			IDs:       []int{msg.ID},
 			Date:      now + 1,
 		}); err != nil {
 			t.Fatalf("DeleteChannelMessages: %v", err)
 		}
 
-		got := latest(t, member)
+		got := e.latest(t, member)
 		if len(got) != 1 {
 			t.Fatalf("latest batch = %+v, want the one deleted message", got)
 		}
@@ -75,7 +105,7 @@ func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletion
 			ActorType:    domain.DeletionActorUser,
 			ActorUserID:  member,
 			OwnerUserID:  0,
-			Peer:         channelPeer,
+			Peer:         e.channelPeer,
 			MessageID:    msg.ID,
 			SenderUserID: member,
 			MessageDate:  now,
@@ -87,17 +117,19 @@ func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletion
 	})
 
 	t.Run("an admin wiping a member's messages records participant_history", func(t *testing.T) {
-		first := send(t, member, "spam a")
-		second := send(t, member, "spam b")
-		if _, err := channels.DeleteChannelParticipantHistory(ctx, domain.DeleteChannelParticipantHistoryRequest{
+		e := setup(t)
+		owner, member := e.Owner, e.Member
+		first := e.send(t, member, "spam a")
+		second := e.send(t, member, "spam b")
+		if _, err := e.Channels.DeleteChannelParticipantHistory(ctx, domain.DeleteChannelParticipantHistoryRequest{
 			UserID:            owner,
-			ChannelID:         channel.ID,
+			ChannelID:         e.channel.ID,
 			ParticipantUserID: member,
 			Date:              now + 2,
 		}); err != nil {
 			t.Fatalf("DeleteChannelParticipantHistory: %v", err)
 		}
-		got := latest(t, owner)
+		got := e.latest(t, owner)
 		ids := map[int]bool{first.ID: false, second.ID: false}
 		for _, row := range got {
 			if row.Source != domain.DeletionSourceParticipantHistory || row.ActorUserID != owner ||
@@ -112,28 +144,29 @@ func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletion
 	})
 
 	t.Run("clearing for everyone records history_clear, a local clear records nothing", func(t *testing.T) {
-		kept := send(t, owner, "visible to others")
-		before := latest(t, member)
-		if _, err := channels.DeleteChannelHistory(ctx, domain.DeleteChannelHistoryRequest{
+		e := setup(t)
+		owner, member := e.Owner, e.Member
+		kept := e.send(t, owner, "visible to others")
+		if _, err := e.Channels.DeleteChannelHistory(ctx, domain.DeleteChannelHistoryRequest{
 			UserID:    member,
-			ChannelID: channel.ID,
+			ChannelID: e.channel.ID,
 			Date:      now + 3,
 		}); err != nil {
 			t.Fatalf("DeleteChannelHistory local: %v", err)
 		}
-		if after := latest(t, member); len(after) != len(before) || (len(after) > 0 && after[0].BatchID != before[0].BatchID) {
+		if after := e.list(t, domain.MessageDeletionFilter{ActorUserID: member, Limit: 50}); len(after) != 0 {
 			t.Fatalf("local clear wrote deletions %+v; it removes nothing for anyone else", after)
 		}
 
-		if _, err := channels.DeleteChannelHistory(ctx, domain.DeleteChannelHistoryRequest{
+		if _, err := e.Channels.DeleteChannelHistory(ctx, domain.DeleteChannelHistoryRequest{
 			UserID:      owner,
-			ChannelID:   channel.ID,
+			ChannelID:   e.channel.ID,
 			ForEveryone: true,
 			Date:        now + 4,
 		}); err != nil {
 			t.Fatalf("DeleteChannelHistory for everyone: %v", err)
 		}
-		got := latest(t, owner)
+		got := e.latest(t, owner)
 		if len(got) != 1 || got[0].MessageID != kept.ID || got[0].Source != domain.DeletionSourceHistoryClear ||
 			got[0].Body != "visible to others" || got[0].Date != now+4 {
 			t.Fatalf("latest batch = %+v, want history_clear of message %d", got, kept.ID)
@@ -141,45 +174,48 @@ func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletion
 	})
 
 	t.Run("an explicit system audit is not attributed to the channel owner", func(t *testing.T) {
-		msg := send(t, member, "expiring")
-		if _, err := channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
+		e := setup(t)
+		owner, member := e.Owner, e.Member
+		msg := e.send(t, member, "expiring")
+		if _, err := e.Channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
 			UserID:    owner,
-			ChannelID: channel.ID,
+			ChannelID: e.channel.ID,
 			IDs:       []int{msg.ID},
 			Date:      now + 5,
 			Audit:     domain.SystemDeletionAudit(domain.DeletionSourceTTL),
 		}); err != nil {
 			t.Fatalf("DeleteChannelMessages ttl: %v", err)
 		}
-		got, err := deletions.ListMessageDeletions(ctx, domain.MessageDeletionFilter{SenderUserID: member, Limit: 50})
-		if err != nil {
-			t.Fatalf("ListMessageDeletions: %v", err)
-		}
-		if len(got) == 0 || got[0].MessageID != msg.ID || got[0].Source != domain.DeletionSourceTTL ||
+		got := e.list(t, domain.MessageDeletionFilter{SenderUserID: member, Limit: 50})
+		if len(got) != 1 || got[0].MessageID != msg.ID || got[0].Source != domain.DeletionSourceTTL ||
 			got[0].ActorType != domain.DeletionActorSystem || got[0].ActorUserID != 0 {
-			t.Fatalf("newest deletion of member's messages = %+v, want system ttl of %d", got, msg.ID)
+			t.Fatalf("deletions of member's messages = %+v, want only system ttl of %d", got, msg.ID)
+		}
+		if rows := e.list(t, domain.MessageDeletionFilter{ActorUserID: owner, Limit: 50}); len(rows) != 0 {
+			t.Fatalf("system deletion attributed to the owner: %+v", rows)
 		}
 	})
 
 	t.Run("deleting a post records its discussion root as discussion_cascade", func(t *testing.T) {
-		broadcast, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		e := setup(t)
+		owner := e.Owner
+		broadcast, err := e.Channels.CreateChannel(ctx, domain.CreateChannelRequest{
 			CreatorUserID: owner, Title: "Deletion log broadcast", Broadcast: true, Date: now,
 		})
 		if err != nil {
 			t.Fatalf("CreateChannel broadcast: %v", err)
 		}
-		group, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		group, err := e.Channels.CreateChannel(ctx, domain.CreateChannelRequest{
 			CreatorUserID: owner, Title: "Deletion log comments", Megagroup: true, Date: now,
 		})
 		if err != nil {
 			t.Fatalf("CreateChannel discussion: %v", err)
 		}
-		if _, err := channels.SetDiscussionGroup(ctx, owner, broadcast.Channel.ID, group.Channel.ID); err != nil {
+		if _, err := e.Channels.SetDiscussionGroup(ctx, owner, broadcast.Channel.ID, group.Channel.ID); err != nil {
 			t.Fatalf("SetDiscussionGroup: %v", err)
 		}
-		nextRandom++
-		post, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
-			UserID: owner, ChannelID: broadcast.Channel.ID, RandomID: nextRandom, Message: "announcement", Date: now,
+		post, err := e.Channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+			UserID: owner, ChannelID: broadcast.Channel.ID, RandomID: e.nextRandom(), Message: "announcement", Date: now,
 		})
 		if err != nil {
 			t.Fatalf("SendChannelMessage post: %v", err)
@@ -187,15 +223,15 @@ func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletion
 		if post.Message.Discussion == nil {
 			t.Fatalf("post = %+v, want a discussion root in the linked group", post.Message)
 		}
-		if _, err := channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
+		if _, err := e.Channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
 			UserID: owner, ChannelID: broadcast.Channel.ID, IDs: []int{post.Message.ID}, Date: now + 7,
 		}); err != nil {
 			t.Fatalf("DeleteChannelMessages post: %v", err)
 		}
 
-		got, err := deletions.ListMessageDeletions(ctx, domain.MessageDeletionFilter{ActorUserID: owner, Limit: 2})
-		if err != nil {
-			t.Fatalf("ListMessageDeletions: %v", err)
+		got := e.list(t, domain.MessageDeletionFilter{ActorUserID: owner, Limit: 50})
+		if len(got) != 2 {
+			t.Fatalf("deletions = %+v, want the post and its discussion root", got)
 		}
 		bySource := make(map[domain.DeletionSource]domain.MessageDeletion, len(got))
 		for _, row := range got {
@@ -212,7 +248,9 @@ func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletion
 	})
 
 	t.Run("deleting a forum topic records topic_history", func(t *testing.T) {
-		forum, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		e := setup(t)
+		owner, member := e.Owner, e.Member
+		forum, err := e.Channels.CreateChannel(ctx, domain.CreateChannelRequest{
 			CreatorUserID: owner,
 			Title:         "Deletion log forum",
 			Megagroup:     true,
@@ -223,18 +261,17 @@ func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletion
 		if err != nil {
 			t.Fatalf("CreateChannel forum: %v", err)
 		}
-		nextRandom++
-		topic, err := channels.CreateForumTopic(ctx, domain.CreateChannelForumTopicRequest{
+		topic, err := e.Channels.CreateForumTopic(ctx, domain.CreateChannelForumTopicRequest{
 			UserID:    owner,
 			ChannelID: forum.Channel.ID,
 			Title:     "Doomed topic",
-			RandomID:  nextRandom,
+			RandomID:  e.nextRandom(),
 			Date:      now,
 		})
 		if err != nil {
 			t.Fatalf("CreateForumTopic: %v", err)
 		}
-		if _, err := channels.DeleteForumTopicHistory(ctx, domain.DeleteChannelForumTopicHistoryRequest{
+		if _, err := e.Channels.DeleteForumTopicHistory(ctx, domain.DeleteChannelForumTopicHistoryRequest{
 			UserID:    owner,
 			ChannelID: forum.Channel.ID,
 			TopicID:   topic.Topic.TopicID,
@@ -242,7 +279,7 @@ func ChannelMessageDeletions(t *testing.T, channels store.ChannelStore, deletion
 		}); err != nil {
 			t.Fatalf("DeleteForumTopicHistory: %v", err)
 		}
-		got := latest(t, owner)
+		got := e.latest(t, owner)
 		if len(got) != 1 || got[0].Source != domain.DeletionSourceTopicHistory ||
 			got[0].Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: forum.Channel.ID}) || got[0].MessageID != topic.Message.ID {
 			t.Fatalf("latest batch = %+v, want topic_history of root %d", got, topic.Message.ID)

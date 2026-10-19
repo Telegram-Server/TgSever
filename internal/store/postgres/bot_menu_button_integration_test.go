@@ -38,11 +38,13 @@ func menuButtonFixture(t *testing.T, pool *pgxpool.Pool) (bot domain.User, userA
 
 func TestBotUserMenuButtonsPostgres(t *testing.T) {
 	pool := testPool(t)
-	bot, a, b := menuButtonFixture(t, pool)
 	bots := NewBotStore(pool)
-	storetest.BotUserMenuButtons(t, bots, NewUserStore(pool), bot.ID, a, b, func(ctx context.Context, botID int64) error {
-		_, err := bots.DeleteBotAccount(ctx, botID)
-		return err
+	storetest.BotUserMenuButtons(t, func(t *testing.T) storetest.BotMenuButtonFixture {
+		bot, a, b := menuButtonFixture(t, pool)
+		return storetest.BotMenuButtonFixture{Bots: bots, Users: NewUserStore(pool), BotID: bot.ID, UserA: a, UserB: b, DeleteBot: func(ctx context.Context, botID int64) error {
+			_, err := bots.DeleteBotAccount(ctx, botID)
+			return err
+		}}
 	})
 }
 

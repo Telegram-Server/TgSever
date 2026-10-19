@@ -46,18 +46,12 @@ func ChannelRestrictionExpiry(t *testing.T, s store.ChannelStore, users [4]int64
 	restrict(p, pending, now)
 	restrict(q, forever, now)
 
-	// 1. 到期的限制读为无限制，未到期与永久的限制保持。
+	// 1. GetParticipant 套用生效换算：到期的限制读为无限制。
 	if m := participant(r); m.Status != domain.ChannelMemberActive || m.BannedRights != (domain.ChannelBannedRights{}) {
 		t.Fatalf("expired restriction participant = %+v, want active and unrestricted", m)
 	}
-	if m := participant(p); m.Status != domain.ChannelMemberActive || m.BannedRights != pending {
-		t.Fatalf("pending restriction participant = %+v, want active with %+v", m, pending)
-	}
-	if m := participant(q); m.Status != domain.ChannelMemberActive || m.BannedRights != forever {
-		t.Fatalf("permanent restriction participant = %+v, want active with %+v", m, forever)
-	}
 
-	// 2. 受限名单只列仍生效的限制。
+	// 2. 受限名单（SQL 过滤）只列仍生效的限制：未到期与永久保留，到期的不列。
 	banned, err := s.GetParticipants(ctx, owner, id, domain.ChannelParticipantsFilter{Kind: domain.ChannelParticipantsBanned}, 0, 100)
 	if err != nil {
 		t.Fatal(err)
@@ -74,13 +68,6 @@ func ChannelRestrictionExpiry(t *testing.T, s store.ChannelStore, users [4]int64
 	if view.Self.BannedRights != (domain.ChannelBannedRights{}) {
 		t.Fatalf("expired self rights = %+v, want none", view.Self.BannedRights)
 	}
-	view, err = s.GetChannel(ctx, p, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if view.Self.BannedRights != pending {
-		t.Fatalf("pending self rights = %+v, want %+v", view.Self.BannedRights, pending)
-	}
 
 	// 4. 发消息：到期者可发，未到期者仍被拒。
 	send := func(user int64, randomID int64) error {
@@ -95,7 +82,8 @@ func ChannelRestrictionExpiry(t *testing.T, s store.ChannelStore, users [4]int64
 		t.Fatalf("send before expiry = %v, want ErrChannelWriteForbidden", err)
 	}
 
-	// 5. 限时踢出：到期后视为已解封（left，可自行加入且不带限制）；未到期与永久踢出仍阻止加入。
+	// 5. 限时踢出：到期后视为已解封（left，可自行加入且不带限制）；未到期的踢出仍阻止加入。
+	// 永久踢出不能加入只在 ChannelRejoinKeepsRestrictions 里断言。
 	restrict(r, domain.ChannelBannedRights{ViewMessages: true, SendMessages: true, UntilDate: now - 3600}, past)
 	restrict(p, domain.ChannelBannedRights{ViewMessages: true, SendMessages: true, UntilDate: now + 3600}, now)
 	restrict(q, domain.ChannelBannedRights{ViewMessages: true, SendMessages: true}, now)
@@ -121,9 +109,6 @@ func ChannelRestrictionExpiry(t *testing.T, s store.ChannelStore, users [4]int64
 	}
 	if _, err := s.JoinChannel(ctx, id, p, now); !errors.Is(err, domain.ErrChannelUserBanned) {
 		t.Fatalf("join before kick expiry = %v, want ErrChannelUserBanned", err)
-	}
-	if _, err := s.JoinChannel(ctx, id, q, now); !errors.Is(err, domain.ErrChannelUserBanned) {
-		t.Fatalf("join with permanent kick = %v, want ErrChannelUserBanned", err)
 	}
 
 	// 6. 改限制时的 previous 也是生效值：到期的踢出之前就已经是 left。
