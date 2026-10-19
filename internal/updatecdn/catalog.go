@@ -118,31 +118,65 @@ type Catalog struct {
 // verification against opts.RootPublicKey and match its entry's platform,
 // channel and build.
 func LoadCatalog(manifestPath, filesDir string, opts CatalogOptions) (*Catalog, error) {
-	f, err := os.Open(manifestPath)
+	manifest, _, err := readManifestFile(manifestPath)
 	if err != nil {
-		return nil, fmt.Errorf("open manifest: %w", err)
-	}
-	defer f.Close()
-	if info, err := f.Stat(); err != nil {
-		return nil, fmt.Errorf("stat manifest: %w", err)
-	} else if info.Size() > 4<<20 {
-		return nil, fmt.Errorf("manifest exceeds 4 MiB")
-	}
-
-	var manifest Manifest
-	decoder := json.NewDecoder(io.LimitReader(f, 4<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
-	}
-	if err := ensureJSONEOF(decoder); err != nil {
 		return nil, err
 	}
-	if manifest.SchemaVersion != ManifestSchemaVersion {
-		return nil, fmt.Errorf("schema_version = %d, want %d", manifest.SchemaVersion, ManifestSchemaVersion)
-	}
+	return newCatalog(manifest, filesDir, opts, nil)
+}
 
-	catalog := &Catalog{manifest: manifest, files: make(map[string]fileRecord)}
+const maxManifestSize = 4 << 20
+
+// readManifestFile 打开并解码清单文件，返回其文件信息。清单不存在时错误满足
+// errors.Is(err, fs.ErrNotExist)。
+func readManifestFile(path string) (Manifest, os.FileInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Manifest{}, nil, fmt.Errorf("open manifest: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return Manifest{}, nil, fmt.Errorf("stat manifest: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return Manifest{}, nil, fmt.Errorf("manifest %q is not a regular file", path)
+	}
+	if info.Size() > maxManifestSize {
+		return Manifest{}, nil, fmt.Errorf("manifest exceeds 4 MiB")
+	}
+	manifest, err := decodeManifest(f)
+	if err != nil {
+		return Manifest{}, nil, err
+	}
+	return manifest, info, nil
+}
+
+// decodeManifest 按加载规则解码清单：未知字段、多余的 JSON 值、错误的 schema_version
+// 都直接失败。
+func decodeManifest(r io.Reader) (Manifest, error) {
+	var manifest Manifest
+	decoder := json.NewDecoder(io.LimitReader(r, maxManifestSize))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return Manifest{}, err
+	}
+	if manifest.SchemaVersion != ManifestSchemaVersion {
+		return Manifest{}, fmt.Errorf("schema_version = %d, want %d", manifest.SchemaVersion, ManifestSchemaVersion)
+	}
+	return manifest, nil
+}
+
+// newCatalog 校验已解码的清单。verified 中的文件视为已经验签（发布的只校验模式用它
+// 代替尚未拷进 filesDir 的包），其余启用条目的包都从 filesDir 读取并验签。
+func newCatalog(manifest Manifest, filesDir string, opts CatalogOptions, verified map[string]fileRecord) (*Catalog, error) {
+	catalog := &Catalog{manifest: manifest, files: make(map[string]fileRecord, len(verified))}
+	for name, record := range verified {
+		catalog.files[name] = record
+	}
 	if err := catalog.validateDesktop(filesDir, opts); err != nil {
 		return nil, err
 	}
