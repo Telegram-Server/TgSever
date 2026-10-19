@@ -108,6 +108,15 @@ func (r *Router) onPhotosUpdateProfilePhoto(ctx context.Context, req *tg.PhotosU
 	}
 	switch in := req.ID.(type) {
 	case *tg.InputPhoto:
+		// 只能从目标 owner（自己或代管的 bot）的头像历史里选，否则任何人都能把别人的
+		// 头像或消息图片设成自己的头像。
+		inHistory, err := r.deps.Files.ProfilePhotoInHistory(ctx, domain.PeerTypeUser, targetUserID, in.ID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		if !inHistory {
+			return nil, photoIDInvalidErr()
+		}
 		photo, found, err := r.deps.Files.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, targetUserID, kind, in.ID, int(r.clock.Now().Unix()))
 		if err != nil {
 			return nil, internalErr()
@@ -375,6 +384,13 @@ func (r *Router) sendSuggestedProfilePhotoMessage(ctx context.Context, userID, t
 	recipientBlocked, err := r.peerBlocksUser(ctx, userID, targetUserID)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
+	}
+	if !recipientBlocked {
+		// 建议的照片要先进入收件人的头像历史（停用态），收件人点"设为头像"时
+		// updateProfilePhoto 的历史归属校验才会放行。
+		if err := r.deps.Files.OfferProfilePhoto(ctx, domain.PeerTypeUser, targetUserID, photo.ID, int(r.clock.Now().Unix())); err != nil {
+			return domain.SendPrivateTextResult{}, internalErr()
+		}
 	}
 	sessionID, _ := SessionIDFrom(ctx)
 	photoCopy := photo

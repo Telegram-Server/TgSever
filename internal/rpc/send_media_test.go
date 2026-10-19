@@ -26,6 +26,7 @@ type fakeFiles struct {
 	docs               map[int64]domain.Document
 	photos             map[int64]domain.Photo
 	profile            map[fakeProfilePhotoKey]int64
+	profileHistory     map[fakeProfileHistoryKey]bool
 	reactions          []domain.AvailableReaction
 	effects            []domain.AvailableEffect
 	sets               map[domain.StickerSetKind][]domain.StickerSet
@@ -50,6 +51,25 @@ type fakeProfilePhotoKey struct {
 	ownerType domain.PeerType
 	ownerID   int64
 	kind      domain.ProfilePhotoKind
+}
+
+// fakeProfileHistoryKey 记录 owner 头像历史里出现过的 photo（不分 kind、不分 active），
+// 对齐 postgres profile_photos 行一旦写入即留在历史中的语义。
+type fakeProfileHistoryKey struct {
+	ownerType domain.PeerType
+	ownerID   int64
+	photoID   int64
+}
+
+func (f *fakeFiles) setCurrentProfile(ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64) {
+	if f.profile == nil {
+		f.profile = map[fakeProfilePhotoKey]int64{}
+	}
+	f.profile[fakeProfilePhotoKey{ownerType: ownerType, ownerID: ownerID, kind: kind}] = photoID
+	if f.profileHistory == nil {
+		f.profileHistory = map[fakeProfileHistoryKey]bool{}
+	}
+	f.profileHistory[fakeProfileHistoryKey{ownerType: ownerType, ownerID: ownerID, photoID: photoID}] = true
 }
 
 func (f *fakeFiles) putPhoto(photo domain.Photo) domain.Photo {
@@ -641,10 +661,7 @@ func (f *fakeFiles) UploadProfilePhoto(ctx context.Context, ownerType domain.Pee
 }
 func (f *fakeFiles) UploadProfilePhotoKind(_ context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, _ domain.UploadedFileRef, _ int) (domain.Photo, error) {
 	photo, _ := f.CreateAvatarFromUpload(context.Background(), domain.UploadedFileRef{})
-	if f.profile == nil {
-		f.profile = map[fakeProfilePhotoKey]int64{}
-	}
-	f.profile[fakeProfilePhotoKey{ownerType: ownerType, ownerID: ownerID, kind: kind}] = photo.ID
+	f.setCurrentProfile(ownerType, ownerID, kind, photo.ID)
 	return photo, nil
 }
 func (f *fakeFiles) SetCurrentProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int) (domain.Photo, bool, error) {
@@ -655,11 +672,18 @@ func (f *fakeFiles) SetCurrentProfilePhotoKind(_ context.Context, ownerType doma
 	if !ok {
 		return domain.Photo{}, false, nil
 	}
-	if f.profile == nil {
-		f.profile = map[fakeProfilePhotoKey]int64{}
-	}
-	f.profile[fakeProfilePhotoKey{ownerType: ownerType, ownerID: ownerID, kind: kind}] = photoID
+	f.setCurrentProfile(ownerType, ownerID, kind, photoID)
 	return photo, true, nil
+}
+func (f *fakeFiles) OfferProfilePhoto(_ context.Context, ownerType domain.PeerType, ownerID, photoID int64, _ int) error {
+	if f.profileHistory == nil {
+		f.profileHistory = map[fakeProfileHistoryKey]bool{}
+	}
+	f.profileHistory[fakeProfileHistoryKey{ownerType: ownerType, ownerID: ownerID, photoID: photoID}] = true
+	return nil
+}
+func (f *fakeFiles) ProfilePhotoInHistory(_ context.Context, ownerType domain.PeerType, ownerID, photoID int64) (bool, error) {
+	return f.profileHistory[fakeProfileHistoryKey{ownerType: ownerType, ownerID: ownerID, photoID: photoID}], nil
 }
 func (f *fakeFiles) CurrentProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID int64) (domain.Photo, bool, error) {
 	return f.CurrentProfilePhotoKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile)

@@ -120,6 +120,8 @@ func frozenParticipantMissingErr() error { return tgerr.New(400, "FROZEN_PARTICI
 
 func photoInvalidErr() error { return tgerr.New(400, "PHOTO_INVALID") }
 
+func photoIDInvalidErr() error { return tgerr.New(400, "PHOTO_ID_INVALID") }
+
 func stickersetInvalidErr() error { return tgerr.New(406, "STICKERSET_INVALID") }
 
 // stickerInvalidErr 表示输入文档不是合法贴纸/GIF（faveSticker/saveRecentSticker/saveGif）。
