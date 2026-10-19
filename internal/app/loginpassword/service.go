@@ -54,6 +54,7 @@ type Service struct {
 	challenges store.LoginPasswordChallengeStore
 	flows      AuthFlows
 	now        func() time.Time
+	userLimit  userRateLimit // signInWithPassword 按目标用户限流，见 rate_limit.go
 }
 
 // Option 调整登录密码服务。
@@ -178,6 +179,7 @@ func (s *Service) issueChallenge(ctx context.Context, userID int64, phone string
 // SignIn 处理 telesrv.signInWithPassword：
 //  1. 按 srp_id 原子地取出并删除 challenge——不论之后成败，它都已作废，客户端要重新 get；
 //  2. challenge 不存在、已过期、不是发给 rawAuthKeyID 的、或手机号对不上：domain.ErrSRPIDInvalid；
+//     账号仍在、号码仍属于它时按目标用户计数（WithUserRateLimit），超额返回 domain.LoginPasswordFloodWaitError；
 //  3. 重新读存储里的登录密码，与 challenge 记录的不一致（期间被改或删）：domain.ErrSRPPasswordChanged；
 //  4. SRP 证明不成立：domain.ErrPasswordHashInvalid；
 //  5. 通过后交给 auth 的登录收尾（FinishVerifiedSignIn）。账号已注销、系统账号、bot 由那里统一
@@ -214,6 +216,10 @@ func (s *Service) SignIn(ctx context.Context, a domain.Authorization, rawAuthKey
 	if u.Phone != ch.Phone {
 		// 号码在发出 challenge 之后换了主人或被改掉。
 		return domain.User{}, domain.ErrSRPIDInvalid
+	}
+	// 按目标用户计数：每次拿着有效 challenge 的尝试都算一次，不论证明对错（challenge 已作废）。
+	if err := s.checkUserRateLimit(ctx, u.ID); err != nil {
+		return domain.User{}, err
 	}
 	current, found, err := s.passwords.GetLoginPassword(ctx, u.ID)
 	if err != nil {

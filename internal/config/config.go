@@ -271,6 +271,11 @@ type Config struct {
 	// 打开后不经验证码即可用任意号码注册，号码不做归属验证，风险由运营者承担。
 	// 关闭时 telesrv. 密码登录方法一律返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
 	PasswordLoginEnabled bool
+	// PasswordLoginUserRateLimit / PasswordLoginUserRateWindow 是 telesrv.signInWithPassword
+	// 按目标用户的限流：同一账号在窗口内最多被尝试这么多次，不论来自哪个 auth_key、密码对错。
+	// 默认每小时 10 次；任一项 <=0 关闭这个维度。被限流的用户仍可用验证码登录。
+	PasswordLoginUserRateLimit  int
+	PasswordLoginUserRateWindow time.Duration
 	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate 是 777000 登录成功后的
 	// 欢迎消息（每次手机号/邮箱登录完成即发送）的回退模板——仅在管理面板未在
 	// internal/identity.Store 设置覆盖时生效（见 domain.ResolveWelcomeMessageTemplate）。
@@ -1084,6 +1089,8 @@ func Load() (Config, error) {
 		LoginEmailRequireSetup:            envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
 		LoginEmailCodeLength:              envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
 		PasswordLoginEnabled:              envBoolOr("TELESRV_PASSWORD_LOGIN_ENABLED", false),
+		PasswordLoginUserRateLimit:        envIntOr("TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT", 10),
+		PasswordLoginUserRateWindow:       envDurationOr("TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW", time.Hour),
 		WelcomeMessagePhoneTemplate:       envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),
 		WelcomeMessageEmailTemplate:       envOr("TELESRV_WELCOME_MESSAGE_EMAIL_TEMPLATE", domain.DefaultWelcomeMessageEmailTemplate),
 		LoginCodeMessageTemplate:          envOr("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", domain.DefaultLoginCodeMessageTemplate),

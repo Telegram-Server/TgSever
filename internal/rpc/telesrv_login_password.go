@@ -50,6 +50,10 @@ func (r *Router) onTelesrvGetLoginPassword(ctx context.Context, req *tg.TelesrvG
 	if !r.passwordLoginEnabled() {
 		return nil, passwordLoginDisabledErr()
 	}
+	// 与 auth.sendCode 共用验证码签发的额度（手机号摘要 + 原始 auth_key），防止改走这条路批量探测号码。
+	if err := r.checkAuthCodeRateLimit(ctx, req.PhoneNumber); err != nil {
+		return nil, err
+	}
 	rawAuthKeyID, _ := RawAuthKeyIDFrom(ctx)
 	settings, err := r.deps.LoginPassword.GetLoginPassword(ctx, rawAuthKeyID, req.PhoneNumber)
 	if err != nil {
@@ -81,6 +85,10 @@ func (r *Router) onTelesrvSignUpWithPassword(ctx context.Context, req *tg.Telesr
 	if !r.passwordLoginEnabled() {
 		return nil, passwordLoginDisabledErr()
 	}
+	// 与 auth.sendCode 共用额度；放在参数解析之前，不合法的注册请求也照样计数。
+	if err := r.checkAuthCodeRateLimit(ctx, req.PhoneNumber); err != nil {
+		return nil, err
+	}
 	settings, err := domainPasswordInputSettings(req.NewSettings)
 	if err != nil {
 		return nil, err
@@ -107,6 +115,9 @@ func passwordLoginNotSetErr() error   { return tgerr.New(400, "PASSWORD_LOGIN_NO
 // loginPasswordErr 映射登录密码业务错误：开关与"未设登录密码"是本功能特有的；
 // new_settings 与 SRP 校验的错误与 2FA 一致（passwordErr）；号码、名字、占用等沿用登录注册（signInErr）。
 func loginPasswordErr(err error) error {
+	if seconds, ok := domain.LoginPasswordFloodWaitSeconds(err); ok {
+		return floodWaitErr(seconds)
+	}
 	switch {
 	case errors.Is(err, domain.ErrPasswordLoginDisabled):
 		return passwordLoginDisabledErr()

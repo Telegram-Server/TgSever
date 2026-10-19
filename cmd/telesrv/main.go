@@ -1691,7 +1691,8 @@ func run(logger *zap.Logger) error {
 	// 部署不跨实例），不写进用户记录。
 	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool),
 		memory.NewLoginPasswordChallengeStore(nil), authService,
-		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled))
+		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled),
+		loginpasswordapp.WithUserRateLimit(rateLimiter, cfg.PasswordLoginUserRateLimit, cfg.PasswordLoginUserRateWindow))
 	if cfg.PasswordLoginEnabled {
 		logger.Warn("手机号 + 密码登录已启用：任何人都可以不经验证码用任意号码注册")
 	}

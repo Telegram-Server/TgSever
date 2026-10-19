@@ -79,6 +79,10 @@ func loginPasswordRSAKey(t *testing.T) *rsa.PrivateKey {
 // loginPasswordServerOptions 是密码登录服务端的可调参数。
 type loginPasswordServerOptions struct {
 	enabled bool
+	// rateLimits 不为 nil 时装上计数限流器并按它配置各维度阈值（见 login_password_rate_limit_e2e_test.go）。
+	rateLimits *loginPasswordRateLimits
+	// challengeLimits 传给内存 challenge store，用来调小挂起 challenge 的上限。
+	challengeLimits []memory.LoginPasswordChallengeOption
 }
 
 // loginPasswordServer 是一个跑在随机端口上的完整服务端，供多个子测试并发使用。
@@ -150,9 +154,10 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore)),
 		auth.WithPasswords(cloudPasswords))
+	limiter := newCountingRateLimiter()
 	loginPasswords := loginpasswordapp.NewService(userStore, memory.NewLoginPasswordStore(baseUsers),
-		memory.NewLoginPasswordChallengeStore(nil), authService,
-		loginpasswordapp.WithEnabled(opts.enabled))
+		memory.NewLoginPasswordChallengeStore(nil, opts.challengeLimits...), authService,
+		loginpasswordapp.WithEnabled(opts.enabled), opts.rateLimits.userRateLimit(limiter))
 
 	deps := rpc.Deps{
 		Auth:          authService,
@@ -166,7 +171,9 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		Dialogs:       dialogs.NewService(dialogStore),
 		Messages:      messageapp.NewService(messageStore, dialogStore),
 	}
-	router := rpc.New(rpc.Config{DC: loginPasswordTestDC, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}, deps, zaptest.NewLogger(t), clock.System)
+	rpcCfg := rpc.Config{DC: loginPasswordTestDC, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}
+	opts.rateLimits.apply(&rpcCfg, &deps, limiter)
+	router := rpc.New(rpcCfg, deps, zaptest.NewLogger(t), clock.System)
 	srv := New(Options{Logger: zaptest.NewLogger(t), DC: loginPasswordTestDC, RSAKey: rsaKey, AuthKeys: authKeyStore, LayerRPC: router, ActiveSessions: activeSessions})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

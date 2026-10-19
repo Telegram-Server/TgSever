@@ -174,6 +174,7 @@ var sensitiveRPCRateGroups = map[uint32]sensitiveRateGroup{
 	tg.AccountUpdatePasswordSettingsRequestTypeID:        rateGroupSRP,
 	tg.AccountDeleteAccountRequestTypeID:                 rateGroupSRP,
 	tg.MessagesEditChatCreatorRequestTypeID:              rateGroupSRP,
+	tg.TelesrvSignInWithPasswordRequestTypeID:            rateGroupSRP,
 	tg.PaymentsGetStarGiftWithdrawalURLRequestTypeID:     rateGroupWithdrawal,
 	tg.PaymentsGetStarsRevenueWithdrawalURLRequestTypeID: rateGroupWithdrawal,
 	tg.PaymentsSendStarsFormRequestTypeID:                rateGroupPayment,
