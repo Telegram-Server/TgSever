@@ -851,7 +851,53 @@ ORDER BY l.peer_id`, communityID, participantUserID)
 	return out, err
 }
 
-func (s *CommunityStore) banCommunityParticipantFromChannelTx(ctx context.Context, tx pgx.Tx, actorUserID, channelID, participantUserID int64, date int) (domain.EditChannelBannedResult, bool, error) {
+// lockCommunityBanChannelMembers 锁住社区每个关联频道里操作者与目标的成员行，并在改动任何
+// 东西之前用频道层同一条规则（domain.CheckManageChannelAdmin）逐频道检查：任一频道里目标是
+// 在任管理员、而操作者既非群主也非其提拔人，就整次拒绝。目标自建的频道沿用原处理（解除关联），
+// 不检查。返回各频道里操作者的成员记录，供逐频道封禁时再校验。
+func lockCommunityBanChannelMembers(ctx context.Context, tx pgx.Tx, communityID, actorUserID, participantUserID int64) (map[int64]domain.ChannelMember, error) {
+	rows, err := sqlcgen.New(tx).LockCommunityBanChannelMembers(ctx, sqlcgen.LockCommunityBanChannelMembersParams{
+		CommunityID: communityID,
+		UserIds:     []int64{actorUserID, participantUserID},
+	})
+	if err != nil {
+		return nil, err
+	}
+	actors := make(map[int64]domain.ChannelMember)
+	targets := make([]domain.ChannelMember, 0, len(rows))
+	for _, row := range rows {
+		member := domain.ChannelMember{
+			ChannelID:     row.ChannelID,
+			UserID:        row.UserID,
+			InviterUserID: row.InviterUserID,
+			Role:          domain.ChannelMemberRole(row.Role),
+			Status:        domain.ChannelMemberStatus(row.Status),
+		}
+		if row.UserID == actorUserID {
+			actors[row.ChannelID] = member
+		}
+		if row.UserID == participantUserID && row.CreatorUserID != participantUserID {
+			targets = append(targets, member)
+		}
+	}
+	for _, target := range targets {
+		if err := domain.CheckManageChannelAdmin(channelActor(actors, target.ChannelID, actorUserID), target); err != nil {
+			return nil, err
+		}
+	}
+	return actors, nil
+}
+
+// channelActor 返回操作者在该频道的成员记录；不在频道里时只带 UserID（既非群主也非提拔人）。
+func channelActor(actors map[int64]domain.ChannelMember, channelID, actorUserID int64) domain.ChannelMember {
+	if actor, ok := actors[channelID]; ok {
+		return actor
+	}
+	return domain.ChannelMember{ChannelID: channelID, UserID: actorUserID}
+}
+
+func (s *CommunityStore) banCommunityParticipantFromChannelTx(ctx context.Context, tx pgx.Tx, actor domain.ChannelMember, channelID, participantUserID int64, date int) (domain.EditChannelBannedResult, bool, error) {
+	actorUserID := actor.UserID
 	channelStore := NewChannelStore(tx, WithChannelAllocators(s.ids, s.msgIDs))
 	channel, err := getChannelByID(ctx, tx, channelID)
 	if err != nil {
@@ -866,6 +912,10 @@ func (s *CommunityStore) banCommunityParticipantFromChannelTx(ctx context.Contex
 	}
 	if previous.Status != domain.ChannelMemberActive {
 		return domain.EditChannelBannedResult{}, false, nil
+	}
+	// 预检之后才出现的成员行不在行锁内；对实际要改的记录再校验一次，失败则整个事务回滚。
+	if err := domain.CheckManageChannelAdmin(actor, previous); err != nil {
+		return domain.EditChannelBannedResult{}, false, err
 	}
 	member := previous
 	member.InviterUserID = actorUserID
@@ -935,6 +985,10 @@ func (s *CommunityStore) ToggleCommunityParticipantBanned(ctx context.Context, a
 		if !found || (participant.Status != domain.CommunityMemberActive && participant.Status != domain.CommunityMemberKicked) {
 			return domain.CommunityParticipantBanResult{}, domain.ErrCommunityParticipantInvalid
 		}
+		channelActors, err := lockCommunityBanChannelMembers(ctx, tx, communityID, actorUserID, participantUserID)
+		if err != nil {
+			return domain.CommunityParticipantBanResult{}, err
+		}
 		var alreadyKicked bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(
 SELECT 1 FROM community_members WHERE community_id=$1 AND user_id=$2 AND role='member' AND status='kicked')`, communityID, participantUserID).Scan(&alreadyKicked); err != nil {
@@ -992,7 +1046,7 @@ FOR UPDATE OF l`, communityID, participantUserID)
 		}
 		channelRows.Close()
 		for _, channelID := range channelIDs {
-			ban, changed, err := s.banCommunityParticipantFromChannelTx(ctx, tx, actorUserID, channelID, participantUserID, date)
+			ban, changed, err := s.banCommunityParticipantFromChannelTx(ctx, tx, channelActor(channelActors, channelID, actorUserID), channelID, participantUserID, date)
 			if err != nil {
 				return domain.CommunityParticipantBanResult{}, err
 			}

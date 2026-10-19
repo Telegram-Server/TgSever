@@ -29,6 +29,9 @@ func communityErr(err error) error {
 		return tgerr400("COMMUNITY_REQUEST_MISSING")
 	case errors.Is(err, domain.ErrCommunityPeerLinked):
 		return tgerr400("COMMUNITY_PEER_ALREADY_LINKED")
+	case errors.Is(err, domain.ErrUserAdminInvalid):
+		// 社区封禁对关联频道沿用频道层管理员保护。
+		return tgerr400("USER_ADMIN_INVALID")
 	case errors.Is(err, domain.ErrCommunityPeerInvalid), errors.Is(err, domain.ErrCommunityParticipantInvalid):
 		return peerIDInvalidErr()
 	case errors.Is(err, domain.ErrChannelTitleInvalid):
