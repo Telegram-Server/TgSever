@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,10 +36,10 @@ func run() error {
 	listenDefault := envOr("TELESRV_UPDATE_LISTEN", "127.0.0.1:2402")
 
 	listenAddr := flag.String("listen", listenDefault, "HTTP listen address")
-	catalog := catalogFlags(flag.CommandLine)
+	catalog := registerCatalogFlags(flag.CommandLine)
 	check := flag.Bool("check", false, "validate the catalog and exit")
 	flag.Parse()
-	paths := catalog()
+	paths := resolveCatalogPaths(catalog)
 	// 服务模式不接受位置参数：把参数写在 publish 前面（telesrv-update -manifest m publish x）
 	// 会落到这里，不能悄悄启动服务。
 	if flag.NArg() > 0 {
@@ -124,20 +124,33 @@ func run() error {
 	return nil
 }
 
-// catalogFlags 注册服务模式与 publish 共用的清单、文件目录与根公钥参数，默认值与环境变量一致。
-// 返回的函数在解析参数之后调用；文件目录未显式配置时取清单所在目录下的 files，与 telesrv
-// 进程内更新服务的默认值一致，这样只设置清单路径时 publish 与服务用的是同一个目录。
-func catalogFlags(fs *flag.FlagSet) func() catalogPaths {
-	manifestPath := fs.String("manifest", envOr("TELESRV_UPDATE_MANIFEST", "data/updates/manifest.json"), "release manifest path")
-	filesDir := fs.String("files", os.Getenv("TELESRV_UPDATE_FILES_DIR"), `desktop update package directory (default "files" next to the manifest)`)
-	rootKeyPath := fs.String("root-public-key", os.Getenv("TELESRV_UPDATE_ROOT_PUBLIC_KEY"),
-		"update root public key PEM file (Ed25519); required when the manifest has enabled desktop entries")
-	return func() catalogPaths {
-		paths := catalogPaths{Manifest: *manifestPath, FilesDir: *filesDir, RootPublicKey: *rootKeyPath}
-		if paths.FilesDir == "" {
-			paths.FilesDir = filepath.Join(filepath.Dir(paths.Manifest), "files")
-		}
-		return paths
+// catalogFlags 是服务模式与 publish 共用的清单、文件目录与根公钥参数，在 Parse 之后由
+// resolveCatalogPaths 解析成路径。
+type catalogFlags struct {
+	manifest      *string
+	filesDir      *string
+	rootPublicKey *string
+}
+
+// registerCatalogFlags 注册共用的路径参数，默认值取自环境变量。telesrv-update 只读进程
+// 环境变量，不读 .env。
+func registerCatalogFlags(fs *flag.FlagSet) catalogFlags {
+	return catalogFlags{
+		manifest: fs.String("manifest", envOr("TELESRV_UPDATE_MANIFEST", "data/updates/manifest.json"), "release manifest path"),
+		filesDir: fs.String("files", os.Getenv("TELESRV_UPDATE_FILES_DIR"), `desktop update package directory (default "files" next to the manifest)`),
+		rootPublicKey: fs.String("root-public-key", os.Getenv("TELESRV_UPDATE_ROOT_PUBLIC_KEY"),
+			"update root public key PEM file (Ed25519); required when the manifest has enabled desktop entries"),
+	}
+}
+
+// resolveCatalogPaths 在解析参数之后调用。路径去掉首尾空白；文件目录未显式配置时用
+// updatecdn.DefaultFilesDir，与 telesrv 进程内更新服务的默认值一致。
+func resolveCatalogPaths(flags catalogFlags) catalogPaths {
+	manifest := strings.TrimSpace(*flags.manifest)
+	return catalogPaths{
+		Manifest:      manifest,
+		FilesDir:      updatecdn.DefaultFilesDir(manifest, *flags.filesDir),
+		RootPublicKey: strings.TrimSpace(*flags.rootPublicKey),
 	}
 }
 
@@ -155,7 +168,7 @@ func runPublish(args []string) error {
 		fmt.Fprintln(fs.Output(), "usage: telesrv-update publish [flags] <package>")
 		fs.PrintDefaults()
 	}
-	catalog := catalogFlags(fs)
+	catalog := registerCatalogFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "verify the package and the resulting manifest without writing any file")
 	allowDowngrade := fs.Bool("allow-downgrade", false, "allow a build not newer than the published one (roll back a bad release)")
 	if err := fs.Parse(args); err != nil {
@@ -164,7 +177,7 @@ func runPublish(args []string) error {
 		}
 		return err
 	}
-	paths := catalog()
+	paths := resolveCatalogPaths(catalog)
 	if fs.NArg() != 1 {
 		fs.Usage()
 		return fmt.Errorf("publish takes exactly one package path (flags go before it), got %d arguments", fs.NArg())

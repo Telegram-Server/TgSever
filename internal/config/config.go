@@ -917,10 +917,7 @@ func Load() (Config, error) {
 		if explicitUpdateServiceURL != "" {
 			return Config{}, fmt.Errorf("TELESRV_UPDATE_SERVICE_URL must be empty when TELESRV_UPDATE_MANIFEST serves updates in process")
 		}
-		updateFilesDir = strings.TrimSpace(envOr("TELESRV_UPDATE_FILES_DIR", ""))
-		if updateFilesDir == "" {
-			updateFilesDir = filepath.Join(filepath.Dir(updateManifest), "files")
-		}
+		updateFilesDir = updatecdn.DefaultFilesDir(updateManifest, envOr("TELESRV_UPDATE_FILES_DIR", ""))
 		updateRootPublicKey = strings.TrimSpace(envOr("TELESRV_UPDATE_ROOT_PUBLIC_KEY", ""))
 		if updatePublicURL == "" {
 			// 自动推导的 <PublicBaseURL>/_updates 只由公开 Web 监听提供；监听关闭时下发它
