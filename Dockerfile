@@ -82,6 +82,9 @@ RUN install -d -o telesrv -g telesrv -m 0700 /var/lib/telesrv/wallet
 # `telesrv-update publish` (run via `docker compose exec server`) can write the
 # manifest, its lock file and the package directory as 10001.
 RUN install -d -o telesrv -g telesrv -m 0750 /var/lib/telesrv-updates
+# Mount point for the read-only update root public key (deploy/docker/update-keys).
+# Root-owned: the trust anchor must not be writable by the server user.
+RUN install -d -o root -g root -m 0755 /etc/telesrv-updates
 COPY --from=build-server /out/telesrv /usr/local/bin/telesrv
 COPY --from=build-server /out/telesrv-update /usr/local/bin/telesrv-update
 COPY --chown=telesrv:telesrv data/langpack/ /usr/share/telesrv/langpack/

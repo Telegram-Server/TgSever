@@ -62,6 +62,34 @@ func exampleUpdateKeys(t *testing.T, path string) (active map[string]string, lis
 	return active, listed
 }
 
+// TestDockerUpdateRootKeyStaysOffTheWritableVolume 保证 Docker 示例与文档不再把更新根公钥放进
+// server_updates 卷：容器用户（10001）能写那个卷，被攻破的 server 可以替换信任根。根公钥走
+// deploy/docker/update-keys 的只读挂载（/etc/telesrv-updates）。
+func TestDockerUpdateRootKeyStaysOffTheWritableVolume(t *testing.T) {
+	const writableVolume = "/var/lib/telesrv-updates/"
+	for _, path := range []string{"../../deploy/docker/.env.example", "../../docs/update-service.md"} {
+		t.Run(path, func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(data)
+			for _, bad := range []string{
+				"TELESRV_UPDATE_ROOT_PUBLIC_KEY=" + writableVolume,
+				"-root-public-key " + writableVolume,
+				writableVolume + "update-root.pub",
+			} {
+				if strings.Contains(text, bad) {
+					t.Errorf("%s puts the update root public key on the writable server_updates volume (%q)", path, bad)
+				}
+			}
+			if !strings.Contains(text, "/etc/telesrv-updates/update-root.pub") {
+				t.Errorf("%s does not point the Docker root key at the read-only /etc/telesrv-updates mount", path)
+			}
+		})
+	}
+}
+
 // TestDocsDescribeDesktopUpdateKeys 保证中英文配置文档与更新服务文档列出进程内更新服务读取的
 // 全部变量，免得文档落后于实现。
 func TestDocsDescribeDesktopUpdateKeys(t *testing.T) {

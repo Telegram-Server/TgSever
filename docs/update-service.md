@@ -94,6 +94,14 @@ openssl pkey -in update-root.key -pubout -out update-root.pub
 `-root-public-key` point to. The same public key must be compiled into the
 custom client (a tdesktop-side change).
 
+The public key is not secret, but it is the server's trust anchor: whoever can
+replace the file can make the server accept packages signed by their own root.
+Keep it in a file and directory the user `telesrv` (and `telesrv-update`) runs
+as **cannot write**, for example owned by root with mode `0644` under
+`/etc/telesrv-updates/`, and not inside the manifest or files directory, which
+the publishing user must be able to write. The Docker layout below mounts it
+read-only for this reason.
+
 The root private key signs nothing but key manifests. Keep it **offline**: on a
 machine or hardware token that is not a build server, used only when the key
 manifest changes. Losing it means you cannot add or rotate signing keys;
@@ -320,7 +328,7 @@ Local example (`.env`):
 
 ```dotenv
 TELESRV_UPDATE_MANIFEST=data/updates/manifest.json
-TELESRV_UPDATE_ROOT_PUBLIC_KEY=data/updates/update-root.pub
+TELESRV_UPDATE_ROOT_PUBLIC_KEY=/etc/telesrv-updates/update-root.pub
 ```
 
 Publish the first package before setting `TELESRV_UPDATE_MANIFEST`, so the
@@ -329,7 +337,7 @@ manifest exists when `telesrv` starts:
 ```sh
 go run ./cmd/telesrv-update publish \
   -manifest data/updates/manifest.json \
-  -root-public-key data/updates/update-root.pub \
+  -root-public-key /etc/telesrv-updates/update-root.pub \
   path/to/package
 ```
 
@@ -376,14 +384,24 @@ reverse proxy in front without rewriting `/current4` or `/files/*`.
 ## Docker
 
 The server image contains `/usr/local/bin/telesrv-update`, and the production
-compose file (`deploy/docker/compose.yaml`) mounts a `server_updates` volume at
-`/var/lib/telesrv-updates`. It is the only place the read-only server container
-can keep update files. The volume is owned by the container user (10001) and
-belongs to the server service only. Compose passes `TELESRV_UPDATE_MANIFEST`,
-`TELESRV_UPDATE_FILES_DIR`, `TELESRV_UPDATE_ROOT_PUBLIC_KEY` and
-`TELESRV_UPDATE_PUBLIC_URL` from `deploy/docker/.env`, all empty by default, and
-always runs the public link listener, so the derived
-`<TELESRV_PUBLIC_BASE_URL>/_updates` prefix works once the manifest is set.
+compose file (`deploy/docker/compose.yaml`) gives the server two update mounts:
+
+- the `server_updates` volume at `/var/lib/telesrv-updates`, for the manifest
+  and the packages. It is the only place the read-only server container can
+  keep update files. The volume is owned by the container user (10001) and
+  belongs to the server service only.
+- `deploy/docker/update-keys/` on the host, bind-mounted **read-only** at
+  `/etc/telesrv-updates`, for the update root public key. The key must not live
+  on `server_updates`: the server user can write that volume, so a compromised
+  server could swap the trust root. The directory ships empty (only
+  `.gitkeep`, its other contents are git-ignored), so the mount is harmless
+  while updates are off.
+
+Compose passes `TELESRV_UPDATE_MANIFEST`, `TELESRV_UPDATE_FILES_DIR`,
+`TELESRV_UPDATE_ROOT_PUBLIC_KEY` and `TELESRV_UPDATE_PUBLIC_URL` from
+`deploy/docker/.env`, all empty by default, and always runs the public link
+listener, so the derived `<TELESRV_PUBLIC_BASE_URL>/_updates` prefix works once
+the manifest is set.
 
 Run the commands below from `deploy/docker` (or add
 `--project-directory deploy/docker --env-file deploy/docker/.env -f deploy/docker/compose.yaml`).
@@ -392,26 +410,29 @@ Run the commands below from `deploy/docker` (or add
 First publish, with updates still off and the server running:
 
 ```sh
-# 1. Create an upload directory on the volume.
-docker compose exec -T server mkdir -p /var/lib/telesrv-updates/incoming
+# 1. Put the root public key in the read-only key directory, on the host.
+#    It must be readable by uid 10001 and writable only by the host admin.
+#    (Use sudo if compose created the directory as root before.)
+install -m 0644 path/to/update-root.pub update-keys/update-root.pub
 
-# 2. Copy in the root public key and the package (piping through the
-#    container keeps the files owned by 10001).
-docker compose exec -T server sh -c 'cat > /var/lib/telesrv-updates/update-root.pub' < update-root.pub
+# 2. Create an upload directory on the volume and copy the package in
+#    (piping through the container keeps the files owned by 10001).
+docker compose exec -T server mkdir -p /var/lib/telesrv-updates/incoming
 docker compose exec -T server sh -c 'cat > /var/lib/telesrv-updates/incoming/package' < path/to/package
 
 # 3. Publish. The manifest variable is still empty, so pass the paths.
 docker compose exec server telesrv-update publish \
   -manifest /var/lib/telesrv-updates/manifest.json \
-  -root-public-key /var/lib/telesrv-updates/update-root.pub \
+  -root-public-key /etc/telesrv-updates/update-root.pub \
   /var/lib/telesrv-updates/incoming/package
 ```
 
-Then enable updates in `deploy/docker/.env` and recreate the server:
+The bind mount shows files added to `update-keys/` without a restart. Then
+enable updates in `deploy/docker/.env` and recreate the server:
 
 ```dotenv
 TELESRV_UPDATE_MANIFEST=/var/lib/telesrv-updates/manifest.json
-TELESRV_UPDATE_ROOT_PUBLIC_KEY=/var/lib/telesrv-updates/update-root.pub
+TELESRV_UPDATE_ROOT_PUBLIC_KEY=/etc/telesrv-updates/update-root.pub
 ```
 
 ```sh
