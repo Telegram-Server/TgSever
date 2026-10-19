@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -146,6 +147,7 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 		member = existing
 		member.Status = domain.ChannelMemberActive
 		member.LeftAt = 0
+		member.BannedRights = rejoinBannedRights(existing, date)
 		// 重进是全新 participant：不保留旧的角色/管理权/Tag；inviter 重置为本人（自加入）。
 		// 只有 channel 当前 owner 仍是该账号时，才保留 creator 身份。
 		if existing.Role != domain.ChannelRoleCreator || channel.CreatorUserID != userID {
@@ -1275,6 +1277,22 @@ func zeroChannelAdminRights(rights domain.ChannelAdminRights) bool {
 
 func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
 	return rights == domain.ChannelBannedRights{}
+}
+
+// rejoinBannedRights 返回旧成员记录重新入群后应带的限制：退群不解除限制，
+// 否则"先退群再让人拉回来"就能绕过；被踢/封禁者能重新入群只可能是被有封禁权的管理员拉回，等同解封。
+// 期限（UntilDate，0 为永久）在入群时刻 date 已过的限制视为无限制。
+func rejoinBannedRights(existing domain.ChannelMember, date int) domain.ChannelBannedRights {
+	if existing.Status == domain.ChannelMemberKicked || existing.Status == domain.ChannelMemberBanned || existing.BannedRights.ViewMessages {
+		return domain.ChannelBannedRights{}
+	}
+	if date <= 0 {
+		date = int(time.Now().Unix())
+	}
+	if until := existing.BannedRights.UntilDate; until > 0 && until <= date {
+		return domain.ChannelBannedRights{}
+	}
+	return existing.BannedRights
 }
 
 func creatorChannelAdminRights() domain.ChannelAdminRights {

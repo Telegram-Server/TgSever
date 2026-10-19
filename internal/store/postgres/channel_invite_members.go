@@ -80,6 +80,9 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 			AvailableMinPts: channelInitialAvailableMinPts(channel),
 			ReadInboxMaxID:  channel.TopMessageID,
 		}
+		if existing, ok := existingMembers[userID]; ok {
+			member.BannedRights = rejoinBannedRights(existing, date)
+		}
 		members = append(members, member)
 		invitedIDs = append(invitedIDs, userID)
 	}
