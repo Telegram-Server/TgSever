@@ -2,18 +2,15 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 func TestBlobStorageAdvisoryLock(t *testing.T) {
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
-	}
+	dsn := pgtest.TestDSN(t)
 	ctx := context.Background()
 	runtimeLock, err := AcquireBlobRuntimeLock(ctx, dsn)
 	if err != nil {

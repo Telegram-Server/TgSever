@@ -20,7 +20,7 @@ import (
 // 依赖全表状态的测试改用 pgtest.NewDatabase(t) 独占一个库。
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool, err := Open(context.Background(), pgtest.DSN(t))
+	pool, err := Open(context.Background(), pgtest.TestDSN(t))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

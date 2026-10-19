@@ -2,11 +2,11 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 // TestChannelRowCacheInvalidatesOnNotify 端到端验证：channels 触发器(0117) → LISTEN/NOTIFY →
@@ -16,7 +16,7 @@ import (
 // sleep 猜时序导致竞态。
 func TestChannelRowCacheInvalidatesOnNotify(t *testing.T) {
 	pool := testPool(t) // 未设 DSN 会 t.Skip
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
+	dsn := pgtest.TestDSN(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

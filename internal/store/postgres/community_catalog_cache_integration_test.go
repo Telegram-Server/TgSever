@@ -2,11 +2,11 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 func TestCommunityCatalogCacheInvalidatesFromDatabaseTrigger(t *testing.T) {
@@ -27,7 +27,7 @@ func TestCommunityCatalogCacheInvalidatesFromDatabaseTrigger(t *testing.T) {
 	cache.cache.Store(communityCatalogPresenceKey, true)
 	lctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	listener := NewReadModelChangeListener(os.Getenv("TELESRV_TEST_POSTGRES_DSN"), ReadModelCacheSet{CommunityCatalog: cache}, nil)
+	listener := NewReadModelChangeListener(pgtest.TestDSN(t), ReadModelCacheSet{CommunityCatalog: cache}, nil)
 	go listener.Run(lctx)
 	if !waitUntil(2*time.Second, func() bool {
 		_, ok := cache.cache.Peek(communityCatalogPresenceKey)

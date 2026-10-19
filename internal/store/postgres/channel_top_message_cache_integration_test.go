@@ -2,16 +2,16 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/pgtest"
 )
 
 func TestChannelTopMessageCacheInvalidatesOnTopPayloadNotify(t *testing.T) {
 	pool := testPool(t)
-	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
+	dsn := pgtest.TestDSN(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

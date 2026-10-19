@@ -193,6 +193,65 @@ func NewDatabase(tb testing.TB) string {
 	return dsn
 }
 
+// perTestLimit 限制同时存活的按测试克隆库数量：每个库都有连接池和连接准入控制器的长连接，
+// 并行测试全开会耗尽服务器的 max_connections（默认 100）。PGTEST_PARALLEL_DBS 可覆盖。
+var perTestLimit = func() chan struct{} {
+	n := 8
+	if v, err := strconv.Atoi(os.Getenv("PGTEST_PARALLEL_DBS")); err == nil && v > 0 {
+		n = v
+	}
+	return make(chan struct{}, n)
+}()
+
+var perTest struct {
+	mu  sync.Mutex
+	dsn map[string]string // 测试名 -> 该测试独占库的 DSN
+}
+
+// TestDSN 返回当前测试独占的克隆库 DSN，并让顶层测试并行运行：库是这个测试独占的，
+// 全表计数、TRUNCATE、全局认领都不会互相影响，因此不需要逐个审查测试才能并行。
+//
+// 同一个测试（含其子测试）多次调用返回同一个库，模拟重启的"再开一个连接池"仍然看到同样的数据。
+// 第一次调用发生在子测试里时，库归该子测试所有，且不调用 Parallel（子测试的 Parallel 会让父测试
+// 先于它返回，改变语义）。测试结束时删库。未设置 EnvDSN 时 Skip。
+//
+// 依赖整个服务器状态（max_connections、pg_stat_activity）的测试不要用它，留在串行的包级库上。
+func TestDSN(t *testing.T) string {
+	t.Helper()
+	requireConfigured(t)
+	name := t.Name()
+	top, _, isSub := strings.Cut(name, "/")
+	perTest.mu.Lock()
+	if perTest.dsn == nil {
+		perTest.dsn = make(map[string]string)
+	}
+	if dsn, ok := perTest.dsn[name]; ok {
+		perTest.mu.Unlock()
+		return dsn
+	}
+	if dsn, ok := perTest.dsn[top]; ok && isSub {
+		perTest.mu.Unlock()
+		return dsn
+	}
+	perTest.mu.Unlock()
+
+	if !isSub {
+		t.Parallel()
+	}
+	perTestLimit <- struct{}{}
+	t.Cleanup(func() { <-perTestLimit })
+	dsn := NewDatabase(t)
+	perTest.mu.Lock()
+	perTest.dsn[name] = dsn
+	perTest.mu.Unlock()
+	t.Cleanup(func() {
+		perTest.mu.Lock()
+		delete(perTest.dsn, name)
+		perTest.mu.Unlock()
+	})
+	return dsn
+}
+
 // TemplateName 返回当前嵌入迁移对应的模板库名：telesrv_tmpl_<hash>_test。
 func TemplateName() (string, error) {
 	hash, err := migrationsHash()
