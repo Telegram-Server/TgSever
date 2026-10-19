@@ -14,7 +14,6 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
 	"telesrv/internal/otpdelivery"
-	"telesrv/internal/srp"
 	"telesrv/internal/store"
 )
 
@@ -368,7 +367,10 @@ func (s *Service) UpdatePasswordSettings(ctx context.Context, userID int64, chec
 		algo := *input.NewAlgo
 		settings.CurrentAlgo = &algo
 		settings.NewAlgo = defaultPasswordAlgo()
-		settings.SRPVerifier = srp.Pad(input.NewPasswordHash)
+		settings.SRPVerifier, err = padVerifier(input.NewPasswordHash)
+		if err != nil {
+			return err
+		}
 		secret, b, err := makeSRPChallenge(settings.SRPVerifier)
 		if err != nil {
 			return err
@@ -487,7 +489,10 @@ func (s *Service) RecoverPassword(ctx context.Context, userID int64, code string
 		return err
 	}
 	settings.CurrentAlgo = input.NewAlgo
-	settings.SRPVerifier = srp.Pad(input.NewPasswordHash)
+	settings.SRPVerifier, err = padVerifier(input.NewPasswordHash)
+	if err != nil {
+		return err
+	}
 	settings.SRPID, err = randomInt64()
 	if err != nil {
 		return err

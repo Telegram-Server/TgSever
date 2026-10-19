@@ -49,13 +49,13 @@ func TestTDClientProofIsAcceptedByServer(t *testing.T) {
 	if err := srp.ValidateNewPassword(&algo, verifier); err != nil {
 		t.Fatalf("ValidateNewPassword(td output) = %v, want nil", err)
 	}
-	verifier = srp.Pad(verifier)
+	verifier = mustPad(t, verifier)
 
 	secret, b, err := srp.NewChallenge(verifier)
 	if err != nil {
 		t.Fatalf("NewChallenge: %v", err)
 	}
-	challenge := srp.Challenge{Verifier: verifier, Secret: secret, B: b, Salt1: algo.Salt1}
+	challenge := srp.Challenge{Verifier: verifier, Secret: secret, B: b, Salt1: algo.Salt1, Salt2: algo.Salt2}
 
 	answer := clientProof(t, algo, password, b)
 	if err := srp.Verify(challenge, answer.A, answer.M1); err != nil {
@@ -80,14 +80,14 @@ func TestTDClientProofIsAcceptedByServer(t *testing.T) {
 func TestProofDoesNotSurviveChallengeRotation(t *testing.T) {
 	password := []byte("rotate me")
 	algo, verifier := clientNewPassword(t, password)
-	verifier = srp.Pad(verifier)
+	verifier = mustPad(t, verifier)
 
 	oldSecret, oldB, err := srp.NewChallenge(verifier)
 	if err != nil {
 		t.Fatalf("NewChallenge old: %v", err)
 	}
 	answer := clientProof(t, algo, password, oldB)
-	if err := srp.Verify(srp.Challenge{Verifier: verifier, Secret: oldSecret, B: oldB, Salt1: algo.Salt1}, answer.A, answer.M1); err != nil {
+	if err := srp.Verify(srp.Challenge{Verifier: verifier, Secret: oldSecret, B: oldB, Salt1: algo.Salt1, Salt2: algo.Salt2}, answer.A, answer.M1); err != nil {
 		t.Fatalf("Verify against its own challenge = %v, want nil", err)
 	}
 
@@ -95,7 +95,7 @@ func TestProofDoesNotSurviveChallengeRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewChallenge new: %v", err)
 	}
-	if err := srp.Verify(srp.Challenge{Verifier: verifier, Secret: newSecret, B: newB, Salt1: algo.Salt1}, answer.A, answer.M1); !errors.Is(err, srp.ErrInvalidProof) {
+	if err := srp.Verify(srp.Challenge{Verifier: verifier, Secret: newSecret, B: newB, Salt1: algo.Salt1, Salt2: algo.Salt2}, answer.A, answer.M1); !errors.Is(err, srp.ErrInvalidProof) {
 		t.Fatalf("Verify(old proof, new challenge) = %v, want ErrInvalidProof", err)
 	}
 }
@@ -103,7 +103,7 @@ func TestProofDoesNotSurviveChallengeRotation(t *testing.T) {
 func TestComputeBIsDeterministicForGivenSecret(t *testing.T) {
 	password := []byte("deterministic")
 	algo, verifier := clientNewPassword(t, password)
-	verifier = srp.Pad(verifier)
+	verifier = mustPad(t, verifier)
 	secret := bytes.Repeat([]byte{0x42}, srp.HashSize)
 
 	b, err := srp.ComputeB(verifier, secret)
@@ -116,7 +116,7 @@ func TestComputeBIsDeterministicForGivenSecret(t *testing.T) {
 	}
 	// 用 (verifier, b, B) 存档后,客户端基于这个 B 的证明能被接受。
 	answer := clientProof(t, algo, password, b)
-	if err := srp.Verify(srp.Challenge{Verifier: verifier, Secret: secret, B: b, Salt1: algo.Salt1}, answer.A, answer.M1); err != nil {
+	if err := srp.Verify(srp.Challenge{Verifier: verifier, Secret: secret, B: b, Salt1: algo.Salt1, Salt2: algo.Salt2}, answer.A, answer.M1); err != nil {
 		t.Fatalf("Verify(proof against ComputeB) = %v, want nil", err)
 	}
 }
@@ -124,19 +124,19 @@ func TestComputeBIsDeterministicForGivenSecret(t *testing.T) {
 func TestVerifyRejectsIncompleteChallengeAndBadValues(t *testing.T) {
 	password := []byte("incomplete")
 	algo, verifier := clientNewPassword(t, password)
-	verifier = srp.Pad(verifier)
+	verifier = mustPad(t, verifier)
 	secret, b, err := srp.NewChallenge(verifier)
 	if err != nil {
 		t.Fatalf("NewChallenge: %v", err)
 	}
 	answer := clientProof(t, algo, password, b)
-	full := srp.Challenge{Verifier: verifier, Secret: secret, B: b, Salt1: algo.Salt1}
+	full := srp.Challenge{Verifier: verifier, Secret: secret, B: b, Salt1: algo.Salt1, Salt2: algo.Salt2}
 
 	for name, ch := range map[string]srp.Challenge{
-		"no verifier": {Secret: secret, B: b, Salt1: algo.Salt1},
-		"no secret":   {Verifier: verifier, B: b, Salt1: algo.Salt1},
-		"no B":        {Verifier: verifier, Secret: secret, Salt1: algo.Salt1},
-		"zero secret": {Verifier: verifier, Secret: make([]byte, srp.HashSize), B: b, Salt1: algo.Salt1},
+		"no verifier": {Secret: secret, B: b, Salt1: algo.Salt1, Salt2: algo.Salt2},
+		"no secret":   {Verifier: verifier, B: b, Salt1: algo.Salt1, Salt2: algo.Salt2},
+		"no B":        {Verifier: verifier, Secret: secret, Salt1: algo.Salt1, Salt2: algo.Salt2},
+		"zero secret": {Verifier: verifier, Secret: make([]byte, srp.HashSize), B: b, Salt1: algo.Salt1, Salt2: algo.Salt2},
 	} {
 		if err := srp.Verify(ch, answer.A, answer.M1); !errors.Is(err, srp.ErrIncompleteChallenge) {
 			t.Fatalf("Verify(%s) = %v, want ErrIncompleteChallenge", name, err)

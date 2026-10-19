@@ -119,10 +119,14 @@ func newLoginPassword(in domain.PasswordInputSettings) (domain.LoginPassword, er
 	if err := srp.ValidateNewPassword(algo, in.NewPasswordHash); err != nil {
 		return domain.LoginPassword{}, mapNewPasswordError(err)
 	}
+	verifier, err := srp.Pad(in.NewPasswordHash)
+	if err != nil {
+		return domain.LoginPassword{}, domain.ErrPasswordHashInvalid
+	}
 	return domain.LoginPassword{
 		Salt1:    append([]byte(nil), algo.Salt1...),
 		Salt2:    append([]byte(nil), algo.Salt2...),
-		Verifier: srp.Pad(in.NewPasswordHash),
+		Verifier: verifier,
 	}, nil
 }
 

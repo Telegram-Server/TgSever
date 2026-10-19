@@ -56,16 +56,33 @@ func checkSRP(settings domain.PasswordSettings, check domain.PasswordCheck) erro
 	if settings.SRPID == 0 || settings.SRPID != check.SRPID {
 		return domain.ErrSRPIDInvalid
 	}
-	salt1 := settings.NewAlgo.Salt1
+	// salt1、salt2 取下发给客户端的 current_algo(与 tgPassword 一致);ValidateNewPassword
+	// 只接受默认 salt2,所以存档里的 salt2 总是默认值。存档缺 salt2 时回退默认值,
+	// 保持加固前 Verify 写死默认 salt2 的行为。
+	algo := settings.NewAlgo
 	if settings.CurrentAlgo != nil {
-		salt1 = settings.CurrentAlgo.Salt1
+		algo = *settings.CurrentAlgo
+	}
+	salt2 := algo.Salt2
+	if len(salt2) == 0 {
+		salt2 = srp.DefaultAlgo().Salt2
 	}
 	return mapSRPError(srp.Verify(srp.Challenge{
 		Verifier: settings.SRPVerifier,
 		Secret:   settings.SRPBSecret,
 		B:        settings.SRPB,
-		Salt1:    salt1,
+		Salt1:    algo.Salt1,
+		Salt2:    salt2,
 	}, check.A, check.M1))
+}
+
+// padVerifier 把已通过 validateNewPasswordSettings 的 new_password_hash 补成定长 verifier。
+func padVerifier(hash []byte) ([]byte, error) {
+	v, err := srp.Pad(hash)
+	if err != nil {
+		return nil, domain.ErrPasswordHashInvalid
+	}
+	return v, nil
 }
 
 func validateNewPasswordSettings(in domain.PasswordInputSettings) error {
