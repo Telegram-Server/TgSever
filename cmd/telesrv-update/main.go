@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -35,9 +36,10 @@ func run() error {
 	listenDefault := envOr("TELESRV_UPDATE_LISTEN", "127.0.0.1:2402")
 
 	listenAddr := flag.String("listen", listenDefault, "HTTP listen address")
-	manifestPath, filesDir, rootKeyPath := catalogFlags(flag.CommandLine)
+	catalog := catalogFlags(flag.CommandLine)
 	check := flag.Bool("check", false, "validate the catalog and exit")
 	flag.Parse()
+	paths := catalog()
 	// 服务模式不接受位置参数：把参数写在 publish 前面（telesrv-update -manifest m publish x）
 	// 会落到这里，不能悄悄启动服务。
 	if flag.NArg() > 0 {
@@ -46,8 +48,8 @@ func run() error {
 
 	// 未配置根公钥时仍可只提供移动端条目；一旦清单有启用的桌面条目，加载会失败。
 	var opts updatecdn.CatalogOptions
-	if *rootKeyPath != "" {
-		rootKey, err := updatecdn.LoadRootPublicKey(*rootKeyPath)
+	if paths.RootPublicKey != "" {
+		rootKey, err := updatecdn.LoadRootPublicKey(paths.RootPublicKey)
 		if err != nil {
 			return err
 		}
@@ -60,10 +62,10 @@ func run() error {
 	defer logger.Sync() //nolint:errcheck
 
 	// 重新加载失败时继续提供上一份正常快照，只记录错误。
-	store, err := updatecdn.NewStore(*manifestPath, *filesDir, opts,
+	store, err := updatecdn.NewStore(paths.Manifest, paths.FilesDir, opts,
 		updatecdn.WithReloadErrorHandler(func(err error) {
 			logger.Error("update manifest reload failed; serving the previous catalog",
-				zap.String("manifest", *manifestPath), zap.Error(err))
+				zap.String("manifest", paths.Manifest), zap.Error(err))
 		}))
 	if err != nil {
 		return fmt.Errorf("load update catalog: %w", err)
@@ -95,9 +97,9 @@ func run() error {
 	}()
 	logger.Info("update service started",
 		zap.String("listen", listener.Addr().String()),
-		zap.String("manifest", *manifestPath),
-		zap.String("files", *filesDir),
-		zap.String("root_public_key", *rootKeyPath))
+		zap.String("manifest", paths.Manifest),
+		zap.String("files", paths.FilesDir),
+		zap.String("root_public_key", paths.RootPublicKey))
 
 	stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -123,12 +125,27 @@ func run() error {
 }
 
 // catalogFlags 注册服务模式与 publish 共用的清单、文件目录与根公钥参数，默认值与环境变量一致。
-func catalogFlags(fs *flag.FlagSet) (manifestPath, filesDir, rootKeyPath *string) {
-	manifestPath = fs.String("manifest", envOr("TELESRV_UPDATE_MANIFEST", "data/updates/manifest.json"), "release manifest path")
-	filesDir = fs.String("files", envOr("TELESRV_UPDATE_FILES_DIR", "data/updates/files"), "desktop update package directory")
-	rootKeyPath = fs.String("root-public-key", os.Getenv("TELESRV_UPDATE_ROOT_PUBLIC_KEY"),
+// 返回的函数在解析参数之后调用；文件目录未显式配置时取清单所在目录下的 files，与 telesrv
+// 进程内更新服务的默认值一致，这样只设置清单路径时 publish 与服务用的是同一个目录。
+func catalogFlags(fs *flag.FlagSet) func() catalogPaths {
+	manifestPath := fs.String("manifest", envOr("TELESRV_UPDATE_MANIFEST", "data/updates/manifest.json"), "release manifest path")
+	filesDir := fs.String("files", os.Getenv("TELESRV_UPDATE_FILES_DIR"), `desktop update package directory (default "files" next to the manifest)`)
+	rootKeyPath := fs.String("root-public-key", os.Getenv("TELESRV_UPDATE_ROOT_PUBLIC_KEY"),
 		"update root public key PEM file (Ed25519); required when the manifest has enabled desktop entries")
-	return manifestPath, filesDir, rootKeyPath
+	return func() catalogPaths {
+		paths := catalogPaths{Manifest: *manifestPath, FilesDir: *filesDir, RootPublicKey: *rootKeyPath}
+		if paths.FilesDir == "" {
+			paths.FilesDir = filepath.Join(filepath.Dir(paths.Manifest), "files")
+		}
+		return paths
+	}
+}
+
+// catalogPaths 是服务模式与 publish 共用的清单、文件目录与根公钥路径。
+type catalogPaths struct {
+	Manifest      string
+	FilesDir      string
+	RootPublicKey string
 }
 
 // runPublish 验签一个 v2 桌面包，把它拷进文件目录并原子更新清单，输出发布的条目。
@@ -138,7 +155,7 @@ func runPublish(args []string) error {
 		fmt.Fprintln(fs.Output(), "usage: telesrv-update publish [flags] <package>")
 		fs.PrintDefaults()
 	}
-	manifestPath, filesDir, rootKeyPath := catalogFlags(fs)
+	catalog := catalogFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "verify the package and the resulting manifest without writing any file")
 	allowDowngrade := fs.Bool("allow-downgrade", false, "allow a build not newer than the published one (roll back a bad release)")
 	if err := fs.Parse(args); err != nil {
@@ -147,18 +164,19 @@ func runPublish(args []string) error {
 		}
 		return err
 	}
+	paths := catalog()
 	if fs.NArg() != 1 {
 		fs.Usage()
 		return fmt.Errorf("publish takes exactly one package path (flags go before it), got %d arguments", fs.NArg())
 	}
-	if *rootKeyPath == "" {
+	if paths.RootPublicKey == "" {
 		return errors.New("publish requires the update root public key (-root-public-key or TELESRV_UPDATE_ROOT_PUBLIC_KEY)")
 	}
-	rootKey, err := updatecdn.LoadRootPublicKey(*rootKeyPath)
+	rootKey, err := updatecdn.LoadRootPublicKey(paths.RootPublicKey)
 	if err != nil {
 		return err
 	}
-	result, err := updatecdn.PublishDesktopPackage(*manifestPath, *filesDir, fs.Arg(0), updatecdn.PublishOptions{
+	result, err := updatecdn.PublishDesktopPackage(paths.Manifest, paths.FilesDir, fs.Arg(0), updatecdn.PublishOptions{
 		CatalogOptions: updatecdn.CatalogOptions{RootPublicKey: rootKey},
 		DryRun:         *dryRun,
 		AllowDowngrade: *allowDowngrade,
@@ -194,7 +212,7 @@ func runPublish(args []string) error {
 		}
 		fmt.Printf("  replaces: build %d (%s%s)\n", previous.Build, previous.File, state)
 	}
-	fmt.Printf("  manifest: %s\n", *manifestPath)
+	fmt.Printf("  manifest: %s\n", paths.Manifest)
 	return nil
 }
 
