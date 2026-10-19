@@ -4,7 +4,6 @@ package updatecdn
 
 import (
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -269,26 +268,14 @@ func verifyDesktopFile(path string, release DesktopRelease, root ed25519.PublicK
 	if release.Size > 0 && release.Size != info.Size() {
 		return fileRecord{}, fmt.Errorf("package %q size = %d, want %d", release.File, info.Size(), release.Size)
 	}
-	if info.Size() > MaxDesktopPackageSize {
-		return fileRecord{}, fmt.Errorf("package %q size %d exceeds the v2 package limit of %d bytes", release.File, info.Size(), int64(MaxDesktopPackageSize))
-	}
-	// 验签需要整个包在内存中（签名输入包含负载的 SHA256，清单在包内），上限由
-	// MaxDesktopPackageSize 保证；多读一个字节用来发现文件在 Stat 之后被追加。
-	data, err := io.ReadAll(io.LimitReader(f, MaxDesktopPackageSize+1))
+	// 一次流式读取同时完成整个文件的 SHA256 与 v2 验签，内存占用与包大小无关。
+	pkg, hash, err := VerifyDesktopPackageStream(f, info.Size(), root, now)
 	if err != nil {
-		return fileRecord{}, fmt.Errorf("read package %q: %w", release.File, err)
+		return fileRecord{}, fmt.Errorf("package %q: %w", release.File, err)
 	}
-	if int64(len(data)) != info.Size() {
-		return fileRecord{}, fmt.Errorf("package %q changed while it was being read", release.File)
-	}
-	hash := sha256.Sum256(data)
 	actual := hex.EncodeToString(hash[:])
 	if !strings.EqualFold(actual, release.SHA256) {
 		return fileRecord{}, fmt.Errorf("package %q SHA256 = %s, want %s", release.File, actual, strings.ToLower(release.SHA256))
-	}
-	pkg, err := VerifyDesktopPackage(data, root, now)
-	if err != nil {
-		return fileRecord{}, fmt.Errorf("package %q: %w", release.File, err)
 	}
 	return fileRecord{
 		path:    path,

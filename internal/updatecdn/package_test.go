@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
@@ -433,6 +434,11 @@ func TestVerifyDesktopPackageManifestContent(t *testing.T) {
 			wantErr: "could not parse manifest JSON"},
 		{name: "JSON array", mutate: func(s *testPackageSpec) { s.manifest = []byte("[]") },
 			wantErr: "could not parse manifest JSON"},
+		// Qt 的 JSON 解析器拒绝非法 UTF-8，Go 会悄悄替换成 U+FFFD，这里必须与客户端一致。
+		{name: "invalid UTF-8 in a string", mutate: func(s *testPackageSpec) {
+			raw, _ := json.Marshal(s.manifestDoc)
+			s.manifest = bytes.Replace(raw, []byte(`"revoked":[]`), []byte("\"revoked\":[\"old-\xff\"]"), 1)
+		}, wantErr: "could not parse manifest JSON"},
 		{name: "format 2", mutate: setField("format", 2), wantErr: "bad manifest format"},
 		{name: "format as string", mutate: setField("format", "1"), wantErr: "bad manifest format"},
 		{name: "format missing", mutate: setField("format", nil), wantErr: "bad manifest format"},
@@ -488,6 +494,31 @@ func TestVerifyDesktopPackageManifestContent(t *testing.T) {
 			assertVerifyError(t, err, tt.wantErr)
 		})
 	}
+}
+
+// 流式验证与内存验证结论一致，并给出整个文件的 SHA256；读到的字节数与声明的大小
+// 不符（文件在读取时被改动）时拒绝。
+func TestVerifyDesktopPackageStream(t *testing.T) {
+	keys := testKeys(t)
+	data := buildTestPackage(t, nil)
+	pkg, fileHash, err := VerifyDesktopPackageStream(bytes.NewReader(data), int64(len(data)), keys.rootPub, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileHash != sha256.Sum256(data) || pkg.Base() != 7000007 || pkg.Target.String() != "win-x64" {
+		t.Fatalf("package = %+v hash = %x", pkg, fileHash)
+	}
+	tampered := bytes.Clone(data)
+	tampered[len(tampered)-1] ^= 1
+	_, _, err = VerifyDesktopPackageStream(bytes.NewReader(tampered), int64(len(tampered)), keys.rootPub, testNow)
+	assertVerifyError(t, err, "no valid signature")
+
+	_, _, err = VerifyDesktopPackageStream(bytes.NewReader(append(bytes.Clone(data), 0)), int64(len(data)), keys.rootPub, testNow)
+	assertVerifyError(t, err, "more bytes than its size")
+	_, _, err = VerifyDesktopPackageStream(bytes.NewReader(data[:len(data)-1]), int64(len(data)), keys.rootPub, testNow)
+	assertVerifyError(t, err, "fewer bytes than its size")
+	_, _, err = VerifyDesktopPackageStream(bytes.NewReader(nil), MaxDesktopPackageSize+1, keys.rootPub, testNow)
+	assertVerifyError(t, err, "exceeds the v2 package limit")
 }
 
 func TestParseRootPublicKey(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"os"
@@ -66,6 +67,9 @@ const MaxDesktopPackageSize = packageHeaderSize +
 	4 + maxPackageManifestSignatureSize +
 	4 + maxPackageSignatures*(4+maxPackageKeyIDSize+4+maxPackageSignatureSize) +
 	4 + maxPackagePayloadSize
+
+// maxPackagePrefixSize 是负载之前全部字段的最大总长。
+const maxPackagePrefixSize = MaxDesktopPackageSize - maxPackagePayloadSize
 
 // PackageChannel 是包内声明的发布通道（u8 channel 字段）。
 type PackageChannel uint8
@@ -204,31 +208,70 @@ func LoadRootPublicKey(path string) (ed25519.PublicKey, error) {
 // 签名再解析清单，然后要求包签名满足清单中该通道的全部签名组（AND-of-ORs）。不解压、
 // 不解析负载内容。now 用于判断签名密钥是否过期。
 func VerifyDesktopPackage(data []byte, root ed25519.PublicKey, now time.Time) (VerifiedPackage, error) {
+	pkg, _, err := VerifyDesktopPackageStream(bytes.NewReader(data), int64(len(data)), root, now)
+	return pkg, err
+}
+
+// VerifyDesktopPackageStream 与 VerifyDesktopPackage 相同，但从 r 顺序读取一个大小为
+// size 的包：只把负载之前的部分（至多几百 KiB）放进内存，负载流式计算 SHA256，内存占用
+// 与包大小无关。同时返回整个文件的 SHA256，供清单校验与发布使用。r 读出的字节数
+// 必须恰好是 size。
+func VerifyDesktopPackageStream(r io.Reader, size int64, root ed25519.PublicKey, now time.Time) (VerifiedPackage, [sha256.Size]byte, error) {
+	var fileSum [sha256.Size]byte
 	if len(root) == 0 {
-		return VerifiedPackage{}, errors.New("update root public key is required")
+		return VerifiedPackage{}, fileSum, errors.New("update root public key is required")
 	}
 	if len(root) != ed25519.PublicKeySize {
-		return VerifiedPackage{}, fmt.Errorf("update root public key has %d bytes, want %d", len(root), ed25519.PublicKeySize)
+		return VerifiedPackage{}, fileSum, fmt.Errorf("update root public key has %d bytes, want %d", len(root), ed25519.PublicKeySize)
 	}
-	envelope, err := parsePackageEnvelope(data)
+	if size < 0 || size > MaxDesktopPackageSize {
+		return VerifiedPackage{}, fileSum, fmt.Errorf("v2 package: size %d exceeds the v2 package limit of %d bytes", size, int64(MaxDesktopPackageSize))
+	}
+
+	// 结构上合法的包，负载之前的字段总长不超过 maxPackagePrefixSize，所以只读这么多就能
+	// 解析出全部头部字段与负载位置；更长的部分全部属于负载。
+	head := make([]byte, min(size, maxPackagePrefixSize))
+	if n, err := io.ReadFull(r, head); err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+			return VerifiedPackage{}, fileSum, fmt.Errorf("v2 package: read %d bytes, fewer bytes than its size %d", n, size)
+		}
+		return VerifiedPackage{}, fileSum, fmt.Errorf("read v2 package: %w", err)
+	}
+	envelope, err := parsePackageEnvelope(head, size)
 	if err != nil {
-		return VerifiedPackage{}, err
+		return VerifiedPackage{}, fileSum, err
 	}
+
+	fileHash := sha256.New()
+	payloadHash := sha256.New()
+	fileHash.Write(head)
+	payloadHash.Write(head[envelope.payloadOffset:])
+	rest, err := io.Copy(io.MultiWriter(fileHash, payloadHash), io.LimitReader(r, size-int64(len(head))+1))
+	if err != nil {
+		return VerifiedPackage{}, fileSum, fmt.Errorf("read v2 package: %w", err)
+	}
+	switch read := int64(len(head)) + rest; {
+	case read < size:
+		return VerifiedPackage{}, fileSum, fmt.Errorf("v2 package: read %d bytes, fewer bytes than its size %d", read, size)
+	case read > size:
+		return VerifiedPackage{}, fileSum, fmt.Errorf("v2 package: read more bytes than its size %d", size)
+	}
+
 	manifest, err := parseVerifiedPackageManifest(envelope.manifest, envelope.manifestSignature, root)
 	if err != nil {
-		return VerifiedPackage{}, err
+		return VerifiedPackage{}, fileSum, err
 	}
-	hash := sha256.Sum256(envelope.payload)
-	signingInput := append(append(make([]byte, 0, len(envelope.signedRegion)+len(hash)), envelope.signedRegion...), hash[:]...)
+	signingInput := payloadHash.Sum(append(make([]byte, 0, len(envelope.signedRegion)+sha256.Size), envelope.signedRegion...))
 	if err := manifest.authorize(envelope.channel, signingInput, envelope.signatures, now.Unix()); err != nil {
-		return VerifiedPackage{}, err
+		return VerifiedPackage{}, fileSum, err
 	}
+	fileHash.Sum(fileSum[:0])
 	return VerifiedPackage{
 		Channel: envelope.channel,
 		Target:  envelope.target,
 		Version: envelope.version,
 		Created: time.Unix(envelope.created, 0),
-	}, nil
+	}, fileSum, nil
 }
 
 type packageSignature struct {
@@ -244,8 +287,9 @@ type packageEnvelope struct {
 	manifest          []byte
 	manifestSignature []byte
 	signatures        []packageSignature
-	payload           []byte
-	signedRegion      []byte
+	// payloadOffset 是负载在包内的起始位置；负载一直延伸到包末尾。
+	payloadOffset int
+	signedRegion  []byte
 }
 
 // packageReader 对应客户端的 Reader：越界读取一律失败。
@@ -303,8 +347,10 @@ func (r *packageReader) lengthPrefixed(max uint32, what string) ([]byte, error) 
 	return value, nil
 }
 
-// parsePackageEnvelope 对应客户端 ParseEnvelope。
-func parsePackageEnvelope(data []byte) (packageEnvelope, error) {
+// parsePackageEnvelope 对应客户端 ParseEnvelope。data 是总长为 size 的包的前缀
+// （至少 min(size, maxPackagePrefixSize) 字节）；负载本身不在这里读取，只核对其长度
+// 字段与包的实际长度恰好吻合：负载之后有多余字节或负载被截断都拒绝。
+func parsePackageEnvelope(data []byte, size int64) (packageEnvelope, error) {
 	var result packageEnvelope
 	if len(data) < 4 || string(data[:4]) != packageMagic {
 		return result, errors.New("v2 package: bad magic, want TDUP")
@@ -367,11 +413,16 @@ func parsePackageEnvelope(data []byte) (packageEnvelope, error) {
 		result.signatures = append(result.signatures, packageSignature{keyID: keyID, sig: sig})
 	}
 
-	if result.payload, err = r.lengthPrefixed(maxPackagePayloadSize, "payload"); err != nil {
-		return result, err
+	payloadLength, ok := r.u32()
+	if !ok || payloadLength == 0 || payloadLength > maxPackagePayloadSize {
+		return result, errors.New("v2 package: bad payload size")
 	}
-	if r.offset != len(data) {
-		return result, fmt.Errorf("v2 package: %d trailing bytes after the payload", len(data)-r.offset)
+	result.payloadOffset = r.offset
+	switch end := int64(r.offset) + int64(payloadLength); {
+	case end > size:
+		return result, errors.New("v2 package: truncated payload")
+	case end < size:
+		return result, fmt.Errorf("v2 package: %d trailing bytes after the payload", size-end)
 	}
 	return result, nil
 }
@@ -400,7 +451,11 @@ func parseVerifiedPackageManifest(manifest, signature []byte, root ed25519.Publi
 		return nil, errors.New("v2 package: bad manifest root signature")
 	}
 
+	// QJsonDocument::fromJson 拒绝非法 UTF-8，encoding/json 则会替换成 U+FFFD 继续解析。
 	var object map[string]json.RawMessage
+	if !utf8.Valid(manifest) {
+		return nil, errors.New("v2 package: could not parse manifest JSON: invalid UTF-8")
+	}
 	if err := json.Unmarshal(manifest, &object); err != nil || object == nil {
 		return nil, errors.New("v2 package: could not parse manifest JSON")
 	}
