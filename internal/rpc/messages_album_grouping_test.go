@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,149 +17,14 @@ import (
 )
 
 // albumScheduledMessages 在真实内存消息服务上叠一个内存定时队列：普通发送、相册预留走
-// appmessages，定时消息的存取按 postgres store 的语义原样保留 GroupedID。
+// appmessages，定时消息走 scheduledQueue（与 postgres store 同语义）。appmessages.Service
+// 多包一层，让它自带的定时方法沉到更深的嵌入层，由 scheduledQueue 的同名方法遮蔽。
 type albumScheduledMessages struct {
-	*appmessages.Service
-	mu        sync.Mutex
-	scheduled []domain.ScheduledMessage
-	nextID    int
+	appMessagesBase
+	*scheduledQueue
 }
 
-func (s *albumScheduledMessages) ScheduleMessage(_ context.Context, userID int64, req domain.ScheduleMessageRequest) (domain.ScheduledMessage, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if req.OwnerUserID == 0 {
-		req.OwnerUserID = userID
-	}
-	s.nextID++
-	msg := domain.ScheduledMessage{
-		OwnerUserID:  req.OwnerUserID,
-		ID:           s.nextID,
-		Peer:         req.Peer,
-		RandomID:     req.RandomID,
-		Message:      req.Message,
-		Entities:     append([]domain.MessageEntity(nil), req.Entities...),
-		Media:        req.Media,
-		RichMessage:  req.RichMessage,
-		Silent:       req.Silent,
-		NoForwards:   req.NoForwards,
-		ReplyTo:      req.ReplyTo,
-		Forward:      req.Forward,
-		SendAs:       req.SendAs,
-		GroupedID:    req.GroupedID,
-		ScheduleDate: req.ScheduleDate,
-		CreatedAt:    req.Date,
-		UpdatedAt:    req.Date,
-		State:        "pending",
-	}
-	s.scheduled = append(s.scheduled, msg)
-	return msg, nil
-}
-
-func (s *albumScheduledMessages) EditScheduledMessage(context.Context, int64, domain.EditScheduledMessageRequest) (domain.ScheduledMessage, error) {
-	return domain.ScheduledMessage{}, domain.ErrMessageIDInvalid
-}
-
-func (s *albumScheduledMessages) match(owner int64, peer domain.Peer, ids []int, states ...string) []domain.ScheduledMessage {
-	want := make(map[int]bool, len(ids))
-	for _, id := range ids {
-		want[id] = true
-	}
-	out := make([]domain.ScheduledMessage, 0, len(s.scheduled))
-	for _, msg := range s.scheduled {
-		if owner != 0 && msg.OwnerUserID != owner {
-			continue
-		}
-		if peer.ID != 0 && msg.Peer != peer {
-			continue
-		}
-		if len(want) > 0 && !want[msg.ID] {
-			continue
-		}
-		stateOK := false
-		for _, state := range states {
-			if msg.State == state {
-				stateOK = true
-			}
-		}
-		if stateOK {
-			out = append(out, msg)
-		}
-	}
-	return out
-}
-
-func (s *albumScheduledMessages) ListScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	items := s.match(userID, filter.Peer, nil, "pending", "dispatching")
-	return domain.ScheduledMessageList{Messages: items, Count: len(items)}, nil
-}
-
-func (s *albumScheduledMessages) GetScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	items := s.match(userID, filter.Peer, filter.IDs, "pending", "dispatching")
-	return domain.ScheduledMessageList{Messages: items, Count: len(items)}, nil
-}
-
-func (s *albumScheduledMessages) DeleteScheduledMessages(context.Context, int64, domain.ScheduledMessageFilter, int) ([]domain.ScheduledMessage, error) {
-	return nil, nil
-}
-
-func (s *albumScheduledMessages) setState(items []domain.ScheduledMessage, state string) []domain.ScheduledMessage {
-	for i := range items {
-		for j := range s.scheduled {
-			if s.scheduled[j].OwnerUserID == items[i].OwnerUserID && s.scheduled[j].ID == items[i].ID {
-				s.scheduled[j].State = state
-				items[i].State = state
-			}
-		}
-	}
-	return items
-}
-
-func (s *albumScheduledMessages) ClaimScheduledMessages(_ context.Context, userID int64, claim domain.ScheduledMessageClaim) ([]domain.ScheduledMessage, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.setState(s.match(userID, claim.Peer, claim.IDs, "pending"), "dispatching"), nil
-}
-
-// ClaimDueScheduledMessages 忽略时间：测试里所有 pending 都视为已到期。
-func (s *albumScheduledMessages) ClaimDueScheduledMessages(context.Context, int, int, int) ([]domain.ScheduledMessage, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.setState(s.match(0, domain.Peer{}, nil, "pending"), "dispatching"), nil
-}
-
-func (s *albumScheduledMessages) MarkScheduledMessageSent(_ context.Context, ownerUserID int64, id, sentMessageID, _ int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.scheduled {
-		if s.scheduled[i].OwnerUserID == ownerUserID && s.scheduled[i].ID == id {
-			s.scheduled[i].State = "sent"
-			s.scheduled[i].SentMessageID = sentMessageID
-		}
-	}
-	return nil
-}
-
-func (s *albumScheduledMessages) ReleaseScheduledMessage(_ context.Context, ownerUserID int64, id int, _ string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.scheduled {
-		if s.scheduled[i].OwnerUserID == ownerUserID && s.scheduled[i].ID == id {
-			s.scheduled[i].State = "pending"
-		}
-	}
-	return nil
-}
-
-func (s *albumScheduledMessages) HasScheduledMessages(_ context.Context, userID int64, peer domain.Peer) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.match(userID, peer, nil, "pending", "dispatching")) > 0, nil
-}
+type appMessagesBase struct{ *appmessages.Service }
 
 func newAlbumScheduledRouter(t *testing.T) (*Router, *albumScheduledMessages, domain.User, domain.User) {
 	t.Helper()
@@ -170,7 +34,10 @@ func newAlbumScheduledRouter(t *testing.T) (*Router, *albumScheduledMessages, do
 	friend, _ := userStore.Create(ctx, domain.User{AccessHash: 12, Phone: "15550019002", FirstName: "Friend"})
 	dialogStore := memory.NewDialogStore()
 	messageStore := memory.NewMessageStore(dialogStore)
-	messages := &albumScheduledMessages{Service: appmessages.NewService(messageStore, dialogStore)}
+	messages := &albumScheduledMessages{
+		appMessagesBase: appMessagesBase{appmessages.NewService(messageStore, dialogStore)},
+		scheduledQueue:  &scheduledQueue{},
+	}
 	files := &fakeFiles{docs: map[int64]domain.Document{
 		555: {ID: 555, AccessHash: 5, DCID: 2, MimeType: "image/jpeg"},
 		556: {ID: 556, AccessHash: 6, DCID: 2, MimeType: "image/jpeg"},

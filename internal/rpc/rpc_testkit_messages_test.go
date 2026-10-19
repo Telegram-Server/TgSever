@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"sync"
+
 	"telesrv/internal/domain"
 )
 
@@ -94,32 +96,14 @@ func (s *ttlCaptureMessages) ClaimExpiredPrivateMessages(context.Context, int, i
 	return append([]domain.DeleteMessagesRequest(nil), s.expiredPrivateClaims...), nil
 }
 
+// scheduledCaptureMessages 在 captureMessages 上叠一个按 postgres store 语义存取的定时队列
+// （行与状态迁移见 scheduledRows），并记录各定时调用的请求供断言。
 func (s *scheduledCaptureMessages) ScheduleMessage(_ context.Context, userID int64, req domain.ScheduleMessageRequest) (domain.ScheduledMessage, error) {
 	s.scheduleReq = req
 	if req.OwnerUserID == 0 {
 		req.OwnerUserID = userID
 	}
-	msg := domain.ScheduledMessage{
-		OwnerUserID:          req.OwnerUserID,
-		ID:                   len(s.scheduled) + 41,
-		Peer:                 req.Peer,
-		RandomID:             req.RandomID,
-		Message:              req.Message,
-		Entities:             append([]domain.MessageEntity(nil), req.Entities...),
-		Media:                req.Media,
-		Silent:               req.Silent,
-		NoForwards:           req.NoForwards,
-		ReplyTo:              req.ReplyTo,
-		Forward:              req.Forward,
-		SendAs:               req.SendAs,
-		ScheduleDate:         req.ScheduleDate,
-		ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
-		CreatedAt:            req.Date,
-		UpdatedAt:            req.Date,
-		State:                "pending",
-	}
-	s.scheduled = append(s.scheduled, msg)
-	return msg, nil
+	return s.rows().schedule(req, len(s.scheduled)+41), nil
 }
 
 func (s *scheduledCaptureMessages) EditScheduledMessage(_ context.Context, userID int64, req domain.EditScheduledMessageRequest) (domain.ScheduledMessage, error) {
@@ -127,25 +111,14 @@ func (s *scheduledCaptureMessages) EditScheduledMessage(_ context.Context, userI
 	if req.OwnerUserID == 0 {
 		req.OwnerUserID = userID
 	}
-	for i := range s.scheduled {
-		if s.scheduled[i].OwnerUserID == req.OwnerUserID && s.scheduled[i].Peer == req.Peer && s.scheduled[i].ID == req.ID {
-			if req.SetMessage {
-				s.scheduled[i].Message = req.Message
-				s.scheduled[i].Entities = append([]domain.MessageEntity(nil), req.Entities...)
-			}
-			s.scheduled[i].ScheduleDate = req.ScheduleDate
-			s.scheduled[i].UpdatedAt = req.Date
-			return s.scheduled[i], nil
-		}
-	}
-	return domain.ScheduledMessage{}, domain.ErrMessageIDInvalid
+	return s.rows().edit(req)
 }
 
 func (s *scheduledCaptureMessages) ListScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
 	if filter.OwnerUserID == 0 {
 		filter.OwnerUserID = userID
 	}
-	items := s.matchScheduled(filter)
+	items := s.rows().match(filter.OwnerUserID, filter.Peer, nil, scheduledActiveStates...)
 	return domain.ScheduledMessageList{Messages: items, Count: len(items)}, nil
 }
 
@@ -153,7 +126,7 @@ func (s *scheduledCaptureMessages) GetScheduledMessages(_ context.Context, userI
 	if filter.OwnerUserID == 0 {
 		filter.OwnerUserID = userID
 	}
-	items := s.matchScheduled(filter)
+	items := s.rows().match(filter.OwnerUserID, filter.Peer, filter.IDs, scheduledActiveStates...)
 	return domain.ScheduledMessageList{Messages: items, Count: len(items)}, nil
 }
 
@@ -162,9 +135,7 @@ func (s *scheduledCaptureMessages) DeleteScheduledMessages(_ context.Context, us
 		filter.OwnerUserID = userID
 	}
 	s.deletedScheduled = filter
-	deleted := s.matchScheduled(filter)
-	s.removeScheduled(filter)
-	return deleted, nil
+	return s.rows().transition(s.rows().match(filter.OwnerUserID, filter.Peer, filter.IDs, scheduledActiveStates...), "deleted"), nil
 }
 
 func (s *scheduledCaptureMessages) ClaimScheduledMessages(_ context.Context, userID int64, claim domain.ScheduledMessageClaim) ([]domain.ScheduledMessage, error) {
@@ -172,76 +143,270 @@ func (s *scheduledCaptureMessages) ClaimScheduledMessages(_ context.Context, use
 		claim.OwnerUserID = userID
 	}
 	s.claimScheduledReq = claim
-	return s.matchScheduled(domain.ScheduledMessageFilter{OwnerUserID: claim.OwnerUserID, Peer: claim.Peer, IDs: claim.IDs}), nil
+	return s.rows().transition(s.rows().match(claim.OwnerUserID, claim.Peer, claim.IDs, "pending"), "dispatching"), nil
 }
 
 func (s *scheduledCaptureMessages) ClaimDueScheduledMessages(context.Context, int, int, int) ([]domain.ScheduledMessage, error) {
-	return nil, nil
+	return s.rows().claimDue(), nil
 }
 
-func (s *scheduledCaptureMessages) MarkScheduledMessageSent(_ context.Context, _ int64, id, sentMessageID, _ int) error {
+func (s *scheduledCaptureMessages) MarkScheduledMessageSent(_ context.Context, ownerUserID int64, id, sentMessageID, _ int) error {
 	s.markedScheduledID = id
 	s.markedSentID = sentMessageID
-	s.removeScheduled(domain.ScheduledMessageFilter{OwnerUserID: s.scheduleReq.OwnerUserID, Peer: s.scheduleReq.Peer, IDs: []int{id}})
+	s.rows().markSent(ownerUserID, id, sentMessageID)
 	return nil
 }
 
-func (s *scheduledCaptureMessages) ReleaseScheduledMessage(_ context.Context, _ int64, id int, errText string) error {
+func (s *scheduledCaptureMessages) ReleaseScheduledMessage(_ context.Context, ownerUserID int64, id int, errText string) error {
 	s.releasedScheduled = id
 	s.releasedErrMessage = errText
+	s.rows().release(ownerUserID, id)
 	return nil
 }
 
 func (s *scheduledCaptureMessages) HasScheduledMessages(_ context.Context, userID int64, peer domain.Peer) (bool, error) {
-	return len(s.matchScheduled(domain.ScheduledMessageFilter{OwnerUserID: userID, Peer: peer})) > 0, nil
+	return len(s.rows().match(userID, peer, nil, scheduledActiveStates...)) > 0, nil
 }
 
-func (s *scheduledCaptureMessages) matchScheduled(filter domain.ScheduledMessageFilter) []domain.ScheduledMessage {
-	idSet := make(map[int]struct{}, len(filter.IDs))
-	for _, id := range filter.IDs {
-		idSet[id] = struct{}{}
-	}
-	out := make([]domain.ScheduledMessage, 0, len(s.scheduled))
-	for _, msg := range s.scheduled {
-		if filter.OwnerUserID != 0 && msg.OwnerUserID != filter.OwnerUserID {
-			continue
-		}
-		if filter.Peer.ID != 0 && msg.Peer != filter.Peer {
-			continue
-		}
-		if len(idSet) > 0 {
-			if _, ok := idSet[msg.ID]; !ok {
-				continue
+func (s *scheduledCaptureMessages) rows() *scheduledRows {
+	return (*scheduledRows)(&s.scheduled)
+}
+
+// scheduledActiveStates 是 postgres 列表/删除/has_scheduled 认作"仍在队列里"的状态。
+var scheduledActiveStates = []string{"pending", "dispatching"}
+
+// scheduledRows 是 rpc 测试里定时队列的唯一实现，按 postgres store（scheduled_messages 表 +
+// queries/scheduled_message.sql）的语义存取：内容按表里的列逐字段保存（表里没有列的字段丢弃），
+// 行按 pending → dispatching → sent / deleted 迁移，发出与删除只改状态不删行。
+// 与 postgres 唯一的差别：claimDue 不看 schedule_date 与重试退避，所有 pending 都视为到期。
+type scheduledRows []domain.ScheduledMessage
+
+func (rows *scheduledRows) schedule(req domain.ScheduleMessageRequest, id int) domain.ScheduledMessage {
+	if req.RandomID != 0 {
+		// 与 postgres 相同：同一 owner 仍在队列里的同 random_id 行原样返回（排程幂等）。
+		for _, msg := range rows.match(req.OwnerUserID, domain.Peer{}, nil, scheduledActiveStates...) {
+			if msg.RandomID == req.RandomID {
+				return msg
 			}
 		}
-		out = append(out, msg)
+	}
+	msg := domain.ScheduledMessage{
+		OwnerUserID:          req.OwnerUserID,
+		ID:                   id,
+		Peer:                 req.Peer,
+		RandomID:             req.RandomID,
+		Message:              req.Message,
+		Entities:             append([]domain.MessageEntity(nil), req.Entities...),
+		Media:                req.Media,
+		RichMessage:          req.RichMessage,
+		Silent:               req.Silent,
+		NoForwards:           req.NoForwards,
+		ReplyTo:              scheduledStoredReply(req.ReplyTo),
+		Forward:              scheduledStoredForward(req.Forward),
+		SendAs:               scheduledStoredSendAs(req.SendAs),
+		GroupedID:            req.GroupedID,
+		ScheduleDate:         req.ScheduleDate,
+		ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
+		CreatedAt:            req.Date,
+		UpdatedAt:            req.Date,
+		State:                "pending",
+	}
+	*rows = append(*rows, msg)
+	return msg
+}
+
+// scheduledStoredReply 只保留 scheduled_messages 有列的回复字段（reply_to_* 与 quote_*）。
+func scheduledStoredReply(in *domain.MessageReply) *domain.MessageReply {
+	if in == nil || in.MessageID <= 0 {
+		return nil
+	}
+	return &domain.MessageReply{
+		MessageID:     in.MessageID,
+		Peer:          in.Peer,
+		TopMessageID:  in.TopMessageID,
+		QuoteText:     in.QuoteText,
+		QuoteEntities: append([]domain.MessageEntity(nil), in.QuoteEntities...),
+		QuoteOffset:   in.QuoteOffset,
+	}
+}
+
+// scheduledStoredForward 只保留 scheduled_messages 有列的转发头字段（fwd_*）。
+func scheduledStoredForward(in *domain.MessageForward) *domain.MessageForward {
+	if in == nil || (in.Date == 0 && in.From.ID == 0 && in.FromName == "") {
+		return nil
+	}
+	return &domain.MessageForward{From: in.From, FromName: in.FromName, Date: in.Date}
+}
+
+func scheduledStoredSendAs(in *domain.Peer) *domain.Peer {
+	if in == nil || in.ID == 0 {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
+func (rows *scheduledRows) edit(req domain.EditScheduledMessageRequest) (domain.ScheduledMessage, error) {
+	for i := range *rows {
+		msg := &(*rows)[i]
+		if msg.OwnerUserID != req.OwnerUserID || msg.Peer != req.Peer || msg.ID != req.ID || msg.State != "pending" {
+			continue
+		}
+		if req.SetMessage {
+			msg.Message = req.Message
+			msg.Entities = append([]domain.MessageEntity(nil), req.Entities...)
+		}
+		if req.SetRichMessage {
+			msg.RichMessage = req.RichMessage
+		}
+		msg.ScheduleDate = req.ScheduleDate
+		msg.UpdatedAt = req.Date
+		return *msg, nil
+	}
+	return domain.ScheduledMessage{}, domain.ErrMessageIDInvalid
+}
+
+func (rows *scheduledRows) match(owner int64, peer domain.Peer, ids []int, states ...string) []domain.ScheduledMessage {
+	want := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	out := make([]domain.ScheduledMessage, 0, len(*rows))
+	for _, msg := range *rows {
+		if owner != 0 && msg.OwnerUserID != owner {
+			continue
+		}
+		if peer.ID != 0 && msg.Peer != peer {
+			continue
+		}
+		if len(want) > 0 && !want[msg.ID] {
+			continue
+		}
+		for _, state := range states {
+			if msg.State == state {
+				out = append(out, msg)
+				break
+			}
+		}
 	}
 	return out
 }
 
-func (s *scheduledCaptureMessages) removeScheduled(filter domain.ScheduledMessageFilter) {
-	idSet := make(map[int]struct{}, len(filter.IDs))
-	for _, id := range filter.IDs {
-		idSet[id] = struct{}{}
-	}
-	kept := s.scheduled[:0]
-	for _, msg := range s.scheduled {
-		if filter.OwnerUserID != 0 && msg.OwnerUserID != filter.OwnerUserID {
-			kept = append(kept, msg)
-			continue
-		}
-		if filter.Peer.ID != 0 && msg.Peer != filter.Peer {
-			kept = append(kept, msg)
-			continue
-		}
-		if len(idSet) > 0 {
-			if _, ok := idSet[msg.ID]; ok {
-				continue
+func (rows *scheduledRows) transition(items []domain.ScheduledMessage, state string) []domain.ScheduledMessage {
+	for i := range items {
+		for j := range *rows {
+			if (*rows)[j].OwnerUserID == items[i].OwnerUserID && (*rows)[j].ID == items[i].ID {
+				(*rows)[j].State = state
+				items[i].State = state
 			}
 		}
-		kept = append(kept, msg)
 	}
-	s.scheduled = kept
+	return items
+}
+
+func (rows *scheduledRows) claimDue() []domain.ScheduledMessage {
+	return rows.transition(rows.match(0, domain.Peer{}, nil, "pending"), "dispatching")
+}
+
+func (rows *scheduledRows) markSent(ownerUserID int64, id, sentMessageID int) {
+	for i := range *rows {
+		if (*rows)[i].OwnerUserID == ownerUserID && (*rows)[i].ID == id {
+			(*rows)[i].State = "sent"
+			(*rows)[i].SentMessageID = sentMessageID
+		}
+	}
+}
+
+func (rows *scheduledRows) release(ownerUserID int64, id int) {
+	for i := range *rows {
+		if (*rows)[i].OwnerUserID == ownerUserID && (*rows)[i].ID == id && (*rows)[i].State == "dispatching" {
+			(*rows)[i].State = "pending"
+		}
+	}
+}
+
+// scheduledQueue 是并发安全的 scheduledRows 包装，实现 scheduledMessagesService 的全部定时方法，
+// 供"真实内存消息服务 + 定时队列"组合的测试替身嵌入。
+type scheduledQueue struct {
+	mu   sync.Mutex
+	rows scheduledRows
+}
+
+func (q *scheduledQueue) ScheduleMessage(_ context.Context, userID int64, req domain.ScheduleMessageRequest) (domain.ScheduledMessage, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if req.OwnerUserID == 0 {
+		req.OwnerUserID = userID
+	}
+	return q.rows.schedule(req, len(q.rows)+1), nil
+}
+
+func (q *scheduledQueue) EditScheduledMessage(_ context.Context, userID int64, req domain.EditScheduledMessageRequest) (domain.ScheduledMessage, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if req.OwnerUserID == 0 {
+		req.OwnerUserID = userID
+	}
+	return q.rows.edit(req)
+}
+
+func (q *scheduledQueue) ListScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	items := q.rows.match(userID, filter.Peer, nil, scheduledActiveStates...)
+	return domain.ScheduledMessageList{Messages: items, Count: len(items)}, nil
+}
+
+func (q *scheduledQueue) GetScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	items := q.rows.match(userID, filter.Peer, filter.IDs, scheduledActiveStates...)
+	return domain.ScheduledMessageList{Messages: items, Count: len(items)}, nil
+}
+
+func (q *scheduledQueue) DeleteScheduledMessages(_ context.Context, userID int64, filter domain.ScheduledMessageFilter, _ int) ([]domain.ScheduledMessage, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.rows.transition(q.rows.match(userID, filter.Peer, filter.IDs, scheduledActiveStates...), "deleted"), nil
+}
+
+func (q *scheduledQueue) ClaimScheduledMessages(_ context.Context, userID int64, claim domain.ScheduledMessageClaim) ([]domain.ScheduledMessage, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.rows.transition(q.rows.match(userID, claim.Peer, claim.IDs, "pending"), "dispatching"), nil
+}
+
+func (q *scheduledQueue) ClaimDueScheduledMessages(context.Context, int, int, int) ([]domain.ScheduledMessage, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.rows.claimDue(), nil
+}
+
+func (q *scheduledQueue) MarkScheduledMessageSent(_ context.Context, ownerUserID int64, id, sentMessageID, _ int) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.rows.markSent(ownerUserID, id, sentMessageID)
+	return nil
+}
+
+func (q *scheduledQueue) ReleaseScheduledMessage(_ context.Context, ownerUserID int64, id int, _ string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.rows.release(ownerUserID, id)
+	return nil
+}
+
+func (q *scheduledQueue) HasScheduledMessages(_ context.Context, userID int64, peer domain.Peer) (bool, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.rows.match(userID, peer, nil, scheduledActiveStates...)) > 0, nil
+}
+
+// snapshot 返回队列当前全部行（含已发出/已删除），供断言状态。
+func (q *scheduledQueue) snapshot() []domain.ScheduledMessage {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return append([]domain.ScheduledMessage(nil), q.rows...)
 }
 
 func (s *captureMessages) SendPrivateText(_ context.Context, userID int64, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
