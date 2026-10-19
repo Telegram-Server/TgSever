@@ -1766,7 +1766,7 @@ func run(logger *zap.Logger) error {
 		if cfg.UpdateRootPublicKey != "" {
 			rootKey, err := updatecdn.LoadRootPublicKey(cfg.UpdateRootPublicKey)
 			if err != nil {
-				return fmt.Errorf("load update root public key (TELESRV_UPDATE_ROOT_PUBLIC_KEY): %w", err)
+				return fmt.Errorf("load update root public key (TELESRV_UPDATE_ROOT_PUBLIC_KEY): %w (%s)", err, config.InProcessUpdateHint)
 			}
 			catalogOpts.RootPublicKey = rootKey
 		}
@@ -1777,7 +1777,7 @@ func run(logger *zap.Logger) error {
 					zap.String("manifest", cfg.UpdateManifest), zap.Error(err))
 			}))
 		if err != nil {
-			return fmt.Errorf("load update manifest %q (TELESRV_UPDATE_MANIFEST): %w", cfg.UpdateManifest, err)
+			return fmt.Errorf("load update manifest %q (TELESRV_UPDATE_MANIFEST): %w (%s)", cfg.UpdateManifest, err, config.InProcessUpdateHint)
 		}
 		handler, err := updatecdn.NewHandler(updateStore)
 		if err != nil {

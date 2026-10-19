@@ -605,17 +605,33 @@ func TestLoadRejectsDerivedUpdatePrefixWithoutPublicWeb(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_PUBLIC_LINK_WEB_ADDR", "")
 	t.Setenv("TELESRV_UPDATE_MANIFEST", filepath.Join("srv", "updates", "manifest.json"))
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TELESRV_PUBLIC_LINK_WEB_ADDR") {
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "TELESRV_PUBLIC_LINK_WEB_ADDR") {
 		t.Fatalf("Load() with in-process updates and no public Web error = %v", err)
 	}
+	assertInProcessUpdateHint(t, err)
 }
 
 func TestLoadRejectsInProcessUpdatesWithUpdateServiceURL(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_UPDATE_MANIFEST", filepath.Join("srv", "updates", "manifest.json"))
 	t.Setenv("TELESRV_UPDATE_SERVICE_URL", "http://127.0.0.1:2402")
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TELESRV_UPDATE_SERVICE_URL") {
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "TELESRV_UPDATE_SERVICE_URL") {
 		t.Fatalf("Load() with both in-process and external updates error = %v", err)
+	}
+	assertInProcessUpdateHint(t, err)
+}
+
+// 旧版 .env.example 里写着 TELESRV_UPDATE_MANIFEST=data/updates/manifest.json；升级后它会
+// 打开进程内更新。由它引起的启动错误必须告诉运营者这一点，以及不需要时清空它。
+func assertInProcessUpdateHint(t *testing.T, err error) {
+	t.Helper()
+	msg := err.Error()
+	for _, want := range []string{"non-empty TELESRV_UPDATE_MANIFEST", "in-process", "clear"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not mention %q: operators upgrading an old .env must learn the manifest now enables in-process updates", msg, want)
+		}
 	}
 }
 

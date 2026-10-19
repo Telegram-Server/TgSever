@@ -855,6 +855,12 @@ type AIProviderConfig struct {
 	Thinking        string
 }
 
+// InProcessUpdateHint 附在由 TELESRV_UPDATE_MANIFEST 启用进程内更新而引起的启动错误后面。
+// 旧版 .env.example 写着 TELESRV_UPDATE_MANIFEST=data/updates/manifest.json（当时只给独立
+// telesrv-update 用）；照它复制的 .env 升级后会意外打开进程内更新，错误里要说清原因与解法。
+const InProcessUpdateHint = "a non-empty TELESRV_UPDATE_MANIFEST enables in-process desktop updates; " +
+	"clear it in .env if this server should not serve updates (older .env.example files set it for the standalone telesrv-update)"
+
 // Load 从环境变量与可选配置文件读取配置并填充默认值。环境变量优先于配置文件。
 func Load() (Config, error) {
 	fileEnv, err := loadConfigEnv()
@@ -915,7 +921,7 @@ func Load() (Config, error) {
 		// 进程内更新优先：help.getAppUpdate 直接读本进程的清单，外部 telesrv-update
 		// 的解析地址没有意义，显式同时配置两者视为配置错误。
 		if explicitUpdateServiceURL != "" {
-			return Config{}, fmt.Errorf("TELESRV_UPDATE_SERVICE_URL must be empty when TELESRV_UPDATE_MANIFEST serves updates in process")
+			return Config{}, fmt.Errorf("TELESRV_UPDATE_SERVICE_URL must be empty when TELESRV_UPDATE_MANIFEST serves updates in process (%s)", InProcessUpdateHint)
 		}
 		updateFilesDir = updatecdn.DefaultFilesDir(updateManifest, envOr("TELESRV_UPDATE_FILES_DIR", ""))
 		updateRootPublicKey = strings.TrimSpace(envOr("TELESRV_UPDATE_ROOT_PUBLIC_KEY", ""))
@@ -923,7 +929,7 @@ func Load() (Config, error) {
 			// 自动推导的 <PublicBaseURL>/_updates 只由公开 Web 监听提供；监听关闭时下发它
 			// 只会让客户端轮询一个没人服务的地址。
 			if strings.TrimSpace(envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", "")) == "" {
-				return Config{}, fmt.Errorf("TELESRV_PUBLIC_LINK_WEB_ADDR is required when TELESRV_UPDATE_MANIFEST serves updates in process and TELESRV_UPDATE_PUBLIC_URL is empty")
+				return Config{}, fmt.Errorf("TELESRV_PUBLIC_LINK_WEB_ADDR is required when TELESRV_UPDATE_MANIFEST serves updates in process and TELESRV_UPDATE_PUBLIC_URL is empty (%s)", InProcessUpdateHint)
 			}
 			updatePublicURL = links.Build(publicBaseURL, updatecdn.PublicWebPrefix, nil)
 		}
