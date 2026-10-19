@@ -2,23 +2,50 @@ package postgres
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"testing"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/pgtest"
+	"telesrv/internal/store/storetest"
 )
 
-func TestScheduledMessageEditPreservesContentWhenMessageUnset(t *testing.T) {
+// TestScheduledMessagesContractPostgres 跑定时消息共享契约。ClaimDueScheduledMessages 是
+// 全局扫描，契约断言"恰好认领哪几行"，所以独占一个库，不受同包其它测试残留行干扰，
+// 也不会改写别人的租约。门控于 TELESRV_TEST_POSTGRES_DSN。
+func TestScheduledMessagesContractPostgres(t *testing.T) {
+	ctx := context.Background()
+	pool, err := Open(ctx, pgtest.NewDatabase(t))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	users := NewUserStore(pool)
+	ids := make([]int64, 0, 3)
+	for i, name := range []string{"ScheduledOwner", "ScheduledOther", "ScheduledPeer"} {
+		u, err := users.Create(ctx, domain.User{AccessHash: int64(171 + i), Phone: fmt.Sprintf("+178200000%02d", i), FirstName: name})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		ids = append(ids, u.ID)
+	}
+	storetest.ScheduledMessages(t, NewMessageStore(pool), ids[0], ids[1], ids[2], 1999000000)
+}
+
+// TestScheduledMessageColumnsRoundTrip 只断言 postgres 专有的列：契约看不到的
+// lease_until / last_error / sent_message_id，以及私聊 dialogs.has_scheduled 标志随
+// 队列增减维护。门控于 TELESRV_TEST_POSTGRES_DSN。
+func TestScheduledMessageColumnsRoundTrip(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
 	users := NewUserStore(pool)
-	owner, err := users.Create(ctx, domain.User{AccessHash: 71, Phone: "+1777" + suffix + "01", FirstName: "ScheduledOwner"})
+	owner, err := users.Create(ctx, domain.User{AccessHash: 181, Phone: "+1783" + suffix + "01", FirstName: "ColumnsOwner"})
 	if err != nil {
 		t.Fatalf("create owner: %v", err)
 	}
-	peerUser, err := users.Create(ctx, domain.User{AccessHash: 72, Phone: "+1777" + suffix + "02", FirstName: "ScheduledPeer"})
+	peerUser, err := users.Create(ctx, domain.User{AccessHash: 182, Phone: "+1783" + suffix + "02", FirstName: "ColumnsPeer"})
 	if err != nil {
 		t.Fatalf("create peer: %v", err)
 	}
@@ -31,148 +58,63 @@ func TestScheduledMessageEditPreservesContentWhenMessageUnset(t *testing.T) {
 
 	messages := NewMessageStore(pool)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: peerUser.ID}
-	media := &domain.MessageMedia{
-		Kind: domain.MessageMediaKindDocument,
-		Document: &domain.Document{
-			ID:         910000000000000101,
-			AccessHash: 9101,
-			DCID:       2,
-			MimeType:   "application/x-tgsticker",
-			Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker, Alt: "wave"}},
-		},
+	hasScheduled := func(t *testing.T) bool {
+		t.Helper()
+		var has bool
+		if err := pool.QueryRow(ctx, "SELECT has_scheduled FROM dialogs WHERE user_id = $1 AND peer_type = 'user' AND peer_id = $2", owner.ID, peerUser.ID).Scan(&has); err != nil {
+			t.Fatalf("read dialogs.has_scheduled: %v", err)
+		}
+		return has
 	}
-	scheduled, err := messages.CreateScheduledMessage(ctx, domain.ScheduleMessageRequest{
-		OwnerUserID:  owner.ID,
-		Peer:         peer,
-		RandomID:     7001,
-		Message:      "",
-		Media:        media,
-		ScheduleDate: 1700003600,
-		Date:         1700000000,
-	})
-	if err != nil {
-		t.Fatalf("create media scheduled message: %v", err)
+	type columns struct {
+		state         string
+		leaseUntil    int
+		lastError     string
+		sentMessageID int
 	}
-
-	dateOnly, err := messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
-		OwnerUserID:  owner.ID,
-		Peer:         peer,
-		ID:           scheduled.ID,
-		ScheduleDate: 1700007200,
-		Date:         1700000100,
-	})
-	if err != nil {
-		t.Fatalf("date-only edit scheduled message: %v", err)
-	}
-	if dateOnly.Message != "" || dateOnly.ScheduleDate != 1700007200 || dateOnly.Media == nil || dateOnly.Media.Document == nil || dateOnly.Media.Document.ID != media.Document.ID {
-		t.Fatalf("date-only scheduled edit = %+v, want original media/content and new date", dateOnly)
+	readColumns := func(t *testing.T, id int) columns {
+		t.Helper()
+		var c columns
+		if err := pool.QueryRow(ctx, `SELECT state, lease_until, last_error, sent_message_id FROM scheduled_messages
+WHERE owner_user_id = $1 AND scheduled_id = $2`, owner.ID, id).Scan(&c.state, &c.leaseUntil, &c.lastError, &c.sentMessageID); err != nil {
+			t.Fatalf("read scheduled columns: %v", err)
+		}
+		return c
 	}
 
-	emptyCaption, err := messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
-		OwnerUserID:  owner.ID,
-		Peer:         peer,
-		ID:           scheduled.ID,
-		SetMessage:   true,
-		Message:      "",
-		ScheduleDate: 1700010800,
-		Date:         1700000200,
+	row, err := messages.CreateScheduledMessage(ctx, domain.ScheduleMessageRequest{
+		OwnerUserID: owner.ID, Peer: peer, RandomID: 8301, Message: "columns", ScheduleDate: 1700003600, Date: 1700000000,
 	})
 	if err != nil {
-		t.Fatalf("empty-caption edit scheduled media: %v", err)
+		t.Fatalf("create scheduled: %v", err)
 	}
-	if emptyCaption.Message != "" || emptyCaption.ScheduleDate != 1700010800 || emptyCaption.Media == nil || emptyCaption.Media.Document == nil || emptyCaption.Media.Document.ID != media.Document.ID {
-		t.Fatalf("empty-caption scheduled edit = %+v, want media kept and new date", emptyCaption)
+	if !hasScheduled(t) {
+		t.Fatalf("dialogs.has_scheduled = false after create, want true")
 	}
-
-	textOnly, err := messages.CreateScheduledMessage(ctx, domain.ScheduleMessageRequest{
-		OwnerUserID:  owner.ID,
-		Peer:         peer,
-		RandomID:     7002,
-		Message:      "text",
-		ScheduleDate: 1700014400,
-		Date:         1700000300,
-	})
-	if err != nil {
-		t.Fatalf("create text scheduled message: %v", err)
+	if _, err := messages.ClaimScheduledMessages(ctx, domain.ScheduledMessageClaim{
+		OwnerUserID: owner.ID, Peer: peer, IDs: []int{row.ID}, Now: 1700000100, LeaseUntil: 1700000160,
+	}); err != nil {
+		t.Fatalf("claim: %v", err)
 	}
-	_, err = messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
-		OwnerUserID:  owner.ID,
-		Peer:         peer,
-		ID:           textOnly.ID,
-		SetMessage:   true,
-		Message:      "",
-		ScheduleDate: 1700018000,
-		Date:         1700000400,
-	})
-	if !errors.Is(err, domain.ErrMessageEmpty) {
-		t.Fatalf("empty text scheduled edit err = %v, want ErrMessageEmpty", err)
+	if got := readColumns(t, row.ID); got != (columns{state: "dispatching", leaseUntil: 1700000160}) {
+		t.Fatalf("claimed columns = %+v, want dispatching with lease", got)
 	}
-
-	richInitial := &domain.MessageRichMessage{Rtl: true, Blocks: []byte{1, 2, 3, 4}}
-	richOnly, err := messages.CreateScheduledMessage(ctx, domain.ScheduleMessageRequest{
-		OwnerUserID:  owner.ID,
-		Peer:         peer,
-		RandomID:     7003,
-		RichMessage:  richInitial,
-		ScheduleDate: 1700021600,
-		Date:         1700000500,
-	})
-	if err != nil {
-		t.Fatalf("create rich scheduled message: %v", err)
+	if err := messages.ReleaseScheduledMessage(ctx, owner.ID, row.ID, "boom"); err != nil {
+		t.Fatalf("release: %v", err)
 	}
-	if !richMessagesEqual(richOnly.RichMessage, richInitial) || richOnly.Message != "" || !richOnly.Media.IsZero() {
-		t.Fatalf("rich scheduled create = %+v, want rich-only content", richOnly)
+	if got := readColumns(t, row.ID); got != (columns{state: "pending", lastError: "boom"}) {
+		t.Fatalf("released columns = %+v, want pending, lease cleared, last_error kept", got)
 	}
-	gotRich, err := messages.GetScheduledMessages(ctx, domain.ScheduledMessageFilter{
-		OwnerUserID: owner.ID,
-		Peer:        peer,
-		IDs:         []int{richOnly.ID},
-		Limit:       10,
-	})
-	if err != nil {
-		t.Fatalf("get rich scheduled message: %v", err)
+	if !hasScheduled(t) {
+		t.Fatalf("dialogs.has_scheduled = false while still queued")
 	}
-	if len(gotRich.Messages) != 1 || !richMessagesEqual(gotRich.Messages[0].RichMessage, richInitial) {
-		t.Fatalf("get rich scheduled = %+v, want original rich", gotRich.Messages)
+	if err := messages.MarkScheduledMessageSent(ctx, owner.ID, row.ID, 4242, 1700000200); err != nil {
+		t.Fatalf("mark sent: %v", err)
 	}
-	richDateOnly, err := messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
-		OwnerUserID:  owner.ID,
-		Peer:         peer,
-		ID:           richOnly.ID,
-		ScheduleDate: 1700025200,
-		Date:         1700000600,
-	})
-	if err != nil {
-		t.Fatalf("date-only edit rich scheduled message: %v", err)
+	if got := readColumns(t, row.ID); got != (columns{state: "sent", lastError: "boom", sentMessageID: 4242}) {
+		t.Fatalf("sent columns = %+v, want sent with sent_message_id", got)
 	}
-	if richDateOnly.ScheduleDate != 1700025200 || !richMessagesEqual(richDateOnly.RichMessage, richInitial) {
-		t.Fatalf("date-only rich scheduled edit = %+v, want original rich and new date", richDateOnly)
-	}
-	richEdited := &domain.MessageRichMessage{Part: true, Blocks: []byte{5, 6, 7}}
-	editedRich, err := messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
-		OwnerUserID:    owner.ID,
-		Peer:           peer,
-		ID:             richOnly.ID,
-		SetRichMessage: true,
-		RichMessage:    richEdited,
-		ScheduleDate:   1700028800,
-		Date:           1700000700,
-	})
-	if err != nil {
-		t.Fatalf("edit rich scheduled message: %v", err)
-	}
-	if !richMessagesEqual(editedRich.RichMessage, richEdited) || editedRich.ScheduleDate != 1700028800 {
-		t.Fatalf("edited rich scheduled = %+v, want replacement rich", editedRich)
-	}
-	_, err = messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
-		OwnerUserID:    owner.ID,
-		Peer:           peer,
-		ID:             richOnly.ID,
-		SetRichMessage: true,
-		ScheduleDate:   1700032400,
-		Date:           1700000800,
-	})
-	if !errors.Is(err, domain.ErrMessageEmpty) {
-		t.Fatalf("clear only rich scheduled edit err = %v, want ErrMessageEmpty", err)
+	if hasScheduled(t) {
+		t.Fatalf("dialogs.has_scheduled = true after the only row was sent, want false")
 	}
 }
