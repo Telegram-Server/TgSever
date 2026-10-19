@@ -6,7 +6,9 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	appmessages "telesrv/internal/app/messages"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 )
 
 // 转发相册的部分重放：同一请求重试时，已发过的条目走重放（不再加载源消息），剩下的条目
@@ -34,13 +36,17 @@ func assertOneGroup(t *testing.T, label string, groups []int64, want int) {
 	}
 }
 
+// 频道里的同一路径（继承已重放条目的分组）由纯函数测试 TestForwardGroupedIDs 覆盖；
+// 这里保留私聊与 monoforum 两个调用点，各自走真实的重放查询。
+
 func TestForwardAlbumPartialReplayKeepsOneGroupPrivate(t *testing.T) {
-	f := newScheduledFidelityFixture(t)
-	ctx := context.Background()
+	messages := appmessages.NewService(memory.NewMessageStore(), nil)
+	f := newForwardCaptionFixtureWithMessages(t, messages)
+	owner, peer := f.owner, f.recipientPeer()
 	sourceIDs := make([]int, 0, 3)
 	for i := int64(0); i < 3; i++ {
-		res, err := f.messages.SendPrivateText(ctx, f.owner.ID, domain.SendPrivateTextRequest{
-			SenderUserID: f.owner.ID, RecipientUserID: f.friend.ID,
+		res, err := messages.SendPrivateText(f.ctx, owner.ID, domain.SendPrivateTextRequest{
+			SenderUserID: owner.ID, RecipientUserID: f.recipient.ID,
 			RandomID: 81001 + i, Message: "album", GroupedID: replaySourceGroup, Date: 1001 + int(i),
 		})
 		if err != nil {
@@ -49,52 +55,27 @@ func TestForwardAlbumPartialReplayKeepsOneGroupPrivate(t *testing.T) {
 		sourceIDs = append(sourceIDs, res.SenderMessage.ID)
 	}
 	randomIDs := []int64{81101, 81102, 81103}
-	first, full := forwardReplayRequest(f.friendPeer(), f.friendPeer(), sourceIDs, randomIDs)
-	if _, err := f.router.onMessagesForwardMessages(f.ctx(f.owner), first); err != nil {
+	first, full := forwardReplayRequest(peer, peer, sourceIDs, randomIDs)
+	ownerCtx := WithUserID(f.ctx, owner.ID)
+	if _, err := f.router.onMessagesForwardMessages(ownerCtx, first); err != nil {
 		t.Fatalf("forward first item: %v", err)
 	}
-	if _, err := f.router.onMessagesForwardMessages(f.ctx(f.owner), full); err != nil {
+	if _, err := f.router.onMessagesForwardMessages(ownerCtx, full); err != nil {
 		t.Fatalf("retry whole forward: %v", err)
 	}
+	history, err := messages.GetHistory(f.ctx, owner.ID, domain.MessageFilter{
+		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: f.recipient.ID}, Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
 	groups := make([]int64, 0, 3)
-	for _, randomID := range randomIDs {
-		if msg, ok := f.privateByRandomID(randomID); ok {
+	for _, msg := range history.Messages {
+		if msg.RandomID >= randomIDs[0] && msg.RandomID <= randomIDs[len(randomIDs)-1] {
 			groups = append(groups, msg.GroupedID)
 		}
 	}
 	assertOneGroup(t, "private partial replay", groups, 3)
-}
-
-func TestForwardAlbumPartialReplayKeepsOneGroupChannel(t *testing.T) {
-	f := newScheduledFidelityFixture(t)
-	ctx := context.Background()
-	group := f.createGroup("Replay Album")
-	sourceIDs := make([]int, 0, 3)
-	for i := int64(0); i < 3; i++ {
-		res, err := f.channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
-			UserID: f.owner.ID, ChannelID: group.ID,
-			RandomID: 82001 + i, Message: "album", GroupedID: replaySourceGroup, Date: 1001 + int(i),
-		})
-		if err != nil {
-			t.Fatalf("seed source album %d: %v", i, err)
-		}
-		sourceIDs = append(sourceIDs, res.Message.ID)
-	}
-	randomIDs := []int64{82101, 82102, 82103}
-	first, full := forwardReplayRequest(inputPeerChannel(group), inputPeerChannel(group), sourceIDs, randomIDs)
-	if _, err := f.router.onMessagesForwardMessages(f.ctx(f.owner), first); err != nil {
-		t.Fatalf("forward first item: %v", err)
-	}
-	if _, err := f.router.onMessagesForwardMessages(f.ctx(f.owner), full); err != nil {
-		t.Fatalf("retry whole forward: %v", err)
-	}
-	groups := make([]int64, 0, 3)
-	for _, randomID := range randomIDs {
-		if msg, ok := f.channelByRandomID(group, randomID); ok {
-			groups = append(groups, msg.GroupedID)
-		}
-	}
-	assertOneGroup(t, "channel partial replay", groups, 3)
 }
 
 func TestForwardAlbumPartialReplayKeepsOneGroupMonoforum(t *testing.T) {
