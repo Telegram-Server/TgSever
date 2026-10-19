@@ -27,6 +27,7 @@ type fakeFiles struct {
 	photos             map[int64]domain.Photo
 	profile            map[fakeProfilePhotoKey]int64
 	profileHistory     map[fakeProfileHistoryKey]bool
+	offerErr           error
 	reactions          []domain.AvailableReaction
 	effects            []domain.AvailableEffect
 	sets               map[domain.StickerSetKind][]domain.StickerSet
@@ -676,6 +677,9 @@ func (f *fakeFiles) SetCurrentProfilePhotoKind(_ context.Context, ownerType doma
 	return photo, true, nil
 }
 func (f *fakeFiles) OfferProfilePhoto(_ context.Context, ownerType domain.PeerType, ownerID, photoID int64, _ int) error {
+	if f.offerErr != nil {
+		return f.offerErr
+	}
 	if f.profileHistory == nil {
 		f.profileHistory = map[fakeProfileHistoryKey]bool{}
 	}

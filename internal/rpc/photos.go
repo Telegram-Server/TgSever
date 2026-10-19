@@ -385,13 +385,6 @@ func (r *Router) sendSuggestedProfilePhotoMessage(ctx context.Context, userID, t
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
-	if !recipientBlocked {
-		// 建议的照片要先进入收件人的头像历史（停用态），收件人点"设为头像"时
-		// updateProfilePhoto 的历史归属校验才会放行。
-		if err := r.deps.Files.OfferProfilePhoto(ctx, domain.PeerTypeUser, targetUserID, photo.ID, int(r.clock.Now().Unix())); err != nil {
-			return domain.SendPrivateTextResult{}, internalErr()
-		}
-	}
 	sessionID, _ := SessionIDFrom(ctx)
 	photoCopy := photo
 	res, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
@@ -412,6 +405,18 @@ func (r *Router) sendSuggestedProfilePhotoMessage(ctx context.Context, userID, t
 	})
 	if err != nil {
 		return domain.SendPrivateTextResult{}, messageSendErr(err)
+	}
+	if !recipientBlocked {
+		// 消息送达后，建议的照片才进入收件人的头像历史（停用态），收件人点"设为头像"时
+		// updateProfilePhoto 的历史归属校验才会放行；发送失败则不留任何历史行。
+		// 这一步失败只记日志：消息已投递，返回错误会让客户端重试、再发一条建议。
+		if err := r.deps.Files.OfferProfilePhoto(ctx, domain.PeerTypeUser, targetUserID, photo.ID, int(r.clock.Now().Unix())); err != nil {
+			r.log.Warn("offer suggested profile photo failed",
+				zap.Int64("suggester_id", userID),
+				zap.Int64("recipient_id", targetUserID),
+				zap.Int64("photo_id", photo.ID),
+				zap.Error(err))
+		}
 	}
 	return res, nil
 }
