@@ -3,7 +3,9 @@
 package updatecdn
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -130,26 +132,44 @@ const maxManifestSize = 4 << 20
 // readManifestFile 打开并解码清单文件，返回其文件信息。清单不存在时错误满足
 // errors.Is(err, fs.ErrNotExist)。
 func readManifestFile(path string) (Manifest, os.FileInfo, error) {
+	manifest, info, _, err := readManifestFileDigest(path)
+	return manifest, info, err
+}
+
+// readManifestFileDigest 同 readManifestFile，另外返回所解码字节的 SHA-256，
+// 供 Store 判断清单内容是否变化。
+func readManifestFileDigest(path string) (Manifest, os.FileInfo, [sha256.Size]byte, error) {
+	var digest [sha256.Size]byte
 	f, err := os.Open(path)
 	if err != nil {
-		return Manifest{}, nil, fmt.Errorf("open manifest: %w", err)
+		return Manifest{}, nil, digest, fmt.Errorf("open manifest: %w", err)
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return Manifest{}, nil, fmt.Errorf("stat manifest: %w", err)
+		return Manifest{}, nil, digest, fmt.Errorf("stat manifest: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return Manifest{}, nil, fmt.Errorf("manifest %q is not a regular file", path)
+		return Manifest{}, nil, digest, fmt.Errorf("manifest %q is not a regular file", path)
 	}
+	// 以下失败都发生在文件打开之后：一并返回 info，Store 据此记住这份坏清单，
+	// 不再对它反复重试。
 	if info.Size() > maxManifestSize {
-		return Manifest{}, nil, fmt.Errorf("manifest exceeds 4 MiB")
+		return Manifest{}, info, digest, fmt.Errorf("manifest exceeds 4 MiB")
 	}
-	manifest, err := decodeManifest(f)
+	data, err := io.ReadAll(io.LimitReader(f, maxManifestSize+1))
 	if err != nil {
-		return Manifest{}, nil, err
+		return Manifest{}, info, digest, fmt.Errorf("read manifest: %w", err)
 	}
-	return manifest, info, nil
+	if len(data) > maxManifestSize {
+		return Manifest{}, info, digest, fmt.Errorf("manifest exceeds 4 MiB")
+	}
+	digest = sha256.Sum256(data)
+	manifest, err := decodeManifest(bytes.NewReader(data))
+	if err != nil {
+		return Manifest{}, info, digest, err
+	}
+	return manifest, info, digest, nil
 }
 
 // decodeManifest 按加载规则解码清单：未知字段、多余的 JSON 值、错误的 schema_version

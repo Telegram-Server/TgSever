@@ -53,7 +53,18 @@ func run() error {
 		}
 		opts.RootPublicKey = rootKey
 	}
-	store, err := updatecdn.NewStore(*manifestPath, *filesDir, opts)
+	logger, err := zap.NewProduction()
+	if err != nil {
+		return fmt.Errorf("initialize logger: %w", err)
+	}
+	defer logger.Sync() //nolint:errcheck
+
+	// 重新加载失败时继续提供上一份正常快照，只记录错误。
+	store, err := updatecdn.NewStore(*manifestPath, *filesDir, opts,
+		updatecdn.WithReloadErrorHandler(func(err error) {
+			logger.Error("update manifest reload failed; serving the previous catalog",
+				zap.String("manifest", *manifestPath), zap.Error(err))
+		}))
 	if err != nil {
 		return fmt.Errorf("load update catalog: %w", err)
 	}
@@ -69,13 +80,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", *listenAddr, err)
 	}
-
-	logger, err := zap.NewProduction()
-	if err != nil {
-		_ = listener.Close()
-		return fmt.Errorf("initialize logger: %w", err)
-	}
-	defer logger.Sync() //nolint:errcheck
 
 	server := &http.Server{
 		Handler:           handler,

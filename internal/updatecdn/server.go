@@ -56,10 +56,17 @@ func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "catalog unavailable")
 		return
 	}
+	// 新清单加载失败时仍在用上一份正常快照服务，因此保持就绪（200），只把状态标为
+	// stale 供监控发现；具体原因不对外暴露，由 Store 的重新加载回调记录到日志。
+	body := "{\"status\":\"ready\"}\n"
+	if h.store.Err() != nil {
+		body = "{\"status\":\"stale\",\"error\":\"manifest reload failed; serving the previous catalog\"}\n"
+	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		_, _ = w.Write([]byte("{\"status\":\"ready\"}\n"))
+		_, _ = w.Write([]byte(body))
 	}
 }
 
