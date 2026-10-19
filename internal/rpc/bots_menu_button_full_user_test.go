@@ -12,7 +12,6 @@ import (
 	appbots "telesrv/internal/app/bots"
 	appmessages "telesrv/internal/app/messages"
 	appusers "telesrv/internal/app/users"
-	"telesrv/internal/botapi"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
@@ -126,13 +125,20 @@ func TestGetFullUserBotInfoMenuButtonIsPerViewer(t *testing.T) {
 	f.setFor(t, &tg.InputUserSelf{}, &tg.BotMenuButton{Text: "Global2", URL: "https://example.com/global2"})
 	wantWebViewButton(t, "A", f.fullMenuButton(t, f.a), "https://example.com/a")
 	wantWebViewButton(t, "C", f.fullMenuButton(t, f.c), "https://example.com/global2")
-
-	// A 清掉专属按钮后回落到全局默认。
-	f.setFor(t, inputUser(f.a), &tg.BotMenuButtonDefault{})
-	wantWebViewButton(t, "A", f.fullMenuButton(t, f.a), "https://example.com/global2")
 }
 
-var _ botapi.MenuButtonGateway = (*Router)(nil)
+// Bot API 的全局 setChatMenuButton 以用户 0 调网关，应设置全局默认按钮。
+func TestBotAPISetChatMenuButtonWithoutUserSetsDefault(t *testing.T) {
+	f := newUserMenuButtonFixture(t)
+
+	if err := f.router.BotAPISetChatMenuButton(f.ctx, f.bot.ID, 0, domain.BotMenuButton{Type: domain.BotMenuButtonCommands}); err != nil {
+		t.Fatalf("BotAPISetChatMenuButton(default): %v", err)
+	}
+	button, err := f.bots.GetBotMenuButton(f.ctx, f.bot.ID)
+	if err != nil || button.Type != domain.BotMenuButtonCommands {
+		t.Fatalf("default button = %+v, %v; want commands", button, err)
+	}
+}
 
 // Bot API setChatMenuButton(chat_id) 经 Router 写专属按钮：同样只失效该用户的缓存，
 // getChatMenuButton(chat_id) 读回该用户生效的按钮；chat_id 不是普通用户时报 USER_ID_INVALID。

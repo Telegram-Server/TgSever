@@ -10,8 +10,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 限制期限端到端：禁言到期前 messages.sendMessage 被拒，到期后可发；
-// channels.getParticipant 看到的也是生效值。
+// 限制期限在 RPC 发送路径上生效：禁言到期前 messages.sendMessage 报 CHAT_WRITE_FORBIDDEN，
+// 到期后可发。读取时的生效值由 storetest.ChannelRestrictionExpiry 覆盖。
 func TestChannelRestrictionExpiryGatesSendMessage(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 	now := int(time.Now().Unix())
@@ -45,41 +45,26 @@ func TestChannelRestrictionExpiryGatesSendMessage(t *testing.T) {
 	if err := send(7_700_002); err != nil {
 		t.Fatalf("send after expiry: %v", err)
 	}
-	if got := tgChannelParticipantForUpdate(f.owner.ID, f.participant(t, f.member.ID)); got == nil {
-		t.Fatal("participant after expiry projected to nil")
-	} else if _, banned := got.(*tg.ChannelParticipantBanned); banned {
-		t.Fatalf("participant after expiry = %#v, want an unrestricted participant", got)
-	}
 }
 
-// 限制一个不在群里的用户：投影为 channelParticipantBanned(left=true)，他仍能自行加入且限制保留。
+// 被限制（非踢出）的非成员仍能经 channels.joinChannel 自行加入。限制保留与记录形状由
+// storetest.ChannelRestrictNonMember 覆盖，投影由 tgChannelParticipantForUpdate 的纯函数测试覆盖。
 func TestChannelRestrictNonMemberStaysJoinable(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 	now := int(time.Now().Unix())
 	if _, err := f.channels.LeaveChannel(f.ctx, f.member.ID, f.channel.ID, now); err != nil {
 		t.Fatalf("leave: %v", err)
 	}
-	rights := domain.ChannelBannedRights{SendMedia: true, UntilDate: now + 3600}
 	if _, err := f.channels.EditBanned(f.ctx, f.owner.ID, domain.EditChannelBannedRequest{
 		UserID:       f.owner.ID,
 		ChannelID:    f.channel.ID,
 		Participant:  domain.Peer{Type: domain.PeerTypeUser, ID: f.member.ID},
-		BannedRights: rights,
+		BannedRights: domain.ChannelBannedRights{SendMedia: true, UntilDate: now + 3600},
 		Date:         now,
 	}); err != nil {
 		t.Fatalf("restrict non-member: %v", err)
 	}
-	// updateChannelParticipant 的投影（channels.getParticipant 走 tgChannelParticipant，
-	// 目前对任何受限/被踢记录都不投影 channelParticipantBanned，见汇报）。
-	got := tgChannelParticipantForUpdate(f.owner.ID, f.participant(t, f.member.ID))
-	banned, ok := got.(*tg.ChannelParticipantBanned)
-	if !ok || !banned.Left || !banned.BannedRights.SendMedia || banned.BannedRights.ViewMessages {
-		t.Fatalf("restricted non-member = %#v, want channelParticipantBanned left=true with send_media", got)
-	}
-	if _, err := f.router.onChannelsJoinChannel(WithUserID(f.ctx, f.member.ID), &tg.InputChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash}); err != nil {
+	if _, err := f.router.onChannelsJoinChannel(WithUserID(f.ctx, f.member.ID), f.inputChannel()); err != nil {
 		t.Fatalf("join as restricted non-member: %v", err)
-	}
-	if m := f.participant(t, f.member.ID); m.Status != domain.ChannelMemberActive || m.BannedRights != rights {
-		t.Fatalf("rejoined member = %+v, want active with %+v", m, rights)
 	}
 }

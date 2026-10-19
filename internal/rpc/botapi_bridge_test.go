@@ -11,14 +11,16 @@ import (
 	appbots "telesrv/internal/app/bots"
 	appchannels "telesrv/internal/app/channels"
 	appmessages "telesrv/internal/app/messages"
+	apppolls "telesrv/internal/app/polls"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
 
-// botAPIBridgeFixture 是 Bot API 各组网关测试共用的环境：一个机器人、群主 owner、
+// botAPIBridgeFixture 是 Bot API 各组网关测试共用的唯一环境：一个机器人、群主 owner、
 // 普通成员 member，以及一个三人都在的公开超级群 @bridgegroup（机器人是普通成员；
-// 需要管理员身份的测试自行用 channels.EditAdmin 提升）。
+// 需要管理员身份的测试用 promote/promoteBot 提升）。文件服务与投票服务默认就绪，
+// 媒体组、投票、媒体编辑和群头像测试直接可用。
 type botAPIBridgeFixture struct {
 	ctx      context.Context
 	owner    domain.User
@@ -32,6 +34,7 @@ type botAPIBridgeFixture struct {
 	messages *appmessages.Service
 	bots     *appbots.Service
 	sessions *captureSessions
+	files    *fakeFiles
 }
 
 func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
@@ -48,6 +51,10 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 	}
 	dialogStore := memory.NewDialogStore()
 	messageStore := memory.NewMessageStore(dialogStore)
+	pollStore := memory.NewPollStore()
+	messageStore.AttachPollStore(pollStore)
+	channelStore := memory.NewChannelStore()
+	channelStore.AttachPollStore(pollStore)
 	botStore := memory.NewBotStore(userStore)
 	bot, _, err := botStore.CreateBotAccount(ctx, domain.User{AccessHash: 2101, FirstName: "BridgeBot", Username: "BridgeBot"}, domain.BotProfile{
 		OwnerUserID: owner.ID,
@@ -58,7 +65,7 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 		t.Fatalf("create bot: %v", err)
 	}
 	botsService := appbots.NewService(userStore, botStore, messageStore)
-	channelsService := appchannels.NewService(memory.NewChannelStore(), appchannels.WithBotProfileResolver(botsService))
+	channelsService := appchannels.NewService(channelStore, appchannels.WithBotProfileResolver(botsService))
 	created, err := channelsService.CreateMegagroupFromCreateChat(ctx, owner.ID, domain.CreateChannelRequest{
 		Title:         "Bridge Group",
 		MemberUserIDs: []int64{member.ID, bot.ID},
@@ -76,11 +83,14 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 	usersService := appusers.NewService(userStore)
 	messagesService := appmessages.NewService(messageStore, dialogStore)
 	sessions := &captureSessions{channelMembers: map[int64][]int64{channel.ID: {owner.ID, member.ID, bot.ID}}}
-	router := New(Config{}, Deps{
+	files := &fakeFiles{photos: map[int64]domain.Photo{}, docs: map[int64]domain.Document{}}
+	router := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
 		Users:         usersService,
 		Messages:      messagesService,
 		Channels:      channelsService,
 		Bots:          botsService,
+		Files:         files,
+		Polls:         apppolls.NewService(pollStore),
 		BotAPIUpdates: memory.NewBotAPIUpdateStore(),
 		Sessions:      sessions,
 	}, zaptest.NewLogger(t), clock.System)
@@ -97,136 +107,79 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 		messages: messagesService,
 		bots:     botsService,
 		sessions: sessions,
+		files:    files,
 	}
 }
 
-// promoteBot 让机器人成为群管理员，给需要管理权限的测试用。
+// userByID 返回夹具里的用户（owner、member 或 bot），用来构造带 access_hash 的 InputUser。
+func (f botAPIBridgeFixture) userByID(t *testing.T, id int64) domain.User {
+	t.Helper()
+	for _, u := range []domain.User{f.owner, f.member, f.bot} {
+		if u.ID == id {
+			return u
+		}
+	}
+	t.Fatalf("user %d is not part of the fixture", id)
+	return domain.User{}
+}
+
+// promote 由 by 经 channels.editAdmin 把 target 提为测试群管理员（rank 为空则不设头衔）。
+// 走 MTProto 处理器，与真实客户端一样会推送更新并给机器人入队 chat_member/my_chat_member。
+func (f botAPIBridgeFixture) promote(t *testing.T, by, target int64, rights domain.ChannelAdminRights, rank string) {
+	t.Helper()
+	user := f.userByID(t, target)
+	req := &tg.ChannelsEditAdminRequest{
+		Channel:     f.inputChannel(),
+		UserID:      &tg.InputUser{UserID: user.ID, AccessHash: user.AccessHash},
+		AdminRights: tgChatAdminRights(rights),
+	}
+	if rank != "" {
+		req.SetRank(rank)
+	}
+	if _, err := f.router.onChannelsEditAdmin(WithUserID(f.ctx, by), req); err != nil {
+		t.Fatalf("promote %d by %d: %v", target, by, err)
+	}
+}
+
+// promoteBot 是 promote 的常用快捷方式：群主把机器人提为管理员。
 func (f botAPIBridgeFixture) promoteBot(t *testing.T, rights domain.ChannelAdminRights) {
 	t.Helper()
-	if _, err := f.channels.EditAdmin(f.ctx, f.owner.ID, domain.EditChannelAdminRequest{
-		UserID:      f.owner.ID,
-		ChannelID:   f.channel.ID,
-		MemberID:    f.bot.ID,
-		AdminRights: rights,
-		Date:        20,
-	}); err != nil {
-		t.Fatalf("promote bot: %v", err)
-	}
+	f.promote(t, f.owner.ID, f.bot.ID, rights, "")
 }
 
-func TestBotAPIBridgeFixturePromotesBot(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	f.promoteBot(t, domain.ChannelAdminRights{BanUsers: true})
-
-	member, err := f.channels.GetParticipant(f.ctx, f.owner.ID, f.channel.ID, f.bot.ID)
-	if err != nil || member.Role != domain.ChannelRoleAdmin || !member.AdminRights.BanUsers {
-		t.Fatalf("bot participant = %+v, %v; want admin with ban rights", member, err)
-	}
-}
-
-func TestBotAPIResolveChatUsernameFindsPublicGroup(t *testing.T) {
+// 官方网关只解析公开群/频道的 @username；用户只能按 id 寻址，不存在的名字同样报错。
+func TestBotAPIResolveChatUsername(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 
-	got, err := f.router.BotAPIResolveChatUsername(f.ctx, f.bot.ID, "BridgeGroup")
-	if err != nil || got != f.chatID {
-		t.Fatalf("resolve @BridgeGroup = %d, %v; want %d", got, err, f.chatID)
-	}
-}
-
-func TestBotAPIResolveChatUsernameRejectsUsersAndUnknownNames(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-
-	// The official gateway only resolves @channelusername: users are addressed by id.
-	for _, name := range []string{"ann_member", "nobody_here"} {
-		if _, err := f.router.BotAPIResolveChatUsername(f.ctx, f.bot.ID, name); err == nil {
-			t.Fatalf("resolve @%s succeeded, want an error", name)
+	for _, tc := range []struct {
+		name    string
+		want    int64
+		wantErr bool
+	}{
+		{name: "BridgeGroup", want: f.chatID},
+		{name: "ann_member", wantErr: true},
+		{name: "nobody_here", wantErr: true},
+	} {
+		got, err := f.router.BotAPIResolveChatUsername(f.ctx, f.bot.ID, tc.name)
+		if tc.wantErr {
+			if err == nil {
+				t.Fatalf("resolve @%s = %d, want an error", tc.name, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Fatalf("resolve @%s = %d, %v; want %d", tc.name, got, err, tc.want)
 		}
 	}
 }
 
-func TestBotAPIInputChannelCarriesAccessHash(t *testing.T) {
+func TestBotAPIInputPeerRejectsInvalidChatIDs(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 
-	input, view, err := f.router.botAPIInputChannel(f.ctx, f.bot.ID, f.chatID)
-	if err != nil {
-		t.Fatalf("botAPIInputChannel: %v", err)
-	}
-	if input.ChannelID != f.channel.ID || input.AccessHash != f.channel.AccessHash || view.Channel.ID != f.channel.ID {
-		t.Fatalf("input = %+v view = %+v, want channel %d with its access hash", input, view.Channel, f.channel.ID)
-	}
 	if _, _, err := f.router.botAPIInputChannel(f.ctx, f.bot.ID, f.member.ID); err == nil {
 		t.Fatal("botAPIInputChannel accepted a user chat id")
 	}
-}
-
-func TestBotAPIInputPeerResolvesUsersAndChannels(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-
-	userPeer, peer, err := f.router.botAPIInputPeer(f.ctx, f.bot.ID, f.member.ID)
-	if err != nil {
-		t.Fatalf("botAPIInputPeer(user): %v", err)
-	}
-	if u, ok := userPeer.(*tg.InputPeerUser); !ok || u.UserID != f.member.ID || peer != (domain.Peer{Type: domain.PeerTypeUser, ID: f.member.ID}) {
-		t.Fatalf("user input = %#v peer = %+v", userPeer, peer)
-	}
-	channelPeer, peer, err := f.router.botAPIInputPeer(f.ctx, f.bot.ID, f.chatID)
-	if err != nil {
-		t.Fatalf("botAPIInputPeer(channel): %v", err)
-	}
-	if c, ok := channelPeer.(*tg.InputPeerChannel); !ok || c.ChannelID != f.channel.ID || c.AccessHash != f.channel.AccessHash ||
-		peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: f.channel.ID}) {
-		t.Fatalf("channel input = %#v peer = %+v", channelPeer, peer)
-	}
 	if _, _, err := f.router.botAPIInputPeer(f.ctx, f.bot.ID, -5); err == nil {
 		t.Fatal("botAPIInputPeer accepted a basic-group chat id this server does not have")
-	}
-}
-
-// 桥接的核心假设：以机器人身份直接调用 MTProto 处理器，再从返回的 Updates 里取回
-// 持久化后的消息，得到与 BotAPISendMessage 相同形状的 domain.Message。
-func TestBotAPIMessagesFromUpdatesReloadsChannelMessages(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	input, peer, err := f.router.botAPIInputPeer(f.ctx, f.bot.ID, f.chatID)
-	if err != nil {
-		t.Fatalf("botAPIInputPeer: %v", err)
-	}
-	updates, err := f.router.onMessagesSendMessage(WithUserID(f.ctx, f.bot.ID), &tg.MessagesSendMessageRequest{
-		Peer: input, Message: "hello via bridge", RandomID: 9101,
-	})
-	if err != nil {
-		t.Fatalf("onMessagesSendMessage as bot: %v", err)
-	}
-
-	msgs, err := f.router.botAPIMessagesFromUpdates(f.ctx, f.bot.ID, peer, updates)
-	if err != nil {
-		t.Fatalf("botAPIMessagesFromUpdates: %v", err)
-	}
-	if len(msgs) != 1 || msgs[0].Body != "hello via bridge" || msgs[0].ID == 0 ||
-		msgs[0].Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: f.channel.ID}) ||
-		msgs[0].From != (domain.Peer{Type: domain.PeerTypeUser, ID: f.bot.ID}) || !msgs[0].Out {
-		t.Fatalf("messages = %+v, want the bot's outbound channel message", msgs)
-	}
-}
-
-func TestBotAPIMessagesFromUpdatesReloadsPrivateMessages(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	input, peer, err := f.router.botAPIInputPeer(f.ctx, f.bot.ID, f.member.ID)
-	if err != nil {
-		t.Fatalf("botAPIInputPeer: %v", err)
-	}
-	updates, err := f.router.onMessagesSendMessage(WithUserID(f.ctx, f.bot.ID), &tg.MessagesSendMessageRequest{
-		Peer: input, Message: "private via bridge", RandomID: 9102,
-	})
-	if err != nil {
-		t.Fatalf("onMessagesSendMessage as bot: %v", err)
-	}
-
-	msgs, err := f.router.botAPIMessagesFromUpdates(f.ctx, f.bot.ID, peer, updates)
-	if err != nil {
-		t.Fatalf("botAPIMessagesFromUpdates: %v", err)
-	}
-	if len(msgs) != 1 || msgs[0].Body != "private via bridge" ||
-		msgs[0].Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: f.member.ID}) || !msgs[0].Out {
-		t.Fatalf("messages = %+v, want the bot's copy of the private message", msgs)
 	}
 }

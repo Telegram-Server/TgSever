@@ -9,8 +9,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// bots.setBotMenuButton 带 user_id 时设置的是该用户专属的按钮，全局默认不受影响；
-// 以 inputUserEmpty、inputUserSelf 或机器人自己的 id 为目标仍表示默认按钮。
+// bots.setBotMenuButton 带 user_id 时只把 updateBotMenuButton 推给该用户；以 inputUserSelf
+// 或机器人自己的 id 为目标表示默认按钮；不存在的用户报 USER_ID_INVALID。专属按钮与全局
+// 默认互不影响、default 即删除专属按钮由 storetest.BotUserMenuButtons 覆盖。
 func TestBotsSetBotMenuButtonPerUserButton(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 	ctx := WithUserID(f.ctx, f.bot.ID)
@@ -36,63 +37,24 @@ func TestBotsSetBotMenuButtonPerUserButton(t *testing.T) {
 	} else if _, ok := u.Button.(*tg.BotMenuButtonCommands); !ok {
 		t.Fatalf("pushed button %T, want commands", u.Button)
 	}
-	button, err := f.bots.GetBotMenuButton(f.ctx, f.bot.ID)
-	if err != nil || button.Type != domain.BotMenuButtonDefault {
-		t.Fatalf("default button = %+v, %v; want it untouched", button, err)
-	}
-	if got, err := f.router.onBotsGetBotMenuButton(ctx, member); err != nil {
-		t.Fatalf("get member button: %v", err)
-	} else if _, ok := got.(*tg.BotMenuButtonCommands); !ok {
-		t.Fatalf("member button = %T, want commands", got)
-	}
-	owner := &tg.InputUser{UserID: f.owner.ID, AccessHash: f.owner.AccessHash}
-	if got, err := f.router.onBotsGetBotMenuButton(ctx, owner); err != nil {
-		t.Fatalf("get owner button: %v", err)
-	} else if _, ok := got.(*tg.BotMenuButtonDefault); !ok {
-		t.Fatalf("owner button = %T, want the default", got)
-	}
-
-	if ok, err := f.router.onBotsSetBotMenuButton(ctx, &tg.BotsSetBotMenuButtonRequest{
-		UserID: &tg.InputUserEmpty{},
-		Button: &tg.BotMenuButton{Text: "Open", URL: "https://example.com/global"},
-	}); err != nil || !ok {
-		t.Fatalf("default set = %v, %v; want ok", ok, err)
-	}
-	button, err = f.bots.GetBotMenuButton(f.ctx, f.bot.ID)
-	if err != nil || button.Type != domain.BotMenuButtonWebView {
-		t.Fatalf("default button = %+v, %v; want web view", button, err)
-	}
-	// 成员的专属按钮不被全局改写覆盖。
-	if got, err := f.router.onBotsGetBotMenuButton(ctx, member); err != nil {
-		t.Fatalf("get member button: %v", err)
-	} else if _, ok := got.(*tg.BotMenuButtonCommands); !ok {
-		t.Fatalf("member button after default change = %T, want commands", got)
-	}
-	// 给成员设 default = 删除专属按钮，回落到全局。
-	if ok, err := f.router.onBotsSetBotMenuButton(ctx, &tg.BotsSetBotMenuButtonRequest{
-		UserID: member,
-		Button: &tg.BotMenuButtonDefault{},
-	}); err != nil || !ok {
-		t.Fatalf("per-user reset = %v, %v; want ok", ok, err)
-	}
-	if got, err := f.router.onBotsGetBotMenuButton(ctx, member); err != nil {
-		t.Fatalf("get member button: %v", err)
-	} else if b, ok := got.(*tg.BotMenuButton); !ok || b.URL != "https://example.com/global" {
-		t.Fatalf("member button after reset = %#v, want the global web view", got)
-	}
 
 	// 以机器人自己为目标（inputUserSelf 或自己的 id）也表示默认按钮，客户端常这样传。
-	for _, self := range []tg.InputUserClass{&tg.InputUserSelf{}, &tg.InputUser{UserID: f.bot.ID}} {
+	for i, self := range []tg.InputUserClass{&tg.InputUserSelf{}, &tg.InputUser{UserID: f.bot.ID}} {
+		url := []string{"https://example.com/self", "https://example.com/own-id"}[i]
 		if ok, err := f.router.onBotsSetBotMenuButton(ctx, &tg.BotsSetBotMenuButtonRequest{
 			UserID: self,
-			Button: &tg.BotMenuButtonDefault{},
+			Button: &tg.BotMenuButton{Text: "Open", URL: url},
 		}); err != nil || !ok {
 			t.Fatalf("self-targeted set %T = %v, %v; want the default set", self, ok, err)
 		}
+		button, err := f.bots.GetBotMenuButton(f.ctx, f.bot.ID)
+		if err != nil || button.Type != domain.BotMenuButtonWebView || button.URL != url {
+			t.Fatalf("default after self-targeted set %T = %+v, %v; want web view %s", self, button, err, url)
+		}
 		if got, err := f.router.onBotsGetBotMenuButton(ctx, self); err != nil {
 			t.Fatalf("self-targeted get %T: %v", self, err)
-		} else if _, ok := got.(*tg.BotMenuButtonDefault); !ok {
-			t.Fatalf("self-targeted get %T = %T, want the default", self, got)
+		} else if b, ok := got.(*tg.BotMenuButton); !ok || b.URL != url {
+			t.Fatalf("self-targeted get %T = %#v, want the default %s", self, got, url)
 		}
 	}
 
