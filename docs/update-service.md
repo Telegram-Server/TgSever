@@ -29,6 +29,7 @@ Contents:
 - [In-process deployment](#in-process-deployment)
 - [Standalone deployment](#standalone-deployment)
 - [Docker](#docker)
+- [Upgrading from an earlier configuration](#upgrading-from-an-earlier-configuration)
 - [Clients remember the update prefix](#clients-remember-the-update-prefix)
 - [HTTP behavior](#http-behavior)
 - [Release manifest fields](#release-manifest-fields)
@@ -341,8 +342,14 @@ go run ./cmd/telesrv-update publish \
   path/to/package
 ```
 
-Because `telesrv-update` reads the same `TELESRV_UPDATE_*` variables, later
-publishes in the same environment need only the package path.
+`telesrv` reads `.env`; `telesrv-update` does **not**. It only sees its own
+process environment, so locally keep passing `-manifest` and
+`-root-public-key` (and `-files` if you set `TELESRV_UPDATE_FILES_DIR`), or
+export the `TELESRV_UPDATE_*` variables in the shell you publish from. Without
+them it uses its built-in defaults (`data/updates/manifest.json`, no root key),
+and `publish` refuses to run without a root key. (Inside the Docker server container the variables are in the process
+environment, so there `publish` needs only the package path; see
+[Docker](#docker).)
 
 ## Standalone deployment
 
@@ -454,9 +461,44 @@ docker compose exec server telesrv-update publish /var/lib/telesrv-updates/incom
 killed leaves `/var/lib/telesrv-updates/manifest.json.lock`; remove it with
 `docker compose exec server rm` once no publish is running.
 
-Back up the `server_updates` volume. It is a separate Docker volume from
-`server_state`, and losing it loses the published packages that the manifest
-and your clients refer to.
+### Backing up the update catalog
+
+`gramsrv-backup` and [backup-restore.md](backup-restore.md) do **not** cover
+the update catalog in Docker: a bundle holds the databases, the `data/` tree
+and the configuration files, not the `server_updates` volume and not
+`deploy/docker/update-keys/`. Back both up yourself (for example
+`docker run --rm -v <project>_server_updates:/v:ro -v "$PWD":/b alpine tar -C /v -czf /b/server_updates.tgz .`,
+and a copy of `update-root.pub`). Losing the volume loses the published
+packages that the manifest and your clients refer to. (In a local deployment
+whose manifest sits under `data/`, such as `data/updates/`, the bundle's
+`data.tar.zst` includes it; the root key under `/etc` it does not.)
+
+Restore order matters: put the `server_updates` volume and the root key back
+**before** setting `TELESRV_UPDATE_MANIFEST` (or before starting a server whose
+restored `.env` already sets it). With the variable set and the manifest
+missing, `telesrv` refuses to start.
+
+## Upgrading from an earlier configuration
+
+- **`TELESRV_UPDATE_MANIFEST` now turns `telesrv` into an update server.** Older
+  `.env.example` files set `TELESRV_UPDATE_MANIFEST=data/updates/manifest.json`
+  (and `TELESRV_UPDATE_FILES_DIR`) for the standalone `telesrv-update` only, and
+  `telesrv` ignored them. `telesrv` now reads the variable, and any non-empty
+  value enables in-process updates. An upgraded `.env` copied from that example
+  therefore fails at startup: the manifest does not exist, or
+  `TELESRV_UPDATE_SERVICE_URL` is also set, or the public link listener is off.
+  These errors say that a non-empty `TELESRV_UPDATE_MANIFEST` enables in-process
+  updates. If this server should not serve updates, clear
+  `TELESRV_UPDATE_MANIFEST` (and the other in-process variables) in its `.env`;
+  a standalone `telesrv-update` keeps getting them from its own environment.
+- **Standalone `telesrv-update` without `-files` / `TELESRV_UPDATE_FILES_DIR`.**
+  The default package directory used to be `data/updates/files` whatever the
+  manifest path; it is now `files` next to the manifest. With the default
+  manifest path nothing changes. A deployment that sets a custom
+  `-manifest`/`TELESRV_UPDATE_MANIFEST` but no files directory must either move
+  its packages from `data/updates/files` to `<manifest dir>/files`, or set
+  `-files`/`TELESRV_UPDATE_FILES_DIR` to the old directory explicitly; otherwise
+  the catalog fails to load because the published files are missing.
 
 ## Clients remember the update prefix
 
