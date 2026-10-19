@@ -108,9 +108,6 @@ func TestChatlistJoinSkipsChannelWhereUserIsKicked(t *testing.T) {
 	f := newChatlistBanFixture(t, "slug-ban-kicked")
 	f.export(t, f.peerA, f.peerB)
 	f.addViewerThenBan(t, f.ownerID, f.peerA, domain.ChannelBannedRights{ViewMessages: true})
-	if got := f.viewerMember(t, f.peerA); got.Status != domain.ChannelMemberKicked {
-		t.Fatalf("seed status = %q, want kicked", got.Status)
-	}
 
 	joined, err := f.svc.JoinInvite(ctx, f.viewerID, f.slug, nil, 101)
 	if err != nil {

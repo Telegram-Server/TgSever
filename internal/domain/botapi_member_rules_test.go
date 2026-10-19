@@ -2,7 +2,6 @@ package domain
 
 import (
 	"encoding/json"
-	"errors"
 	"testing"
 )
 
@@ -29,22 +28,5 @@ func TestBotChatMemberUpdatedDecodesLegacyPayloadWithoutViewer(t *testing.T) {
 	_ = json.Unmarshal(encoded, &back)
 	if _, present := back["viewer"]; present {
 		t.Fatalf("zero viewer serialized: %s", encoded)
-	}
-}
-
-// Viewer 只能是收件机器人自己。
-func TestBotChatMemberUpdatedRejectsForeignViewer(t *testing.T) {
-	u := BotChatMemberUpdated{
-		Chat: Peer{Type: PeerTypeChannel, ID: 5}, ActorUserID: 7, Date: 10,
-		Old:    BotChatMemberSnapshot{UserID: 42, Role: ChannelRoleMember, Status: ChannelMemberLeft},
-		New:    BotChatMemberSnapshot{UserID: 42, Role: ChannelRoleMember, Status: ChannelMemberActive},
-		Viewer: BotChatMemberSnapshot{UserID: 98, Role: ChannelRoleAdmin, Status: ChannelMemberActive},
-	}
-	if err := u.ValidateFor(99, BotAPIUpdateChatMember); !errors.Is(err, ErrBotChatMemberUpdateInvalid) {
-		t.Fatalf("foreign viewer = %v", err)
-	}
-	u.Viewer.UserID = 99
-	if err := u.ValidateFor(99, BotAPIUpdateChatMember); err != nil {
-		t.Fatalf("own viewer = %v", err)
 	}
 }

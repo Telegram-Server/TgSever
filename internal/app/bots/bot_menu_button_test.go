@@ -6,60 +6,104 @@ import (
 	"testing"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 )
 
-func TestBotMenuButtonForUser(t *testing.T) {
+var globalMenuButton = domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: "Global", URL: "https://example.com/global"}
+
+// menuButtonFixture 是一个已设全局 web_app 按钮的机器人和两个普通用户。
+type menuButtonFixture struct {
+	svc              *Service
+	users            *memory.UserStore
+	bot              domain.User
+	viewerA, viewerB domain.User
+}
+
+func newMenuButtonFixture(t *testing.T) menuButtonFixture {
+	t.Helper()
 	svc, users, _, _ := newTestService(t)
 	owner := newOwner(t, users, "+2101")
-	viewerA := newOwner(t, users, "+2102")
-	viewerB := newOwner(t, users, "+2103")
-	bot := makeBot(t, svc, owner, "Scoped Menu Bot", "scoped_menu_bot")
-	ctx := context.Background()
-
-	global := domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: "Global", URL: "https://example.com/global"}
-	if _, err := svc.SetBotMenuButton(ctx, bot.ID, global); err != nil {
+	f := menuButtonFixture{
+		svc:     svc,
+		users:   users,
+		viewerA: newOwner(t, users, "+2102"),
+		viewerB: newOwner(t, users, "+2103"),
+	}
+	f.bot = makeBot(t, svc, owner, "Scoped Menu Bot", "scoped_menu_bot")
+	if _, err := svc.SetBotMenuButton(context.Background(), f.bot.ID, globalMenuButton); err != nil {
 		t.Fatalf("set global: %v", err)
 	}
-	before, _, _ := users.ByID(ctx, bot.ID)
-	personal := domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: " Mine ", URL: " https://example.com/a "}
-	if err := svc.SetBotMenuButtonForUser(ctx, bot.ID, viewerA.ID, personal); err != nil {
-		t.Fatalf("set personal: %v", err)
+	return f
+}
+
+func (f menuButtonFixture) setPersonal(t *testing.T, userID int64, button domain.BotMenuButton) {
+	t.Helper()
+	if err := f.svc.SetBotMenuButtonForUser(context.Background(), f.bot.ID, userID, button); err != nil {
+		t.Fatalf("set personal for %d: %v", userID, err)
 	}
-	// 专属按钮不 bump 所有人共享的 bot_info_version。
-	if after, _, _ := users.ByID(ctx, bot.ID); after.BotInfoVersion != before.BotInfoVersion {
-		t.Fatalf("bot_info_version %d -> %d, want untouched", before.BotInfoVersion, after.BotInfoVersion)
-	}
-	if got, err := svc.BotMenuButtonForUser(ctx, bot.ID, viewerA.ID); err != nil || got.Text != "Mine" || got.URL != "https://example.com/a" {
+}
+
+// 专属按钮（去掉首尾空白后）只对该用户生效，别人仍看到全局默认。
+func TestBotMenuButtonForUserAppliesOnlyToThatViewer(t *testing.T) {
+	f := newMenuButtonFixture(t)
+	ctx := context.Background()
+	f.setPersonal(t, f.viewerA.ID, domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: " Mine ", URL: " https://example.com/a "})
+
+	if got, err := f.svc.BotMenuButtonForUser(ctx, f.bot.ID, f.viewerA.ID); err != nil || got.Text != "Mine" || got.URL != "https://example.com/a" {
 		t.Fatalf("viewer A button = %+v, %v; want the trimmed personal button", got, err)
 	}
-	if got, err := svc.BotMenuButtonForUser(ctx, bot.ID, viewerB.ID); err != nil || got != global {
+	if got, err := f.svc.BotMenuButtonForUser(ctx, f.bot.ID, f.viewerB.ID); err != nil || got != globalMenuButton {
 		t.Fatalf("viewer B button = %+v, %v; want the global default", got, err)
 	}
-	if got, err := svc.GetBotMenuButton(ctx, bot.ID); err != nil || got != global {
+}
+
+// 专属按钮不改所有人共享的状态：bot_info_version、全局按钮、main mini app 都不动。
+func TestBotMenuButtonForUserLeavesSharedStateAlone(t *testing.T) {
+	f := newMenuButtonFixture(t)
+	ctx := context.Background()
+	before, _, _ := f.users.ByID(ctx, f.bot.ID)
+	f.setPersonal(t, f.viewerA.ID, domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: "Mine", URL: "https://example.com/a"})
+
+	if after, _, _ := f.users.ByID(ctx, f.bot.ID); after.BotInfoVersion != before.BotInfoVersion {
+		t.Fatalf("bot_info_version %d -> %d, want untouched", before.BotInfoVersion, after.BotInfoVersion)
+	}
+	if got, err := f.svc.GetBotMenuButton(ctx, f.bot.ID); err != nil || got != globalMenuButton {
 		t.Fatalf("global button = %+v, %v; want untouched", got, err)
 	}
-	// 专属按钮不会生成/改写 main mini app（那是所有人共享的）。
-	if app, found, err := svc.GetMainBotApp(ctx, bot.ID); err != nil || !found || app.URL != global.URL {
+	if app, found, err := f.svc.GetMainBotApp(ctx, f.bot.ID); err != nil || !found || app.URL != globalMenuButton.URL {
 		t.Fatalf("main app = %+v found=%v err=%v; want the global button's app", app, found, err)
 	}
+}
 
-	// default 删除专属按钮，回落到全局。
-	if err := svc.SetBotMenuButtonForUser(ctx, bot.ID, viewerA.ID, domain.BotMenuButton{Type: domain.BotMenuButtonDefault}); err != nil {
-		t.Fatalf("reset personal: %v", err)
-	}
-	if got, err := svc.BotMenuButtonForUser(ctx, bot.ID, viewerA.ID); err != nil || got != global {
+// 设 default 即删除专属按钮，回落到全局默认。
+func TestBotMenuButtonForUserDefaultFallsBackToGlobal(t *testing.T) {
+	f := newMenuButtonFixture(t)
+	f.setPersonal(t, f.viewerA.ID, domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: "Mine", URL: "https://example.com/a"})
+	f.setPersonal(t, f.viewerA.ID, domain.BotMenuButton{Type: domain.BotMenuButtonDefault})
+
+	if got, err := f.svc.BotMenuButtonForUser(context.Background(), f.bot.ID, f.viewerA.ID); err != nil || got != globalMenuButton {
 		t.Fatalf("viewer A after reset = %+v, %v; want the global default", got, err)
 	}
+}
 
-	// 校验规则与全局一致。
-	if err := svc.SetBotMenuButtonForUser(ctx, bot.ID, viewerA.ID, domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: "x", URL: "http://insecure"}); !errors.Is(err, domain.ErrBotMenuButtonInvalid) {
-		t.Fatalf("http url err = %v, want ErrBotMenuButtonInvalid", err)
-	}
-	// 目标必须是存在的、非机器人自身的用户。
-	if err := svc.SetBotMenuButtonForUser(ctx, bot.ID, 987654321, domain.BotMenuButton{Type: domain.BotMenuButtonCommands}); !errors.Is(err, domain.ErrUserNotFound) {
-		t.Fatalf("unknown user err = %v, want ErrUserNotFound", err)
-	}
-	if err := svc.SetBotMenuButtonForUser(ctx, bot.ID, bot.ID, domain.BotMenuButton{Type: domain.BotMenuButtonCommands}); !errors.Is(err, domain.ErrUserNotFound) {
-		t.Fatalf("self target err = %v, want ErrUserNotFound", err)
+// 按钮校验与全局一致；目标必须是存在的、非机器人自身的用户。
+func TestSetBotMenuButtonForUserValidates(t *testing.T) {
+	f := newMenuButtonFixture(t)
+	commands := domain.BotMenuButton{Type: domain.BotMenuButtonCommands}
+	for _, tc := range []struct {
+		name   string
+		userID int64
+		button domain.BotMenuButton
+		want   error
+	}{
+		{"http url", f.viewerA.ID, domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: "x", URL: "http://insecure"}, domain.ErrBotMenuButtonInvalid},
+		{"unknown user", 987654321, commands, domain.ErrUserNotFound},
+		{"the bot itself", f.bot.ID, commands, domain.ErrUserNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := f.svc.SetBotMenuButtonForUser(context.Background(), f.bot.ID, tc.userID, tc.button); !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }

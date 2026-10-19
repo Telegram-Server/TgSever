@@ -42,112 +42,74 @@ func (g *fakeBotProfileGateway) BotAPIGetBotInfo(_ context.Context, botID int64,
 	return g.name, g.about, g.description, nil
 }
 
-func TestSetMyNameStoresName(t *testing.T) {
-	gateway := newFakeBotProfileGateway()
-	h := newTestHandler(t, gateway)
-
-	resp := decodeAPIResponse(t, callMethod(t, h, "setMyName", `{"name":"Helper"}`))
-	if !resp.OK || string(resp.Result) != "true" {
-		t.Fatalf("setMyName = %+v", resp)
-	}
-	if gateway.name != "Helper" || gateway.lastBotID != testBotProfile.BotUserID {
-		t.Fatalf("gateway name = %q for bot %d", gateway.name, gateway.lastBotID)
-	}
-}
-
-func TestSetMyNameRejectsTooLongNameBeforeGateway(t *testing.T) {
-	gateway := newFakeBotProfileGateway()
-	h := newTestHandler(t, gateway)
-
-	long := strings.Repeat("я", 65)
-	rec := callMethod(t, h, "setMyName", `{"name":"`+long+`"}`)
-	resp := decodeAPIResponse(t, rec)
-	if resp.OK || rec.Code != http.StatusBadRequest || resp.Description != "NAME_TOO_LONG" {
-		t.Fatalf("setMyName(65) = %d %+v", rec.Code, resp)
-	}
-	if gateway.setCalls != 0 {
-		t.Fatalf("gateway called %d times", gateway.setCalls)
-	}
-	if resp := decodeAPIResponse(t, callMethod(t, h, "setMyName", `{"name":"`+long[2:]+`"}`)); !resp.OK {
-		t.Fatalf("setMyName(64) = %+v", resp)
+// 每个 setter 只写自己那一项（长度上限按字符计，边界值可写入），其余两项不动。
+func TestBotProfileSettersStoreOnlyTheirField(t *testing.T) {
+	for _, tc := range []struct {
+		method, param, value string
+		// stored 依次是 name、about、description 应有的值。
+		stored [3]string
+	}{
+		{"setMyName", "name", strings.Repeat("я", 64), [3]string{strings.Repeat("я", 64), "", ""}},
+		{"setMyShortDescription", "short_description", strings.Repeat("я", 120), [3]string{"", strings.Repeat("я", 120), ""}},
+		{"setMyDescription", "description", strings.Repeat("я", 512), [3]string{"", "", strings.Repeat("я", 512)}},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			gateway := newFakeBotProfileGateway()
+			resp := decodeAPIResponse(t, callMethod(t, newTestHandler(t, gateway), tc.method, `{"`+tc.param+`":"`+tc.value+`"}`))
+			if !resp.OK || string(resp.Result) != "true" {
+				t.Fatalf("%s = %+v", tc.method, resp)
+			}
+			if got := [3]string{gateway.name, gateway.about, gateway.description}; got != tc.stored || gateway.lastBotID != testBotProfile.BotUserID {
+				t.Fatalf("stored (name, about, description) = %q for bot %d, want %q", got, gateway.lastBotID, tc.stored)
+			}
+		})
 	}
 }
 
-func TestSetMyNameRejectsLanguageCode(t *testing.T) {
-	gateway := newFakeBotProfileGateway()
-	h := newTestHandler(t, gateway)
-
-	rec := callMethod(t, h, "setMyName", `{"name":"Помощник","language_code":"ru"}`)
-	resp := decodeAPIResponse(t, rec)
-	if resp.OK || rec.Code != http.StatusBadRequest || resp.Description != "LANG_CODE_NOT_SUPPORTED" {
-		t.Fatalf("setMyName(ru) = %d %+v", rec.Code, resp)
-	}
-	if gateway.setCalls != 0 {
-		t.Fatalf("gateway called %d times", gateway.setCalls)
-	}
-}
-
-func TestSetMyDescriptionStoresDescriptionAndChecksLength(t *testing.T) {
-	gateway := newFakeBotProfileGateway()
-	h := newTestHandler(t, gateway)
-
-	if resp := decodeAPIResponse(t, callMethod(t, h, "setMyDescription", `{"description":"What I do"}`)); !resp.OK {
-		t.Fatalf("setMyDescription = %+v", resp)
-	}
-	if gateway.description != "What I do" || gateway.name != "" {
-		t.Fatalf("gateway description = %q, name = %q", gateway.description, gateway.name)
-	}
-	rec := callMethod(t, h, "setMyDescription", `{"description":"`+strings.Repeat("x", 513)+`"}`)
-	if resp := decodeAPIResponse(t, rec); resp.OK || resp.Description != "DESCRIPTION_TOO_LONG" {
-		t.Fatalf("setMyDescription(513) = %+v", resp)
-	}
-	rec = callMethod(t, h, "setMyDescription", `{"description":"x","language_code":"en"}`)
-	if resp := decodeAPIResponse(t, rec); resp.OK || resp.Description != "LANG_CODE_NOT_SUPPORTED" {
-		t.Fatalf("setMyDescription(en) = %+v", resp)
-	}
-	if gateway.setCalls != 1 {
-		t.Fatalf("gateway called %d times, want 1", gateway.setCalls)
+// 超长或带 language_code 的写入在到达网关前就以 400 拒绝。
+func TestBotProfileSettersRejectBeforeGateway(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, body, code string
+	}{
+		{"long name", "setMyName", `{"name":"` + strings.Repeat("я", 65) + `"}`, "NAME_TOO_LONG"},
+		{"long short description", "setMyShortDescription", `{"short_description":"` + strings.Repeat("я", 121) + `"}`, "ABOUT_TOO_LONG"},
+		{"long description", "setMyDescription", `{"description":"` + strings.Repeat("я", 513) + `"}`, "DESCRIPTION_TOO_LONG"},
+		{"name language_code", "setMyName", `{"name":"Помощник","language_code":"ru"}`, "LANG_CODE_NOT_SUPPORTED"},
+		{"description language_code", "setMyDescription", `{"description":"x","language_code":"en"}`, "LANG_CODE_NOT_SUPPORTED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := newFakeBotProfileGateway()
+			rec := callMethod(t, newTestHandler(t, gateway), tc.method, tc.body)
+			if resp := decodeAPIResponse(t, rec); resp.OK || rec.Code != http.StatusBadRequest || resp.Description != tc.code {
+				t.Fatalf("%s = %d %+v, want 400 %s", tc.method, rec.Code, resp, tc.code)
+			}
+			if gateway.setCalls != 0 {
+				t.Fatalf("gateway called %d times", gateway.setCalls)
+			}
+		})
 	}
 }
 
-func TestGetMyDescriptionReturnsBotDescription(t *testing.T) {
-	gateway := newFakeBotProfileGateway()
-	gateway.name, gateway.about, gateway.description = "Helper", "short", "long"
-	h := newTestHandler(t, gateway)
-
-	resp := decodeAPIResponse(t, callMethod(t, h, "getMyDescription", `{}`))
-	if !resp.OK || string(resp.Result) != `{"description":"long"}` {
-		t.Fatalf("getMyDescription = %+v (%s)", resp, resp.Result)
-	}
-}
-
-func TestSetMyShortDescriptionStoresAboutAndChecksLength(t *testing.T) {
-	gateway := newFakeBotProfileGateway()
-	h := newTestHandler(t, gateway)
-
-	if resp := decodeAPIResponse(t, callMethod(t, h, "setMyShortDescription", `{"short_description":"Hi"}`)); !resp.OK {
-		t.Fatalf("setMyShortDescription = %+v", resp)
-	}
-	if gateway.about != "Hi" || gateway.description != "" {
-		t.Fatalf("gateway about = %q, description = %q", gateway.about, gateway.description)
-	}
-	rec := callMethod(t, h, "setMyShortDescription", `{"short_description":"`+strings.Repeat("x", 121)+`"}`)
-	if resp := decodeAPIResponse(t, rec); resp.OK || resp.Description != "ABOUT_TOO_LONG" {
-		t.Fatalf("setMyShortDescription(121) = %+v", resp)
-	}
-	if gateway.setCalls != 1 {
-		t.Fatalf("gateway called %d times, want 1", gateway.setCalls)
-	}
-}
-
-func TestGetMyShortDescriptionReturnsAbout(t *testing.T) {
-	gateway := newFakeBotProfileGateway()
-	gateway.name, gateway.about, gateway.description = "Helper", "short", "long"
-	h := newTestHandler(t, gateway)
-
-	resp := decodeAPIResponse(t, callMethod(t, h, "getMyShortDescription", `{}`))
-	if !resp.OK || string(resp.Result) != `{"short_description":"short"}` {
-		t.Fatalf("getMyShortDescription = %+v (%s)", resp, resp.Result)
+// 每个 getter 只取自己那一项；language_code 原样传给网关。
+func TestBotProfileGettersReturnTheirField(t *testing.T) {
+	for _, tc := range []struct {
+		method, want string
+	}{
+		{"getMyName", `{"name":"Helper"}`},
+		{"getMyShortDescription", `{"short_description":"short"}`},
+		{"getMyDescription", `{"description":"long"}`},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			gateway := newFakeBotProfileGateway()
+			gateway.name, gateway.about, gateway.description = "Helper", "short", "long"
+			resp := decodeAPIResponse(t, callMethod(t, newTestHandler(t, gateway), tc.method, `{"language_code":"de"}`))
+			if !resp.OK || string(resp.Result) != tc.want {
+				t.Fatalf("%s = %+v (%s), want %s", tc.method, resp, resp.Result, tc.want)
+			}
+			if gateway.lastLanguageCode != "de" {
+				t.Fatalf("language_code passed = %q, want de", gateway.lastLanguageCode)
+			}
+		})
 	}
 }
 
@@ -162,19 +124,5 @@ func TestBotProfileMethodsNeedGatewaySupport(t *testing.T) {
 		if resp := decodeAPIResponse(t, rec); rec.Code != http.StatusNotImplemented || resp.Description != "METHOD_NOT_FOUND" {
 			t.Fatalf("%s without gateway = %d %+v", method, rec.Code, resp)
 		}
-	}
-}
-
-func TestGetMyNameReturnsBotName(t *testing.T) {
-	gateway := newFakeBotProfileGateway()
-	gateway.name = "Helper"
-	h := newTestHandler(t, gateway)
-
-	resp := decodeAPIResponse(t, callMethod(t, h, "getMyName", `{"language_code":"de"}`))
-	if !resp.OK || string(resp.Result) != `{"name":"Helper"}` {
-		t.Fatalf("getMyName = %+v (%s)", resp, resp.Result)
-	}
-	if gateway.lastLanguageCode != "de" {
-		t.Fatalf("language_code passed = %q, want de", gateway.lastLanguageCode)
 	}
 }
