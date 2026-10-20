@@ -652,6 +652,18 @@ func (r *Router) pushSelfPhotoUpdateWithUser(ctx context.Context, self domain.Us
 	updates := selfPhotoUpdates(self, int(r.clock.Now().Unix()), projected)
 	r.pushUserUpdates(ctx, self.ID, updates)
 	r.pushSelfPhotoUpdateToCurrentSession(ctx, updates)
+	// Bot API 以 bot 自己的身份换头像；所有者不是该账号的 session，也必须收到刷新。
+	if self.Bot && r.deps.Bots != nil {
+		profile, found, err := r.deps.Bots.BotInfo(ctx, self.ID)
+		if err != nil {
+			r.log.Warn("resolve bot avatar owner failed", zap.Int64("bot_user_id", self.ID), zap.Error(err))
+		} else if found && profile.OwnerUserID != 0 && profile.OwnerUserID != self.ID {
+			ownerUser := r.tgUser(self)
+			ownerUser.SetBotCanEdit(true)
+			r.applyUsernamesToPeerObjects(ctx, []tg.UserClass{ownerUser}, nil)
+			r.pushUserUpdates(ctx, profile.OwnerUserID, selfPhotoUpdates(self, int(r.clock.Now().Unix()), ownerUser))
+		}
+	}
 }
 
 func (r *Router) pushBotPhotoUpdateToOwner(ctx context.Context, ownerUserID int64, bot domain.User, projected *tg.User) {

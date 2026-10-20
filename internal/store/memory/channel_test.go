@@ -570,7 +570,7 @@ func TestPendingJoinRequestsSummaryAndInviteAdmins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invite admins: %v", err)
 	}
-	want := []int64{1, 2, 4}
+	want := []int64{1, 2}
 	if !reflect.DeepEqual(admins, want) {
 		t.Fatalf("invite admins = %+v, want %+v", admins, want)
 	}

@@ -39,6 +39,12 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
 			return domain.ChannelParticipantList{Channel: channel, Count: channel.ParticipantsCount}, nil
 		}
 	}
+	if filter.Kind == domain.ChannelParticipantsKicked {
+		if !isChannelAdmin(viewer) {
+			return domain.ChannelParticipantList{Channel: channel}, nil
+		}
+		return s.listChannelKickedPeers(ctx, channel, filter, offset, limit)
+	}
 	where := []string{"m.channel_id = $1"}
 	args := []any{channelID}
 	now := nowUnix()
@@ -57,12 +63,6 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
 		// （含 rank）灌进 badge 缓存，因此带成员 Tag 的普通成员也必须返回。
 		where = append(where, "m.status = 'active'", "(m.role IN ('creator','admin') OR m.rank <> '')")
 		count = 0
-	case domain.ChannelParticipantsKicked:
-		count = channel.KickedCount
-		if !isChannelAdmin(viewer) {
-			return domain.ChannelParticipantList{Channel: channel, Count: channel.KickedCount}, nil
-		}
-		where = append(where, "(m.status = 'kicked' OR (m.banned_rights->>'ViewMessages')::boolean IS TRUE)", activeRestriction())
 	case domain.ChannelParticipantsBanned:
 		count = channel.BannedCount
 		if !isChannelAdmin(viewer) {

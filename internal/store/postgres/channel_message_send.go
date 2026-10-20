@@ -9,6 +9,7 @@ import (
 	"strings"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func (s *ChannelStore) SendChannelMessage(ctx context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error) {
@@ -98,6 +99,15 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
+	if req.SendAs != nil && req.SendAs.Type == domain.PeerTypeChannel {
+		_, err := sqlcgen.New(tx).GetChannelSenderBan(ctx, sqlcgen.GetChannelSenderBanParams{ChannelID: req.ChannelID, SenderChannelID: req.SendAs.ID})
+		if err == nil {
+			return domain.SendChannelMessageResult{}, domain.ErrChannelSenderBanned
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return domain.SendChannelMessageResult{}, err
+		}
+	}
 	if member.Guest && channel.JoinToSend {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
 	}
@@ -153,8 +163,12 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 	var discussion *domain.SendChannelDiscussionResult
 	var discussionRef *domain.ChannelDiscussionRef
 	if channel.Broadcast && channel.LinkedChatID != 0 && req.Action == nil {
+		_, banErr := sqlcgen.New(tx).GetChannelSenderBan(ctx, sqlcgen.GetChannelSenderBanParams{ChannelID: channel.LinkedChatID, SenderChannelID: channel.ID})
+		if banErr != nil && !errors.Is(banErr, pgx.ErrNoRows) {
+			return domain.SendChannelMessageResult{}, banErr
+		}
 		linked, err := getChannelByID(ctx, tx, channel.LinkedChatID)
-		if err == nil && !linked.Deleted && linked.Megagroup {
+		if err == nil && !linked.Deleted && linked.Megagroup && errors.Is(banErr, pgx.ErrNoRows) {
 			discussionMsgID, err := s.msgIDs.NextChannelMessageID(ctx, linked.ID)
 			if err != nil {
 				return domain.SendChannelMessageResult{}, fmt.Errorf("allocate discussion message id: %w", err)
@@ -512,7 +526,12 @@ WHERE channel_id = $1 AND id = $2`, msg.ChannelID, msg.ID).Scan(
 }
 
 func (s *ChannelStore) insertServiceMessage(ctx context.Context, tx pgx.Tx, channel domain.Channel, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.ChannelMessage, domain.ChannelUpdateEvent, error) {
-	msgID, err := s.msgIDs.NextChannelMessageID(ctx, channel.ID)
+	allocator := s.msgIDs
+	if _, fallback := allocator.(pgChannelMessageIDAllocator); fallback {
+		// MAX(id) 必须包含当前事务已写入的服务消息；pool 看不到同批先前未提交的 ID。
+		allocator = pgChannelMessageIDAllocator{db: tx}
+	}
+	msgID, err := allocator.NextChannelMessageID(ctx, channel.ID)
 	if err != nil {
 		return domain.ChannelMessage{}, domain.ChannelUpdateEvent{}, fmt.Errorf("allocate channel service message id: %w", err)
 	}

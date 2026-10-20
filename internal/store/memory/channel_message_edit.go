@@ -77,6 +77,15 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	if !viaBotEdit && msg.SenderUserID != req.UserID && !canEditChannelMessage(member) && !participantTodoEdit {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindGeoLive && msg.Media != nil && msg.Media.Kind == domain.MessageMediaKindGeoLive && !msg.Media.GeoLive.Active(msg.Date, req.EditDate) {
+		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
+	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindTodo && (!req.AllowTodoParticipantMutation || req.ReplaceTodo) && !viaBotEdit && msg.SenderUserID != req.UserID {
+		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+	}
+	if req.ReplaceTodo {
+		req.Media = req.Media.WithTodoCompletionsFrom(msg.Media)
+	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
 	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
@@ -224,7 +233,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 }
 
 func isChannelTodoParticipantEdit(req domain.EditChannelMessageRequest, msg domain.ChannelMessage) bool {
-	if !req.AllowTodoParticipantMutation || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
+	if !req.AllowTodoParticipantMutation || req.ReplaceTodo || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
 		return false
 	}
 	if msg.Media == nil || msg.Media.Kind != domain.MessageMediaKindTodo || msg.Media.Todo == nil {

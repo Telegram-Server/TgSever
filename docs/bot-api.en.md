@@ -211,7 +211,7 @@ one answers that group with `501 METHOD_NOT_FOUND`.
 
 ## Updates
 
-Six update kinds are produced:
+Nine update kinds are produced:
 
 | `allowed_updates` value | Update key | Delivered by default |
 |---|---|---|
@@ -221,14 +221,17 @@ Six update kinds are produced:
 | `pre_checkout_query` | `pre_checkout_query` | yes |
 | `my_chat_member` | `my_chat_member` | yes |
 | `chat_member` | `chat_member` | **no** — only when listed explicitly |
+| `message_reaction` | `message_reaction` | **no** — only when listed explicitly |
+| `message_reaction_count` | `message_reaction_count` | **no** — only when listed explicitly |
+| `chat_join_request` | `chat_join_request` | yes |
 
 `allowed_updates` is a JSON array of up to 100 strings, accepted both by
 `getUpdates` and by `setWebhook`, and it persists per bot. The filter is
 applied when an update is queued: with an explicit list, kinds that are not
 listed are never queued (changing the list does not touch what is already in
 the queue). An empty array `[]` resets the bot to the default set, which is
-every kind above except `chat_member`. Unknown names parse successfully but
-never match anything.
+every kind above except `chat_member`, `message_reaction` and
+`message_reaction_count`. Unknown names parse successfully but never match anything.
 
 Ephemeral (Bot API 10.2) messages arrive as normal `message` updates, but
 their `message_id` belongs to the ephemeral namespace rather than the chat's
@@ -246,12 +249,32 @@ Replies go back through `reply_parameters.ephemeral_message_id`; see
 - forwarded messages carry `forward_origin` of type `user`, `chat`,
   `channel` (with `message_id`) or `hidden_user`. `sender_user`,
   `sender_chat` and `chat` inside the origin are built from the id only.
+- private live-location edits and checklist toggles, appends and replacements
+  produce `edited_message`; a user's permitted edit of a bot-authored checklist
+  is also delivered to that bot.
+
+### Reactions and join requests
+
+- `message_reaction` carries the human actor's `old_reaction` and
+  `new_reaction`. The counterpart bot receives private-chat changes;
+  supergroup/channel bots must be administrators. Reactions set by bots do
+  not generate identified reaction updates.
+- Anonymous channel changes use `message_reaction_count` with the committed
+  aggregate counts instead of exposing the actor. Administrative reaction
+  removal follows the same delivery rules.
+- `chat_join_request` goes only to administrator bots with `InviteUsers`.
+  Approval links include `invite_link`; direct requests to a public group
+  omit it. The request's bio and invite are captured when queued, so
+  processing or deleting the pending request does not erase the queued event.
+- These payload updates share the same durable `update_id` cursor and
+  confirmation path in `getUpdates` and Webhook delivery.
+
 
 ### `my_chat_member` and `chat_member`
 
 Both carry an official `ChatMemberUpdated`: `chat`, `from` (who made the
 change), `date`, `old_chat_member`, `new_chat_member`, and optionally
-`via_join_request` / `via_chat_folder_invite_link`.
+`invite_link`, `via_join_request` / `via_chat_folder_invite_link`.
 
 - `my_chat_member` — the bot's own status changed in a supergroup or channel
   (added, promoted, restricted, banned, left). Delivered by default.
@@ -263,13 +286,15 @@ Known differences from the official gateway:
 
 - member updates exist only for supergroups and channels; there is no
   `my_chat_member` for a user blocking or unblocking the bot in a private chat;
-- for join-type events (added by someone, joined by themselves, joined by an
-  invite link, approved join request) `old_chat_member` is always `left`, even
-  if the user had been kicked or restricted before;
-- `can_be_edited` in an `administrator` member is always `false` — the server
-  does not record who promoted an admin;
-- there is no `invite_link` field; `via_join_request` and
-  `via_chat_folder_invite_link` are filled.
+- approval through an invite link returns both `invite_link` and
+  `via_join_request: true`, as required by
+  [the local compatibility specification](https://github.com/Telegram-Server/TgSever/issues/47).
+  This differs from the [official field description](https://core.telegram.org/bots/api/types/chatmemberupdated.md),
+  which reserves `via_join_request` for requests without an invite link.
+
+The old member state preserves the actual previous restriction/ban state.
+`can_be_edited` is computed from the recipient bot's membership snapshot;
+legacy queued rows without that snapshot fall back to `false`.
 
 Queue retention is controlled by `TELESRV_BOT_API_UPDATE_RETENTION`
 (default `24h`); acknowledged updates are dropped earlier.
@@ -646,8 +671,13 @@ already closed is `MESSAGE_POLL_CLOSED`; a message without a poll is
 
 ### `deleteMessage`
 
-`chat_id` + `message_id`. Returns `true`. Deleting an already-deleted or
-foreign message returns `false` or an error, as with the official gateway.
+`chat_id` + `message_id`. Returns `true` only after deletion. Private message
+IDs are checked against the specified conversation before revoke deletion.
+Supergroups/channels use the normal MTProto deletion permissions: a bot can
+delete its own messages without administrator rights, and needs
+`DeleteMessages` to delete someone else's. Missing or wrong-chat messages
+return HTTP 400 with `Bad Request: message to delete not found`; permission
+denials use `Bad Request: message can't be deleted`. Bot deletions are audited.
 
 ### `answerCallbackQuery`
 
@@ -1005,6 +1035,64 @@ units, unknown types are `ENTITY_TYPE_UNSUPPORTED`.
 | Bot name / description / short description | 64 / 512 / 120 characters |
 | Chat title / description | 1..128 / 0..255 characters |
 | Admin custom title | 0..16 characters |
+
+## MTProto prerequisites for Bot API adapters
+
+[Issue #37](https://github.com/Telegram-Server/TgSever/issues/37) tracks
+underlying MTProto/app/store behavior; it does **not** add all corresponding
+HTTP methods. The photo/boost privacy prerequisites (#38–40) are delivered
+separately and must be included before these changes. Methods in the next
+section remain unavailable until their separate gateway adapters are implemented.
+- Main invites have explicit identity; ordinary creation never promotes a
+  link to main. Non-owner administrators manage only their own links, and
+  management/pending-request visibility require `InviteUsers`. MTProto member
+  updates include a private invite only for authorized viewers or that link's
+  creator; ordinary members and direct joiners do not receive its secret.
+  Bot API events expose another administrator's link with its secret replaced
+  by `...`, while preserving non-secret metadata. Batch approvals are atomic;
+  direct invites and link deletion clear stale pending requests and counts.
+- Participant queries preserve restrictions, bans and member tags. Tags use
+  at most 16 Unicode characters and reject emoji. Message ranks are loaded
+  once per author batch/event, not per sender or fanout recipient, and are not
+  retained in a long-lived cache. Channel-identity bans cover text, media,
+  albums, forwards and linked-discussion copies; nonzero temporary expiry is
+  rejected. Unbanning an already-unbanned channel identity creates no audit
+  entry, PTS change or membership broadcast.
+- Supergroup sticker sets require `ChangeInfo` and 100 members when setting
+  a non-empty set. Authorized administrators may still remove an existing
+  set below that threshold; `can_set_stickers` includes this removal capability.
+- Live locations reject revival after expiry/stop, including inline edits.
+  Checklist replacement is author-only and merges against current locked
+  completion state: surviving item IDs retain their completer/date, removed
+  IDs lose completion, and new IDs start incomplete. Allowed collaboration
+  continues to produce edit updates.
+- Text/rich streaming drafts are bot-only, validate IDs/text/entities,
+  respect blocking, and emit server-side rich constructors. Unsupported paid
+  media is no longer advertised; paid reactions remain independent.
+- `messages.getPersonalChannelHistory` lets bots read a valid public personal
+  broadcast channel only while its associated user is the active creator.
+  Transferring ownership revokes the old association even if that user remains
+  an administrator; ordinary bot history privacy is unchanged. Default bot
+  administrator rights persist separately, and avatar byte import uses avatar
+  sizing/512 KiB video parts and notifies the bot owner.
+- Internal channel deletion has an explicit `SkipUnauthorized` mode for
+  future batch adapters. Normal MTProto deletion remains atomic and does not
+  silently skip unauthorized messages.
+- Reaction delivery snapshots the committed old/new selections and counts
+  before admission to the bounded FIFO worker. Bot discovery, current role
+  checks and update insertion run there rather than on the reaction RPC's
+  synchronous path. Queue pressure applies FIFO backpressure; cancellation
+  before admission can reject delivery. Admitted work drains on shutdown with
+  a bounded per-job deadline. This is not a durable outbox or an exactly-once
+  delivery guarantee.
+
+The upgrade adds migrations `20261024010000` through `20261024060000`.
+Include the photo/privacy prerequisite migration `20261023020000` first:
+adding an older version after applying these migrations would skip it.
+The first Bot API migration repairs duplicate active main invites and enforces
+uniqueness per channel/administrator; its data correction is not undone on
+rollback. Rolling back reaction/join-request payload migrations discards queued
+updates of the removed kinds. Back up the database before upgrading or rolling back.
 
 ## Not implemented
 

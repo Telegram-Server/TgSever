@@ -8,27 +8,30 @@ import (
 	"go.uber.org/zap"
 )
 
-// Bot API 私聊 enqueue 异步化（性能审计 H2）：user→bot 私聊发送/编辑时，把
-// bot_api_updates 的 INSERT（以及可能打 PG 的 bot 判定）移出发送者 RPC 同步路径，
-// 发送者不再为 Bot API 队列写入多等一次 PG 往返。
+// Bot API enqueue 异步化：候选查询、bot 判定与 bot_api_updates 写入都在
+// 单 worker FIFO 内执行，避免发送者/反应 RPC 等待额外的存储往返。
 //
-// 与 channel fanout dispatcher 的关键差异：bot_api_updates 行本身就是投递真值
-// （getUpdates 只读该表，没有 getDifference 类兜底），因此队列满时**同步回退执行**
-// 而不是丢弃——发送者多等一次 INSERT，换 update 不丢。
-//
-// 单 worker FIFO：保证同一 bot 的 update_id 顺序与发送顺序一致（并发 goroutine 池
-// 会让 bot 侧 getUpdates 看到乱序消息）。
+// 队列行本身是投递真值，已接收的任务不能丢弃，满时也不能旁路插入旧任务之前。
+// 满时背压入队并等待执行；请求取消可退出等待，停止时 drain 已接收任务。
 
 const (
 	defaultBotAPIEnqueueBuffer  = 4096
 	botAPIEnqueueJobTimeout     = 10 * time.Second
-	botAPIEnqueueFallbackReason = "bot api enqueue queue full, falling back to synchronous insert"
+	botAPIEnqueuePressureReason = "bot api enqueue queue full, waiting for ordered insert"
 )
 
+type botAPIEnqueueJob struct {
+	run  func(context.Context)
+	done chan struct{}
+}
+
 type botAPIEnqueueDispatcher struct {
-	log     *zap.Logger
-	jobs    chan func(context.Context)
-	started atomic.Bool
+	log      *zap.Logger
+	jobs     chan botAPIEnqueueJob
+	started  atomic.Bool
+	admit    chan struct{}
+	stopping chan struct{}
+	done     chan struct{}
 }
 
 func newBotAPIEnqueueDispatcher(log *zap.Logger, buffer int) *botAPIEnqueueDispatcher {
@@ -36,8 +39,11 @@ func newBotAPIEnqueueDispatcher(log *zap.Logger, buffer int) *botAPIEnqueueDispa
 		buffer = defaultBotAPIEnqueueBuffer
 	}
 	return &botAPIEnqueueDispatcher{
-		log:  log.Named("botapi-enqueue"),
-		jobs: make(chan func(context.Context), buffer),
+		log:      log.Named("botapi-enqueue"),
+		jobs:     make(chan botAPIEnqueueJob, buffer),
+		admit:    make(chan struct{}, 1),
+		stopping: make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
@@ -51,32 +57,93 @@ func (d *botAPIEnqueueDispatcher) Run(ctx context.Context) {
 	if d == nil || !d.started.CompareAndSwap(false, true) {
 		return
 	}
-	for {
+	defer close(d.done)
+	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
-			return
 		case job := <-d.jobs:
-			jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), botAPIEnqueueJobTimeout)
-			job(jobCtx)
-			cancel()
+			d.execute(ctx, job)
+		}
+	}
+	// Wake admissions blocked by a full queue before taking the admission
+	// barrier. Everything accepted before the barrier drains with a fresh ctx.
+	close(d.stopping)
+	d.admit <- struct{}{}
+	<-d.admit
+	for {
+		select {
+		case job := <-d.jobs:
+			d.execute(ctx, job)
+		default:
+			return
 		}
 	}
 }
 
-// Enqueue 投递一个 Bot API 队列写入任务。dispatcher 未启动时同步执行（用请求 ctx）；
-// 已启动时投入 FIFO，满则同步回退执行——绝不丢弃（队列行是投递真值）。
-func (d *botAPIEnqueueDispatcher) Enqueue(reqCtx context.Context, job func(context.Context)) {
-	if d == nil || job == nil {
+func (d *botAPIEnqueueDispatcher) execute(ctx context.Context, job botAPIEnqueueJob) {
+	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), botAPIEnqueueJobTimeout)
+	defer cancel()
+	if job.done != nil {
+		defer close(job.done)
+	}
+	job.run(jobCtx)
+}
+
+// Enqueue 未启动时同步执行；正常时非阻塞投入 FIFO。队列满时保留背压/
+// 同步等待语义，但仍由单 worker 按顺序执行，绝不越过队列里的旧事件。
+// 停止后等待 drain 完毕再同步执行，避免任务留在无人消费的队列。
+func (d *botAPIEnqueueDispatcher) Enqueue(reqCtx context.Context, run func(context.Context)) {
+	if d == nil || run == nil {
 		return
 	}
 	if !d.started.Load() {
-		job(reqCtx)
+		run(reqCtx)
 		return
 	}
 	select {
-	case d.jobs <- job:
+	case d.admit <- struct{}{}:
+	case <-reqCtx.Done():
+		d.log.Warn("bot api enqueue canceled before admission", zap.Error(reqCtx.Err()))
+		return
+	}
+	select {
+	case <-d.stopping:
+		<-d.admit
+		d.afterDrain(reqCtx, run)
+		return
 	default:
-		d.log.Warn(botAPIEnqueueFallbackReason)
-		job(reqCtx)
+	}
+	job := botAPIEnqueueJob{run: run}
+	select {
+	case d.jobs <- job:
+		<-d.admit
+		return
+	default:
+		d.log.Warn(botAPIEnqueuePressureReason)
+	}
+	job.done = make(chan struct{})
+	select {
+	case d.jobs <- job:
+		<-d.admit
+		select {
+		case <-job.done:
+		case <-reqCtx.Done():
+			// Already accepted: the worker still delivers the immutable job.
+		}
+	case <-reqCtx.Done():
+		<-d.admit
+		d.log.Warn("bot api enqueue canceled before admission", zap.Error(reqCtx.Err()))
+	case <-d.stopping:
+		<-d.admit
+		d.afterDrain(reqCtx, run)
+	}
+}
+
+func (d *botAPIEnqueueDispatcher) afterDrain(reqCtx context.Context, run func(context.Context)) {
+	select {
+	case <-d.done:
+		run(reqCtx)
+	case <-reqCtx.Done():
+		d.log.Warn("bot api enqueue canceled before admission", zap.Error(reqCtx.Err()))
 	}
 }

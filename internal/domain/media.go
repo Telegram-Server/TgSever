@@ -516,7 +516,13 @@ type MessageGeoLive struct {
 	Geo                         MessageGeoPoint `json:"geo"`
 	Heading                     int             `json:"heading,omitempty"`
 	Period                      int             `json:"period"`
+	Stopped                     bool            `json:"stopped,omitempty"`
 	ProximityNotificationRadius int             `json:"proximity_notification_radius,omitempty"`
+}
+
+func (g *MessageGeoLive) Active(date, now int) bool {
+	return g != nil && !g.Stopped && g.Period > 0 &&
+		(g.Period == 0x7fffffff || int64(date)+int64(g.Period) > int64(now))
 }
 
 // MessageStory is a story shared as messageMediaStory. Peer+ID are the stable
@@ -875,6 +881,31 @@ type MessageContact struct {
 // IsZero 表示无媒体（用于落库时跳过空快照、转换时回退 MessageMediaEmpty）。
 func (m *MessageMedia) IsZero() bool {
 	return m == nil || m.Kind == MessageMediaKindNone
+}
+
+// WithTodoCompletionsFrom 替换清单定义时，仅继承当前清单中仍存在任务的完成记录。
+// 调用方须在写锁内传入当前媒体；返回独立快照，不改输入或信任替换中的 completions。
+func (m *MessageMedia) WithTodoCompletionsFrom(current *MessageMedia) *MessageMedia {
+	if m == nil || m.Kind != MessageMediaKindTodo || m.Todo == nil {
+		return m
+	}
+	media := *m
+	todo := *m.Todo
+	todo.Completions = nil
+	media.Todo = &todo
+	if current == nil || current.Kind != MessageMediaKindTodo || current.Todo == nil || len(current.Todo.Completions) == 0 {
+		return &media
+	}
+	ids := make(map[int]struct{}, len(todo.Items))
+	for _, item := range todo.Items {
+		ids[item.ID] = struct{}{}
+	}
+	for _, completion := range current.Todo.Completions {
+		if _, keep := ids[completion.ID]; keep {
+			todo.Completions = append(todo.Completions, completion)
+		}
+	}
+	return &media
 }
 
 // HasUnreadPayload 表示该媒体是否参与 media_unread（"未听"）状态。

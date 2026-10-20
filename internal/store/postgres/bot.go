@@ -193,41 +193,13 @@ func (s *BotStore) GetBots(ctx context.Context, botUserIDs []int64) (map[int64]d
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := s.db.Query(ctx, `
-SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history,
-       bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type,
-       menu_button_text, menu_button_url, bot_inline_geo
-FROM bots
-WHERE bot_user_id = ANY($1::bigint[])`, ids)
+	rows, err := s.q.GetBotsByIDs(ctx, ids)
 	if err != nil {
 		return nil, fmt.Errorf("get bots: %w", err)
 	}
-	defer rows.Close()
-	out := make(map[int64]domain.BotProfile, len(ids))
-	for rows.Next() {
-		var row sqlcgen.Bot
-		if err := rows.Scan(
-			&row.BotUserID,
-			&row.OwnerUserID,
-			&row.TokenSecret,
-			&row.Description,
-			&row.Commands,
-			&row.BotChatHistory,
-			&row.BotNochats,
-			&row.InlinePlaceholder,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-			&row.MenuButtonType,
-			&row.MenuButtonText,
-			&row.MenuButtonUrl,
-			&row.BotInlineGeo,
-		); err != nil {
-			return nil, err
-		}
+	out := make(map[int64]domain.BotProfile, len(rows))
+	for _, row := range rows {
 		out[row.BotUserID] = botProfileFromModel(row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("get bots: %w", err)
 	}
 	for id, profile := range out {
 		enriched, err := s.enrichBotProfile(ctx, profile)
@@ -516,6 +488,8 @@ func botProfileFromModel(r sqlcgen.Bot) domain.BotProfile {
 			URL:  r.MenuButtonUrl,
 		},
 	}
+	_ = json.Unmarshal(r.GroupAdminRights, &p.GroupAdminRights)
+	_ = json.Unmarshal(r.BroadcastAdminRights, &p.BroadcastAdminRights)
 	if len(r.Commands) > 0 {
 		// commands 列损坏不阻断读路径：botInfo 退化为空命令列表。
 		_ = json.Unmarshal(r.Commands, &p.Commands)

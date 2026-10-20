@@ -351,20 +351,22 @@ type BootstrapUpdateJob struct {
 }
 
 type Bot struct {
-	BotUserID         int64
-	OwnerUserID       int64
-	TokenSecret       string
-	Description       string
-	Commands          []byte
-	BotChatHistory    bool
-	BotNochats        bool
-	InlinePlaceholder string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	MenuButtonType    int16
-	MenuButtonText    string
-	MenuButtonUrl     string
-	BotInlineGeo      bool
+	BotUserID            int64
+	OwnerUserID          int64
+	TokenSecret          string
+	Description          string
+	Commands             []byte
+	BotChatHistory       bool
+	BotNochats           bool
+	InlinePlaceholder    string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	MenuButtonType       int16
+	MenuButtonText       string
+	MenuButtonUrl        string
+	BotInlineGeo         bool
+	GroupAdminRights     []byte
+	BroadcastAdminRights []byte
 }
 
 type BotApiUpdate struct {
@@ -388,6 +390,8 @@ type BotApiUpdate struct {
 	EphemeralPayload         []byte
 	PreCheckoutPayload       []byte
 	MemberPayload            []byte
+	ReactionPayload          []byte
+	JoinRequestPayload       []byte
 }
 
 type BotApiUpdateState struct {
@@ -719,6 +723,7 @@ type Channel struct {
 	Fake                          bool
 	Gigagroup                     bool
 	SignatureProfiles             bool
+	StickerSetID                  int64
 }
 
 type ChannelAdminLogEvent struct {
@@ -1037,6 +1042,13 @@ type ChannelRevenueWithdrawal struct {
 	UserTransactionID    *int64
 	ChannelBalanceAfter  *int64
 	UserBalanceAfter     *int64
+}
+
+type ChannelSenderBan struct {
+	ChannelID       int64
+	SenderChannelID int64
+	BannedBy        int64
+	BannedAt        int32
 }
 
 type ChannelStarsBalance struct {

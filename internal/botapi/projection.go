@@ -101,7 +101,7 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 			}
 			return map[string]any{"update_id": updateID, "message": message}, "message", true
 		}
-		if !apiMessageProjectable(event.Message) {
+		if event.Message.Out || !apiMessageProjectable(event.Message) {
 			return nil, "", false
 		}
 		return map[string]any{
@@ -195,6 +195,18 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 				"invoice_payload": query.Payload,
 			},
 		}, "pre_checkout_query", true
+	case domain.UpdateEventBotChatJoinRequest:
+		body, ok := apiChatJoinRequest(event)
+		if !ok {
+			return nil, "", false
+		}
+		return map[string]any{"update_id": updateID, "chat_join_request": body}, "chat_join_request", true
+	case domain.UpdateEventBotMessageReaction, domain.UpdateEventBotMessageReactionCount:
+		body, kind, ok := apiReactionUpdated(event)
+		if !ok {
+			return nil, "", false
+		}
+		return map[string]any{"update_id": updateID, kind: body}, kind, true
 	case domain.UpdateEventBotMyChatMember, domain.UpdateEventBotChatMember:
 		body, ok := apiChatMemberUpdated(event)
 		if !ok {
@@ -244,6 +256,9 @@ func apiChatMemberUpdated(event domain.UpdateEvent) (map[string]any, bool) {
 		"date":            update.Date,
 		"old_chat_member": apiChatMember(old, subject, domain.CanEditChannelAdmin(viewer, old)),
 		"new_chat_member": apiChatMember(updated, subject, domain.CanEditChannelAdmin(viewer, updated)),
+	}
+	if update.Invite != nil {
+		out["invite_link"] = apiInviteLink(*update.Invite, userOf(update.Invite.AdminUserID), event.UserID)
 	}
 	if update.ViaJoinRequest {
 		out["via_join_request"] = true
@@ -330,7 +345,7 @@ func decodeBotAPIInlineMessageID(raw string) (domain.BotInlineMessageID, error) 
 }
 
 func apiMessageProjectable(msg domain.Message) bool {
-	if msg.Out || msg.ID <= 0 {
+	if msg.ID <= 0 {
 		return false
 	}
 	if apiSuccessfulPayment(msg.Media) != nil {
@@ -772,6 +787,35 @@ func apiMessageMedia(media *domain.MessageMedia, users map[int64]domain.User, ch
 			return nil
 		}
 		return map[string]any{"poll": apiPoll(*media.Poll, users)}
+	case domain.MessageMediaKindTodo:
+		if media.Todo == nil {
+			return nil
+		}
+		todo := media.Todo
+		completed := make(map[int]domain.MessageTodoCompletion, len(todo.Completions))
+		for _, completion := range todo.Completions {
+			completed[completion.ID] = completion
+		}
+		tasks := make([]map[string]any, 0, len(todo.Items))
+		for _, item := range todo.Items {
+			task := map[string]any{"id": item.ID, "text": item.Title}
+			if entities := apiMessageEntities(item.Entities, users); len(entities) > 0 {
+				task["text_entities"] = entities
+			}
+			if completion, ok := completed[item.ID]; ok {
+				user := users[completion.CompletedBy]
+				user.ID = completion.CompletedBy
+				task["completed_by_user"] = apiUser(user)
+				task["completion_date"] = completion.Date
+			}
+			tasks = append(tasks, task)
+		}
+		checklist := map[string]any{"title": todo.Title, "tasks": tasks,
+			"others_can_add_tasks": todo.OthersCanAppend, "others_can_mark_tasks_as_done": todo.OthersCanComplete}
+		if entities := apiMessageEntities(todo.TitleEntities, users); len(entities) > 0 {
+			checklist["title_entities"] = entities
+		}
+		return map[string]any{"checklist": checklist}
 	case domain.MessageMediaKindService:
 		if media.ServiceAction == nil {
 			return nil
@@ -861,7 +905,7 @@ func apiLocation(geo domain.MessageGeoPoint, live *domain.MessageGeoLive) map[st
 		out["horizontal_accuracy"] = float64(geo.AccuracyRadius)
 	}
 	if live != nil {
-		if live.Period > 0 {
+		if live.Period > 0 && !live.Stopped {
 			out["live_period"] = live.Period
 		}
 		if live.Heading > 0 {

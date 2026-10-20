@@ -6,6 +6,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 	"telesrv/internal/domain"
+	"unicode/utf8"
 )
 
 func reportResultForOption(option string) (tg.ReportResultClass, error) {
@@ -182,12 +183,12 @@ func (r *Router) onMessagesSetTyping(ctx context.Context, req *tg.MessagesSetTyp
 	if err != nil {
 		return false, err
 	}
+	action, err := r.typingAction(ctx, userID, peer, req.Action)
+	if err != nil {
+		return false, err
+	}
 	if peer.Type != domain.PeerTypeUser || peer.ID == 0 || peer.ID == userID {
 		if peer.Type == domain.PeerTypeChannel && peer.ID != 0 && r.deps.Channels != nil {
-			action := req.Action
-			if action == nil {
-				action = &tg.SendMessageCancelAction{}
-			}
 			updates := &tg.Updates{
 				Updates: []tg.UpdateClass{&tg.UpdateChannelUserTyping{
 					ChannelID: peer.ID,
@@ -203,9 +204,12 @@ func (r *Router) onMessagesSetTyping(ctx context.Context, req *tg.MessagesSetTyp
 		}
 		return true, nil
 	}
-	action := req.Action
-	if action == nil {
-		action = &tg.SendMessageCancelAction{}
+	blocked, err := r.peerBlocksUser(ctx, userID, peer.ID)
+	if err != nil {
+		return false, err
+	}
+	if blocked {
+		return true, nil
 	}
 	update := &tg.UpdateUserTyping{
 		UserID:   userID,
@@ -218,6 +222,71 @@ func (r *Router) onMessagesSetTyping(ctx context.Context, req *tg.MessagesSetTyp
 	}
 	r.pushTypingUpdate(ctx, peer.ID, updates)
 	return true, nil
+}
+
+func (r *Router) typingAction(ctx context.Context, userID int64, peer domain.Peer, action tg.SendMessageActionClass) (tg.SendMessageActionClass, error) {
+	switch draft := action.(type) {
+	case nil:
+		return &tg.SendMessageCancelAction{}, nil
+	case *tg.SendMessageRichMessageDraftAction:
+		return nil, inputConstructorInvalidErr()
+	case *tg.SendMessageTextDraftAction, *tg.InputSendMessageRichMessageDraftAction:
+		// TDLib sendTextMessageDraft/sendRichMessageDraft are bot-only; unlike
+		// sendMessageStopDraftAction these are not ordinary user chat actions.
+		if !r.userIsBot(ctx, userID) {
+			return nil, userBotRequiredErr()
+		}
+		if peer.Type != domain.PeerTypeUser || peer.ID == userID {
+			return nil, peerIDInvalidErr()
+		}
+		switch draft := draft.(type) {
+		case *tg.SendMessageTextDraftAction:
+			if draft == nil || draft.RandomID == 0 {
+				return nil, randomIDEmptyErr()
+			}
+			if !utf8.ValidString(draft.Text.Text) || utf8.RuneCountInString(draft.Text.Text) > maxSendMessageTextLength {
+				return nil, messageTooLongErr()
+			}
+			if err := validateStoryCaptionEntities(draft.Text.Text, draft.Text.Entities); err != nil {
+				return nil, err
+			}
+			if len(draft.Text.Entities) != 0 {
+				bounds := utf16ByteBoundaries(draft.Text.Text)
+				for _, entity := range draft.Text.Entities {
+					if _, ok := byteSpanFromUTF16Bounds(bounds, entity.GetOffset(), entity.GetLength()); !ok {
+						return nil, entityBoundsInvalidErr()
+					}
+				}
+			}
+			entities := domainMessageEntitiesForViewer(userID, draft.Text.Entities)
+			if len(entities) != len(draft.Text.Entities) {
+				return nil, entityBoundsInvalidErr()
+			}
+			out := *draft
+			out.Text = tgTextWithEntities(draft.Text.Text, entities)
+			return &out, nil
+		case *tg.InputSendMessageRichMessageDraftAction:
+			if draft == nil || draft.RandomID == 0 {
+				return nil, randomIDEmptyErr()
+			}
+			rich, err := r.domainRichMessageFromInput(ctx, draft.RichMessage)
+			if err != nil {
+				return nil, err
+			}
+			if rich.IsZero() {
+				return nil, richMessageInvalidErr()
+			}
+			wire, err := tgRichMessage(rich)
+			if err != nil {
+				return nil, internalErr()
+			}
+			return &tg.SendMessageRichMessageDraftAction{
+				RandomID: draft.RandomID, CanStop: draft.CanStop,
+				KeepOnStop: draft.KeepOnStop, RichMessage: *wire,
+			}, nil
+		}
+	}
+	return action, nil
 }
 
 func (r *Router) pushTypingUpdate(ctx context.Context, targetUserID int64, updates *tg.UpdateShort) {

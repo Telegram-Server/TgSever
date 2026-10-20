@@ -716,22 +716,25 @@ func domainInlineMediaAutoMessage(botID int64, raw tg.InputBotInlineMessageClass
 }
 
 func domainInlineGeoMessage(msg *tg.InputBotInlineMessageMediaGeo) (*domain.MessageMedia, *domain.MessageReplyMarkup, error) {
-	if _, ok := msg.GetHeading(); ok {
-		return nil, nil, mediaInvalidErr()
+	markup, err := domainReplyMarkupForSender(msg.ReplyMarkup, true)
+	if err != nil {
+		return nil, nil, replyMarkupErr(err)
 	}
-	if _, ok := msg.GetPeriod(); ok {
-		return nil, nil, mediaInvalidErr()
-	}
-	if _, ok := msg.GetProximityNotificationRadius(); ok {
-		return nil, nil, mediaInvalidErr()
+	if period, ok := msg.GetPeriod(); ok && period != 0 {
+		input := &tg.InputMediaGeoLive{GeoPoint: msg.GeoPoint}
+		input.SetPeriod(period)
+		if heading, ok := msg.GetHeading(); ok {
+			input.SetHeading(heading)
+		}
+		if radius, ok := msg.GetProximityNotificationRadius(); ok {
+			input.SetProximityNotificationRadius(radius)
+		}
+		media, err := domainLiveLocationFromInput(input)
+		return media, markup, err
 	}
 	geo, err := domainGeoPointFromInput(msg.GeoPoint)
 	if err != nil {
 		return nil, nil, err
-	}
-	markup, err := domainReplyMarkupForSender(msg.ReplyMarkup, true)
-	if err != nil {
-		return nil, nil, replyMarkupErr(err)
 	}
 	return &domain.MessageMedia{Kind: domain.MessageMediaKindGeo, Geo: geo}, markup, nil
 }
@@ -1068,6 +1071,7 @@ func tgBotInlineResult(in domain.BotInlineResult) tg.BotInlineResultClass {
 			SendMessage: msg,
 		}
 		if in.Media.Kind == domain.MessageMediaKindGeo ||
+			in.Media.Kind == domain.MessageMediaKindGeoLive ||
 			in.Media.Kind == domain.MessageMediaKindVenue ||
 			in.Media.Kind == domain.MessageMediaKindContact {
 			return out
@@ -1159,6 +1163,20 @@ func tgInlineWebDocument(in domain.BotInlineWebDocument) tg.WebDocumentClass {
 
 func tgBotInlineMediaMessage(in domain.BotInlineResult) tg.BotInlineMessageClass {
 	switch {
+	case in.Media.Kind == domain.MessageMediaKindGeoLive && in.Media.GeoLive != nil:
+		live := in.Media.GeoLive
+		msg := &tg.BotInlineMessageMediaGeo{Geo: tgGeoPoint(live.Geo)}
+		msg.SetPeriod(live.Period)
+		if live.Heading != 0 {
+			msg.SetHeading(live.Heading)
+		}
+		if live.ProximityNotificationRadius != 0 {
+			msg.SetProximityNotificationRadius(live.ProximityNotificationRadius)
+		}
+		if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {
+			msg.SetReplyMarkup(markup)
+		}
+		return msg
 	case in.Media.Kind == domain.MessageMediaKindGeo && in.Media.Geo != nil:
 		msg := &tg.BotInlineMessageMediaGeo{Geo: tgGeoPoint(*in.Media.Geo)}
 		if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {

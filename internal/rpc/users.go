@@ -348,6 +348,9 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 	}
 	if u.Bot {
 		full.SetBotInfo(r.tgBotInfo(ctx, currentUserID, u))
+		if err := r.applyBotDefaultAdminRights(ctx, u.ID, &full); err != nil {
+			return tg.UserFull{}, err
+		}
 	}
 	if r.deps.Dialogs != nil && u.ID != currentUserID {
 		list, err := r.deps.Dialogs.GetPeerDialogs(ctx, currentUserID, []domain.Peer{{Type: domain.PeerTypeUser, ID: u.ID}})
@@ -565,11 +568,8 @@ func tgBirthday(b domain.Birthday) tg.Birthday {
 // 之后做（与 notify/stories overlay 同构）：个人频道可访问性随 viewer 变化须实时解析，且避免
 // build（缓存 miss）与 chats 两次解析同一频道。personalChannelID 取自当次加载的 owner 用户。
 func (r *Router) applyPersonalChannelToUserFull(ctx context.Context, viewerUserID, personalChannelID int64, full *tg.UserFull) []tg.ChatClass {
-	if personalChannelID == 0 || r.deps.Channels == nil {
-		return nil
-	}
-	view, err := r.deps.Channels.ResolveChannel(ctx, viewerUserID, personalChannelID)
-	if err != nil || view.Channel.ID == 0 || view.Channel.Deleted {
+	view, found := r.resolvePersonalChannel(ctx, viewerUserID, full.ID, personalChannelID)
+	if !found {
 		return nil
 	}
 	full.SetPersonalChannelID(view.Channel.ID)
