@@ -254,7 +254,11 @@ services:
       TELESRV_ADMIN_UI_TOKEN: ${TELESRV_ADMIN_UI_TOKEN:-}
       TELESRV_ADMIN_SESSION_KEY: ${TELESRV_ADMIN_SESSION_KEY:?set TELESRV_ADMIN_SESSION_KEY in deploy/docker/.env}
       TELESRV_SIGN_UP_ENABLED: ${TELESRV_SIGN_UP_ENABLED:-true}
+      # The admin loads the same config, whose lock-out guard rejects code
+      # login off without password login on; pass both so it starts whenever
+      # the server does.
       TELESRV_CODE_LOGIN_ENABLED: ${TELESRV_CODE_LOGIN_ENABLED:-true}
+      TELESRV_PASSWORD_LOGIN_ENABLED: ${TELESRV_PASSWORD_LOGIN_ENABLED:-false}
       # Read-only here (see the server's TELESRV_IDENTITY_DIR): the panel shows
       # the current settings from it and sends every change to the server.
       TELESRV_IDENTITY_DIR: /var/lib/telesrv/identity
