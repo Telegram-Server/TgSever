@@ -1,6 +1,7 @@
-import { RefreshCw, Send, Upload, X } from "lucide-react";
+import { Ban, RefreshCw, RotateCcw, Send, Upload, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { APIError, api, errorMessage, uploadClientUpdate } from "../api";
+import { ActionButton } from "../components/ActionButton";
 import { CommandFlow } from "../components/CommandFlow";
 import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, LoadingSurface, PageFrame } from "../components/ui";
@@ -32,7 +33,8 @@ function shortSHA(value: string): string {
 // Desktop builds. The status card says whether the service runs in this
 // process, in a separate telesrv-update, or not at all, and warns while the
 // manifest on disk fails to load (the previous good one keeps being served).
-// The table lists every desktop entry, disabled ones included.
+// The table lists every desktop entry, disabled ones included; updates.publish
+// sessions also get its Actions column (disable / re-enable).
 export function ClientUpdatesPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const canPublish = useCan(permissionUpdatesPublish);
@@ -72,7 +74,9 @@ export function ClientUpdatesPage({ navigate }: { navigate: Navigate }) {
         <>
           <StatusCard status={status} />
           {status.mode === "in_process" && canPublish && <PublishCard onPublished={() => void load()} />}
-          {status.mode === "in_process" && <EntriesTable entries={status.entries} />}
+          {status.mode === "in_process" && (
+            <EntriesTable entries={status.entries} canManage={canPublish} onChanged={() => void load()} />
+          )}
         </>
       )}
     </PageFrame>
@@ -320,8 +324,15 @@ function PublishCard({ onPublished }: { onPublished: () => void }) {
   );
 }
 
-function EntriesTable({ entries }: { entries: ClientUpdateEntry[] }) {
+// EntriesTable lists the manifest's desktop entries. With canManage (an
+// updates.publish session) each row gets one action: Disable for a served
+// entry -- a warn-level confirm, it only stops serving the build -- or
+// Re-enable for a disabled one, a danger-level confirm because the entry may
+// be a build that was pulled for a reason. Both need a reason, run a dry run
+// first, and refresh the list once applied.
+function EntriesTable({ entries, canManage, onChanged }: { entries: ClientUpdateEntry[]; canManage: boolean; onChanged: () => void }) {
   const { t } = useI18n();
+  const [enabling, setEnabling] = useState<ClientUpdateEntry | null>(null);
   return (
     <section className="section-block">
       <h2>{t("clientUpdates.entries")}</h2>
@@ -337,6 +348,7 @@ function EntriesTable({ entries }: { entries: ClientUpdateEntry[] }) {
               <th>{t("clientUpdates.sha256")}</th>
               <th>{t("clientUpdates.created")}</th>
               <th>{t("common.status")}</th>
+              {canManage && <th>{t("common.actions")}</th>}
             </tr>
           </thead>
           <tbody>
@@ -357,12 +369,41 @@ function EntriesTable({ entries }: { entries: ClientUpdateEntry[] }) {
                     ? <Badge tone="danger">{t("clientUpdates.entryDisabled")}</Badge>
                     : <Badge tone="good">{t("clientUpdates.entryPublished")}</Badge>}
                 </td>
+                {canManage && (
+                  <td>
+                    {entry.disabled ? (
+                      <button className="btn danger compact-btn icon-text" type="button" onClick={() => setEnabling(entry)}>
+                        <RotateCcw size={14} /> {t("clientUpdates.enable")}
+                      </button>
+                    ) : (
+                      <ActionButton
+                        compact
+                        tone="warn"
+                        icon={<Ban size={14} />}
+                        label={t("clientUpdates.disable")}
+                        path="/api/actions/client-update-disable"
+                        payload={() => ({ platform: entry.platform, channel: entry.channel })}
+                        onDone={onChanged}
+                      />
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
-            {entries.length === 0 && <EmptyRow colSpan={8} />}
+            {entries.length === 0 && <EmptyRow colSpan={canManage ? 9 : 8} />}
           </tbody>
         </table>
       </div>
+      {enabling && (
+        <CommandFlow
+          path="/api/actions/client-update-enable"
+          label={t("clientUpdates.enableConfirm", { entry: `${enabling.platform}.${enabling.channel}`, build: enabling.build })}
+          payload={() => ({ platform: enabling.platform, channel: enabling.channel })}
+          extra={<Alert>{t("clientUpdates.enableWarning")}</Alert>}
+          onApplied={onChanged}
+          onClose={() => setEnabling(null)}
+        />
+      )}
     </section>
   );
 }
