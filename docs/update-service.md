@@ -26,6 +26,7 @@ Contents:
 - [Building packages with Packer](#building-packages-with-packer)
 - [File names](#file-names)
 - [Publishing a release](#publishing-a-release)
+- [Publishing from the admin panel](#publishing-from-the-admin-panel)
 - [In-process deployment](#in-process-deployment)
 - [Standalone deployment](#standalone-deployment)
 - [Docker](#docker)
@@ -294,6 +295,71 @@ and switches to it without a restart. To withdraw a release, set
 `-allow-downgrade`). Validate a hand-edited manifest before putting it in place
 with `telesrv-update -check` (see below).
 
+## Publishing from the admin panel
+
+Once the update service runs in process (`TELESRV_UPDATE_MANIFEST` is set), later
+releases can be published from the admin panel: **Server → Client updates**. The
+panel runs the same publish as `telesrv-update publish`, so the two produce the
+same manifest and files and can be mixed. Enabling the service the first time is
+still done with the CLI and the environment variables above; with the service
+disabled the page shows those steps, and with a separate `telesrv-update`
+(standalone mode) the page only shows its status and changes nothing.
+
+**Permissions.** Two rights, granted per operator on the operator accounts
+screen:
+
+| Right | Allows |
+|---|---|
+| `updates.read` | The Client updates tab: service status, update URL, manifest reload errors, every desktop entry (disabled ones included). |
+| `updates.publish` | Uploading, preflighting and publishing packages. It does not include `updates.read`; grant both. |
+
+**Upload, preflight, confirm.** The operator picks a package, writes the reason,
+and uploads it once. The upload is streamed (browser → panel → admin API, never
+buffered in memory or sent as multipart) into a staging file, and the server then
+runs a full dry-run publish on it. The page shows the entry it would write
+(platform, channel, build, package time, file, size, SHA-256) and the entry it
+would replace, or the reason the package was refused (signature, root key,
+platform, canary channel, not newer, same name with other content). Nothing
+changes until the operator confirms. The confirm only names the staging id: the
+staged file is verified again from scratch (the confirm dialog's dry run, then
+the publish itself), nothing from the preflight is trusted. After a publish the
+list shows the new entry; the server picks the manifest up without a restart.
+Uploading a package that is already published reports `already published` and
+offers nothing to confirm.
+
+- **Upload limit:** `MaxDesktopPackageSize`, 268,707,243 bytes (a 256 MiB payload
+  plus the largest possible header and signatures). A larger upload is refused as
+  soon as its declared length is seen, or cut off one byte past the limit.
+- **Staging:** `.staging/` in the manifest's directory, on the same volume as the
+  manifest and the files directory. The update HTTP handler never serves it.
+  A staged upload expires **30 minutes** after it was uploaded; expired files,
+  and the partial files of interrupted uploads, are removed on every upload and
+  publish. A staging is also removed when its publish succeeds, when its
+  preflight fails, and when the upload repeats or conflicts with an earlier
+  command. A failed publish (lock held, rollback not allowed) keeps it, so the
+  operator can retry without uploading again until it expires.
+- **One publish at a time, shared with the CLI.** A panel publish takes the same
+  `<manifest>.lock` as `telesrv-update publish`; while either holds it, the other
+  is refused with `another publish is in progress`. The preflight and the dry run
+  take no lock.
+- **Rollback.** Publishing a build that is not newer than the entry on its
+  channel (including re-publishing a disabled build) needs **Allow rollback**,
+  the panel's counterpart of `-allow-downgrade`, and is drawn as a danger
+  action. A
+  rollback only changes what clients still on an older build receive: clients
+  that already upgraded to a newer build do not go back.
+- **Reason and audit.** Every preflight and publish needs a reason and is an
+  audited admin command (`updates.preflight`, a dry run, and `updates.publish`).
+  The Audit log shows the operator, the reason and the outcome: platform,
+  channel, build, file, SHA-256, the replaced entry, and whether anything
+  changed. Failed attempts are recorded with their error.
+
+Only the server container writes the update volume: the admin container
+forwards the upload to the admin API inside `telesrv` and needs neither the
+volume nor the root public key.
+
+<!-- Disabling and re-enabling an entry from the panel (#82) is documented here. -->
+
 ## In-process deployment
 
 Use this unless you need the update traffic on another host. Configuration:
@@ -461,6 +527,11 @@ docker compose exec server telesrv-update publish /var/lib/telesrv-updates/incom
 killed leaves `/var/lib/telesrv-updates/manifest.json.lock`; remove it with
 `docker compose exec server rm` once no publish is running.
 
+Instead of these commands, later releases can be uploaded from the admin panel
+(see [Publishing from the admin panel](#publishing-from-the-admin-panel)). The
+admin container needs no update volume for that: the upload is forwarded to the
+server container, which stages it in `/var/lib/telesrv-updates/.staging`.
+
 ### Backing up the update catalog
 
 `gramsrv-backup` and [backup-restore.md](backup-restore.md) do **not** cover
@@ -471,7 +542,9 @@ and the configuration files, not the `server_updates` volume and not
 and a copy of `update-root.pub`). Losing the volume loses the published
 packages that the manifest and your clients refer to. (In a local deployment
 whose manifest sits under `data/`, such as `data/updates/`, the bundle's
-`data.tar.zst` includes it; the root key under `/etc` it does not.)
+`data.tar.zst` includes it; the root key under `/etc` it does not.) The
+`.staging/` directory next to the manifest holds only uploads waiting for a
+confirm from the admin panel; it need not be backed up.
 
 Restore order matters: put the `server_updates` volume and the root key back
 **before** setting `TELESRV_UPDATE_MANIFEST` (or before starting a server whose
