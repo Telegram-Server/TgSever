@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
-	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,17 +19,9 @@ import (
 // the telesrv process (admin API, 2599), so the admin container needs neither
 // the update volume nor the update root public key.
 
-const (
-	// clientUpdateUploadSlack 与 adminapi 一致：包上限之外的少量余量。
-	clientUpdateUploadSlack = 1 << 20
-	// clientUpdateUploadTimeout 是一次上传转发的总时限，略长于 adminapi 自己的 30
-	// 分钟读取时限，让超时由离暂存更近的一端报告。
-	clientUpdateUploadTimeout = 35 * time.Minute
-)
-
-// clientUpdateUploadClient 转发上传。不用 http.DefaultClient：那里没有时限，而这里
-// 的时限由请求的 context 给出。
-var clientUpdateUploadClient = &http.Client{}
+// clientUpdateUploadTimeout 是一次上传转发的总时限（由请求的 context 给出），略长于
+// adminapi 自己的 30 分钟读取时限，让超时由离暂存更近的一端报告。
+const clientUpdateUploadTimeout = 35 * time.Minute
 
 func (s *server) handleClientUpdatesAPI(w http.ResponseWriter, r *http.Request) {
 	s.proxyAdminJSONNoStore(w, r, "/v1/client-updates", 1<<20)
@@ -42,12 +34,13 @@ func (s *server) handleClientUpdatesAPI(w http.ResponseWriter, r *http.Request) 
 // preflight, so it is always a dry-run command.
 func (s *server) handleClientUpdateUploadAPI(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/octet-stream" {
-		writeAPIError(w, http.StatusUnsupportedMediaType, "upload the package as application/octet-stream")
+	body, err := updatecdn.PackageUploadBody(w, r)
+	switch {
+	case errors.Is(err, updatecdn.ErrUploadContentType):
+		writeAPIError(w, http.StatusUnsupportedMediaType, err.Error())
 		return
-	}
-	if r.ContentLength > updatecdn.MaxDesktopPackageSize {
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "package exceeds the v2 package limit", "code": admin.CodeUpdatePackageTooLarge})
+	case err != nil:
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": err.Error(), "code": admin.CodeUpdatePackageTooLarge})
 		return
 	}
 	query := r.URL.Query()
@@ -68,7 +61,6 @@ func (s *server) handleClientUpdateUploadAPI(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), clientUpdateUploadTimeout)
 	defer cancel()
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(clientUpdateUploadTimeout))
-	body := http.MaxBytesReader(w, r.Body, updatecdn.MaxDesktopPackageSize+clientUpdateUploadSlack)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.AdminAPIURL+"/v1/client-updates/uploads?"+upstreamQuery.Encode(), body)
 	if err != nil {
 		writeCommandResultAPI(w, admin.CommandResult{}, err)
@@ -81,7 +73,7 @@ func (s *server) handleClientUpdateUploadAPI(w http.ResponseWriter, r *http.Requ
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
-	resp, err := clientUpdateUploadClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		writeCommandResultAPI(w, admin.CommandResult{}, err)
 		return

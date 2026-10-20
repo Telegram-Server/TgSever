@@ -23,9 +23,11 @@ type clientUpdatesCaptureService struct {
 	uploadBody []byte
 	// uploadBuffered 记录 Service 收到的是不是已经整体读进内存的请求体。
 	uploadBuffered bool
-	published      []admin.PublishClientUpdateRequest
-	disabled       []admin.ClientUpdateEntryRequest
-	enabled        []admin.ClientUpdateEntryRequest
+	// uploadErr 非空时 UploadClientUpdate 读完请求体后返回它（不带命令结果，如暂存失败）。
+	uploadErr error
+	published []admin.PublishClientUpdateRequest
+	disabled  []admin.ClientUpdateEntryRequest
+	enabled   []admin.ClientUpdateEntryRequest
 }
 
 func (s *clientUpdatesCaptureService) DisableClientUpdate(_ context.Context, req admin.ClientUpdateEntryRequest) (admin.CommandResult, error) {
@@ -50,6 +52,9 @@ func (s *clientUpdatesCaptureService) UploadClientUpdate(_ context.Context, req 
 		return admin.CommandResult{}, err
 	}
 	s.uploadBody = data
+	if s.uploadErr != nil {
+		return admin.CommandResult{}, s.uploadErr
+	}
 	return admin.CommandResult{CommandID: req.CommandID, Action: admin.ActionPreflightClientUpdate, Status: "completed", DryRun: true,
 		Details: map[string]any{"staging_id": "0123456789abcdef0123456789abcdef"}}, nil
 }
@@ -125,6 +130,25 @@ func TestAdminAPIClientUpdateUploadRejectsMultipartAndOversize(t *testing.T) {
 	}
 	if svc.uploads != 0 {
 		t.Fatalf("rejected uploads reached the service %d times", svc.uploads)
+	}
+}
+
+// 暂存失败按是谁的问题给出 HTTP 状态：服务器存储失败是 5xx，其余是客户端可以处理的 4xx。
+func TestAdminAPIClientUpdateUploadStatusFollowsTheFailure(t *testing.T) {
+	for code, want := range map[string]int{
+		admin.CodeUpdatePackageTooLarge: http.StatusRequestEntityTooLarge,
+		admin.CodeUpdateStagingFull:     http.StatusTooManyRequests,
+		admin.CodeUpdateUploadFailed:    http.StatusBadRequest,
+		admin.CodeUpdateStagingStorage:  http.StatusInternalServerError,
+	} {
+		svc := &clientUpdatesCaptureService{uploadErr: codedTestError{code: code}}
+		srv := clientUpdatesServer(svc)
+		query := url.Values{"command_id": {"up-1"}, "reason": {"r"}}.Encode()
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, uploadRequest("publish-token", query, strings.NewReader("pkg")))
+		if rec.Code != want || !strings.Contains(rec.Body.String(), `"code":"`+code+`"`) {
+			t.Errorf("%s: status=%d body=%s, want %d with the code", code, rec.Code, rec.Body.String(), want)
+		}
 	}
 }
 
@@ -237,3 +261,9 @@ func TestAdminAPIClientUpdatesReadWithoutServiceSupport(t *testing.T) {
 		t.Fatalf("status=%d body=%s, want 501", rec.Code, rec.Body.String())
 	}
 }
+
+// codedTestError 是带错误码的错误，admin.ErrorCode 认它的 Code 方法。
+type codedTestError struct{ code string }
+
+func (e codedTestError) Error() string { return e.code + ": staging failed" }
+func (e codedTestError) Code() string  { return e.code }

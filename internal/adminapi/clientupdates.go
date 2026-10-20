@@ -2,8 +2,8 @@ package adminapi
 
 import (
 	"context"
+	"errors"
 	"io"
-	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,9 +19,6 @@ import (
 var _ clientUpdatesService = (*admin.Service)(nil)
 
 const (
-	// clientUpdateUploadSlack 是上传请求体在包上限之外允许的余量；暂存本身按包上限
-	// 截断，这里只是给 MaxBytesReader 一个不会先于暂存触发的上限。
-	clientUpdateUploadSlack = 1 << 20
 	// clientUpdateUploadDeadline 是一次上传最长的读取时间，clientUpdateUploadIdle 是
 	// 两次读到数据之间允许的最长间隔：慢速链路上 256 MiB 也能传完，停住的上传则
 	// 很快被断开，不会一直占着一个写了一半的暂存文件。
@@ -55,12 +52,13 @@ func (s *Server) handleUploadClientUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer r.Body.Close()
-	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/octet-stream" {
-		writeError(w, http.StatusUnsupportedMediaType, "upload the package as application/octet-stream")
+	limited, err := updatecdn.PackageUploadBody(w, r)
+	switch {
+	case errors.Is(err, updatecdn.ErrUploadContentType):
+		writeError(w, http.StatusUnsupportedMediaType, err.Error())
 		return
-	}
-	if r.ContentLength > updatecdn.MaxDesktopPackageSize {
-		writeCodedError(w, http.StatusRequestEntityTooLarge, admin.CodeUpdatePackageTooLarge, "package exceeds the v2 package limit")
+	case err != nil:
+		writeCodedError(w, http.StatusRequestEntityTooLarge, admin.CodeUpdatePackageTooLarge, err.Error())
 		return
 	}
 	query := r.URL.Query()
@@ -84,14 +82,22 @@ func (s *Server) handleUploadClientUpdate(w http.ResponseWriter, r *http.Request
 	}
 	s.applyVerificationPrincipal(r, &req.CommandMeta)
 
-	body := newUploadDeadlineReader(w, http.MaxBytesReader(w, r.Body, updatecdn.MaxDesktopPackageSize+clientUpdateUploadSlack))
+	body := newUploadDeadlineReader(w, limited)
 	result, err := svc.UploadClientUpdate(r.Context(), req, body)
 	body.done()
-	if admin.ErrorCode(err) == admin.CodeUpdatePackageTooLarge {
-		writeJSON(w, http.StatusRequestEntityTooLarge, failedResult(result, err))
+	if status, ok := uploadFailureStatus[admin.ErrorCode(err)]; ok {
+		writeJSON(w, status, failedResult(result, err))
 		return
 	}
 	writeCommandResult(w, result, err)
+}
+
+// uploadFailureStatus 是暂存失败的 HTTP 状态；其余失败照常是 400。服务器存储失败是
+// 500，不让运营者以为是自己的包或网络有问题。
+var uploadFailureStatus = map[string]int{
+	admin.CodeUpdatePackageTooLarge: http.StatusRequestEntityTooLarge,
+	admin.CodeUpdateStagingFull:     http.StatusTooManyRequests,
+	admin.CodeUpdateStagingStorage:  http.StatusInternalServerError,
 }
 
 func (s *Server) handlePublishClientUpdate(w http.ResponseWriter, r *http.Request) {
