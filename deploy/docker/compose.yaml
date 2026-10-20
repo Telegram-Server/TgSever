@@ -127,6 +127,13 @@ services:
       # Sign-up switch default; the admin service gets the same value so the
       # panel's "from environment" state matches what this server enforces.
       TELESRV_SIGN_UP_ENABLED: ${TELESRV_SIGN_UP_ENABLED:-true}
+      # Phone number + password login (telesrv extension), off by default; the
+      # risks of turning it on are listed in .env.example and
+      # docs/password-login.md. Defaults match internal/config.
+      TELESRV_PASSWORD_LOGIN_ENABLED: ${TELESRV_PASSWORD_LOGIN_ENABLED:-false}
+      TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT: ${TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT:-10}
+      TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW: ${TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW:-1h}
+      TELESRV_PASSWORD_LOGIN_RESET_WINDOW: ${TELESRV_PASSWORD_LOGIN_RESET_WINDOW:-0}
       TELESRV_PHONE_CODE_DELIVERY_PROVIDER: ${TELESRV_PHONE_CODE_DELIVERY_PROVIDER:-development}
       TELESRV_OTP_WEBHOOK_URL: ${TELESRV_OTP_WEBHOOK_URL:-}
       TELESRV_OTP_WEBHOOK_SECRET: ${TELESRV_OTP_WEBHOOK_SECRET:-}
