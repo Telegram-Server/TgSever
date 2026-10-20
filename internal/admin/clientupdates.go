@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	"telesrv/internal/domain"
@@ -28,6 +29,8 @@ const (
 const (
 	ActionPreflightClientUpdate = "updates.preflight"
 	ActionPublishClientUpdate   = "updates.publish"
+	ActionDisableClientUpdate   = "updates.disable"
+	ActionEnableClientUpdate    = "updates.enable"
 )
 
 // 客户端更新写操作的稳定错误码，面板按它显示说明而不是匹配英文错误。
@@ -38,8 +41,10 @@ const (
 	CodeUpdateStagingExpired    = "UPDATE_STAGING_EXPIRED"
 	CodeUpdatePublishInProgress = "UPDATE_PUBLISH_IN_PROGRESS"
 	CodeUpdatePackageTooLarge   = "UPDATE_PACKAGE_TOO_LARGE"
-	// CodeUpdatePackageRejected 是预检或发布的其余失败：签名、平台、通道、版本回退、
-	// 同名文件内容不同、新清单无效。具体原因在错误文本里。
+	// CodeUpdateEntryNotFound 表示要停用或启用的 desktop.<platform>.<channel> 不在清单里。
+	CodeUpdateEntryNotFound = "UPDATE_ENTRY_NOT_FOUND"
+	// CodeUpdatePackageRejected 是预检、发布或重新启用的其余失败：签名、平台、通道、
+	// 版本回退、同名文件内容不同、包文件缺失、新清单无效。具体原因在错误文本里。
 	CodeUpdatePackageRejected = "UPDATE_PACKAGE_REJECTED"
 )
 
@@ -49,6 +54,9 @@ const (
 // from the panel validates against, exactly as the store reloads. The staging
 // methods stage an upload next to the manifest, preview or publish it with
 // the store's own options, and drop it (see updatecdn.StagePackage).
+// SetDesktopReleaseDisabled previews or applies disabling or re-enabling one
+// entry under the same lock and validation (see
+// updatecdn.SetDesktopReleaseDisabled).
 type ClientUpdateCatalog interface {
 	Status() (updatecdn.StoreStatus, error)
 	ManifestPath() string
@@ -57,6 +65,7 @@ type ClientUpdateCatalog interface {
 	StagePackage(r io.Reader) (updatecdn.StagedPackage, error)
 	PublishStagedPackage(id string, dryRun, allowDowngrade bool) (*updatecdn.PublishResult, error)
 	DiscardStagedPackage(id string) error
+	SetDesktopReleaseDisabled(platform, channel string, disabled, dryRun bool) (*updatecdn.SetDisabledResult, error)
 }
 
 var _ ClientUpdateCatalog = (*updatecdn.Store)(nil)
@@ -248,6 +257,71 @@ func (s *Service) PublishClientUpdate(ctx context.Context, req PublishClientUpda
 	})
 }
 
+// ClientUpdateEntryRequest names the desktop.<platform>.<channel> entry to
+// disable or re-enable.
+type ClientUpdateEntryRequest struct {
+	CommandMeta
+	Platform string `json:"platform"`
+	Channel  string `json:"channel"`
+}
+
+// DisableClientUpdate stops serving one desktop entry right away. The entry
+// stays in the manifest marked disabled, so it can be re-enabled and a later
+// publish still treats its build as published. Disabling a disabled entry is
+// reported unchanged and writes nothing.
+func (s *Service) DisableClientUpdate(ctx context.Context, req ClientUpdateEntryRequest) (CommandResult, error) {
+	return s.setClientUpdateDisabled(ctx, req, ActionDisableClientUpdate, true)
+}
+
+// EnableClientUpdate serves a disabled desktop entry again. It is a deliberate
+// operator decision on what may be a pulled bad build, so it skips the
+// downgrade check a publish makes; the package must still be present and
+// still verify. Like every command it needs a reason.
+func (s *Service) EnableClientUpdate(ctx context.Context, req ClientUpdateEntryRequest) (CommandResult, error) {
+	return s.setClientUpdateDisabled(ctx, req, ActionEnableClientUpdate, false)
+}
+
+func (s *Service) setClientUpdateDisabled(ctx context.Context, req ClientUpdateEntryRequest, action string, disabled bool) (CommandResult, error) {
+	catalog, err := s.clientUpdateCatalog()
+	if err != nil {
+		return CommandResult{}, err
+	}
+	req.Platform = strings.TrimSpace(req.Platform)
+	req.Channel = strings.TrimSpace(req.Channel)
+	if req.Platform == "" || req.Channel == "" {
+		return CommandResult{}, errors.New("platform and channel are required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, action, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		changed, err := catalog.SetDesktopReleaseDisabled(req.Platform, req.Channel, disabled, req.DryRun)
+		if err != nil {
+			return CommandResult{}, clientUpdateError(err)
+		}
+		release := changed.Release
+		details := map[string]any{
+			"platform":  changed.Platform,
+			"channel":   changed.Channel,
+			"build":     release.Build,
+			"version":   release.Version,
+			"file":      release.File,
+			"sha256":    release.SHA256,
+			"size":      release.Size,
+			"disabled":  release.Disabled,
+			"unchanged": changed.Unchanged,
+		}
+		switch {
+		case changed.Unchanged && disabled:
+			return CommandResult{Message: "entry is already disabled; nothing to do", Details: details}, nil
+		case changed.Unchanged:
+			return CommandResult{Message: "entry is already enabled; nothing to do", Details: details}, nil
+		case req.DryRun:
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		case disabled:
+			return CommandResult{Message: "disabled", Details: details}, nil
+		}
+		return CommandResult{Message: "re-enabled", Details: details}, nil
+	})
+}
+
 // clientUpdateError attaches the stable code the panel switches on.
 func clientUpdateError(err error) error {
 	switch {
@@ -259,6 +333,8 @@ func clientUpdateError(err error) error {
 		return codedError(CodeUpdatePublishInProgress, err)
 	case errors.Is(err, updatecdn.ErrStagedPackageTooLarge):
 		return codedError(CodeUpdatePackageTooLarge, err)
+	case errors.Is(err, updatecdn.ErrDesktopEntryNotFound):
+		return codedError(CodeUpdateEntryNotFound, err)
 	}
 	return codedError(CodeUpdatePackageRejected, err)
 }

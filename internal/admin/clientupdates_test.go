@@ -25,6 +25,15 @@ type fakeClientUpdateCatalog struct {
 	publishErr error
 	calls      []fakePublishCall
 	discarded  []string
+
+	setResult   updatecdn.SetDisabledResult
+	setErr      error
+	setDisabled []fakeSetDisabledCall
+}
+
+type fakeSetDisabledCall struct {
+	platform, channel string
+	disabled, dryRun  bool
 }
 
 type fakePublishCall struct {
@@ -76,6 +85,15 @@ func (f *fakeClientUpdateCatalog) DiscardStagedPackage(id string) error {
 	delete(f.staged, id)
 	f.discarded = append(f.discarded, id)
 	return nil
+}
+
+func (f *fakeClientUpdateCatalog) SetDesktopReleaseDisabled(platform, channel string, disabled, dryRun bool) (*updatecdn.SetDisabledResult, error) {
+	f.setDisabled = append(f.setDisabled, fakeSetDisabledCall{platform: platform, channel: channel, disabled: disabled, dryRun: dryRun})
+	if f.setErr != nil {
+		return nil, f.setErr
+	}
+	result := f.setResult
+	return &result, nil
 }
 
 func TestClientUpdateStatusWithoutDependencyReportsDisabled(t *testing.T) {
