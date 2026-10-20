@@ -21,6 +21,7 @@ type fakeClientUpdateCatalog struct {
 
 	staged     map[string][]byte
 	nextID     int
+	stageErr   error
 	result     updatecdn.PublishResult
 	publishErr error
 	calls      []fakePublishCall
@@ -49,6 +50,9 @@ func (f *fakeClientUpdateCatalog) CatalogOptions() updatecdn.CatalogOptions {
 }
 
 func (f *fakeClientUpdateCatalog) StagePackage(r io.Reader) (updatecdn.StagedPackage, error) {
+	if f.stageErr != nil {
+		return updatecdn.StagedPackage{}, f.stageErr
+	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return updatecdn.StagedPackage{}, err
@@ -139,6 +143,10 @@ func TestClientUpdateStatusInProcessListsEntries(t *testing.T) {
 	}
 	if status.Mode != ClientUpdatesInProcess || status.PublicURL != "https://chat.example/_updates" || status.ReloadError != "" {
 		t.Fatalf("status = %+v, want in-process mode without a reload error", status)
+	}
+	// 面板在上传前按它检查文件大小：256 MiB 载荷加上包头、清单与签名的最大值。
+	if status.MaxPackageSize != 268707243 {
+		t.Fatalf("max package size = %d, want the v2 package limit 268707243", status.MaxPackageSize)
 	}
 	if len(status.Entries) != 2 {
 		t.Fatalf("entries = %+v, want 2", status.Entries)

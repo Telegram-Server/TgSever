@@ -41,6 +41,15 @@ const (
 	CodeUpdateStagingExpired    = "UPDATE_STAGING_EXPIRED"
 	CodeUpdatePublishInProgress = "UPDATE_PUBLISH_IN_PROGRESS"
 	CodeUpdatePackageTooLarge   = "UPDATE_PACKAGE_TOO_LARGE"
+	// CodeUpdateStagingFull 表示同时暂存的上传已达上限；发布或等暂存过期后再上传。
+	CodeUpdateStagingFull = "UPDATE_STAGING_FULL"
+	// CodeUpdateUploadFailed 表示读取上传内容失败（断开、超时），是客户端一侧的问题，
+	// 重新上传即可。
+	CodeUpdateUploadFailed = "UPDATE_UPLOAD_FAILED"
+	// CodeUpdateStagingStorage 表示服务器写暂存失败（磁盘满、目录不可写），需要运维处理。
+	CodeUpdateStagingStorage = "UPDATE_STAGING_STORAGE_FAILED"
+	// CodeUpdateEntryInvalid 表示停用或启用请求缺少 platform 或 channel。
+	CodeUpdateEntryInvalid = "UPDATE_ENTRY_INVALID"
 	// CodeUpdateEntryNotFound 表示要停用或启用的 desktop.<platform>.<channel> 不在清单里。
 	CodeUpdateEntryNotFound = "UPDATE_ENTRY_NOT_FOUND"
 	// CodeUpdatePackageRejected 是预检、发布或重新启用的其余失败：签名、平台、通道、
@@ -89,8 +98,11 @@ type ClientUpdateStatus struct {
 	PublicURL  string `json:"public_url,omitempty"`
 	ServiceURL string `json:"service_url,omitempty"`
 	// ReloadError 非空时清单最近一次重新加载失败，Entries 来自上一份正常清单。
-	ReloadError string              `json:"reload_error,omitempty"`
-	Entries     []ClientUpdateEntry `json:"entries"`
+	ReloadError string `json:"reload_error,omitempty"`
+	// MaxPackageSize 是进程内模式下可上传的包大小上限（字节）。面板在上传前据此检查，
+	// 不必把超限的文件传到一半才被拒绝。
+	MaxPackageSize int64               `json:"max_package_size,omitempty"`
+	Entries        []ClientUpdateEntry `json:"entries"`
 }
 
 // ClientUpdateEntry is one desktop.<platform>.<channel> manifest entry.
@@ -125,6 +137,7 @@ func (s *Service) ClientUpdateStatus(ctx context.Context) (ClientUpdateStatus, e
 		return status, nil
 	}
 	status.Mode = ClientUpdatesInProcess
+	status.MaxPackageSize = updatecdn.MaxDesktopPackageSize
 	current, err := cfg.Catalog.Status()
 	if err != nil {
 		return ClientUpdateStatus{}, err
@@ -187,7 +200,9 @@ func (s *Service) clientUpdateCatalog() (ClientUpdateCatalog, error) {
 // confirm publishes, together with what would be published and replaced. The
 // preflight is recorded as a dry-run command, failures included.
 //
-// The command metadata is checked before body is read. The staged file is
+// The command store and metadata are checked before body is read; a staging
+// failure is coded by its cause (see clientUpdateStagingError) and, since no
+// command was begun yet, not recorded. The staged file is
 // removed again when the preflight fails, when the upload replays an earlier
 // command (whose result, and staging id, is returned instead) or conflicts
 // with one, and when the package is already published.
@@ -196,13 +211,17 @@ func (s *Service) UploadClientUpdate(ctx context.Context, req UploadClientUpdate
 	if err != nil {
 		return CommandResult{}, err
 	}
+	// 先做不读请求体就能做的检查，再把可能 256 MiB 的上传收进暂存。
+	if s.commands == nil {
+		return CommandResult{}, errors.New("admin command store is not configured")
+	}
 	req.DryRun = true
 	if req.CommandMeta, err = normalizeCommandMeta(req.CommandMeta); err != nil {
 		return CommandResult{}, err
 	}
 	staged, err := catalog.StagePackage(body)
 	if err != nil {
-		return CommandResult{}, clientUpdateError(err)
+		return CommandResult{}, clientUpdateStagingError(err)
 	}
 	keep := false
 	defer func() {
@@ -289,7 +308,7 @@ func (s *Service) setClientUpdateDisabled(ctx context.Context, req ClientUpdateE
 	req.Platform = strings.TrimSpace(req.Platform)
 	req.Channel = strings.TrimSpace(req.Channel)
 	if req.Platform == "" || req.Channel == "" {
-		return CommandResult{}, errors.New("platform and channel are required")
+		return CommandResult{}, codedError(CodeUpdateEntryInvalid, errors.New("platform and channel are required"))
 	}
 	return s.runCommand(ctx, req.CommandMeta, action, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		changed, err := catalog.SetDesktopReleaseDisabled(req.Platform, req.Channel, disabled, req.DryRun)
@@ -320,6 +339,23 @@ func (s *Service) setClientUpdateDisabled(ctx context.Context, req ClientUpdateE
 		}
 		return CommandResult{Message: "re-enabled", Details: details}, nil
 	})
+}
+
+// clientUpdateStagingError codes a failure to stage an upload by whose problem
+// it is: the package (too large), the pending uploads (full), the client's
+// transfer (read failed: retry the upload) or the server's storage (disk full,
+// directory not writable: an operator has to look). An unclassified failure is
+// counted as the server's.
+func clientUpdateStagingError(err error) error {
+	switch {
+	case errors.Is(err, updatecdn.ErrStagedPackageTooLarge):
+		return codedError(CodeUpdatePackageTooLarge, err)
+	case errors.Is(err, updatecdn.ErrStagingFull):
+		return codedError(CodeUpdateStagingFull, err)
+	case errors.Is(err, updatecdn.ErrStagingReadFailed):
+		return codedError(CodeUpdateUploadFailed, err)
+	}
+	return codedError(CodeUpdateStagingStorage, err)
 }
 
 // clientUpdateError attaches the stable code the panel switches on.

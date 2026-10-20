@@ -117,8 +117,10 @@ func TestEnableClientUpdateRequiresReason(t *testing.T) {
 
 func TestClientUpdateEntryRequestNeedsPlatformAndChannel(t *testing.T) {
 	svc, catalog, _ := clientUpdateService(t)
-	if _, err := svc.DisableClientUpdate(context.Background(), entryRequest("dis-empty", "linux", " ")); err == nil {
-		t.Fatal("disable without a channel succeeded")
+	for _, req := range []ClientUpdateEntryRequest{entryRequest("dis-empty", "linux", " "), entryRequest("dis-empty", "", "stable")} {
+		if _, err := svc.DisableClientUpdate(context.Background(), req); ErrorCode(err) != CodeUpdateEntryInvalid {
+			t.Fatalf("disable %q/%q: error = %v (code %q), want code %s", req.Platform, req.Channel, err, ErrorCode(err), CodeUpdateEntryInvalid)
+		}
 	}
 	if len(catalog.setDisabled) != 0 {
 		t.Fatal("an empty channel reached the catalog")

@@ -188,6 +188,45 @@ func TestUploadClientUpdateValidatesMetaBeforeReadingTheBody(t *testing.T) {
 	}
 }
 
+// 暂存失败按原因给出不同的码：包太大、暂存已满、读取上传失败（客户端一侧）与本机
+// 存储失败（服务器一侧）。暂存失败发生在命令记录之前，不记日志。
+func TestUploadClientUpdateCodesStagingFailures(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		code string
+	}{
+		"too large": {updatecdn.ErrStagedPackageTooLarge, CodeUpdatePackageTooLarge},
+		"full":      {updatecdn.ErrStagingFull, CodeUpdateStagingFull},
+		"read":      {fmt.Errorf("%w: %w", updatecdn.ErrStagingReadFailed, errors.New("i/o timeout")), CodeUpdateUploadFailed},
+		"storage":   {fmt.Errorf("%w: write staging file: %w", updatecdn.ErrStagingStorage, errors.New("no space left on device")), CodeUpdateStagingStorage},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, catalog, repo := clientUpdateService(t)
+			catalog.stageErr = tc.err
+			_, err := svc.UploadClientUpdate(context.Background(), UploadClientUpdateRequest{CommandMeta: uploadMeta("up-" + name)}, strings.NewReader("bytes"))
+			if ErrorCode(err) != tc.code {
+				t.Fatalf("error = %v (code %q), want code %s", err, ErrorCode(err), tc.code)
+			}
+			if len(repo.items) != 0 {
+				t.Fatalf("a staging failure was journalled: %+v", repo.items)
+			}
+		})
+	}
+}
+
+// 命令存储未配置时，在读取请求体之前就失败：不会先把 256 MiB 收进暂存再拒绝。
+func TestUploadClientUpdateChecksTheCommandStoreBeforeReadingTheBody(t *testing.T) {
+	catalog := &fakeClientUpdateCatalog{result: newerLinuxRelease()}
+	svc := NewService(Dependencies{Now: fixedNow, ClientUpdates: &ClientUpdates{Catalog: catalog}})
+	_, err := svc.UploadClientUpdate(context.Background(), UploadClientUpdateRequest{CommandMeta: uploadMeta("up-nostore")}, strings.NewReader("bytes"))
+	if err == nil || !strings.Contains(err.Error(), "command store") {
+		t.Fatalf("error = %v, want the command store requirement", err)
+	}
+	if catalog.nextID != 0 {
+		t.Fatal("the body was staged although no command can be recorded")
+	}
+}
+
 func TestClientUpdateWritesRequireInProcessCatalog(t *testing.T) {
 	for name, tc := range map[string]struct {
 		deps *ClientUpdates
