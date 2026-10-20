@@ -441,7 +441,7 @@ body always contains the **common command fields** (`command_id`, `reason`,
 | `set-account-username` | `user_id` (int64), `username` (string) | — |
 | `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | — |
 | `set-account-phone` | `user_id` (int64), `phone` (string) | — |
-| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED` | — |
+| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.), `password` (string, opt., 1..256 UTF-8 bytes); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED`; with `password` the account and its login password are created together — see below | — |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | — |
 | `set-login-password` | `user_id` (int64), `password` (string, 1..256 UTF-8 bytes), `revoke_sessions` (bool, opt.); sets or resets the login password without the old one — see below | — |
 | `set-account-avatar` | **multipart**: `metadata` field (JSON with common fields + `user_id` (int64)) and a file in `file` | — |
@@ -500,6 +500,29 @@ or to help a member who forgot theirs.
 - The limit of 256 bytes is a server bound: the SRP algorithm itself (td,
   Telegram Desktop) has no length limit, and 256 bytes is far beyond any typed
   password.
+
+### Creating an account with a login password
+
+`create-account` takes an optional `password`. Left empty, the command behaves
+exactly as before: only the account is created and the member signs in with a
+login code. Filled in, the account and its login password are written in one
+transaction, so the member can sign in with phone number + password
+(`telesrv.signInWithPassword`) right away, without any login code.
+
+- **Where:** Accounts → **Create account** → the optional **Login password**
+  field.
+- **Atomic:** either both the account and the password are written or neither
+  is. An occupied number (`PHONE_NUMBER_OCCUPIED`) or an invalid password
+  (`LOGIN_PASSWORD_INVALID`) leaves nothing behind, and a failed password write
+  rolls the new account back.
+- **Rules and secrecy** are those of `set-login-password` above: 1 to 256 UTF-8
+  bytes, the server computes the SRP verifier, the password is masked in the
+  preview and never appears in the command log, the audit trail (its details only
+  say `login_password: true`), responses or logs. The idempotency fingerprint is
+  the keyed HMAC, so reusing a `command_id` with a different password — or
+  without one — is rejected with `COMMAND_ID_CONFLICT`. The dry run validates
+  the number and the password and writes nothing. No 777000 message is sent: the
+  new account has no sessions yet.
 
 ## API: machine account lookup (v1)
 

@@ -95,7 +95,7 @@ export function LoginEmailAction({ id, current, onDone }: { id: number; current:
 
 // maxLoginPasswordBytes mirrors loginpassword.MaxPlaintextPasswordBytes on the
 // server: the limit is in UTF-8 bytes, not characters.
-const maxLoginPasswordBytes = 256;
+export const maxLoginPasswordBytes = 256;
 
 // LoginPasswordAction sets or resets the account's login password without the
 // old one. The plaintext goes to the server over HTTPS, which hashes it the way
