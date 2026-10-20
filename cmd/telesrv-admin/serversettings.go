@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -43,6 +44,8 @@ func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
 // Postgres cannot roll back: apply runs last inside the transaction, so a
 // failure before it leaves the files untouched, and a commit failure after it
 // is reported as an error (the change happened, its audit row did not).
+// The one exception is the .env editor, which falls back to an unaudited
+// write when the command store is unreachable (see handleUpdateServerEnvAPI).
 //
 // params is what the trail stores as the request and must be safe to keep:
 // pass a keyed digest, not the value, for anything secret (see
@@ -50,7 +53,14 @@ func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
 // params into command_id's identity, so a reused id with different content
 // conflicts instead of replaying.
 func (s *server) runServerSettingsCommand(w http.ResponseWriter, r *http.Request, meta admin.CommandMeta, action string, params any, fingerprint string, dryMessage, doneMessage string, details map[string]any, apply func() error) {
-	fn := func(context.Context, pgx.Tx) (admin.CommandResult, error) {
+	result, err := s.runOperatorCommand(r.Context(), meta, action, params, fingerprint, serverSettingsCommandFn(meta, dryMessage, doneMessage, details, apply))
+	writeCommandResultAPI(w, result, err)
+}
+
+// serverSettingsCommandFn is the runOperatorCommand body shared by every
+// Server Settings write: a dry run reports dryMessage, a real run applies.
+func serverSettingsCommandFn(meta admin.CommandMeta, dryMessage, doneMessage string, details map[string]any, apply func() error) func(context.Context, pgx.Tx) (admin.CommandResult, error) {
+	return func(context.Context, pgx.Tx) (admin.CommandResult, error) {
 		if meta.DryRun {
 			return admin.CommandResult{Message: dryMessage, Details: details}, nil
 		}
@@ -59,8 +69,6 @@ func (s *server) runServerSettingsCommand(w http.ResponseWriter, r *http.Request
 		}
 		return admin.CommandResult{Message: doneMessage, Details: details}, nil
 	}
-	result, err := s.runOperatorCommand(r.Context(), meta, action, params, fingerprint, fn)
-	writeCommandResultAPI(w, result, err)
 }
 
 // --- identity (name/description/icon) ---------------------------------
@@ -454,9 +462,50 @@ func (s *server) handleUpdateServerEnvAPI(w http.ResponseWriter, r *http.Request
 	}
 	sort.Strings(keys)
 	details := map[string]any{"keys_changed": len(body.Values), "keys": keys}
-	s.runServerSettingsCommand(w, r, meta, "server.update_env", map[string]any{"keys": keys}, envValuesFingerprint(s.cfg.SessionKey, keys, body.Values),
-		"would update .env -- takes effect on telesrv restart", ".env updated -- restart telesrv for changes to take effect", details,
-		func() error { return s.envCtl.WriteEnvValues(body.Values) })
+	const (
+		action      = "server.update_env"
+		dryMessage  = "would update .env -- takes effect on telesrv restart"
+		doneMessage = ".env updated -- restart telesrv for changes to take effect"
+	)
+	apply := func() error { return s.envCtl.WriteEnvValues(body.Values) }
+	result, err := s.runOperatorCommand(r.Context(), meta, action, map[string]any{"keys": keys}, envValuesFingerprint(s.cfg.SessionKey, keys, body.Values),
+		serverSettingsCommandFn(meta, dryMessage, doneMessage, details, apply))
+	var unavailable *operatorStoreUnavailableError
+	if errors.As(err, &unavailable) {
+		// The .env editor is the repair path for a broken database setting
+		// (TELESRV_POSTGRES_DSN), and the break-glass login works without the
+		// database for exactly that. Refusing the write because the audit store
+		// is down would leave no way out, so write without the trail, say so in
+		// the log and in the result, and keep every other Server Settings write
+		// strictly audited.
+		result, err = s.updateServerEnvUnaudited(meta, action, keys, details, dryMessage, doneMessage, apply, unavailable)
+	}
+	writeCommandResultAPI(w, result, err)
+}
+
+// updateServerEnvUnaudited is handleUpdateServerEnvAPI's fallback when the
+// command store cannot be reached. It applies the same validation as an
+// audited command, but there is no command row, so command_id is not
+// idempotent here and the result carries audit_recorded=false.
+func (s *server) updateServerEnvUnaudited(meta admin.CommandMeta, action string, keys []string, details map[string]any, dryMessage, doneMessage string, apply func() error, cause error) (admin.CommandResult, error) {
+	meta, err := normalizeOperatorCommandMeta(meta)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	details["audit_recorded"] = false
+	result := admin.CommandResult{CommandID: meta.CommandID, Action: action, DryRun: meta.DryRun, Status: "completed", Details: details}
+	if meta.DryRun {
+		result.Message = dryMessage + " (audit store unavailable: this change will not be audited)"
+		return result, nil
+	}
+	if err := apply(); err != nil {
+		result.Status = "failed"
+		return result, err
+	}
+	log.Printf("WARNING: %s by %q applied WITHOUT an audit record (command_id=%s, keys=%v, reason=%q): audit store unavailable: %v",
+		action, meta.Actor, meta.CommandID, keys, meta.Reason, cause)
+	result.Message = doneMessage + " (audit store unavailable: not audited)"
+	return result, nil
 }
 
 // envValuesFingerprint binds the submitted .env values into command_id's

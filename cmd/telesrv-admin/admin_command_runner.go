@@ -94,6 +94,35 @@ type storedOperatorCommand struct {
 
 const storedOperatorCommandColumns = `command_id, actor, action, dry_run, reason, request, result, status, error`
 
+// operatorStoreUnavailableError marks a runOperatorCommand failure that
+// happened before anything ran because the command store itself could not be
+// reached (not configured, or no connection). Nothing was claimed, mutated or
+// recorded. The .env editor uses it to fall back to an unaudited write, since
+// it is the tool for repairing a broken database setting (see
+// handleUpdateServerEnvAPI); every other caller just reports the error.
+type operatorStoreUnavailableError struct{ err error }
+
+func (e *operatorStoreUnavailableError) Error() string { return e.err.Error() }
+func (e *operatorStoreUnavailableError) Unwrap() error { return e.err }
+
+// normalizeOperatorCommandMeta trims meta and enforces the fields every
+// operator command must carry.
+func normalizeOperatorCommandMeta(meta admin.CommandMeta) (admin.CommandMeta, error) {
+	meta.CommandID = strings.TrimSpace(meta.CommandID)
+	meta.Actor = strings.TrimSpace(meta.Actor)
+	meta.Reason = strings.TrimSpace(meta.Reason)
+	if meta.CommandID == "" || len(meta.CommandID) > maxOperatorCommandIDLength {
+		return meta, fmt.Errorf("command_id is required and must be <= %d bytes", maxOperatorCommandIDLength)
+	}
+	if meta.Actor == "" || len(meta.Actor) > maxOperatorActorLength {
+		return meta, fmt.Errorf("actor is required and must be <= %d bytes", maxOperatorActorLength)
+	}
+	if meta.Reason == "" || len(meta.Reason) > maxOperatorReasonLength {
+		return meta, fmt.Errorf("reason is required and must be <= %d bytes", maxOperatorReasonLength)
+	}
+	return meta, nil
+}
+
 // runOperatorCommand pre-claims the command row for meta.CommandID, farms the
 // mutation out to fn inside the same transaction, and only reports success once
 // the mutation, the finished command row and the audit row have all committed
@@ -104,19 +133,11 @@ const storedOperatorCommandColumns = `command_id, actor, action, dry_run, reason
 // back the transaction itself.
 func (s *server) runOperatorCommand(ctx context.Context, meta admin.CommandMeta, action string, params any, password string, fn func(context.Context, pgx.Tx) (admin.CommandResult, error)) (admin.CommandResult, error) {
 	if s == nil || s.read == nil || s.read.pool == nil {
-		return admin.CommandResult{}, fmt.Errorf("read store is not configured")
+		return admin.CommandResult{}, &operatorStoreUnavailableError{err: fmt.Errorf("read store is not configured")}
 	}
-	meta.CommandID = strings.TrimSpace(meta.CommandID)
-	meta.Actor = strings.TrimSpace(meta.Actor)
-	meta.Reason = strings.TrimSpace(meta.Reason)
-	if meta.CommandID == "" || len(meta.CommandID) > maxOperatorCommandIDLength {
-		return admin.CommandResult{}, fmt.Errorf("command_id is required and must be <= %d bytes", maxOperatorCommandIDLength)
-	}
-	if meta.Actor == "" || len(meta.Actor) > maxOperatorActorLength {
-		return admin.CommandResult{}, fmt.Errorf("actor is required and must be <= %d bytes", maxOperatorActorLength)
-	}
-	if meta.Reason == "" || len(meta.Reason) > maxOperatorReasonLength {
-		return admin.CommandResult{}, fmt.Errorf("reason is required and must be <= %d bytes", maxOperatorReasonLength)
+	meta, err := normalizeOperatorCommandMeta(meta)
+	if err != nil {
+		return admin.CommandResult{}, err
 	}
 	// Params must be JSON-marshallable and credential-free; the caller builds
 	// it without the password. The fingerprint is where the password lives.
@@ -139,7 +160,7 @@ func (s *server) runOperatorCommand(ctx context.Context, meta admin.CommandMeta,
 
 	tx, err := s.read.pool.Begin(ctx)
 	if err != nil {
-		return admin.CommandResult{}, fmt.Errorf("begin operator command tx: %w", err)
+		return admin.CommandResult{}, &operatorStoreUnavailableError{err: fmt.Errorf("begin operator command tx: %w", err)}
 	}
 	committed := false
 	defer func() {
