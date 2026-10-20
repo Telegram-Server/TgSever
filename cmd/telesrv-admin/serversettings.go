@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -44,8 +45,8 @@ func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
 // is reported as an error (the change happened, its audit row did not).
 //
 // params is what the trail stores as the request and must be safe to keep:
-// pass a digest, not the value, for anything secret (see
-// handleUpdateServerEnvAPI). fingerprint additionally binds data that is not in
+// pass a keyed digest, not the value, for anything secret (see
+// envValuesFingerprint). fingerprint additionally binds data that is not in
 // params into command_id's identity, so a reused id with different content
 // conflicts instead of replaying.
 func (s *server) runServerSettingsCommand(w http.ResponseWriter, r *http.Request, meta admin.CommandMeta, action string, params any, fingerprint string, dryMessage, doneMessage string, details map[string]any, apply func() error) {
@@ -446,20 +447,36 @@ func (s *server) handleUpdateServerEnvAPI(w http.ResponseWriter, r *http.Request
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "update-server-env")
 	// .env holds secrets (DSNs, tokens, passwords), so the trail records which
 	// keys changed and never their values; the values only feed the command_id
-	// fingerprint, as a digest.
+	// fingerprint, through envValuesFingerprint's keyed MAC.
 	keys := make([]string, 0, len(body.Values))
 	for key := range body.Values {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	digest := sha256.New()
-	for _, key := range keys {
-		_, _ = digest.Write([]byte(key + "=" + body.Values[key] + "\x00"))
-	}
 	details := map[string]any{"keys_changed": len(body.Values), "keys": keys}
-	s.runServerSettingsCommand(w, r, meta, "server.update_env", map[string]any{"keys": keys}, hex.EncodeToString(digest.Sum(nil)),
+	s.runServerSettingsCommand(w, r, meta, "server.update_env", map[string]any{"keys": keys}, envValuesFingerprint(s.cfg.SessionKey, keys, body.Values),
 		"would update .env -- takes effect on telesrv restart", ".env updated -- restart telesrv for changes to take effect", details,
 		func() error { return s.envCtl.WriteEnvValues(body.Values) })
+}
+
+// envValuesFingerprint binds the submitted .env values into command_id's
+// identity without making the stored fingerprint an offline oracle for them.
+// A plain SHA-256 of key=value could be brute-forced by anyone who can read
+// admin_commands (a short password or token falls quickly), so the digest is
+// an HMAC keyed by a key derived from the panel session key
+// (TELESRV_ADMIN_SESSION_KEY): a secret the panel already requires, that never
+// reaches the database, and that is stable across restarts, so replaying a
+// command_id after a restart still returns the first run. Rotating the session
+// key changes the MAC, and a replay after that reports COMMAND_ID_CONFLICT
+// instead of already-executed -- the safe direction.
+func envValuesFingerprint(sessionKey []byte, sortedKeys []string, values map[string]string) string {
+	derive := hmac.New(sha256.New, sessionKey)
+	_, _ = derive.Write([]byte("telesrv-admin/update-server-env/fingerprint"))
+	mac := hmac.New(sha256.New, derive.Sum(nil))
+	for _, key := range sortedKeys {
+		_, _ = mac.Write([]byte(key + "=" + values[key] + "\x00"))
+	}
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // --- status --------------------------------------------------------------
