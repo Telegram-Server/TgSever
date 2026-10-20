@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
@@ -47,6 +48,11 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 	channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.EditChannelMessageResult{}, err
+	}
+	// Channel writers reserve PTS by locking this row. Take the same lock
+	// before reading media so a queued edit cannot overwrite a committed stop.
+	if _, err := sqlcgen.New(tx).LockChannelForMessageEdit(ctx, req.ChannelID); err != nil {
+		return domain.EditChannelMessageResult{}, fmt.Errorf("lock channel for message edit: %w", err)
 	}
 	msg, err := s.getChannelMessage(ctx, tx, req.ChannelID, req.ID)
 	if err != nil {
@@ -122,6 +128,12 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 	}
 	canWriteEdit := viaBotEdit || msg.SenderUserID == req.UserID || canEditChannelMessage(member) || participantTodoEdit
 	if !canWriteEdit {
+		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindGeoLive && msg.Media != nil && msg.Media.Kind == domain.MessageMediaKindGeoLive && !msg.Media.GeoLive.Active(msg.Date, req.EditDate) {
+		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
+	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindTodo && !req.AllowTodoParticipantMutation && !viaBotEdit && msg.SenderUserID != req.UserID {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)

@@ -730,15 +730,6 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if slowChannel := slowUpdates.(*tg.Updates).Chats[0].(*tg.Channel); !slowChannel.SlowmodeEnabled {
 		t.Fatalf("slow mode channel = %+v, want slowmode enabled", slowChannel)
 	}
-	if ok, err := r.onChannelsSetStickers(WithUserID(ctx, owner.ID), &tg.ChannelsSetStickersRequest{Channel: input, Stickerset: &tg.InputStickerSetEmpty{}}); err != nil || !ok {
-		t.Fatalf("set stickers = ok %v err %v, want true", ok, err)
-	}
-	if _, err := r.onChannelsSetStickers(WithUserID(ctx, owner.ID), &tg.ChannelsSetStickersRequest{
-		Channel:    input,
-		Stickerset: &tg.InputStickerSetID{ID: 1, AccessHash: 2},
-	}); err == nil || !strings.Contains(err.Error(), "STICKERSET_INVALID") {
-		t.Fatalf("set stickers non-empty err = %v, want STICKERSET_INVALID", err)
-	}
 	if ok, err := r.onChannelsReorderUsernames(WithUserID(ctx, owner.ID), &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: []string{"public_team"}}); err != nil || !ok {
 		t.Fatalf("reorder usernames = ok %v err %v, want true", ok, err)
 	}

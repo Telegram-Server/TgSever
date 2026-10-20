@@ -63,18 +63,12 @@ func (r *Router) onBotsAnswerWebhookJSONQuery(ctx context.Context, req *tg.BotsA
 	return false, queryIDInvalidErr()
 }
 
-func (r *Router) onBotsSetBotBroadcastDefaultAdminRights(ctx context.Context, _ tg.ChatAdminRights) (bool, error) {
-	if _, err := r.callerBotID(ctx); err != nil {
-		return false, err
-	}
-	return false, rightsNotModifiedErr()
+func (r *Router) onBotsSetBotBroadcastDefaultAdminRights(ctx context.Context, rights tg.ChatAdminRights) (bool, error) {
+	return r.setBotDefaultAdminRights(ctx, true, rights)
 }
 
-func (r *Router) onBotsSetBotGroupDefaultAdminRights(ctx context.Context, _ tg.ChatAdminRights) (bool, error) {
-	if _, err := r.callerBotID(ctx); err != nil {
-		return false, err
-	}
-	return false, rightsNotModifiedErr()
+func (r *Router) onBotsSetBotGroupDefaultAdminRights(ctx context.Context, rights tg.ChatAdminRights) (bool, error) {
+	return r.setBotDefaultAdminRights(ctx, false, rights)
 }
 
 // onBotsReorderUsernames reorders a bot's collectible usernames. A bot is a user

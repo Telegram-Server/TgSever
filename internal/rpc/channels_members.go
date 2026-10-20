@@ -209,6 +209,7 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 			users = append(users, r.tgUsersForIDs(ctx, userID, missing)...)
 		}
 	}
+	chats := tgBannedSenderChats(list.Participants)
 	r.applyPeerReadModels(ctx, userID, users, nil)
 	r.log.Debug("channels.getParticipants result",
 		zap.Int64("channel_id", ref.ID),
@@ -220,7 +221,7 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 	return &tg.ChannelsChannelParticipants{
 		Count:        list.Count,
 		Participants: participants,
-		Chats:        []tg.ChatClass{},
+		Chats:        chats,
 		Users:        users,
 	}, nil
 }
@@ -267,10 +268,15 @@ func (r *Router) onChannelsGetParticipant(ctx context.Context, req *tg.ChannelsG
 		return nil, err
 	}
 	peer, ok := r.domainPeerFromInputPeer(userID, req.Participant)
-	if !ok || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
+	if !ok || (peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel) || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
-	member, err := r.deps.Channels.GetParticipant(ctx, userID, channelID, peer.ID)
+	var member domain.ChannelMember
+	if peer.Type == domain.PeerTypeChannel {
+		member, err = r.deps.Channels.GetChannelSenderBan(ctx, userID, channelID, peer.ID)
+	} else {
+		member, err = r.deps.Channels.GetParticipant(ctx, userID, channelID, peer.ID)
+	}
 	if err != nil {
 		return nil, channelParticipantErr(err)
 	}
@@ -280,6 +286,7 @@ func (r *Router) onChannelsGetParticipant(ctx context.Context, req *tg.ChannelsG
 	r.applyPeerReadModels(ctx, userID, users, nil)
 	return &tg.ChannelsChannelParticipant{
 		Participant: participant,
+		Chats:       tgBannedSenderChats([]domain.ChannelMember{member}),
 		Users:       users,
 	}, nil
 }
@@ -375,6 +382,9 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	if err != nil {
 		return nil, channelInviteErr(err)
 	}
+	if res.PendingRequestsChanged {
+		r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+	}
 	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
 	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
 	cache := newViewerPeerCache(r)
@@ -415,6 +425,7 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+			r.deliverChatJoinRequest(ctx, res)
 		}
 		return nil, channelInviteErr(err)
 	}
@@ -570,7 +581,7 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 		return nil, err
 	}
 	participant, ok := r.domainPeerFromInputPeer(userID, req.Participant)
-	if !ok || participant.Type != domain.PeerTypeUser || participant.ID == 0 {
+	if !ok || (participant.Type != domain.PeerTypeUser && participant.Type != domain.PeerTypeChannel) || participant.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
 	res, err := r.deps.Channels.EditBanned(ctx, userID, domain.EditChannelBannedRequest{
@@ -582,6 +593,13 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	})
 	if err != nil {
 		return nil, channelAdminErr(err)
+	}
+	if participant.Type == domain.PeerTypeChannel {
+		build := func(viewerID int64) *tg.Updates {
+			return &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateChannel{ChannelID: res.Channel.ID}}, Chats: tgChannels(viewerID, []domain.Channel{res.Channel}), Date: res.Date}
+		}
+		r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
+		return build(userID), nil
 	}
 	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
 	// 与 onChannelsEditAdmin 对称维护在线成员路由索引：踢出/封禁后立即摘除，
@@ -763,7 +781,7 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 
 func canViewChannelJoinRequests(member domain.ChannelMember) bool {
 	return member.Role == domain.ChannelRoleCreator ||
-		(member.Role == domain.ChannelRoleAdmin && (member.AdminRights.InviteUsers || member.AdminRights.ChangeInfo))
+		(member.Role == domain.ChannelRoleAdmin && member.AdminRights.InviteUsers)
 }
 
 func (r *Router) pendingJoinRequestsUpdates(ctx context.Context, viewerUserID int64, channel domain.Channel) *tg.Updates {
@@ -842,10 +860,10 @@ func (r *Router) channelParticipantUpdatesWithPeerCache(ctx context.Context, vie
 		update.ActorID = viewerUserID
 	}
 	if previous.UserID != 0 {
-		update.SetPrevParticipant(tgChannelParticipantForUpdate(viewerUserID, previous))
+		update.SetPrevParticipant(tgChannelParticipant(viewerUserID, previous))
 	}
 	if participant.UserID != 0 {
-		update.SetNewParticipant(tgChannelParticipantForUpdate(viewerUserID, participant))
+		update.SetNewParticipant(tgChannelParticipant(viewerUserID, participant))
 	}
 	// 当事成员必须收到完整 channel 投影：被踢/被封禁状态只有通过非 min
 	// 对象的 left/banned_rights 才会被客户端应用，min 形态会让被踢者
@@ -999,6 +1017,10 @@ func domainChannelParticipantsFilter(filter tg.ChannelParticipantsFilterClass) d
 
 func channelAdminErr(err error) error {
 	switch {
+	case errors.Is(err, domain.ErrChannelRankInvalid):
+		return tgerr400("ADMIN_RANK_INVALID")
+	case errors.Is(err, domain.ErrChannelRankEmojiNotAllowed):
+		return tgerr400("ADMIN_RANK_EMOJI_NOT_ALLOWED")
 	case errors.Is(err, domain.ErrChannelNotModified):
 		return tgerr400("CHAT_NOT_MODIFIED")
 	case errors.Is(err, domain.ErrChatPublicRequired):

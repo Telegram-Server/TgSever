@@ -75,16 +75,37 @@ func (r *Router) onChannelsToggleSlowMode(ctx context.Context, req *tg.ChannelsT
 }
 
 func (r *Router) onChannelsSetStickers(ctx context.Context, req *tg.ChannelsSetStickersRequest) (bool, error) {
-	_, view, err := r.channelChangeInfoView(ctx, req.Channel)
+	userID, view, err := r.channelChangeInfoView(ctx, req.Channel)
 	if err != nil {
 		return false, err
 	}
 	if !view.Channel.Megagroup || view.Channel.Broadcast {
 		return false, channelInvalidErr(domain.ErrChannelInvalid)
 	}
-	if err := validateEmptyChannelStickerSet(req.Stickerset); err != nil {
-		return false, err
+	var stickerSetID int64
+	if _, empty := req.Stickerset.(*tg.InputStickerSetEmpty); !empty {
+		ref, ok := stickerSetRefFromInput(req.Stickerset)
+		if !ok || (ref.Kind != domain.StickerSetRefByID && ref.Kind != domain.StickerSetRefByShortName) || r.deps.Files == nil {
+			return false, stickersetInvalidErr()
+		}
+		set, _, found, err := r.deps.Files.ResolveStickerSet(ctx, ref)
+		if err != nil {
+			return false, internalErr()
+		}
+		if !found || set.Deleted || set.ID <= 0 || set.Kind != domain.StickerSetKindStickers || set.Masks || set.Emojis || (ref.Kind == domain.StickerSetRefByID && ref.AccessHash != set.AccessHash) {
+			return false, stickersetInvalidErr()
+		}
+		stickerSetID = set.ID
 	}
+	channel, err := r.deps.Channels.SetStickers(ctx, userID, view.Channel.ID, stickerSetID)
+	if err != nil {
+		if errors.Is(err, domain.ErrChannelParticipantsTooFew) {
+			return false, tgerr400("PARTICIPANTS_TOO_FEW")
+		}
+		return false, channelAdminErr(err)
+	}
+	r.invalidateRPCProjectionForChannel(channel.ID)
+	r.pushChannelStateToMembers(ctx, userID, channel)
 	return true, nil
 }
 

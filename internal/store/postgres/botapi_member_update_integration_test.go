@@ -72,3 +72,10 @@ VALUES ($1, 'message', 'channel', $2, 5, $3, '{}'::jsonb)`, f.BotID, chat.ID, no
 		t.Fatal("a message row with member_payload passed the table constraints")
 	}
 }
+
+func TestBotAPIJoinRequestsPostgres(t *testing.T) {
+	pool := testPool(t)
+	storetest.BotAPIJoinRequests(t, func(t *testing.T) storetest.BotAPIMemberUpdateFixture {
+		return botAPIMemberUpdateFixture(t, pool)
+	})
+}

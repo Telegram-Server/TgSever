@@ -15,3 +15,14 @@ func CheckManageChannelAdmin(actor, target ChannelMember) error {
 	}
 	return ErrUserAdminInvalid
 }
+
+// CanDeleteAnyChannelMessage reports whether the actor may delete other authors' messages.
+// Callers must first verify access to the channel and active membership.
+func CanDeleteAnyChannelMessage(member ChannelMember) bool {
+	return member.Role == ChannelRoleCreator || (member.Role == ChannelRoleAdmin && member.AdminRights.DeleteMessages)
+}
+
+// CanDeleteChannelMessage shares author/admin deletion rules across storage backends.
+func CanDeleteChannelMessage(member ChannelMember, actorUserID, senderUserID int64) bool {
+	return senderUserID == actorUserID || CanDeleteAnyChannelMessage(member)
+}

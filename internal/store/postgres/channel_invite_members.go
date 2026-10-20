@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUserID int64, userIDs []int64, date int) (domain.CreateChannelResult, error) {
@@ -45,6 +46,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 	invitedIDs := make([]int64, 0, len(requested))
 	members := make([]domain.ChannelMember, 0, len(requested))
 	restoredKicked := 0
+	pendingChanged := false
 	existingMembers, err := channelMembersForUpdateBatchTx(ctx, tx, channelID, requested)
 	if err != nil {
 		return domain.CreateChannelResult{}, err
@@ -103,6 +105,11 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		if err := upsertChannelMembersBatchTx(ctx, tx, channel, members); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
+		removed, err := sqlcgen.New(tx).ClearPendingDirectInviteRequests(ctx, sqlcgen.ClearPendingDirectInviteRequestsParams{ChannelID: channelID, UserIds: invitedIDs})
+		if err != nil {
+			return domain.CreateChannelResult{}, fmt.Errorf("clear directly invited join requests: %w", err)
+		}
+		pendingChanged = removed > 0
 		// 批量拉人同样可能包含"重新入群"的成员:逐个归还纯 prehistory 来源的读边界
 		// (upsert 是 GREATEST,不会下调),否则他们永久看到空频道。
 		if !channel.PreHistoryHidden {
@@ -151,7 +158,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		return domain.CreateChannelResult{}, fmt.Errorf("commit invite channel: %w", err)
 	}
 	committed = true
-	return domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous, Message: msg, Event: event}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous, Message: msg, Event: event, PendingRequestsChanged: pendingChanged}, nil
 }
 
 func canInviteToChannel(channel domain.Channel, member domain.ChannelMember) bool {

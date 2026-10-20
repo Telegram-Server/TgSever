@@ -128,20 +128,20 @@ func (s *ChannelStore) HideChatJoinRequest(ctx context.Context, req domain.HideC
 	if req.Date == 0 {
 		req.Date = nowUnix()
 	}
-	beginner, ok := s.db.(txBeginner)
-	if !ok {
-		return domain.CreateChannelResult{}, fmt.Errorf("hide channel join request: db does not support transactions")
-	}
-	tx, err := beginner.Begin(ctx)
+	var result domain.CreateChannelResult
+	err := withTx(ctx, s.db, "hide channel join request", func(tx pgx.Tx) error {
+		var err error
+		result, err = s.hideChatJoinRequestTx(ctx, tx, req)
+		return err
+	})
 	if err != nil {
-		return domain.CreateChannelResult{}, fmt.Errorf("begin hide channel join request: %w", err)
+		return domain.CreateChannelResult{}, err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	result.Recipients, _ = s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
+	return result, nil
+}
+
+func (s *ChannelStore) hideChatJoinRequestTx(ctx context.Context, tx pgx.Tx, req domain.HideChannelJoinRequestRequest) (domain.CreateChannelResult, error) {
 	channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.CreateChannelResult{}, err
@@ -171,11 +171,5 @@ func (s *ChannelStore) HideChatJoinRequest(ctx context.Context, req domain.HideC
 	} else {
 		result = domain.CreateChannelResult{Channel: channel}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.CreateChannelResult{}, fmt.Errorf("commit hide channel join request: %w", err)
-	}
-	committed = true
-	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
-	result.Recipients = recipients
 	return result, nil
 }

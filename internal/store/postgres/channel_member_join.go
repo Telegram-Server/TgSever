@@ -57,7 +57,7 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 			return domain.CreateChannelResult{}, fmt.Errorf("commit public channel join request: %w", err)
 		}
 		committed = true
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		return domain.CreateChannelResult{Channel: channel, JoinRequest: domain.NewChannelJoinRequest(channel.ID, userID, date, nil)}, domain.ErrInviteRequestSent
 	}
 	preJoinTopID := channel.TopMessageID
 	minID := channelInitialAvailableMinID(channel)

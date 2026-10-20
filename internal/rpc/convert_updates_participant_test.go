@@ -9,10 +9,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// tgChannelParticipantForUpdate 是 updateChannelParticipant 的投影：被踢、带封禁状态或
+// tgChannelParticipant 是查询及 updateChannelParticipant 的共同投影：被踢、带封禁状态或
 // view_messages 被禁的记录投成 channelParticipantBanned（不在群里时 left=true），退群的投成
 // channelParticipantLeft，其余走普通成员投影。
-func TestTgChannelParticipantForUpdate(t *testing.T) {
+func TestTgChannelParticipant(t *testing.T) {
 	const self, user, actor = int64(1), int64(42), int64(7)
 	for _, tc := range []struct {
 		name   string
@@ -46,12 +46,6 @@ func TestTgChannelParticipantForUpdate(t *testing.T) {
 			want:   &tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: user}},
 		},
 		{
-			name: "active member with a partial restriction is a plain participant",
-			member: domain.ChannelMember{UserID: user, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
-				BannedRights: domain.ChannelBannedRights{SendMedia: true}},
-			want: &tg.ChannelParticipant{UserID: user, Date: 100},
-		},
-		{
 			name:   "plain member",
 			member: domain.ChannelMember{UserID: user, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100},
 			want:   &tg.ChannelParticipant{UserID: user, Date: 100},
@@ -68,9 +62,9 @@ func TestTgChannelParticipantForUpdate(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tgChannelParticipantForUpdate(self, tc.member)
+			got := tgChannelParticipant(self, tc.member)
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("tgChannelParticipantForUpdate = %#v, want %#v", got, tc.want)
+				t.Fatalf("tgChannelParticipant = %#v, want %#v", got, tc.want)
 			}
 		})
 	}

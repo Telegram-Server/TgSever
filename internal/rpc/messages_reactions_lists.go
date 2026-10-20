@@ -24,7 +24,7 @@ func (r *Router) onMessagesDeleteParticipantReaction(ctx context.Context, req *t
 		return nil, userIDInvalidErr()
 	}
 	if peer.Type != domain.PeerTypeChannel || r.deps.Channels == nil {
-		return tgEmptyUpdates(int(r.clock.Now().Unix())), nil
+		return nil, peerIDInvalidErr()
 	}
 	moderator, ok := r.deps.Channels.(channelParticipantReactionModerator)
 	if !ok {
@@ -41,6 +41,7 @@ func (r *Router) onMessagesDeleteParticipantReaction(ctx context.Context, req *t
 		return nil, channelInvalidErr(err)
 	}
 	updates := r.channelMessageReactionsUpdates(ctx, userID, res)
+	r.deliverChannelBotReaction(ctx, res, int(r.clock.Now().Unix()))
 	moderationIDs := []int{res.Message.ID}
 	r.pushChannelViewerUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelReactionsViewerUpdates(ctx, userID, viewerUserID, res, moderationIDs)
@@ -61,37 +62,59 @@ func (r *Router) onMessagesDeleteParticipantReactions(ctx context.Context, req *
 		return false, userIDInvalidErr()
 	}
 	if peer.Type != domain.PeerTypeChannel || r.deps.Channels == nil {
-		return true, nil
+		return false, peerIDInvalidErr()
 	}
 	moderator, ok := r.deps.Channels.(channelParticipantReactionModerator)
 	if !ok {
 		return false, channelInvalidErr(domain.ErrChannelInvalid)
 	}
-	res, err := moderator.DeleteParticipantReactions(ctx, userID, domain.DeleteChannelParticipantReactionsRequest{
-		UserID:            userID,
-		ChannelID:         peer.ID,
-		ParticipantUserID: participant.ID,
-		Limit:             domain.MaxDeleteParticipantReactionsBatch,
-		Date:              int(r.clock.Now().Unix()),
-	})
-	if err != nil {
-		return false, channelInvalidErr(err)
-	}
-	if len(res.Messages) > 0 {
-		reactionRes := domain.ChannelMessageReactionsResult{
-			Channel:    res.Channel,
-			Messages:   res.Messages,
-			Recipients: res.Recipients,
+	date := int(r.clock.Now().Unix())
+	for deleted := 0; deleted < 10000; {
+		limit := min(domain.MaxDeleteParticipantReactionsBatch, 10000-deleted)
+		res, err := moderator.DeleteParticipantReactions(ctx, userID, domain.DeleteChannelParticipantReactionsRequest{
+			UserID: userID, ChannelID: peer.ID, ParticipantUserID: participant.ID, Limit: limit, Date: date,
+		})
+		if err != nil {
+			return false, channelInvalidErr(err)
 		}
-		ids := make([]int, 0, len(res.Messages))
-		for _, msg := range res.Messages {
-			if msg.ID > 0 {
-				ids = append(ids, msg.ID)
+		if res.Deleted == 0 {
+			break
+		}
+		deleted += res.Deleted
+		admins := r.botAPIChannelAdminBots(ctx, res.Channel)
+		if len(admins) > 0 {
+			changes := make(map[int]domain.MessageReactionChange, len(res.Changes))
+			for _, change := range res.Changes {
+				changes[change.MessageID] = change
+			}
+			for _, msg := range res.Messages {
+				change, ok := changes[msg.ID]
+				if !ok {
+					continue
+				}
+				item := domain.ChannelMessageReactionsResult{Channel: res.Channel, Message: msg, MessageReactionChange: change}
+				if msg.Reactions != nil {
+					item.Reactions = *msg.Reactions
+				}
+				r.deliverChannelBotReactionTo(ctx, item, date, admins)
 			}
 		}
-		r.pushChannelViewerUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
-			return r.channelReactionsViewerUpdates(ctx, userID, viewerUserID, reactionRes, ids)
-		})
+		if len(res.Messages) > 0 {
+			reactionRes := domain.ChannelMessageReactionsResult{
+				Channel:    res.Channel,
+				Messages:   res.Messages,
+				Recipients: res.Recipients,
+			}
+			ids := make([]int, 0, len(res.Messages))
+			for _, msg := range res.Messages {
+				if msg.ID > 0 {
+					ids = append(ids, msg.ID)
+				}
+			}
+			r.pushChannelViewerUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
+				return r.channelReactionsViewerUpdates(ctx, userID, viewerUserID, reactionRes, ids)
+			})
+		}
 	}
 	return true, nil
 }

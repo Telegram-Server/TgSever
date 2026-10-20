@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap"
 
 	"github.com/iamxvbaba/td/tlprofile"
@@ -1707,8 +1708,8 @@ func (r *Router) onAccountUpdateBirthday(ctx context.Context, req *tg.AccountUpd
 }
 
 // onAccountUpdatePersonalChannel 设置/清除资料页「个人频道」（account.updatePersonalChannel）。
-// inputChannelEmpty 清除；否则解析频道并要求调用者为其创建者/管理员（与官方 picker 取
-// getAdminedPublicChannels 一致）。频道与最新一帖在 getFullUser 时按 id 投影进 userFull + chats。
+// inputChannelEmpty 清除；否则必须是调用者创建的公开广播频道。
+// 频道与最新一帖在 getFullUser 时按 id 投影进 userFull + chats。
 func (r *Router) onAccountUpdatePersonalChannel(ctx context.Context, channel tg.InputChannelClass) (bool, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -1730,7 +1731,10 @@ func (r *Router) onAccountUpdatePersonalChannel(ctx context.Context, channel tg.
 		if err != nil {
 			return false, err
 		}
-		if !channelMemberIsAdmin(view.Self) {
+		if !view.Channel.Broadcast || view.Channel.Megagroup || view.Channel.Username == "" {
+			return false, tgerr.New(400, "PUBLIC_BROADCAST_EXPECTED")
+		}
+		if view.Channel.CreatorUserID != userID || view.Self.Role != domain.ChannelRoleCreator {
 			return false, channelInvalidErr(domain.ErrChannelAdminRequired)
 		}
 		channelID = view.Channel.ID
