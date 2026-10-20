@@ -239,13 +239,17 @@ func sameDesktopRelease(previous, release DesktopRelease) bool {
 		(previous.Size == 0 || previous.Size == release.Size)
 }
 
+// ErrPublishInProgress 表示 <manifest>.lock 已存在：另一个发布（命令行或管理后台）
+// 正在进行，或者上一次发布异常退出留下了锁文件。
+var ErrPublishInProgress = errors.New("another publish is in progress")
+
 // lockManifest 创建 <manifest>.lock 以排除并发发布；返回的函数删除它。
 func lockManifest(manifestPath string) (func(), error) {
 	lockPath := manifestPath + ".lock"
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return nil, fmt.Errorf("another publish is in progress (%s exists; remove it if no publish is running)", lockPath)
+			return nil, fmt.Errorf("%w (%s exists; remove it if no publish is running)", ErrPublishInProgress, lockPath)
 		}
 		return nil, fmt.Errorf("lock manifest: %w", err)
 	}
