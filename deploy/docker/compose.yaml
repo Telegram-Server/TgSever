@@ -127,6 +127,10 @@ services:
       # Sign-up switch default; the admin service gets the same value so the
       # panel's "from environment" state matches what this server enforces.
       TELESRV_SIGN_UP_ENABLED: ${TELESRV_SIGN_UP_ENABLED:-true}
+      # Code login switch default, also passed to the admin service. false
+      # requires TELESRV_PASSWORD_LOGIN_ENABLED=true or the server refuses to
+      # start (nobody could log in).
+      TELESRV_CODE_LOGIN_ENABLED: ${TELESRV_CODE_LOGIN_ENABLED:-true}
       # Phone number + password login (telesrv extension), off by default; the
       # risks of turning it on are listed in .env.example and
       # docs/password-login.md. Defaults match internal/config.
@@ -250,6 +254,7 @@ services:
       TELESRV_ADMIN_UI_TOKEN: ${TELESRV_ADMIN_UI_TOKEN:-}
       TELESRV_ADMIN_SESSION_KEY: ${TELESRV_ADMIN_SESSION_KEY:?set TELESRV_ADMIN_SESSION_KEY in deploy/docker/.env}
       TELESRV_SIGN_UP_ENABLED: ${TELESRV_SIGN_UP_ENABLED:-true}
+      TELESRV_CODE_LOGIN_ENABLED: ${TELESRV_CODE_LOGIN_ENABLED:-true}
       # Read-only here (see the server's TELESRV_IDENTITY_DIR): the panel shows
       # the current settings from it and sends every change to the server.
       TELESRV_IDENTITY_DIR: /var/lib/telesrv/identity
