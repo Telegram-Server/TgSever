@@ -443,6 +443,7 @@ body always contains the **common command fields** (`command_id`, `reason`,
 | `set-account-phone` | `user_id` (int64), `phone` (string) | — |
 | `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED` | — |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | — |
+| `set-login-password` | `user_id` (int64), `password` (string, 1..256 UTF-8 bytes), `revoke_sessions` (bool, opt.); sets or resets the login password without the old one — see below | — |
 | `set-account-avatar` | **multipart**: `metadata` field (JSON with common fields + `user_id` (int64)) and a file in `file` | — |
 | `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |
 | `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, seconds) | — |
@@ -463,6 +464,42 @@ X-CSRF-Token: <csrf from /api/session>
   "months": 12
 }
 ```
+
+### Setting or resetting a login password
+
+`set-login-password` gives any existing account a login password (phone number
++ password sign-in) or replaces the one it has; the operator never needs the old
+password. Use it to give an account that signed up with a login code a password,
+or to help a member who forgot theirs.
+
+- **Where:** Accounts → open the account → **Set login password**. The field and
+  the "Also sign out all devices" checkbox (off by default) are shown only to
+  operators holding `accounts.manage`; the route requires the same right.
+- **Flow:** the usual reason → dry run → confirm. The dry run checks the account
+  and the password and reports `had_password` (whether this is a set or a reset);
+  nothing is written. Confirming writes the password.
+- **Rules:** the password is 1 to 256 UTF-8 bytes (`LOGIN_PASSWORD_INVALID`
+  otherwise), with no complexity rules. System accounts, bots and deleted
+  accounts are refused with `USER_INVALID`. It works while the password login
+  switch (`TELESRV_PASSWORD_LOGIN_ENABLED`) is off; the password is then stored
+  but cannot be used until the switch is turned on.
+- **Effect:** the account can sign in with the new password at once; any login
+  challenge issued before (`telesrv.getLoginPassword`) now fails with
+  `SRP_PASSWORD_CHANGED`; every session of the account receives a message from
+  777000 saying an administrator set or reset the password. With
+  `revoke_sessions: true` every authorization of the account is then revoked,
+  exactly like `revoke-sessions` with `revoke_all`.
+- **Secrecy:** the panel forwards the plaintext over HTTPS to the server, which
+  computes the SRP verifier the way clients do and stores only the verifier and
+  salts. The request preview masks the field; the password never appears in the
+  command log, the audit trail, responses or logs. Idempotency (the same
+  `command_id` replayed) compares an HMAC of the password keyed from the server's
+  `TELESRV_ADMIN_API_TOKEN`, so reusing a `command_id` with a different password
+  is rejected with `COMMAND_ID_CONFLICT`, and the stored fingerprint cannot be
+  checked against guesses without that key.
+- The limit of 256 bytes is a server bound: the SRP algorithm itself (td,
+  Telegram Desktop) has no length limit, and 256 bytes is far beyond any typed
+  password.
 
 ## API: machine account lookup (v1)
 

@@ -58,6 +58,7 @@ type Service interface {
 	SetProfile(ctx context.Context, req admin.SetProfileRequest) (admin.CommandResult, error)
 	SetPhone(ctx context.Context, req admin.SetPhoneRequest) (admin.CommandResult, error)
 	CreateAccount(ctx context.Context, req admin.CreateAccountRequest) (admin.CommandResult, error)
+	SetLoginPassword(ctx context.Context, req admin.SetLoginPasswordRequest) (admin.CommandResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
@@ -287,6 +288,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-profile", s.authenticated(s.handleSetProfile))
 	mux.HandleFunc("POST /v1/accounts/set-phone", s.authenticated(s.handleSetPhone))
 	mux.HandleFunc("POST /v1/accounts/create", s.authenticated(s.handleCreateAccount))
+	mux.HandleFunc("POST /v1/accounts/set-login-password", s.authenticated(s.handleSetLoginPassword))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
@@ -725,6 +727,30 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.CreateAccount(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// setLoginPasswordWire 是 POST /v1/accounts/set-login-password 的请求体。admin.SetLoginPasswordRequest
+// 的 Password 是 json:"-"（不进命令记录），所以明文密码在这里单独解码；密码指纹只由服务端计算，
+// 请求体里带 password_fingerprint 按未知字段拒绝。
+type setLoginPasswordWire struct {
+	admin.CommandMeta
+	UserID         int64  `json:"user_id"`
+	Password       string `json:"password"`
+	RevokeSessions bool   `json:"revoke_sessions,omitempty"`
+}
+
+func (s *Server) handleSetLoginPassword(w http.ResponseWriter, r *http.Request) {
+	var body setLoginPasswordWire
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	result, err := s.svc.SetLoginPassword(r.Context(), admin.SetLoginPasswordRequest{
+		CommandMeta:    body.CommandMeta,
+		UserID:         body.UserID,
+		Password:       body.Password,
+		RevokeSessions: body.RevokeSessions,
+	})
 	writeCommandResult(w, result, err)
 }
 

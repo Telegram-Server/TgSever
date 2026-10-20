@@ -1,4 +1,4 @@
-import { AtSign, LifeBuoy, Mail, Palette, Phone, Settings2, Smile, UserRoundPen } from "lucide-react";
+import { AtSign, KeyRound, LifeBuoy, Mail, Palette, Phone, Settings2, Smile, UserRoundPen } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ActionButton } from "./ActionButton";
 import { useI18n } from "../i18n";
@@ -89,6 +89,40 @@ export function LoginEmailAction({ id, current, onDone }: { id: number; current:
     <div className="attr-block">
       <label className="duration-field"><span>{t("attr.loginEmail")}</span><input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder={t("attr.loginEmailPlaceholder")} /></label>
       <ActionButton label={t("attr.setLoginEmail")} icon={<Mail size={15} />} tone="neutral" path="/api/actions/set-account-login-email" payload={() => ({ user_id: id, email: email.trim() })} onDone={onDone} />
+    </div>
+  );
+}
+
+// maxLoginPasswordBytes mirrors loginpassword.MaxPlaintextPasswordBytes on the
+// server: the limit is in UTF-8 bytes, not characters.
+const maxLoginPasswordBytes = 256;
+
+// LoginPasswordAction sets or resets the account's login password without the
+// old one. The plaintext goes to the server over HTTPS, which hashes it the way
+// clients do; it is masked in the request preview and never stored here.
+export function LoginPasswordAction({ id, onDone }: { id: number; onDone: () => void }) {
+  const { t } = useI18n();
+  const [password, setPassword] = useState("");
+  const [revokeSessions, setRevokeSessions] = useState(false);
+  const tooLong = new TextEncoder().encode(password).length > maxLoginPasswordBytes;
+  return (
+    <div className="attr-block">
+      <label className="duration-field">
+        <span>{t("attr.loginPassword")}</span>
+        <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" placeholder={t("attr.loginPasswordPlaceholder")} />
+      </label>
+      {tooLong && <p className="muted">{t("attr.loginPasswordTooLong")}</p>}
+      <label className="checkline"><input type="checkbox" checked={revokeSessions} onChange={(e) => setRevokeSessions(e.target.checked)} /> {t("attr.loginPasswordRevokeSessions")}</label>
+      <ActionButton
+        label={t("attr.setLoginPassword")}
+        icon={<KeyRound size={15} />}
+        tone="warn"
+        path="/api/actions/set-login-password"
+        payload={() => ({ user_id: id, password, revoke_sessions: revokeSessions })}
+        maskFields={["password"]}
+        disabled={password === "" || tooLong}
+        onDone={() => { setPassword(""); setRevokeSessions(false); onDone(); }}
+      />
     </div>
   );
 }

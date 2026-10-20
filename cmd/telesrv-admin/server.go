@@ -164,6 +164,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-account-profile", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetProfileAPI)))
 	mux.Handle("POST /api/actions/set-account-phone", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPhoneAPI)))
 	mux.Handle("POST /api/actions/create-account", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleCreateAccountAPI)))
+	mux.Handle("POST /api/actions/set-login-password", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginPasswordAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
 	mux.Handle("POST /api/actions/set-account-color", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserColorAPI)))
@@ -1119,6 +1120,42 @@ func (s *server) handleCreateAccountAPI(w http.ResponseWriter, r *http.Request) 
 		LastName:    body.LastName,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/create", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setLoginPasswordAPIRequest struct {
+	CommandID      string `json:"command_id"`
+	Reason         string `json:"reason"`
+	Confirm        bool   `json:"confirm"`
+	UserID         int64  `json:"user_id"`
+	Password       string `json:"password"`
+	RevokeSessions bool   `json:"revoke_sessions"`
+}
+
+// setLoginPasswordUpstreamRequest 是转发给服务端 POST /v1/accounts/set-login-password 的请求体。
+// admin.SetLoginPasswordRequest 的明文密码字段不序列化（不进命令记录），所以这一跳单独带上
+// password，由服务端算 verifier 和幂等指纹。
+type setLoginPasswordUpstreamRequest struct {
+	admin.CommandMeta
+	UserID         int64  `json:"user_id"`
+	Password       string `json:"password"`
+	RevokeSessions bool   `json:"revoke_sessions,omitempty"`
+}
+
+// handleSetLoginPasswordAPI 给已有账号设置或重设登录密码（不需要旧密码），可选同时登出所有
+// 设备。明文密码经 HTTPS 交给服务端，面板不保存、不记录，响应里也不回显。
+func (s *server) handleSetLoginPasswordAPI(w http.ResponseWriter, r *http.Request) {
+	var body setLoginPasswordAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := setLoginPasswordUpstreamRequest{
+		CommandMeta:    s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-login-password"),
+		UserID:         body.UserID,
+		Password:       body.Password,
+		RevokeSessions: body.RevokeSessions,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-login-password", req)
 	writeCommandResultAPI(w, result, err)
 }
 
