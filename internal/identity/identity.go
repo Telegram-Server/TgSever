@@ -6,15 +6,18 @@
 // 现用，不缓存进内存。
 //
 // 两个进程协作：cmd/telesrv-admin（管理二进制）写，cmd/telesrv（主服务器二进制）读。
-// 读写均为原子操作（临时文件 + rename），可安全并发。
+// 读写均为原子操作（唯一临时文件 + rename），可安全并发；同一进程内的写者按目录串行
+// （见 lockDir），读-改-写不会互相覆盖字段。
 package identity
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -87,26 +90,22 @@ func (s *Store) Get() (Info, error) {
 
 // SetText 更新名称与简介，保留已配置的图标与模板覆盖。
 func (s *Store) SetText(name, description string) error {
-	info, err := s.Get()
-	if err != nil {
-		return err
-	}
-	info.Name = strings.TrimSpace(name)
-	info.Description = strings.TrimSpace(description)
-	return s.save(info)
+	return s.update(func(info *Info) error {
+		info.Name = strings.TrimSpace(name)
+		info.Description = strings.TrimSpace(description)
+		return nil
+	})
 }
 
 // SetWelcomeMessageTemplates 更新登录成功后欢迎消息的模板覆盖，保留其余身份字段。
 // 任一参数为空串即清除该渠道的覆盖（回退到环境变量 / 内置文案——沿用 Info 各处
 // 「空 = 未设置」的约定），且互不影响。
 func (s *Store) SetWelcomeMessageTemplates(phone, email string) error {
-	info, err := s.Get()
-	if err != nil {
-		return err
-	}
-	info.WelcomeMessagePhoneTemplate = strings.TrimSpace(phone)
-	info.WelcomeMessageEmailTemplate = strings.TrimSpace(email)
-	return s.save(info)
+	return s.update(func(info *Info) error {
+		info.WelcomeMessagePhoneTemplate = strings.TrimSpace(phone)
+		info.WelcomeMessageEmailTemplate = strings.TrimSpace(email)
+		return nil
+	})
 }
 
 // SetLoginCodeMessageTemplate 更新登录码投递消息的管理面板覆盖，保留其余身份字段。
@@ -116,62 +115,54 @@ func (s *Store) SetWelcomeMessageTemplates(phone, email string) error {
 // 本方法不自行拒绝缺失 {{code}} 占位符的模板，因为 internal/identity 不依赖
 // internal/domain（见包注释）。
 func (s *Store) SetLoginCodeMessageTemplate(template string) error {
-	info, err := s.Get()
-	if err != nil {
-		return err
-	}
-	info.LoginCodeMessageTemplate = strings.TrimSpace(template)
-	return s.save(info)
+	return s.update(func(info *Info) error {
+		info.LoginCodeMessageTemplate = strings.TrimSpace(template)
+		return nil
+	})
 }
 
 // SetSignUpOverride 设置或清除注册开关的管理面板覆盖，保留其余身份字段。
 // nil 清除覆盖（恢复跟随环境变量），非 nil 以其值为准。
 func (s *Store) SetSignUpOverride(enabled *bool) error {
-	info, err := s.Get()
-	if err != nil {
-		return err
-	}
-	if enabled == nil {
-		info.SignUpEnabled = nil
-	} else {
-		v := *enabled
-		info.SignUpEnabled = &v
-	}
-	return s.save(info)
+	return s.update(func(info *Info) error {
+		if enabled == nil {
+			info.SignUpEnabled = nil
+		} else {
+			v := *enabled
+			info.SignUpEnabled = &v
+		}
+		return nil
+	})
 }
 
 // SetIcon 替换图标文件（移除旧扩展名下的既有图标）并把扩展名写回 identity.json。
 // ext 必须带前导点（如 ".png"）。
 func (s *Store) SetIcon(data []byte, ext string) error {
-	info, err := s.Get()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		return fmt.Errorf("identity: mkdir: %w", err)
-	}
-	if info.IconExt != "" && info.IconExt != ext {
-		_ = os.Remove(s.iconPath(info.IconExt))
-	}
-	if err := writeFileAtomic(s.iconPath(ext), data, 0o644); err != nil {
-		return fmt.Errorf("identity: write icon: %w", err)
-	}
-	info.IconExt = ext
-	return s.save(info)
+	return s.update(func(info *Info) error {
+		if err := os.MkdirAll(s.dir, 0o755); err != nil {
+			return fmt.Errorf("identity: mkdir: %w", err)
+		}
+		if info.IconExt != "" && info.IconExt != ext {
+			_ = os.Remove(s.iconPath(info.IconExt))
+		}
+		if err := writeFileAtomic(s.iconPath(ext), data, 0o644); err != nil {
+			return fmt.Errorf("identity: write icon: %w", err)
+		}
+		info.IconExt = ext
+		return nil
+	})
 }
 
 // RemoveIcon 删除已配置的图标（若有）。
 func (s *Store) RemoveIcon() error {
-	info, err := s.Get()
-	if err != nil {
-		return err
-	}
-	if info.IconExt == "" {
+	return s.update(func(info *Info) error {
+		if info.IconExt == "" {
+			return errNoChange
+		}
+		_ = os.Remove(s.iconPath(info.IconExt))
+		info.IconExt = ""
 		return nil
-	}
-	_ = os.Remove(s.iconPath(info.IconExt))
-	info.IconExt = ""
-	return s.save(info)
+	})
 }
 
 // Icon 返回图标的原始字节与扩展名；未配置图标时返回 ("", nil, false)。
@@ -205,6 +196,42 @@ func (s *Store) IconFingerprint() (string, error) {
 	return info.IconExt, nil
 }
 
+// dirLocks 按解析后的绝对目录串行同一进程内的所有写者。键用目录而不是 *Store，
+// 使指向同一目录的多个 Store 实例（例如管理面板各处各自 NewStore）也互斥。
+// 跨进程只有管理二进制一个写者，主服务器只读，因此进程内锁足够。
+var dirLocks sync.Map // map[string]*sync.Mutex
+
+func lockDir(dir string) func() {
+	key := filepath.Clean(dir)
+	if abs, err := filepath.Abs(dir); err == nil {
+		key = abs
+	}
+	mu, _ := dirLocks.LoadOrStore(key, &sync.Mutex{})
+	m := mu.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
+}
+
+// errNoChange 让 update 的回调表示「无需写回」。
+var errNoChange = errors.New("identity: no change")
+
+// update 在目录锁内完成读-改-写，避免并发保存用旧快照覆盖彼此的字段。
+func (s *Store) update(mutate func(*Info) error) error {
+	unlock := lockDir(s.dir)
+	defer unlock()
+	info, err := s.Get()
+	if err != nil {
+		return err
+	}
+	if err := mutate(&info); err != nil {
+		if err == errNoChange {
+			return nil
+		}
+		return err
+	}
+	return s.save(info)
+}
+
 func (s *Store) save(info Info) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return fmt.Errorf("identity: mkdir: %w", err)
@@ -219,12 +246,29 @@ func (s *Store) save(info Info) error {
 	return nil
 }
 
+// writeFileAtomic 先写同目录下的唯一临时文件再 rename，两个写者不会共用（并互相
+// 截断）同一个临时文件。
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return renameWithRetry(tmp, path)
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, perm)
+	}
+	if werr == nil {
+		werr = renameWithRetry(tmp, path)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+	}
+	return werr
 }
 
 // renameWithRetry 尝试原子替换目标文件。Windows 上无法在目标文件正被其他进程/协程
