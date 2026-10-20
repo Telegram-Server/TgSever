@@ -189,6 +189,12 @@ type itemPricesService interface {
 	SetStarsRate(ctx context.Context, req admin.SetStarsRateRequest) (admin.CommandResult, error)
 }
 
+// clientUpdatesService is optional like itemPricesService: the routes answer
+// 501 when the service does not carry the client update surface.
+type clientUpdatesService interface {
+	ClientUpdateStatus(ctx context.Context) (admin.ClientUpdateStatus, error)
+}
+
 func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http.Server, error) {
 	cfg.Addr = strings.TrimSpace(cfg.Addr)
 	if cfg.Addr == "" {
@@ -252,6 +258,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/item-prices", s.authorized(PermissionPricesManage, s.handleItemPrices))
 	mux.HandleFunc("POST /v1/item-prices/update", s.authorized(PermissionPricesManage, s.handleUpdateItemPrice))
 	mux.HandleFunc("POST /v1/item-prices/set-rate", s.authorized(PermissionPricesManage, s.handleSetStarsRate))
+	mux.HandleFunc("GET /v1/client-updates", s.authorized(PermissionUpdatesRead, s.handleClientUpdates))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/set-flags", s.authenticated(s.handleSetUserFlags))
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
