@@ -15,6 +15,8 @@ type fakeAccountCreator struct {
 	byPhone     map[string]domain.User
 	nextID      int64
 	createCalls int
+	// lookups counts phone-ownership checks (the auth service's ByPhone).
+	lookups int
 }
 
 func newFakeAccountCreator() *fakeAccountCreator {
@@ -29,6 +31,7 @@ func (f *fakeAccountCreator) ValidateNewAccount(_ context.Context, phone, firstN
 	if strings.TrimSpace(firstName) == "" {
 		return domain.User{}, domain.ErrFirstNameInvalid
 	}
+	f.lookups++
 	if _, taken := f.byPhone[phone]; taken {
 		return domain.User{}, domain.ErrPhoneNumberOccupied
 	}
@@ -77,9 +80,13 @@ func TestCreateAccountDryRunExecuteAndIdempotency(t *testing.T) {
 		FirstName:   "Dana",
 		LastName:    "Ops",
 	}
+	creator.lookups = 0
 	exec, err := svc.CreateAccount(ctx, execReq)
 	if err != nil {
 		t.Fatalf("execute CreateAccount: %v", err)
+	}
+	if creator.lookups != 1 {
+		t.Fatalf("execute checked the phone %d times, want once (the creator validates itself)", creator.lookups)
 	}
 	if exec.Status != string(domain.AdminCommandCompleted) || creator.createCalls != 1 || exec.Details["user_id"] != int64(5001) {
 		t.Fatalf("execute result=%+v createCalls=%d", exec, creator.createCalls)

@@ -2401,33 +2401,38 @@ func (s *Service) SetPhone(ctx context.Context, req SetPhoneRequest) (CommandRes
 // Only the account is created: no session, no auth key. The member then signs
 // in with a login code and gets the welcome message like any new user.
 // Validation runs inside the command so rejected attempts (bad phone, occupied
-// number) are recorded in the command and audit logs too.
+// number) are recorded in the command and audit logs too. A dry run only
+// validates; a real run leaves validation to AccountCreator.CreateAccount,
+// which applies the same rules, so the number is checked once per attempt.
 func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (CommandResult, error) {
 	if s == nil || s.accountCreator == nil {
 		return CommandResult{}, fmt.Errorf("admin account creator dependency is not configured")
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionCreateAccount, 0, domain.Peer{}, req, func() (CommandResult, error) {
-		pending, err := s.accountCreator.ValidateNewAccount(ctx, req.Phone, req.FirstName, req.LastName)
-		if err != nil {
-			return CommandResult{}, createAccountError(err)
-		}
-		details := map[string]any{
-			"phone":         pending.Phone,
-			"first_name":    pending.FirstName,
-			"last_name":     pending.LastName,
-			"premium_until": pending.PremiumUntil,
-		}
 		if req.DryRun {
-			return CommandResult{Message: "account creation validated", Details: details}, nil
+			pending, err := s.accountCreator.ValidateNewAccount(ctx, req.Phone, req.FirstName, req.LastName)
+			if err != nil {
+				return CommandResult{}, createAccountError(err)
+			}
+			return CommandResult{Message: "account creation validated", Details: createAccountDetails(pending)}, nil
 		}
 		created, err := s.accountCreator.CreateAccount(ctx, req.Phone, req.FirstName, req.LastName)
 		if err != nil {
-			return CommandResult{Details: details}, createAccountError(err)
+			return CommandResult{}, createAccountError(err)
 		}
+		details := createAccountDetails(created)
 		details["user_id"] = created.ID
-		details["premium_until"] = created.PremiumUntil
 		return CommandResult{Message: "account created", Details: details}, nil
 	})
+}
+
+func createAccountDetails(u domain.User) map[string]any {
+	return map[string]any{
+		"phone":         u.Phone,
+		"first_name":    u.FirstName,
+		"last_name":     u.LastName,
+		"premium_until": u.PremiumUntil,
+	}
 }
 
 // createAccountError attaches a stable code to the rejections an operator can
