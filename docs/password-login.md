@@ -166,6 +166,8 @@ Always start with `telesrv.getMyLoginPassword()`. It returns `has_password` and
 Every successful set, change or removal makes 777000 send the account a message
 (bold title "Login password set." / "Login password changed." /
 "Login password removed.") that reaches all its sessions as `updateNewMessage`.
+A reset without the old password (see "Forgotten password") sends
+"Login password reset." instead.
 Challenges issued before a change answer `SRP_PASSWORD_CHANGED` afterwards.
 Deleting the account deletes its login password.
 
@@ -186,15 +188,36 @@ There is no recovery email. A user who forgot the login password:
    `auth.checkPassword` if 2FA is on).
 2. `telesrv.getMyLoginPassword()` → `has_password` true; keep `new_algo`.
 3. `telesrv.updateLoginPassword(current: inputCheckPasswordEmpty, new_settings from new_algo)`
-   → `boolTrue`, **while the session's sign-in is younger than the operator's
-   reset window** (`TELESRV_PASSWORD_LOGIN_RESET_WINDOW`, default 10 minutes;
-   the sign-in time is refreshed by each code sign-in and by completing 2FA).
+   → `boolTrue`, **only if the operator enabled the reset window and the
+   session's authorization is younger than it**
+   (`TELESRV_PASSWORD_LOGIN_RESET_WINDOW`, **off by default**).
 
-Outside the window, or when the operator set it to `0`, step 3 returns
-`400 PASSWORD_HASH_INVALID`. The client cannot query the window; offer the
-"reset" path right after a code sign-in, and on `PASSWORD_HASH_INVALID` ask the
-user to sign in with a code again. A reset is an ordinary change: 777000 sends
-"Login password changed." and earlier challenges answer `SRP_PASSWORD_CHANGED`.
+The window counts from when the current authorization was created, and **any**
+new authorization starts it, not only a code sign-in: completing 2FA, QR login
+(`auth.acceptLoginToken`), passkey login and password sign-in or sign-up do too.
+That is why it is off by default: with it on, anyone holding one existing session
+of the account can approve a new device by QR and, from that device, replace the
+login password without knowing it. Operators enable it only if they accept that.
+
+**The reset may not be available.** When the window is off (the default), has
+passed, or the session's authorization cannot be read, step 3 returns
+`400 PASSWORD_HASH_INVALID`, exactly like a wrong password. The client cannot
+query the window. Handle it like this:
+
+- Offer "Forgot password?" right after a code sign-in, never as the only way
+  out. On `PASSWORD_HASH_INVALID` for an empty `current`, say the password
+  cannot be reset on this server without the old one (or that the user must
+  sign in with a code again and retry at once), and keep the account usable:
+  sign-in with a login code still works without the login password.
+- A user who cannot reset it can still remove it only with the old password;
+  without it they stay on code sign-in until an operator helps.
+
+A successful reset changes the password like any other change (earlier
+challenges answer `SRP_PASSWORD_CHANGED`), but 777000 sends a distinct notice to
+every session of the account: bold title "Login password reset.", saying the
+login password was reset without the old password from a session that signed in
+recently, and advising to check active sessions if it was not the user. Removing
+the password with an empty `current` inside the window sends the same title.
 
 Test: `TestLoginPasswordResetEndToEnd` (`within the reset window an empty current resets a forgotten login password`,
 `with the reset window set to 0 an empty current is rejected`).
@@ -278,7 +301,7 @@ request does not use up the challenge) → `current` → write → 777000 notice
 | `400 BOT_METHOD_INVALID` | Bot, deleted or system account | Do not offer the setting |
 | `400 NEW_SETTINGS_INVALID` | `email` is set (also when removing), or a hash without `new_algo` | Client bug |
 | `400 NEW_SALT_INVALID` | `new_algo` salts/group differ from `getMyLoginPassword`'s | Client bug: recompute from a fresh `getMyLoginPassword` |
-| `400 PASSWORD_HASH_INVALID` | Wrong current password; an unsupported `new_algo` type with a non-empty hash; or `current` empty while a password is set and the session is outside the reset window | Wrong password: re-ask. Empty current rejected: ask for the old password, or a fresh code sign-in |
+| `400 PASSWORD_HASH_INVALID` | Wrong current password; an unsupported `new_algo` type with a non-empty hash; or `current` empty while a password is set and the reset window is off (the default), has passed, or the authorization cannot be read | Wrong password: re-ask. Empty current rejected: the reset is unavailable; ask for the old password, or explain that code sign-in still works (see "Forgotten password") |
 | `400 SRP_ID_INVALID` | `srp_id` 0, unknown, used, expired, from another connection or another account | Restart at `getMyLoginPassword` |
 | `400 SRP_PASSWORD_CHANGED` | The password changed after the challenge was issued | Restart at `getMyLoginPassword` |
 
