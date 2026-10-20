@@ -1761,6 +1761,9 @@ func run(logger *zap.Logger) error {
 	// 进程内更新服务：清单与包由公开 Web 的 /_updates/ 提供，help.getAppUpdate 直接
 	// 读同一个 Store。保持 nil 接口（而不是 nil *Handler），未启用时公开 Web 不注册路由。
 	var appUpdateHandler http.Handler
+	// 管理后台的“客户端更新”页：未启用时为 nil（页面显示未启用），外部 telesrv-update
+	// 模式下没有目录（页面只显示状态）。
+	var adminClientUpdates *adminapp.ClientUpdates
 	if cfg.UpdateManifest != "" {
 		var catalogOpts updatecdn.CatalogOptions
 		if cfg.UpdateRootPublicKey != "" {
@@ -1784,6 +1787,7 @@ func run(logger *zap.Logger) error {
 			return fmt.Errorf("initialize update handler: %w", err)
 		}
 		appUpdateResolver, appUpdateHandler = updateStore, handler
+		adminClientUpdates = &adminapp.ClientUpdates{PublicURL: cfg.UpdatePublicURL, Catalog: updateStore}
 		if strings.TrimSpace(cfg.PublicLinkWebAddr) == "" {
 			updateLog.Warn("in-process updates are enabled but the public Web listener is disabled; /_updates/ is not served")
 		}
@@ -1798,6 +1802,7 @@ func run(logger *zap.Logger) error {
 			return fmt.Errorf("initialize update service client: %w", err)
 		}
 		appUpdateResolver = client
+		adminClientUpdates = &adminapp.ClientUpdates{PublicURL: cfg.UpdatePublicURL, ServiceURL: cfg.UpdateServiceURL}
 	}
 	// 会话地理归属(account.getAuthorizations 的 country/region)。协议层没有
 	// help.requestIpAddress 的对等实现,不配 endpoint 时 resolver 为 nil,列表继续回传
@@ -2032,6 +2037,7 @@ func run(logger *zap.Logger) error {
 		UniqueGifts:             postgres.NewStarGiftClaimStore(pool),
 		TonDNS:                  tondns.New(cfg.CustomFragmentLiteserverConfigURL),
 		UsernameWallets:         postgres.NewStarGiftClaimStore(pool),
+		ClientUpdates:           adminClientUpdates,
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
