@@ -198,6 +198,65 @@ func TestClientUpdatePublishProxiesToAdminAPI(t *testing.T) {
 	}
 }
 
+func TestClientUpdateDisableEnableProxyToAdminAPI(t *testing.T) {
+	got := map[string]admin.ClientUpdateEntryRequest{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer updates-secret" {
+			http.NotFound(w, r)
+			return
+		}
+		var req admin.ClientUpdateEntryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		got[r.URL.Path] = req
+		_ = json.NewEncoder(w).Encode(admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun})
+	}))
+	defer upstream.Close()
+
+	srv := panelServer(t, permissionUpdatesPublish)
+	srv.cfg.AdminAPIURL = upstream.URL
+	srv.cfg.AdminAPIToken = "updates-secret"
+	cookies, csrf := signIn(t, srv)
+	viewer := panelServer(t, permissionUpdatesRead)
+	viewer.cfg.AdminAPIURL = upstream.URL
+	viewerCookies, viewerCSRF := signIn(t, viewer)
+
+	for panelPath, upstreamPath := range map[string]string{
+		"/api/actions/client-update-disable": "/v1/client-updates/disable",
+		"/api/actions/client-update-enable":  "/v1/client-updates/enable",
+	} {
+		body := `{"reason":"crashes on start","confirm":true,"command_id":"dry-x-1","platform":"linux","channel":"stable"}`
+		req := withCookies(httptest.NewRequest(http.MethodPost, panelPath, strings.NewReader(body)), cookies)
+		req.Header.Set(csrfHeaderName, csrf)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		sent, ok := got[upstreamPath]
+		if rec.Code != http.StatusOK || !ok || sent.DryRun || !strings.HasPrefix(sent.CommandID, "exec-") || sent.Actor != "admin" ||
+			sent.Platform != "linux" || sent.Channel != "stable" || sent.Reason != "crashes on start" {
+			t.Fatalf("%s status=%d request=%+v body=%s", panelPath, rec.Code, sent, rec.Body.String())
+		}
+
+		// 未确认是 dry-run。
+		preview := withCookies(httptest.NewRequest(http.MethodPost, panelPath, strings.NewReader(`{"reason":"r","platform":"linux","channel":"stable"}`)), cookies)
+		preview.Header.Set(csrfHeaderName, csrf)
+		rec = httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, preview)
+		if sent := got[upstreamPath]; rec.Code != http.StatusOK || !sent.DryRun {
+			t.Fatalf("%s preview status=%d request=%+v", panelPath, rec.Code, sent)
+		}
+
+		delete(got, upstreamPath)
+		denied := withCookies(httptest.NewRequest(http.MethodPost, panelPath, strings.NewReader(body)), viewerCookies)
+		denied.Header.Set(csrfHeaderName, viewerCSRF)
+		rec = httptest.NewRecorder()
+		viewer.routes().ServeHTTP(rec, denied)
+		if _, reached := got[upstreamPath]; rec.Code != http.StatusForbidden || reached || !strings.Contains(rec.Body.String(), permissionUpdatesPublish) {
+			t.Fatalf("%s viewer status=%d body=%s", panelPath, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestClientUpdatePermissionsAreAssignable(t *testing.T) {
 	assignable := make(map[string]bool)
 	for _, name := range assignablePermissions() {

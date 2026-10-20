@@ -131,3 +131,35 @@ func (s *server) handleClientUpdatePublishAPI(w http.ResponseWriter, r *http.Req
 	result, err := s.callAdminAPI(r.Context(), "/v1/client-updates/publish", req)
 	writeCommandResultAPI(w, result, err)
 }
+
+type clientUpdateEntryAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	Platform  string `json:"platform"`
+	Channel   string `json:"channel"`
+}
+
+// handleClientUpdateDisableAPI 停用一个桌面条目：立即停止下发，条目仍留在清单里。
+func (s *server) handleClientUpdateDisableAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyClientUpdateEntry(w, r, "client-update-disable", "/v1/client-updates/disable")
+}
+
+// handleClientUpdateEnableAPI 重新启用一个已停用的条目；理由必填（命令框架统一要求）。
+func (s *server) handleClientUpdateEnableAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyClientUpdateEntry(w, r, "client-update-enable", "/v1/client-updates/enable")
+}
+
+func (s *server) proxyClientUpdateEntry(w http.ResponseWriter, r *http.Request, prefix, apiPath string) {
+	var body clientUpdateEntryAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.ClientUpdateEntryRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, strings.TrimSpace(body.Reason), body.Confirm, prefix),
+		Platform:    strings.TrimSpace(body.Platform),
+		Channel:     strings.TrimSpace(body.Channel),
+	}
+	result, err := s.callAdminAPI(r.Context(), apiPath, req)
+	writeCommandResultAPI(w, result, err)
+}
