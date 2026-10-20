@@ -13,14 +13,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/admin"
+	"telesrv/internal/identity"
 	"telesrv/internal/procctl"
 )
 
 // The .env editor is how an operator repairs a broken TELESRV_POSTGRES_DSN, and
 // the break-glass login works without the database precisely for that. So when
 // the audit store is missing or unreachable the .env write still goes through,
-// and the result says no audit row was recorded. Every other Server Settings
-// write keeps requiring the audit trail.
+// and the result says no audit row was recorded. The identity writes are not
+// local at all: the server executes and audits them (see serversettings.go).
 func TestServerEnvUpdateWorksWithoutTheAuditStore(t *testing.T) {
 	unreachable := func(t *testing.T) *readStore {
 		pool, err := pgxpool.New(context.Background(), "postgres://nobody:x@127.0.0.1:1/none_test?sslmode=disable&connect_timeout=2")
@@ -87,16 +88,25 @@ func TestServerEnvUpdateWorksWithoutTheAuditStore(t *testing.T) {
 	}
 }
 
-// Identity writes are not a repair path: without the audit store they fail.
-func TestServerIdentityWriteStillRequiresTheAuditStore(t *testing.T) {
+// Identity writes are not a repair path and not this process's to make: they
+// are executed (and audited) by the server. With the server's admin API
+// unreachable they fail, and the panel does not fall back to writing the
+// identity directory itself.
+func TestServerIdentityWriteNeedsTheServer(t *testing.T) {
 	srv := panelServer(t, permissionAll)
+	srv.cfg.AdminAPIURL = "http://127.0.0.1:1"
+	dir := t.TempDir()
+	srv.identity = identity.NewStore(dir)
 	cookies, csrf := signIn(t, srv)
 	req := withCookies(httptest.NewRequest(http.MethodPost, "/api/actions/set-server-identity",
 		strings.NewReader(`{"command_id":"id-1","reason":"rebrand","confirm":true,"name":"Acme","description":""}`)), cookies)
 	req.Header.Set(csrfHeaderName, csrf)
 	rec := httptest.NewRecorder()
 	srv.routes().ServeHTTP(rec, req)
-	if rec.Code == http.StatusOK {
-		t.Fatalf("identity write without audit store succeeded: %s", rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("identity write without the server status=%d body=%s, want 502", rec.Code, rec.Body.String())
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("panel fell back to a local identity write: %v err=%v", entries, err)
 	}
 }

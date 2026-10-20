@@ -612,10 +612,11 @@ func run(logger *zap.Logger) error {
 	if !domain.ConfigurePremiumBotUsername(cfg.PremiumBotUsername) {
 		return fmt.Errorf("configure Premium bot username %q", cfg.PremiumBotUsername)
 	}
-	// 服务器身份由管理面板（Server Settings → Server identity）在
-	// cfg.IdentityDir 下维护；这里启动时读取一次自定义服务器名，用作 777000 官方
-	// 系统账号的展示名与登录通知 {{server_name}} 占位符（见
-	// domain.SetOfficialSystemUserDisplayName）。登录通知模板在 internal/app/auth
+	// 服务器身份由管理面板（Server Settings → Server identity）编辑，由本进程经
+	// admin API 的服务器设置命令写入 cfg.IdentityDir（后台只读该目录）；这里启动时
+	// 读取一次自定义服务器名，用作 777000 官方系统账号的展示名与登录通知
+	// {{server_name}} 占位符（见 domain.SetOfficialSystemUserDisplayName）。
+	// 登录通知模板在 internal/app/auth
 	// 内部每次发送时实时读取；名称与图标随后由 systemidentity.Watcher 在运行期
 	// 持续跟随面板改动，无需重启。
 	identityStore := identity.NewStore(cfg.IdentityDir)
@@ -1077,6 +1078,10 @@ func run(logger *zap.Logger) error {
 		Commands:      adminStore,
 		Restrictions:  adminStore,
 		OfficialGifts: officialgifts.New(cfg.OfficialGiftsDir),
+		// 服务器设置只由本进程写入 identity 存储：管理后台经 admin API 下发命令，
+		// 后台自己只读同一目录（Docker 下它的挂载是只读的）。
+		ServerIdentity:       identityStore,
+		SignUpEnabledDefault: func() bool { return cfg.SignUpEnabled },
 	})
 	userProjectionFacts := userprojection.NewDurableUserProjectionFacts(
 		adminService,
@@ -1333,8 +1338,9 @@ func run(logger *zap.Logger) error {
 	// its display name was already set from identityStore above, and here its
 	// avatar is seeded from the operator's icon (falling back to the bundled
 	// default when none is configured). The watcher then keeps both in sync
-	// with later admin-panel edits without a restart, since the panel is a
-	// separate process that only writes identity.json.
+	// with later admin-panel edits without a restart: the panel hands those
+	// edits to this process as admin API commands, which write identity.json,
+	// and the watcher polls the directory regardless of who wrote it.
 	seedOfficialAvatar := func(ctx context.Context, icon []byte, now int64) (bool, error) {
 		return botavatars.SeedOfficialSystemAvatar(ctx, filesService, icon, now)
 	}

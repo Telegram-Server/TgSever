@@ -245,11 +245,12 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/revoke-custom-verification", s.botVerificationManage(s.handleRevokeCustomVerificationAPI))
 
 	// Server Settings. One right for the whole surface (see
-	// permissionServerManage in security.go). These handlers do not touch
-	// internal/admin: they operate on local files (the identity.json store and
-	// .env) or probe local services. Every write still goes through
-	// runServerSettingsCommand, so it is audited in admin_commands /
-	// admin_audit_logs like any other panel command.
+	// permissionServerManage in security.go). The identity writes (name,
+	// templates, sign-up, icon) are forwarded to the server's admin API, which
+	// writes its own identity directory and audits them like any other
+	// command; this process only reads that directory. The .env editor writes
+	// this process's own .env and is audited by the panel's runner
+	// (runOperatorCommand). The status page probes local services.
 	mux.Handle("GET /api/server/identity", s.serverManage(s.handleServerIdentityAPI))
 	mux.Handle("GET /api/server/icon", s.serverManage(s.handleServerIconAPI))
 	mux.Handle("POST /api/actions/set-server-identity", s.serverManage(s.handleSetServerIdentityAPI))

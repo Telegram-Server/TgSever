@@ -5,9 +5,11 @@
 // —— 因此它以纯文本文件落在磁盘上（目录由 Config.IdentityDir 指定），每次读取都现取
 // 现用，不缓存进内存。
 //
-// 两个进程协作：cmd/telesrv-admin（管理二进制）写，cmd/telesrv（主服务器二进制）读。
-// 读写均为原子操作（唯一临时文件 + rename），可安全并发；同一进程内的写者按目录串行
-// （见 lockDir），读-改-写不会互相覆盖字段。
+// 两个进程协作：cmd/telesrv（主服务器二进制）写也读——管理面板的编辑经 admin API 的
+// 服务器设置命令交给主服务器执行（见 internal/admin/serveridentity.go）；
+// cmd/telesrv-admin（管理二进制）只读，用来展示当前设置。Docker 部署下后台的根文件系统
+// 与 server_state 卷都是只读的，所以写者只能是主服务器。读写均为原子操作（唯一临时文件 +
+// rename），可安全并发；同一进程内的写者按目录串行（见 lockDir），读-改-写不会互相覆盖字段。
 package identity
 
 import (
@@ -55,7 +57,7 @@ type Info struct {
 }
 
 // Store 在指定目录（通常为 Config.IdentityDir）下读写 Info 与图标文件。所有方法均可
-// 多协程、跨进程并发调用（管理二进制写、主服务器二进制读）。
+// 多协程、跨进程并发调用（主服务器二进制写，管理二进制只读）。
 type Store struct {
 	dir string
 }
@@ -198,7 +200,7 @@ func (s *Store) IconFingerprint() (string, error) {
 
 // dirLocks 按解析后的绝对目录串行同一进程内的所有写者。键用目录而不是 *Store，
 // 使指向同一目录的多个 Store 实例（例如管理面板各处各自 NewStore）也互斥。
-// 跨进程只有管理二进制一个写者，主服务器只读，因此进程内锁足够。
+// 跨进程只有主服务器一个写者，管理二进制只读，因此进程内锁足够。
 var dirLocks sync.Map // map[string]*sync.Mutex
 
 func lockDir(dir string) func() {

@@ -90,10 +90,11 @@ type uiConfig struct {
 	// panel that worked before.
 	Permissions []string
 	// IdentityDir mirrors config.IdentityDir -- must point at the same
-	// directory the telesrv server reads, so an identity edit here is visible
-	// to the running server immediately (see internal/identity). The name the
-	// server boots with is read once at startup, so a rename here shows up on
-	// the next telesrv restart.
+	// directory the telesrv server writes. The panel only reads it, to show the
+	// current settings; every identity edit is sent to the server as an admin
+	// API command and the server writes it (see serversettings.go). In Docker
+	// the directory is /var/lib/telesrv/identity on the server_state volume,
+	// which this container mounts read-only.
 	IdentityDir string
 	// WelcomeMessagePhoneDefault/WelcomeMessageEmailDefault mirror
 	// config.WelcomeMessage{Phone,Email}Template -- the env-var-resolved text

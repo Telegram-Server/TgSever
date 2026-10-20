@@ -7,13 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -36,29 +34,26 @@ func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
 	return s.requireAuthAPI(s.requirePermission(permissionServerManage, handler))
 }
 
-// runServerSettingsCommand runs one Server Settings write through the panel's
-// command runner (runOperatorCommand), so every preview and every change lands
-// in admin_commands/admin_audit_logs with the operator, the reason and the
-// time, and command_id is idempotent like every other panel command. The
-// writes themselves are local files (identity.json, the icon, .env), which
-// Postgres cannot roll back: apply runs last inside the transaction, so a
-// failure before it leaves the files untouched, and a commit failure after it
-// is reported as an error (the change happened, its audit row did not).
-// The one exception is the .env editor, which falls back to an unaudited
-// write when the command store is unreachable (see handleUpdateServerEnvAPI).
+// Server Settings writes fall into two groups.
 //
-// params is what the trail stores as the request and must be safe to keep:
-// pass a keyed digest, not the value, for anything secret (see
-// envValuesFingerprint). fingerprint additionally binds data that is not in
-// params into command_id's identity, so a reused id with different content
-// conflicts instead of replaying.
-func (s *server) runServerSettingsCommand(w http.ResponseWriter, r *http.Request, meta admin.CommandMeta, action string, params any, fingerprint string, dryMessage, doneMessage string, details map[string]any, apply func() error) {
-	result, err := s.runOperatorCommand(r.Context(), meta, action, params, fingerprint, serverSettingsCommandFn(meta, dryMessage, doneMessage, details, apply))
-	writeCommandResultAPI(w, result, err)
-}
+// The identity store (internal/identity: the 777000 name and description, the
+// icon, the welcome and login-code templates, the sign-up override) is written
+// by the telesrv server only. In Docker this process runs on a read-only root
+// filesystem with the server_state volume mounted read-only, so it could never
+// write there; instead each of the six identity writes below is handed to the
+// server as an admin command over the admin API (callAdminAPI /
+// callAdminMultipart, like account freezing), and the server writes its own
+// identity.Store. The server's command runner owns the command_id idempotency
+// and the admin_commands/admin_audit_logs rows, exactly as for every other
+// forwarded command, so nothing is recorded here. This process only reads the
+// same directory, to show the current settings.
+//
+// The .env editor edits this process's own .env and stays local, audited by
+// the panel's own runner (runOperatorCommand + serverSettingsCommandFn).
 
-// serverSettingsCommandFn is the runOperatorCommand body shared by every
-// Server Settings write: a dry run reports dryMessage, a real run applies.
+// serverSettingsCommandFn is the runOperatorCommand body of a local Server
+// Settings write (the .env editor): a dry run reports dryMessage, a real run
+// applies.
 func serverSettingsCommandFn(meta admin.CommandMeta, dryMessage, doneMessage string, details map[string]any, apply func() error) func(context.Context, pgx.Tx) (admin.CommandResult, error) {
 	return func(context.Context, pgx.Tx) (admin.CommandResult, error) {
 		if meta.DryRun {
@@ -104,18 +99,6 @@ type serverIdentityAPIResponse struct {
 	SignUpSource           string `json:"sign_up_source"`
 }
 
-const (
-	signUpSourceEnv      = "env"
-	signUpSourceOverride = "override"
-)
-
-func signUpSource(override *bool) string {
-	if override != nil {
-		return signUpSourceOverride
-	}
-	return signUpSourceEnv
-}
-
 func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request) {
 	info, err := s.identity.Get()
 	if err != nil {
@@ -129,7 +112,7 @@ func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request)
 		DefaultLoginCodeMessageTemplate:    s.cfg.LoginCodeMessageDefault,
 		DefaultSignUpEnabled:               s.cfg.SignUpEnabledDefault,
 		SignUpEnabledEffective:             domain.ResolveSignUpEnabled(info.SignUpEnabled, s.cfg.SignUpEnabledDefault),
-		SignUpSource:                       signUpSource(info.SignUpEnabled),
+		SignUpSource:                       admin.SignUpSource(info.SignUpEnabled),
 	})
 }
 
@@ -145,62 +128,30 @@ type setSignUpEnabledAPIRequest struct {
 	Mode string `json:"mode"`
 }
 
-// signUpOverrideForMode maps the request's mode onto identity's tri-state
-// override (nil = follow TELESRV_SIGN_UP_ENABLED).
-func signUpOverrideForMode(mode string) (*bool, bool) {
-	switch mode {
-	case "on":
-		v := true
-		return &v, true
-	case "off":
-		v := false
-		return &v, true
-	case "follow_env":
-		return nil, true
-	}
-	return nil, false
-}
-
-// handleSetSignUpEnabledAPI sets or clears the panel's sign-up override in
-// identity.json. telesrv re-reads it on every sign-up decision (see
-// auth.IdentitySignUpAllowed), so the change -- including the
-// telesrv_sign_up_disabled app-config key and its hash -- takes effect
-// without a restart.
+// handleSetSignUpEnabledAPI sets or clears the sign-up override in
+// identity.json, through the server (admin.Service.SetSignUpEnabled). telesrv
+// re-reads it on every sign-up decision (see auth.IdentitySignUpAllowed), so
+// the change -- including the telesrv_sign_up_disabled app-config key and its
+// hash -- takes effect without a restart.
 //
-// Audited and idempotent through runServerSettingsCommand, like every Server
-// Settings write.
+// An unknown mode is refused here with 422 before anything is forwarded; the
+// server applies the same check (admin.SignUpOverrideForMode).
 func (s *server) handleSetSignUpEnabledAPI(w http.ResponseWriter, r *http.Request) {
 	var body setSignUpEnabledAPIRequest
 	if !decodeAction(w, r, &body) {
 		return
 	}
 	mode := strings.TrimSpace(body.Mode)
-	override, ok := signUpOverrideForMode(mode)
-	if !ok {
+	if _, ok := admin.SignUpOverrideForMode(mode); !ok {
 		writeAPIError(w, http.StatusUnprocessableEntity, `mode must be "on", "off" or "follow_env"`)
 		return
 	}
-	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-sign-up-enabled")
-	const action = "server.set_sign_up_enabled"
-	params := map[string]any{"mode": mode}
-	effective := domain.ResolveSignUpEnabled(override, s.cfg.SignUpEnabledDefault)
-	details := map[string]any{
-		"mode":                      mode,
-		"sign_up_enabled_effective": effective,
-		"sign_up_source":            signUpSource(override),
+	req := admin.SetSignUpEnabledRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-sign-up-enabled"),
+		Mode:        mode,
 	}
-
-	s.runServerSettingsCommand(w, r, meta, action, params, "",
-		fmt.Sprintf("Would set sign-up to %s (effective: %s).", mode, openWord(effective)),
-		fmt.Sprintf("Sign-up set to %s (effective: %s).", mode, openWord(effective)),
-		details, func() error { return s.identity.SetSignUpOverride(override) })
-}
-
-func openWord(open bool) string {
-	if open {
-		return "open"
-	}
-	return "closed"
+	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/set-sign-up-enabled", req)
+	writeCommandResultAPI(w, result, err)
 }
 
 // handleServerIconAPI serves the icon's raw bytes for the panel's own
@@ -260,11 +211,13 @@ func (s *server) handleSetServerIdentityAPI(w http.ResponseWriter, r *http.Reque
 	if !decodeAction(w, r, &body) {
 		return
 	}
-	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-server-identity")
-	details := map[string]any{"name": body.Name, "description": body.Description}
-	s.runServerSettingsCommand(w, r, meta, "server.set_identity", details, "",
-		"server identity validated", "server identity updated", details,
-		func() error { return s.identity.SetText(body.Name, body.Description) })
+	req := admin.SetServerIdentityRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-server-identity"),
+		Name:        body.Name,
+		Description: body.Description,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/set-identity", req)
+	writeCommandResultAPI(w, result, err)
 }
 
 // --- login-notification templates ---------------------------------------
@@ -290,15 +243,13 @@ func (s *server) handleSetWelcomeMessageTemplatesAPI(w http.ResponseWriter, r *h
 	if !decodeAction(w, r, &body) {
 		return
 	}
-	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-welcome-message-templates")
-	details := map[string]any{
-		"phone_template_set": strings.TrimSpace(body.PhoneTemplate) != "",
-		"email_template_set": strings.TrimSpace(body.EmailTemplate) != "",
+	req := admin.SetWelcomeMessageTemplatesRequest{
+		CommandMeta:   s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-welcome-message-templates"),
+		PhoneTemplate: body.PhoneTemplate,
+		EmailTemplate: body.EmailTemplate,
 	}
-	params := map[string]any{"phone_template": body.PhoneTemplate, "email_template": body.EmailTemplate}
-	s.runServerSettingsCommand(w, r, meta, "server.set_welcome_message_templates", params, "",
-		"login-notification templates validated", "login-notification templates updated", details,
-		func() error { return s.identity.SetWelcomeMessageTemplates(body.PhoneTemplate, body.EmailTemplate) })
+	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/set-welcome-message-templates", req)
+	writeCommandResultAPI(w, result, err)
 }
 
 // --- login-code delivery message template --------------------------------
@@ -320,8 +271,9 @@ type setLoginCodeMessageTemplateAPIRequest struct {
 // need -- a template missing {{code}} (or containing it more than once)
 // would either silently drop the code from the message or leave it
 // ambiguous which occurrence carries it, so it is rejected outright with a
-// 422 rather than saved. Clearing the override (empty string) is exempt --
-// it always resolves to a valid built-in/env default.
+// 422 here, before anything is forwarded (the server repeats the check in
+// admin.Service.SetLoginCodeMessageTemplate). Clearing the override (empty
+// string) is exempt -- it always resolves to a valid built-in/env default.
 func (s *server) handleSetLoginCodeMessageTemplateAPI(w http.ResponseWriter, r *http.Request) {
 	var body setLoginCodeMessageTemplateAPIRequest
 	if !decodeAction(w, r, &body) {
@@ -333,21 +285,15 @@ func (s *server) handleSetLoginCodeMessageTemplateAPI(w http.ResponseWriter, r *
 			return
 		}
 	}
-	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-login-code-message-template")
-	details := map[string]any{"template_set": strings.TrimSpace(body.Template) != ""}
-	params := map[string]any{"template": body.Template}
-	s.runServerSettingsCommand(w, r, meta, "server.set_login_code_message_template", params, "",
-		"login-code message template validated", "login-code message template updated", details,
-		func() error { return s.identity.SetLoginCodeMessageTemplate(body.Template) })
+	req := admin.SetLoginCodeMessageTemplateRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-login-code-message-template"),
+		Template:    body.Template,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/set-login-code-message-template", req)
+	writeCommandResultAPI(w, result, err)
 }
 
 // --- server icon upload/remove -------------------------------------------
-
-var allowedServerIconExts = map[string]bool{
-	".png": true, ".jpg": true, ".jpeg": true, ".webp": true, ".gif": true,
-}
-
-const maxServerIconBytes = 2 << 20 // 2 MiB
 
 type uploadServerIconAPIRequest struct {
 	CommandID string `json:"command_id"`
@@ -359,13 +305,17 @@ type uploadServerIconAPIRequest struct {
 // field + a "file" field), the same shape handleSetAccountAvatarAPI uses --
 // deliberately not JSON+base64 like the other Server Settings actions:
 // base64 inflates a file ~33%, and decodeAction's plain io.LimitReader caps
-// the request body at 1MiB regardless of maxServerIconBytes, so a real
+// the request body at 1MiB regardless of admin.MaxServerIconBytes, so a real
 // multi-hundred-KB icon would fail decoding ("unexpected EOF" from the
 // truncated body) before this handler ever saw it. Multipart sidesteps that
-// entirely -- the size cap below is enforced on the actual file bytes.
+// entirely -- the size cap below is enforced on the actual file bytes. The
+// file is forwarded to the server the same way (callAdminMultipart to
+// /v1/server-settings/upload-icon, capped at admin.MaxServerIconBytes there
+// too); the extension and size checks here only keep an obviously bad upload
+// from making the round trip.
 func (s *server) handleUploadServerIconAPI(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	r.Body = http.MaxBytesReader(w, r.Body, maxServerIconBytes+(1<<20))
+	r.Body = http.MaxBytesReader(w, r.Body, admin.MaxServerIconBytes+(1<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
 		return
@@ -386,22 +336,21 @@ func (s *server) handleUploadServerIconAPI(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer file.Close()
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if !allowedServerIconExts[ext] {
-		writeAPIError(w, http.StatusBadRequest, "unsupported icon extension")
-		return
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxServerIconBytes+1))
-	if err != nil || len(data) == 0 || len(data) > maxServerIconBytes {
+	data, err := io.ReadAll(io.LimitReader(file, admin.MaxServerIconBytes+1))
+	if err != nil || len(data) == 0 || len(data) > admin.MaxServerIconBytes {
 		writeAPIError(w, http.StatusBadRequest, "icon file is empty or too large (max 2MiB)")
 		return
 	}
-	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "upload-server-icon")
-	sum := sha256.Sum256(data)
-	details := map[string]any{"bytes": len(data), "ext": ext, "sha256": hex.EncodeToString(sum[:])}
-	s.runServerSettingsCommand(w, r, meta, "server.upload_icon", details, "",
-		"server icon validated", "server icon updated", details,
-		func() error { return s.identity.SetIcon(data, ext) })
+	if _, err := admin.ServerIconExt(header.Filename, data); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "unsupported icon extension")
+		return
+	}
+	req := admin.UploadServerIconRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "upload-server-icon"),
+		FileName:    header.Filename,
+	}
+	result, err := s.callAdminMultipart(r.Context(), "/v1/server-settings/upload-icon", req, header.Filename, data)
+	writeCommandResultAPI(w, result, err)
 }
 
 type removeServerIconAPIRequest struct {
@@ -415,10 +364,11 @@ func (s *server) handleRemoveServerIconAPI(w http.ResponseWriter, r *http.Reques
 	if !decodeAction(w, r, &body) {
 		return
 	}
-	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "remove-server-icon")
-	s.runServerSettingsCommand(w, r, meta, "server.remove_icon", map[string]any{}, "",
-		"server icon removal validated", "server icon removed", nil,
-		s.identity.RemoveIcon)
+	req := admin.RemoveServerIconRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "remove-server-icon"),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/remove-icon", req)
+	writeCommandResultAPI(w, result, err)
 }
 
 // --- .env editing --------------------------------------------------------

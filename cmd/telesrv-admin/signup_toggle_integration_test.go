@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"telesrv/internal/admin"
-	"telesrv/internal/identity"
 )
 
-// Every sign-up switch change is audited through the panel's own command
-// runner: who, when, why, dry run or not, replayable by command_id.
+// 注册开关的每次改动都经后台转发给服务端执行，由服务端的命令执行器记录：谁、何时、
+// 为什么、是否试运行，并按 command_id 幂等。这里走完整链路（后台 → 真实 admin API →
+// 服务端命令 → Postgres），证明预览、重放和冲突在跨进程之后仍然成立。
 
 func postSignUpToggle(t *testing.T, srv *server, cookies []*http.Cookie, csrf, body string) (int, admin.CommandResult) {
 	t.Helper()
@@ -31,9 +31,7 @@ func postSignUpToggle(t *testing.T, srv *server, cookies []*http.Cookie, csrf, b
 }
 
 func TestSetSignUpEnabledTogglesOverrideAndAuditsEveryChange(t *testing.T) {
-	srv, store := operatorServer(t)
-	srv.identity = identity.NewStore(t.TempDir())
-	srv.cfg.SignUpEnabledDefault = true
+	srv, store, _ := serverSettingsChain(t)
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	cookies, csrf := signIn(t, srv)
@@ -46,8 +44,7 @@ func TestSetSignUpEnabledTogglesOverrideAndAuditsEveryChange(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		for _, id := range ids {
-			_, _ = store.pool.Exec(ctx, `DELETE FROM admin_audit_logs WHERE command_id = $1`, id)
-			_, _ = store.pool.Exec(ctx, `DELETE FROM admin_commands WHERE command_id = $1`, id)
+			deleteCommandRows(store, id)
 		}
 	})
 	override := func() *bool {
@@ -78,16 +75,13 @@ func TestSetSignUpEnabledTogglesOverrideAndAuditsEveryChange(t *testing.T) {
 	if code != http.StatusOK || !dry.DryRun || dry.Error != "" || dry.Action != action {
 		t.Fatalf("dry run status=%d result=%+v", code, dry)
 	}
+	t.Cleanup(func() { deleteCommandRows(store, dry.CommandID) })
 	if got := override(); got != nil {
 		t.Fatalf("dry run wrote override %v", *got)
 	}
 	if row := auditRow(dry.CommandID); !row.DryRun || row.Reason != "spam wave" {
 		t.Fatalf("dry run audit row=%+v", row)
 	}
-	t.Cleanup(func() {
-		_, _ = store.pool.Exec(ctx, `DELETE FROM admin_audit_logs WHERE command_id = $1`, dry.CommandID)
-		_, _ = store.pool.Exec(ctx, `DELETE FROM admin_commands WHERE command_id = $1`, dry.CommandID)
-	})
 
 	// Off.
 	code, off := postSignUpToggle(t, srv, cookies, csrf,
@@ -122,8 +116,14 @@ func TestSetSignUpEnabledTogglesOverrideAndAuditsEveryChange(t *testing.T) {
 		fmt.Sprintf(`{"command_id":%q,"reason":"spam wave","confirm":true,"mode":"on"}`, ids["off"])); code == http.StatusOK || conflict.Error != "COMMAND_ID_CONFLICT" {
 		t.Fatalf("conflict status=%d result=%+v", code, conflict)
 	}
+	if commands, audits := commandRowCounts(t, store, ids["off"]); commands != 1 || audits != 1 {
+		t.Fatalf("after replay and conflict: command rows=%d audit rows=%d, want one of each", commands, audits)
+	}
 
-	// On, then clear back to following the env.
+	// Off again, then on: opening sign-up goes through the same chain.
+	if err := srv.identity.SetSignUpOverride(nil); err != nil {
+		t.Fatal(err)
+	}
 	if code, res := postSignUpToggle(t, srv, cookies, csrf,
 		fmt.Sprintf(`{"command_id":%q,"reason":"wave over","confirm":true,"mode":"on"}`, ids["on"])); code != http.StatusOK || res.Error != "" {
 		t.Fatalf("on status=%d result=%+v", code, res)
@@ -131,6 +131,11 @@ func TestSetSignUpEnabledTogglesOverrideAndAuditsEveryChange(t *testing.T) {
 	if got := override(); got == nil || !*got {
 		t.Fatalf("override after on = %v, want true", got)
 	}
+	if row := auditRow(ids["on"]); row.Reason != "wave over" || row.DryRun {
+		t.Fatalf("on audit row=%+v", row)
+	}
+
+	// Clear back to following the env.
 	if code, res := postSignUpToggle(t, srv, cookies, csrf,
 		fmt.Sprintf(`{"command_id":%q,"reason":"back to deploy config","confirm":true,"mode":"follow_env"}`, ids["follow"])); code != http.StatusOK || res.Error != "" {
 		t.Fatalf("follow_env status=%d result=%+v", code, res)
@@ -140,8 +145,5 @@ func TestSetSignUpEnabledTogglesOverrideAndAuditsEveryChange(t *testing.T) {
 	}
 	if row := auditRow(ids["follow"]); row.Reason != "back to deploy config" || row.DryRun {
 		t.Fatalf("follow_env audit row=%+v", row)
-	}
-	if row := auditRow(ids["on"]); row.Reason != "wave over" {
-		t.Fatalf("on audit row=%+v", row)
 	}
 }

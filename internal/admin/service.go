@@ -541,7 +541,12 @@ type Dependencies struct {
 	UniqueGifts     UniqueGiftWalletStore
 	TonDNS          TonDNSResolver
 	UsernameWallets UsernameWalletLookup
-	Now             func() time.Time
+	// ServerIdentity 是主服务器自己的 identity 存储（Config.IdentityDir），服务器设置
+	// 命令写入这里（见 serveridentity.go）。SignUpEnabledDefault 返回服务端的
+	// TELESRV_SIGN_UP_ENABLED，用来在命令结果里报告注册开关的实际状态。
+	ServerIdentity       ServerIdentityStore
+	SignUpEnabledDefault func() bool
+	Now                  func() time.Time
 }
 
 type Service struct {
@@ -584,6 +589,8 @@ type Service struct {
 	uniqueGifts             UniqueGiftWalletStore
 	tonDNS                  TonDNSResolver
 	usernameWallets         UsernameWalletLookup
+	serverIdentity          ServerIdentityStore
+	signUpEnabledDefault    func() bool
 	now                     func() time.Time
 }
 
@@ -709,6 +716,12 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.UsernameWallets != nil {
 		s.usernameWallets = deps.UsernameWallets
+	}
+	if deps.ServerIdentity != nil {
+		s.serverIdentity = deps.ServerIdentity
+	}
+	if deps.SignUpEnabledDefault != nil {
+		s.signUpEnabledDefault = deps.SignUpEnabledDefault
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
