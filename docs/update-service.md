@@ -328,8 +328,9 @@ Uploading a package that is already published reports `already published` and
 offers nothing to confirm.
 
 - **Upload limit:** `MaxDesktopPackageSize`, 268,707,243 bytes (a 256 MiB payload
-  plus the largest possible header and signatures). A larger upload is refused as
-  soon as its declared length is seen, or cut off one byte past the limit.
+  plus the largest possible header and signatures). The page checks the file
+  against it before sending anything; the server also refuses a larger upload as
+  soon as its declared length is seen, or cuts it off one byte past the limit.
 - **Staging:** `.staging/` in the manifest's directory, on the same volume as the
   manifest and the files directory. The update HTTP handler never serves it.
   A staged upload expires **30 minutes** after it was uploaded; expired files,
@@ -337,16 +338,32 @@ offers nothing to confirm.
   publish. A staging is also removed when its publish succeeds, when its
   preflight fails, and when the upload repeats or conflicts with an earlier
   command. A failed publish (lock held, rollback not allowed) keeps it, so the
-  operator can retry without uploading again until it expires.
+  operator can retry without uploading again until it expires. Two confirms of
+  one staging publish it once: the first claims the staged file (it is renamed
+  to `<id>.claim` while the publish runs, and renamed back if the publish
+  fails), and the other reports that the package is no longer staged.
+- **Pending uploads are capped.** At most **4** uploads, finished or still
+  arriving, may wait in `.staging/` at once, holding at most four times the
+  upload limit (about 1 GiB) together. Past either cap a new upload is refused
+  with `UPDATE_STAGING_FULL` before any of it is read; publish a staged package or
+  wait for stagings to expire.
+- **Why an upload failed.** Besides the package's own refusals
+  (`UPDATE_PACKAGE_REJECTED`, `UPDATE_PACKAGE_TOO_LARGE`), a failed upload says
+  whose problem it is: `UPDATE_UPLOAD_FAILED` (HTTP 400) when the transfer broke
+  off (connection dropped, read timeout; upload again), and
+  `UPDATE_STAGING_STORAGE_FAILED` (HTTP 500) when the server could not write the
+  staging file (update volume full or not writable; the package is not at
+  fault). These are not recorded as commands: no command has begun yet.
 - **One publish at a time, shared with the CLI.** A panel publish takes the same
   `<manifest>.lock` as `telesrv-update publish`; while either holds it, the other
   is refused with `another publish is in progress`. The preflight and the dry run
   take no lock.
 - **Rollback.** Publishing a build that is not newer than the entry on its
   channel (including re-publishing a disabled build) needs **Allow rollback**,
-  the panel's counterpart of `-allow-downgrade`, and is drawn as a danger
-  action. A
-  rollback only changes what clients still on an older build receive: clients
+  the panel's counterpart of `-allow-downgrade`. Whether a confirm is a rollback
+  is decided by the preflight, not the checkbox: a rollback confirm is drawn as a
+  danger action with a warning, while a newer package uploaded with the box
+  ticked is an ordinary publish. A rollback only changes what clients still on an older build receive: clients
   that already upgraded to a newer build do not go back.
 - **Reason and audit.** Every preflight and publish needs a reason and is an
   audited admin command (`updates.preflight`, a dry run, and `updates.publish`).
