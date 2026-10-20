@@ -112,6 +112,9 @@ type Service struct {
 	walletEnabled bool
 	// telesrvFeatures 是下发给自有客户端的 telesrv 扩展能力（app config 的 telesrv_features）。
 	telesrvFeatures []string
+	// signUpAllowed 是 auth 服务"是否允许注册"的同一个来源，每次 GetAppConfig 都实时
+	// 读取（不缓存），据此按请求注入 telesrv_sign_up_disabled。nil 表示开放注册。
+	signUpAllowed func(context.Context) (bool, error)
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -169,6 +172,18 @@ func WithPasswordLogin(enabled bool) Option {
 		if enabled {
 			s.telesrvFeatures = append(s.telesrvFeatures, telesrvFeaturePasswordLogin)
 		}
+	}
+}
+
+// appConfigKeySignUpDisabled 是注册关闭时下发给客户端的服务器状态 key。它与
+// telesrv_features 分开：后者表示能力，这个表示服务器当前状态。注册开放时不出现。
+const appConfigKeySignUpDisabled = "telesrv_sign_up_disabled"
+
+// WithSignUpAllowed 注入"是否允许注册"的来源（通常是 auth.Service.SignUpAllowed，
+// 保证下发状态与服务端拦截同源）。每次 GetAppConfig 都实时调用；返回 error 时按关闭下发。
+func WithSignUpAllowed(fn func(context.Context) (bool, error)) Option {
+	return func(s *Service) {
+		s.signUpAllowed = fn
 	}
 }
 
@@ -246,8 +261,9 @@ func defaultAppConfigHashForPremiumBot(mapboxToken, premiumBotUsername string, w
 	return hash + 1 + int(crc32.ChecksumIEEE([]byte(mapboxToken))&0x1fffffff)
 }
 
-// GetAppConfig returns the cached global app config plus an authenticated,
-// per-account freeze overlay. The cached base already carries the
+// GetAppConfig returns the cached global app config plus a per-request
+// telesrv_sign_up_disabled overlay (read live from the sign-up switch) and an
+// authenticated, per-account freeze overlay. The cached base already carries the
 // server-wide telesrv_features (see withTelesrvFeatures). Only active freezes
 // add account fields; an inactive account receives that base config. The overlay owns its
 // own deterministic hash so a FROZEN_METHOD_INVALID-triggered refresh and a
@@ -268,11 +284,15 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 		return domain.AppConfig{}, fmt.Errorf("decode base app config: %w", err)
 	}
 	changed := false
-	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url"} {
+	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled} {
 		if _, exists := values[key]; exists {
 			delete(values, key)
 			changed = true
 		}
+	}
+	if s.signUpDisabled(ctx) {
+		values[appConfigKeySignUpDisabled] = json.RawMessage("true")
+		changed = true
 	}
 	if userID > 0 {
 		if s != nil && s.accountFreeze != nil {
@@ -297,6 +317,15 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 		return domain.AppConfig{}, fmt.Errorf("encode account app config: %w", err)
 	}
 	return domain.AppConfig{Client: base.Client, Hash: overlayAppConfigHash(base.Hash, body), JSON: body}, nil
+}
+
+// signUpDisabled 实时读取注册开关；读取失败按关闭处理，与 auth 的 fail-closed 拦截一致。
+func (s *Service) signUpDisabled(ctx context.Context) bool {
+	if s == nil || s.signUpAllowed == nil {
+		return false
+	}
+	allowed, err := s.signUpAllowed(ctx)
+	return err != nil || !allowed
 }
 
 // overlayAppConfigHash 为在 base 之上改写过的 config 算一个确定的新 hash，保证与 base 不同，
