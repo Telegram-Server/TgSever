@@ -115,6 +115,14 @@ type uiConfig struct {
 	// template defaults above: it is this process's own reading of .env, so
 	// it matches the server only when both binaries share the same env.
 	SignUpEnabledDefault bool
+	// CodeLoginEnabledDefault mirrors config.CodeLoginEnabled (the
+	// TELESRV_CODE_LOGIN_ENABLED value telesrv follows whenever the panel's
+	// code login override is unset) and PasswordLoginEnabled mirrors
+	// config.PasswordLoginEnabled, which the server checks before it lets the
+	// panel turn code login off. Same "both processes share one .env"
+	// contract as SignUpEnabledDefault; the server makes the real decision.
+	CodeLoginEnabledDefault bool
+	PasswordLoginEnabled    bool
 	// RepoRoot is the working directory the .env editor (see
 	// internal/procctl) operates on: it reads .env.example for the field
 	// vocabulary and rewrites .env in place. The panel resolves it the same
@@ -181,6 +189,8 @@ func loadConfig() (uiConfig, error) {
 		WelcomeMessageEmailDefault: appCfg.WelcomeMessageEmailTemplate,
 		LoginCodeMessageDefault:    appCfg.LoginCodeMessageTemplate,
 		SignUpEnabledDefault:       appCfg.SignUpEnabled,
+		CodeLoginEnabledDefault:    appCfg.CodeLoginEnabled,
+		PasswordLoginEnabled:       appCfg.PasswordLoginEnabled,
 		RepoRoot:                   repoRoot,
 		RedisAddr:                  appCfg.RedisAddr,
 		RedisPassword:              appCfg.RedisPassword,

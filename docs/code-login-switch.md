@@ -15,7 +15,10 @@ The server side is one check, `auth.Service.CheckCodeLoginAllowed`
 end-to-end wiring test is `internal/mtprotoedge/code_login_switch_e2e_test.go`.
 The operator setting is `TELESRV_CODE_LOGIN_ENABLED` in
 [configuration.en.md](configuration.en.md) section 5
-([中文](configuration.zh-CN.md)).
+([中文](configuration.zh-CN.md)), which the admin panel can override at runtime
+(Server Settings → **Code login**); the state can therefore change while a
+client is running, which is why the refusal below matters even for a client
+that read a fresh config.
 
 ## Server state: `telesrv_code_login_disabled`
 

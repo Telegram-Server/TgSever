@@ -260,6 +260,23 @@ func StaticCodeLoginAllowed(enabled bool) CodeLoginAllowedFunc {
 	return func(context.Context) (bool, error) { return enabled, nil }
 }
 
+// IdentityCodeLoginAllowed 返回现读 identity 存储的 CodeLoginAllowedFunc，与
+// IdentitySignUpAllowed 同构：每次判断都读取 identity.json 里的管理面板覆盖值，按
+// domain.ResolveCodeLoginEnabled 与环境变量默认值 envDefault 合并，不缓存。
+// identity.json 读不出时返回错误（fail closed）。nil store 等价于只有环境变量一个来源。
+func IdentityCodeLoginAllowed(store *identity.Store, envDefault bool) CodeLoginAllowedFunc {
+	if store == nil {
+		return StaticCodeLoginAllowed(envDefault)
+	}
+	return func(context.Context) (bool, error) {
+		info, err := store.Get()
+		if err != nil {
+			return false, err
+		}
+		return domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, envDefault), nil
+	}
+}
+
 // WithCodeLoginAllowed 注入"是否允许验证码登录"的来源。所有签发或接受登录/注册用
 // 验证码的入口（发码、重发、登录、注册、登录邮箱 setup、登录邮箱重置）都经
 // CheckCodeLoginAllowed 调用它；会话内验证码流程（更换手机号、注销确认）不经过它。

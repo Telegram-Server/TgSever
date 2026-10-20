@@ -8,7 +8,7 @@ import (
 )
 
 // 服务器设置命令：管理后台把 identity 存储（777000 名称与简介、头像、欢迎消息模板、
-// 登录码模板、注册开关覆盖）的写入交给主服务器执行，见 internal/admin/serveridentity.go。
+// 登录码模板、注册开关覆盖、验证码登录开关覆盖）的写入交给主服务器执行，见 internal/admin/serveridentity.go。
 // 路由与历史路由一样挂在 authenticated() 下：只有主 token 能调用，作用域 token 不行。
 
 // serverSettingsService 是可选的，与 itemPricesService 同理：不提供它的轻量测试替身
@@ -18,6 +18,7 @@ type serverSettingsService interface {
 	SetWelcomeMessageTemplates(context.Context, admin.SetWelcomeMessageTemplatesRequest) (admin.CommandResult, error)
 	SetLoginCodeMessageTemplate(context.Context, admin.SetLoginCodeMessageTemplateRequest) (admin.CommandResult, error)
 	SetSignUpEnabled(context.Context, admin.SetSignUpEnabledRequest) (admin.CommandResult, error)
+	SetCodeLoginEnabled(context.Context, admin.SetCodeLoginEnabledRequest) (admin.CommandResult, error)
 	UploadServerIcon(context.Context, admin.UploadServerIconRequest) (admin.CommandResult, error)
 	RemoveServerIcon(context.Context, admin.RemoveServerIconRequest) (admin.CommandResult, error)
 }
@@ -30,6 +31,7 @@ func (s *Server) registerServerSettingsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/server-settings/set-welcome-message-templates", s.authenticated(s.handleSetWelcomeMessageTemplates))
 	mux.HandleFunc("POST /v1/server-settings/set-login-code-message-template", s.authenticated(s.handleSetLoginCodeMessageTemplate))
 	mux.HandleFunc("POST /v1/server-settings/set-sign-up-enabled", s.authenticated(s.handleSetSignUpEnabled))
+	mux.HandleFunc("POST /v1/server-settings/set-code-login-enabled", s.authenticated(s.handleSetCodeLoginEnabled))
 	mux.HandleFunc("POST /v1/server-settings/upload-icon", s.authenticated(s.handleUploadServerIcon))
 	mux.HandleFunc("POST /v1/server-settings/remove-icon", s.authenticated(s.handleRemoveServerIcon))
 }
@@ -91,6 +93,19 @@ func (s *Server) handleSetSignUpEnabled(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	result, err := svc.SetSignUpEnabled(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetCodeLoginEnabled(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.serverSettings(w)
+	if !ok {
+		return
+	}
+	var req admin.SetCodeLoginEnabledRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := svc.SetCodeLoginEnabled(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
