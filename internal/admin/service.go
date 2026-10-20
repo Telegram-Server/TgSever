@@ -527,7 +527,9 @@ type Dependencies struct {
 	UniqueGifts     UniqueGiftWalletStore
 	TonDNS          TonDNSResolver
 	UsernameWallets UsernameWalletLookup
-	Now             func() time.Time
+	// ClientUpdates is nil when the desktop update service is disabled.
+	ClientUpdates *ClientUpdates
+	Now           func() time.Time
 }
 
 type Service struct {
@@ -569,6 +571,7 @@ type Service struct {
 	uniqueGifts             UniqueGiftWalletStore
 	tonDNS                  TonDNSResolver
 	usernameWallets         UsernameWalletLookup
+	clientUpdates           *ClientUpdates
 	now                     func() time.Time
 }
 
@@ -691,6 +694,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.UsernameWallets != nil {
 		s.usernameWallets = deps.UsernameWallets
+	}
+	if deps.ClientUpdates != nil {
+		s.clientUpdates = deps.ClientUpdates
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
