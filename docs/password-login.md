@@ -334,7 +334,9 @@ Differences from 2FA:
 
 - **The challenge belongs to the connection.** It is bound to the raw auth key
   that called `getLoginPassword`/`getMyLoginPassword`; answering on another
-  connection gives `SRP_ID_INVALID`.
+  connection gives `SRP_ID_INVALID`. With PFS, a temp key rotated between the
+  two calls is another raw key too: get a fresh challenge after the rotation
+  instead of answering the old one.
 - **Single use.** The first answer burns it, whatever the outcome; a second
   answer to the same `srp_id` gives `SRP_ID_INVALID`. 2FA's challenge stays on
   the account until the password changes.
