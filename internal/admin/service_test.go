@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	authapp "telesrv/internal/app/auth"
 	ratingapp "telesrv/internal/app/rating"
 	stargiftapp "telesrv/internal/app/stargifts"
 	usernamesapp "telesrv/internal/app/usernames"
@@ -28,6 +29,7 @@ import (
 // has to fail here rather than at integration time.
 var (
 	_ CollectibleUsernamesService = (*usernamesapp.Service)(nil)
+	_ AccountCreator              = (*authapp.Service)(nil)
 	_ AccountRatingService        = (*ratingapp.Service)(nil)
 )
 

@@ -1988,6 +1988,7 @@ func run(logger *zap.Logger) error {
 	activeSessions.SetLifecycleObserver(router)
 	adminService.Configure(adminapp.Dependencies{
 		Auth:                    authService,
+		AccountCreator:          authService,
 		Revoker:                 router,
 		Users:                   usersService,
 		UserLookup:              userStore,

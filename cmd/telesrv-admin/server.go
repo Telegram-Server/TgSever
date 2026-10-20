@@ -163,6 +163,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-account-username", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUsernameAPI)))
 	mux.Handle("POST /api/actions/set-account-profile", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetProfileAPI)))
 	mux.Handle("POST /api/actions/set-account-phone", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPhoneAPI)))
+	mux.Handle("POST /api/actions/create-account", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleCreateAccountAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
 	mux.Handle("POST /api/actions/set-account-color", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserColorAPI)))
@@ -1082,6 +1083,33 @@ func (s *server) handleBotDetailAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+type createAccountAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	Phone     string `json:"phone"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+}
+
+// handleCreateAccountAPI creates a regular user account (phone, first name,
+// optional last name) through the server's admin command channel. Only the
+// account is created; the member signs in with a login code afterwards.
+func (s *server) handleCreateAccountAPI(w http.ResponseWriter, r *http.Request) {
+	var body createAccountAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.CreateAccountRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-account"),
+		Phone:       body.Phone,
+		FirstName:   body.FirstName,
+		LastName:    body.LastName,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/create", req)
+	writeCommandResultAPI(w, result, err)
 }
 
 type createBotAPIRequest struct {

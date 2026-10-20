@@ -1427,20 +1427,9 @@ func (s *Service) SignUpWithAccountCreator(ctx context.Context, auth domain.Auth
 // 建号、绑定授权，然后（afterBind 成功后）写欢迎消息。phone 和名字必须已经校验过。
 // afterBind 用于验证码注册在欢迎消息之前写入的 bootstrap 登录码消息，可以为 nil。
 func (s *Service) signUpAccount(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create CreateAccountFunc, afterBind func(context.Context, domain.User) error) (domain.User, error) {
-	accessHash, err := randomInt64()
+	newUser, err := s.newSignUpUser(phone, firstName, lastName)
 	if err != nil {
 		return domain.User{}, err
-	}
-	newUser := domain.User{
-		AccessHash: accessHash,
-		Phone:      phone,
-		FirstName:  firstName,
-		LastName:   lastName,
-	}
-	// 新账号默认赠送会员：到期时间 = 注册时刻 + N 个月（与迁移 0094 对存量
-	// 账号的 backfill 同一语义）。premium 状态由下发路径按该时间即时派生。
-	if s.premiumGrantMonths > 0 {
-		newUser.PremiumUntil = int(time.Now().AddDate(0, s.premiumGrantMonths, 0).Unix())
 	}
 	u, err := create(ctx, newUser)
 	if err != nil {
@@ -1456,6 +1445,71 @@ func (s *Service) signUpAccount(ctx context.Context, auth domain.Authorization, 
 	}
 	s.recordWelcomeMessage(ctx, u)
 	return u, nil
+}
+
+// newSignUpUser 构造一个待写入的新账号：生成 access_hash，按配置赠送会员。
+// 所有建号路径（验证码注册、密码注册、后台建号）共用，保证新账号默认待遇一致。
+// phone 和名字必须已经校验过。
+func (s *Service) newSignUpUser(phone, firstName, lastName string) (domain.User, error) {
+	accessHash, err := randomInt64()
+	if err != nil {
+		return domain.User{}, err
+	}
+	newUser := s.signUpUserDefaults(phone, firstName, lastName)
+	newUser.AccessHash = accessHash
+	return newUser, nil
+}
+
+// signUpUserDefaults 是新账号除 access_hash 以外的默认字段。
+func (s *Service) signUpUserDefaults(phone, firstName, lastName string) domain.User {
+	newUser := domain.User{
+		Phone:     phone,
+		FirstName: firstName,
+		LastName:  lastName,
+	}
+	// 新账号默认赠送会员：到期时间 = 注册时刻 + N 个月（与迁移 0094 对存量
+	// 账号的 backfill 同一语义）。premium 状态由下发路径按该时间即时派生。
+	if s.premiumGrantMonths > 0 {
+		newUser.PremiumUntil = int(time.Now().AddDate(0, s.premiumGrantMonths, 0).Unix())
+	}
+	return newUser
+}
+
+// ValidateNewAccount 按普通注册的规则校验后台建号参数（号码格式、保留号段、名字），
+// 并确认号码未被占用（占用时返回 domain.ErrPhoneNumberOccupied）。返回将要创建的账号
+// （规范化后的号码和名字、按配置赠送的会员到期时间；没有 ID 和 access_hash），不建号，
+// 用于试运行。不受注册开关限制。
+func (s *Service) ValidateNewAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error) {
+	phone, err := NormalizeSignUpPhone(phone)
+	if err != nil {
+		return domain.User{}, err
+	}
+	firstName, lastName, err = NormalizeSignUpName(firstName, lastName)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if _, found, err := s.currentPhoneOwner(ctx, phone); err != nil {
+		return domain.User{}, err
+	} else if found {
+		return domain.User{}, domain.ErrPhoneNumberOccupied
+	}
+	return s.signUpUserDefaults(phone, firstName, lastName), nil
+}
+
+// CreateAccount 是后台建号：按普通注册的规则校验并建号（含会员赠送），
+// 但不受注册开关限制，不绑定任何授权，也不写欢迎消息——欢迎消息在新成员
+// 首次用验证码登录时按普通登录流程发送。号码已被占用时返回 domain.ErrPhoneNumberOccupied
+// （并发建号由存储的唯一约束兜底）。
+func (s *Service) CreateAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error) {
+	pending, err := s.ValidateNewAccount(ctx, phone, firstName, lastName)
+	if err != nil {
+		return domain.User{}, err
+	}
+	newUser, err := s.newSignUpUser(pending.Phone, pending.FirstName, pending.LastName)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return s.users.Create(ctx, newUser)
 }
 
 // SignInBot 处理 auth.importBotAuthorization：校验 bot token 并把当前 auth_key
