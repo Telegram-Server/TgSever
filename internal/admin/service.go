@@ -4950,17 +4950,9 @@ func (s *Service) runCommand(ctx context.Context, meta CommandMeta, action strin
 	if s == nil || s.commands == nil {
 		return CommandResult{}, fmt.Errorf("admin command store is not configured")
 	}
-	meta.CommandID = strings.TrimSpace(meta.CommandID)
-	meta.Actor = strings.TrimSpace(meta.Actor)
-	meta.Reason = strings.TrimSpace(meta.Reason)
-	if meta.CommandID == "" || len(meta.CommandID) > maxCommandIDLength {
-		return CommandResult{}, fmt.Errorf("command_id is required and must be <= %d bytes", maxCommandIDLength)
-	}
-	if meta.Actor == "" || len(meta.Actor) > maxActorLength {
-		return CommandResult{}, fmt.Errorf("actor is required and must be <= %d bytes", maxActorLength)
-	}
-	if meta.Reason == "" || len(meta.Reason) > maxReasonLength {
-		return CommandResult{}, fmt.Errorf("reason is required and must be <= %d bytes", maxReasonLength)
+	meta, err := normalizeCommandMeta(meta)
+	if err != nil {
+		return CommandResult{}, err
 	}
 	requestJSON, err := json.Marshal(request)
 	if err != nil {
@@ -5027,6 +5019,26 @@ func (s *Service) runCommand(ctx context.Context, meta CommandMeta, action strin
 		return response, err
 	}
 	return response, opErr
+}
+
+// normalizeCommandMeta trims the metadata every command carries and checks it
+// the way runCommand does. A command that does expensive work before
+// runCommand (staging an uploaded package) calls it first, so a request that
+// runCommand would reject never gets that far.
+func normalizeCommandMeta(meta CommandMeta) (CommandMeta, error) {
+	meta.CommandID = strings.TrimSpace(meta.CommandID)
+	meta.Actor = strings.TrimSpace(meta.Actor)
+	meta.Reason = strings.TrimSpace(meta.Reason)
+	if meta.CommandID == "" || len(meta.CommandID) > maxCommandIDLength {
+		return meta, fmt.Errorf("command_id is required and must be <= %d bytes", maxCommandIDLength)
+	}
+	if meta.Actor == "" || len(meta.Actor) > maxActorLength {
+		return meta, fmt.Errorf("actor is required and must be <= %d bytes", maxActorLength)
+	}
+	if meta.Reason == "" || len(meta.Reason) > maxReasonLength {
+		return meta, fmt.Errorf("reason is required and must be <= %d bytes", maxReasonLength)
+	}
+	return meta, nil
 }
 
 func sameJSON(a, b []byte) bool {

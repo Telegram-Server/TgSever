@@ -2,17 +2,34 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"testing"
 	"time"
 
 	"telesrv/internal/updatecdn"
 )
 
-// fakeClientUpdateCatalog 是进程内更新目录的替身，Status 返回预设的结果。
+// fakeClientUpdateCatalog 是进程内更新目录的替身：Status 返回预设的结果；暂存把读到
+// 的字节记在内存里，发布按预设的 result/publishErr 应答并记录每一次调用。
 type fakeClientUpdateCatalog struct {
 	status updatecdn.StoreStatus
 	err    error
+
+	staged     map[string][]byte
+	nextID     int
+	result     updatecdn.PublishResult
+	publishErr error
+	calls      []fakePublishCall
+	discarded  []string
+}
+
+type fakePublishCall struct {
+	id                     string
+	dryRun, allowDowngrade bool
 }
 
 func (f *fakeClientUpdateCatalog) Status() (updatecdn.StoreStatus, error) { return f.status, f.err }
@@ -20,6 +37,45 @@ func (f *fakeClientUpdateCatalog) ManifestPath() string                   { retu
 func (f *fakeClientUpdateCatalog) FilesDir() string                       { return "/updates/files" }
 func (f *fakeClientUpdateCatalog) CatalogOptions() updatecdn.CatalogOptions {
 	return updatecdn.CatalogOptions{}
+}
+
+func (f *fakeClientUpdateCatalog) StagePackage(r io.Reader) (updatecdn.StagedPackage, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return updatecdn.StagedPackage{}, err
+	}
+	if f.staged == nil {
+		f.staged = map[string][]byte{}
+	}
+	f.nextID++
+	id := fmt.Sprintf("%032x", f.nextID)
+	f.staged[id] = data
+	sum := sha256.Sum256(data)
+	return updatecdn.StagedPackage{ID: id, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}, nil
+}
+
+func (f *fakeClientUpdateCatalog) PublishStagedPackage(id string, dryRun, allowDowngrade bool) (*updatecdn.PublishResult, error) {
+	f.calls = append(f.calls, fakePublishCall{id: id, dryRun: dryRun, allowDowngrade: allowDowngrade})
+	if _, ok := f.staged[id]; !ok {
+		return nil, updatecdn.ErrStagingNotFound
+	}
+	if f.publishErr != nil {
+		return nil, f.publishErr
+	}
+	if !dryRun {
+		delete(f.staged, id)
+	}
+	result := f.result
+	return &result, nil
+}
+
+func (f *fakeClientUpdateCatalog) DiscardStagedPackage(id string) error {
+	if _, ok := f.staged[id]; !ok {
+		return updatecdn.ErrStagingNotFound
+	}
+	delete(f.staged, id)
+	f.discarded = append(f.discarded, id)
+	return nil
 }
 
 func TestClientUpdateStatusWithoutDependencyReportsDisabled(t *testing.T) {
