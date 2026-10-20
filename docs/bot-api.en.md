@@ -1037,6 +1037,18 @@ MTProto clients are unaffected: everything implemented for the official
 Android/iOS/Desktop clients is reached over MTProto, not HTTP. See
 `docs/premium-stars.md` for the shared Stars and Premium pipelines.
 
+MTProto profile privacy is enforced independently of those HTTP adapters:
+an existing avatar must belong to the target owner's profile/fallback history;
+hidden albums expose only the current fallback photo (or an empty album), and
+their pagination/count do not disclose hidden history. Deleted owners expose
+neither albums nor saved music. Boost lists project users for the viewer, so
+phone and photo privacy apply equally to memory and PostgreSQL.
+
+Migration `20261023020000_suggested_profile_photo_offers` backfills inactive
+history for previously delivered avatar suggestions. It sorts after the
+published `20261023010000_login_passwords`; its rollback intentionally retains
+the offers because they cannot be distinguished from later accepted photos.
+
 ## Demos and self-tests
 
 | Path | Purpose |

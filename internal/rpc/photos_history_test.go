@@ -251,18 +251,6 @@ func TestSuggestedPhotoNotOfferedWhenSendFails(t *testing.T) {
 	}
 }
 
-// recipientBlocksContacts 让 blocker 拉黑 blocked，其余调用透传。
-type recipientBlocksContacts struct {
-	ContactsService
-	blocker, blocked int64
-}
-
-func (c recipientBlocksContacts) IsBlocked(ctx context.Context, userID, peerUserID int64) (bool, error) {
-	if userID == c.blocker && peerUserID == c.blocked {
-		return true, nil
-	}
-	return c.ContactsService.IsBlocked(ctx, userID, peerUserID)
-}
 
 // TestSuggestedPhotoNotOfferedWhenRecipientBlocksSuggester 守护：收件人拉黑了建议者时，
 // 消息不投递，照片也不进入收件人的头像历史。
