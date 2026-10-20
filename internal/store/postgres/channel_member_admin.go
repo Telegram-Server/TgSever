@@ -8,6 +8,11 @@ import (
 )
 
 func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error) {
+	if req.HasRank() {
+		if err := domain.ValidateChannelRank(req.Rank); err != nil {
+			return domain.EditChannelAdminResult{}, err
+		}
+	}
 	if req.UserID == 0 || req.ChannelID == 0 || req.MemberID == 0 {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
@@ -307,6 +312,9 @@ WHERE id = $1 AND NOT deleted`, req.ChannelID, req.NewOwnerID); err != nil {
 }
 
 func (s *ChannelStore) EditChannelMemberRank(ctx context.Context, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error) {
+	if err := domain.ValidateChannelRank(req.Rank); err != nil {
+		return domain.EditChannelAdminResult{}, err
+	}
 	if req.UserID == 0 || req.ChannelID == 0 || req.MemberID == 0 {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
@@ -372,6 +380,9 @@ func (s *ChannelStore) EditChannelMemberRank(ctx context.Context, req domain.Edi
 }
 
 func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error) {
+	if req.Participant.Type == domain.PeerTypeChannel {
+		return s.editChannelSenderBan(ctx, req)
+	}
 	if req.UserID == 0 || req.ChannelID == 0 || req.Participant.Type != domain.PeerTypeUser || req.Participant.ID == 0 {
 		return domain.EditChannelBannedResult{}, domain.ErrChannelInvalid
 	}

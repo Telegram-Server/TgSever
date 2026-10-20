@@ -376,7 +376,7 @@ func TestChannelStorePendingJoinRequestsSummaryAndInviteAdmins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invite admins: %v", err)
 	}
-	want := []int64{owner.ID, inviteAdmin.ID, changeAdmin.ID}
+	want := []int64{owner.ID, inviteAdmin.ID}
 	if !reflect.DeepEqual(admins, want) {
 		t.Fatalf("invite admins = %+v, want %+v", admins, want)
 	}

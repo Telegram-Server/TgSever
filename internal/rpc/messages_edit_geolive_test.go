@@ -77,7 +77,7 @@ func TestEditMessageLiveLocationUpdateAndStop(t *testing.T) {
 		t.Fatalf("edited period = %d, want preserved 3600", live.Period)
 	}
 
-	// 停止共享：period 收口为已逝时长（≤ 原 period 且 ≥1），客户端立即判定过期。
+	// 停止共享：原消息的有效期结束于当前时间，首发同秒停止也立即过期。
 	stopReq := &tg.MessagesEditMessageRequest{Peer: ownerPeer, ID: msg.ID}
 	stopped := &tg.InputMediaGeoLive{GeoPoint: &tg.InputGeoPointEmpty{}, Stopped: true}
 	stopReq.SetMedia(stopped)
@@ -90,8 +90,8 @@ func TestEditMessageLiveLocationUpdateAndStop(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected MessageMediaGeoLive after stop, got %T", edited.Media)
 	}
-	if live.Period < 1 || live.Period > 60 {
-		t.Fatalf("stopped period = %d, want small elapsed value", live.Period)
+	if edited.Date+live.Period > int(r.clock.Now().Unix()) {
+		t.Fatalf("stopped location still active: date=%d period=%d", edited.Date, live.Period)
 	}
 
 	// 非 geolive 消息不可走 live 编辑。

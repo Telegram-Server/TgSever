@@ -86,6 +86,15 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validTodoParticipantEdit(req, target, oldEntities) {
 		return res, domain.ErrMessageAuthorRequired
 	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindGeoLive {
+		targetMedia, err := decodeMessageMedia(target.MediaJson)
+		if err != nil {
+			return res, fmt.Errorf("decode live location for edit: %w", err)
+		}
+		if targetMedia != nil && targetMedia.Kind == domain.MessageMediaKindGeoLive && !targetMedia.GeoLive.Active(int(target.MessageDate), req.EditDate) {
+			return res, domain.ErrMessageNotModified
+		}
+	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(targetRich, req.RichMessage)
 	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
 		return res, domain.ErrMessageNotModified

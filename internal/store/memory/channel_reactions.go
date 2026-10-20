@@ -107,6 +107,7 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 	if s.reactions[req.ChannelID][req.MessageID] == nil {
 		s.reactions[req.ChannelID][req.MessageID] = make(map[int64][]domain.ChannelMessagePeerReaction)
 	}
+	old := reactionSelection(s.reactions[req.ChannelID][req.MessageID][req.UserID])
 	// 广播频道 reaction 匿名（官方语义），作者不收 unread 角标，不写 unread 簿记。
 	unreadEligible := !channel.Broadcast || channel.Megagroup
 	if len(req.Reactions) == 0 {
@@ -160,11 +161,12 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 	msg.Reactions = cloneChannelMessageReactionsPtr(&reactions)
 	// sendReaction 实时推送走在线 viewer scope（rpc 层封顶），不预热全量成员列表。
 	return domain.ChannelMessageReactionsResult{
-		Channel:    cloneChannel(channel),
-		Message:    msg,
-		Messages:   []domain.ChannelMessage{msg},
-		Reactions:  cloneChannelMessageReactions(reactions),
-		Recipients: []int64{req.UserID},
+		MessageReactionChange: domain.MessageReactionChange{MessageID: req.MessageID, ActorUserID: req.UserID, OldReactions: old, NewReactions: append([]domain.MessageReaction(nil), req.Reactions...)},
+		Channel:               cloneChannel(channel),
+		Message:               msg,
+		Messages:              []domain.ChannelMessage{msg},
+		Reactions:             cloneChannelMessageReactions(reactions),
+		Recipients:            []int64{req.UserID},
 	}, nil
 }
 
@@ -420,13 +422,14 @@ func (s *ChannelStore) DeleteChannelParticipantReaction(_ context.Context, req d
 	if err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
 	}
-	if !canDeleteAnyChannelMessage(member) {
+	if !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrChannelAdminRequired
 	}
 	msg, ok := s.findMessageLocked(req.ChannelID, req.MessageID)
 	if !ok || msg.Deleted || msg.ID <= member.AvailableMinID {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
+	old := reactionSelection(s.reactions[req.ChannelID][req.MessageID][req.ParticipantUserID])
 	if s.reactions[req.ChannelID] != nil && s.reactions[req.ChannelID][req.MessageID] != nil {
 		delete(s.reactions[req.ChannelID][req.MessageID], req.ParticipantUserID)
 	}
@@ -435,11 +438,12 @@ func (s *ChannelStore) DeleteChannelParticipantReaction(_ context.Context, req d
 	outMsg := cloneChannelMessage(msg)
 	outMsg.Reactions = cloneChannelMessageReactionsPtr(&reactions)
 	return domain.ChannelMessageReactionsResult{
-		Channel:    cloneChannel(channel),
-		Message:    outMsg,
-		Messages:   []domain.ChannelMessage{outMsg},
-		Reactions:  cloneChannelMessageReactions(reactions),
-		Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0),
+		MessageReactionChange: domain.MessageReactionChange{MessageID: req.MessageID, ActorUserID: req.ParticipantUserID, OldReactions: old},
+		Channel:               cloneChannel(channel),
+		Message:               outMsg,
+		Messages:              []domain.ChannelMessage{outMsg},
+		Reactions:             cloneChannelMessageReactions(reactions),
+		Recipients:            s.activeMemberIDsLocked(req.ChannelID, 0, 0),
 	}, nil
 }
 
@@ -456,7 +460,7 @@ func (s *ChannelStore) DeleteChannelParticipantReactions(_ context.Context, req 
 	if err != nil {
 		return domain.DeleteChannelParticipantReactionsResult{}, err
 	}
-	if !canDeleteAnyChannelMessage(member) {
+	if !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelParticipantReactionsResult{}, domain.ErrChannelAdminRequired
 	}
 	type reactionMsg struct {
@@ -493,7 +497,9 @@ func (s *ChannelStore) DeleteChannelParticipantReactions(_ context.Context, req 
 	}
 	owners := make(map[int64]struct{})
 	ids := make([]int, 0, len(candidates))
+	changes := make([]domain.MessageReactionChange, 0, len(candidates))
 	for _, item := range candidates {
+		changes = append(changes, domain.MessageReactionChange{MessageID: item.id, ActorUserID: req.ParticipantUserID, OldReactions: reactionSelection(s.reactions[req.ChannelID][item.id][req.ParticipantUserID])})
 		if s.reactions[req.ChannelID] != nil && s.reactions[req.ChannelID][item.id] != nil {
 			delete(s.reactions[req.ChannelID][item.id], req.ParticipantUserID)
 		}
@@ -518,6 +524,7 @@ func (s *ChannelStore) DeleteChannelParticipantReactions(_ context.Context, req 
 	}
 	sort.Slice(messages, func(i, j int) bool { return messages[i].ID > messages[j].ID })
 	return domain.DeleteChannelParticipantReactionsResult{
+		Changes:    changes,
 		Channel:    cloneChannel(channel),
 		Messages:   messages,
 		Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0),

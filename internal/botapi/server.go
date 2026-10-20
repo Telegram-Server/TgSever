@@ -1134,10 +1134,23 @@ func (h *handler) deleteMessage(w http.ResponseWriter, r *http.Request, botID in
 	}
 	ok, err := h.gateway.BotAPIDeleteMessage(r.Context(), botID, chatID, messageID)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+		writeAPIError(w, http.StatusBadRequest, deleteMessageErrorDescription(err))
 		return
 	}
 	writeAPIOK(w, ok)
+}
+
+// deleteMessageErrorDescription 把删除失败映射成官方 Bot API 的说明文本：bot 库
+// 按这两句判断"消息已不存在"和"没有权限删除"，其余错误保持网关错误码。
+func deleteMessageErrorDescription(err error) string {
+	switch code := apiErrorDescription(err); code {
+	case "MESSAGE_ID_INVALID":
+		return "Bad Request: message to delete not found"
+	case "MESSAGE_DELETE_FORBIDDEN":
+		return "Bad Request: message can't be deleted"
+	default:
+		return code
+	}
 }
 
 // answerPreCheckoutQuery implements the Bot API answerPreCheckoutQuery. It is the
@@ -1841,6 +1854,7 @@ func apiErrorDescription(err error) string {
 		"QUERY_ID_INVALID",
 		"MESSAGE_ID_INVALID",
 		"MESSAGE_NOT_MODIFIED",
+		"MESSAGE_DELETE_FORBIDDEN",
 		"BOT_COMMAND_INVALID",
 		"EPHEMERAL_MESSAGE_ID_INVALID",
 		"EPHEMERAL_ACTION_EXPIRED",

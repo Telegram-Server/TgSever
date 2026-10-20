@@ -381,7 +381,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(_ context.Context, req domain.Del
 	if !ok {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrMessageIDInvalid
 	}
-	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !canDeleteAnyChannelMessage(member) {
+	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
 	ids := make([]int, 0, domain.MaxDeleteHistoryBatch)
@@ -399,7 +399,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(_ context.Context, req domain.Del
 		}
 	}
 	audit := domain.UserDeletionAudit(domain.DeletionSourceTopicHistory, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
-	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit)
+	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit, false)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
@@ -585,9 +585,10 @@ func (s *ChannelStore) channelMessageRepliesLocked(viewerUserID, channelID int64
 		rootID = msg.Discussion.MessageID
 		stats.Comments = true
 		stats.ChannelID = msg.Discussion.ChannelID
-	} else if channel, ok := s.channels[channelID]; ok && channel.Broadcast && channel.LinkedChatID != 0 && msg.Post {
-		stats.Comments = true
-		stats.ChannelID = channel.LinkedChatID
+	} else if channel, ok := s.channels[channelID]; ok && channel.Broadcast && msg.Post {
+		// A linked channel does not imply that this particular post has a
+		// discussion root (for example when its sender identity is banned).
+		return nil
 	}
 	if rootID <= 0 {
 		return nil

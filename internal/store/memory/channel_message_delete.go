@@ -26,7 +26,7 @@ func (s *ChannelStore) DeleteChannelMessages(_ context.Context, req domain.Delet
 		}
 	}
 	audit := req.Audit.OrUser(domain.DeletionSourceUser, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
-	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, req.IDs, req.UserID, req.Date, audit)
+	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, req.IDs, req.UserID, req.Date, audit, req.SkipUnauthorized)
 	if err != nil {
 		return domain.DeleteChannelMessagesResult{}, err
 	}
@@ -46,7 +46,7 @@ func (s *ChannelStore) DeleteChannelMessages(_ context.Context, req domain.Delet
 			continue
 		}
 		systemMember := domain.ChannelMember{ChannelID: groupID, UserID: req.UserID, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}
-		groupDeleted, groupEvent, group, err := s.deleteChannelMessagesLocked(group, systemMember, rootIDs, req.UserID, req.Date, cascadeAudit)
+		groupDeleted, groupEvent, group, err := s.deleteChannelMessagesLocked(group, systemMember, rootIDs, req.UserID, req.Date, cascadeAudit, false)
 		if err != nil || len(groupDeleted) == 0 {
 			continue
 		}
@@ -123,7 +123,7 @@ func (s *ChannelStore) DeleteChannelHistory(_ context.Context, req domain.Delete
 			AvailableMinChanged: changed,
 		}, nil
 	}
-	if !canDeleteAnyChannelMessage(member) {
+	if !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
 	// id=1 是建群服务消息，全员清空必须保留：它是清空后会话仅剩的
@@ -141,7 +141,7 @@ func (s *ChannelStore) DeleteChannelHistory(_ context.Context, req domain.Delete
 		}
 	}
 	audit := domain.UserDeletionAudit(domain.DeletionSourceHistoryClear, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
-	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit)
+	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit, false)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
@@ -169,7 +169,7 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(_ context.Context, req do
 		return domain.DeleteChannelHistoryResult{}, err
 	}
 	member := s.members[req.ChannelID][req.UserID]
-	if !canDeleteAnyChannelMessage(member) {
+	if !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
 	// 同全员清空：id=1 建群服务消息不随发送者（创建者）历史一起删除，
@@ -186,7 +186,7 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(_ context.Context, req do
 		}
 	}
 	audit := domain.UserDeletionAudit(domain.DeletionSourceParticipantHistory, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
-	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit)
+	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit, false)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
@@ -205,11 +205,11 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(_ context.Context, req do
 
 // deleteChannelMessagesLocked 软删除一批群/频道消息。actorUserID 用于权限校验与
 // 频道管理日志；audit 是写入删除记录的完整归属，由各入口按自身语义给出。
-func (s *ChannelStore) deleteChannelMessagesLocked(channel domain.Channel, member domain.ChannelMember, ids []int, actorUserID int64, date int, audit domain.DeletionAudit) ([]int, domain.ChannelUpdateEvent, domain.Channel, error) {
+func (s *ChannelStore) deleteChannelMessagesLocked(channel domain.Channel, member domain.ChannelMember, ids []int, actorUserID int64, date int, audit domain.DeletionAudit, skipUnauthorized bool) ([]int, domain.ChannelUpdateEvent, domain.Channel, error) {
 	if len(ids) == 0 {
 		return nil, domain.ChannelUpdateEvent{}, channel, nil
 	}
-	seen := make(map[int]struct{}, len(ids))
+	seen := make(map[int]int, len(ids))
 	deleted := make([]int, 0, len(ids))
 	for _, id := range ids {
 		if id <= 0 || id > domain.MaxMessageBoxID {
@@ -218,13 +218,16 @@ func (s *ChannelStore) deleteChannelMessagesLocked(channel domain.Channel, membe
 		if _, ok := seen[id]; ok {
 			continue
 		}
-		seen[id] = struct{}{}
+		seen[id] = -1
 		idx, ok := s.findMessageIndexLocked(channel.ID, id)
 		if !ok || s.messages[channel.ID][idx].Deleted {
 			continue
 		}
 		msg := s.messages[channel.ID][idx]
-		if msg.SenderUserID != actorUserID && !canDeleteAnyChannelMessage(member) {
+		if !domain.CanDeleteChannelMessage(member, actorUserID, msg.SenderUserID) {
+			if skipUnauthorized {
+				continue
+			}
 			return nil, domain.ChannelUpdateEvent{}, channel, domain.ErrChannelAdminRequired
 		}
 		if id <= 1 {
@@ -232,9 +235,15 @@ func (s *ChannelStore) deleteChannelMessagesLocked(channel domain.Channel, membe
 			// 删除入口统一静默跳过（官方客户端对它禁用删除）。
 			continue
 		}
+		seen[id] = idx
+		deleted = append(deleted, id)
+	}
+	// Validate the entire batch before mutation: memory has no transaction rollback.
+	for _, id := range deleted {
+		idx := seen[id]
+		msg := s.messages[channel.ID][idx]
 		msg.Deleted = true
 		s.messages[channel.ID][idx] = msg
-		deleted = append(deleted, id)
 		s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
 			ChannelID: channel.ID,
 			UserID:    actorUserID,
@@ -327,8 +336,4 @@ func (s *ChannelStore) topNonDeletedMessageIDLocked(channelID int64) int {
 		}
 	}
 	return 0
-}
-
-func canDeleteAnyChannelMessage(member domain.ChannelMember) bool {
-	return member.Role == domain.ChannelRoleCreator || (member.Role == domain.ChannelRoleAdmin && member.AdminRights.DeleteMessages)
 }

@@ -37,6 +37,11 @@ func (r *Router) tgStoryViewsList(ctx context.Context, viewerUserID int64, list 
 	peerUsers, peerChannels := r.storyPeerObjects(ctx, viewerUserID, storyViewPeers(list.Views))
 	users = mergeDomainUsers(users, peerUsers...)
 	out := tgStoryViewsList(viewerUserID, list, users)
+	for _, view := range out.Views {
+		if forward, ok := view.(*tg.StoryViewPublicForward); ok {
+			r.applyChannelMessageRanks(ctx, viewerUserID, []tg.MessageClass{forward.Message})
+		}
+	}
 	if len(peerChannels) > 0 {
 		out.Chats = appendUniqueTGChats(out.Chats, tgChannels(viewerUserID, peerChannels)...)
 	}
@@ -49,6 +54,11 @@ func (r *Router) tgStoryReactionsList(ctx context.Context, viewerUserID int64, l
 	peerUsers, peerChannels := r.storyPeerObjects(ctx, viewerUserID, storyViewPeers(list.Reactions))
 	users = mergeDomainUsers(users, peerUsers...)
 	out := tgStoryReactionsList(viewerUserID, list, users)
+	for _, reaction := range out.Reactions {
+		if forward, ok := reaction.(*tg.StoryReactionPublicForward); ok {
+			r.applyChannelMessageRanks(ctx, viewerUserID, []tg.MessageClass{forward.Message})
+		}
+	}
 	if len(peerChannels) > 0 {
 		out.Chats = appendUniqueTGChats(out.Chats, tgChannels(viewerUserID, peerChannels)...)
 	}
@@ -71,8 +81,10 @@ func (r *Router) tgMessagesDialogs(ctx context.Context, viewerUserID int64, list
 	out := tgMessagesDialogs(viewerUserID, list)
 	switch v := out.(type) {
 	case *tg.MessagesDialogs:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.Messages)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.MessagesDialogsSlice:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.Messages)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	}
 	return out
@@ -81,6 +93,7 @@ func (r *Router) tgMessagesDialogs(ctx context.Context, viewerUserID int64, list
 func (r *Router) tgPeerDialogs(ctx context.Context, viewerUserID int64, list domain.DialogList, st domain.UpdateState) *tg.MessagesPeerDialogs {
 	list = r.withDialogNotifySettings(ctx, viewerUserID, list)
 	out := tgPeerDialogs(viewerUserID, list, st)
+	r.applyChannelMessageRanks(ctx, viewerUserID, out.Messages)
 	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
@@ -150,12 +163,14 @@ func (r *Router) tgMessagesDiscussionMessage(ctx context.Context, viewerUserID i
 	// 用带 presence + self 标志的投影覆盖裸 tgUsers，防止 viewer 自己以 self=false
 	// 进入 Users（Android putUsers 会覆盖 currentUser）。
 	out.Users = r.tgUsersForViewer(viewerUserID, discussion.Users)
+	r.applyChannelMessageRanks(ctx, viewerUserID, out.Messages)
 	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 
 func (r *Router) applyStoryMaxIDsToForumTopics(ctx context.Context, viewerUserID int64, out *tg.MessagesForumTopics) *tg.MessagesForumTopics {
 	if out != nil {
+		r.applyChannelMessageRanks(ctx, viewerUserID, out.Messages)
 		r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	}
 	return out
@@ -190,10 +205,13 @@ func (r *Router) tgGlobalSearchMessages(ctx context.Context, viewerUserID int64,
 func (r *Router) applyPeerReadModelsToMessages(ctx context.Context, viewerUserID int64, out tg.MessagesMessagesClass) {
 	switch v := out.(type) {
 	case *tg.MessagesMessages:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.Messages)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.MessagesMessagesSlice:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.Messages)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.MessagesChannelMessages:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.Messages)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	}
 }
@@ -215,8 +233,12 @@ func (r *Router) tgUpdatesDifference(ctx context.Context, viewerUserID int64, di
 	out := tgUpdatesDifference(viewerUserID, diff)
 	switch v := out.(type) {
 	case *tg.UpdatesDifference:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.NewMessages)
+		r.applyChannelUpdateRanks(ctx, viewerUserID, v.OtherUpdates)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.UpdatesDifferenceSlice:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.NewMessages)
+		r.applyChannelUpdateRanks(ctx, viewerUserID, v.OtherUpdates)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	}
 	return out
@@ -226,8 +248,11 @@ func (r *Router) tgChannelDifference(ctx context.Context, viewerUserID int64, di
 	out := tgChannelDifference(viewerUserID, diff)
 	switch v := out.(type) {
 	case *tg.UpdatesChannelDifference:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.NewMessages)
+		r.applyChannelUpdateRanks(ctx, viewerUserID, v.OtherUpdates)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.UpdatesChannelDifferenceTooLong:
+		r.applyChannelMessageRanks(ctx, viewerUserID, v.Messages)
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	}
 	return out

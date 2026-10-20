@@ -515,7 +515,7 @@ func (r *Router) inviteManagementChannelView(ctx context.Context, peer tg.InputP
 	if err != nil {
 		return 0, domain.ChannelView{}, err
 	}
-	if view.Self.Role != domain.ChannelRoleCreator && view.Self.Role != domain.ChannelRoleAdmin {
+	if view.Self.Role != domain.ChannelRoleCreator && (view.Self.Role != domain.ChannelRoleAdmin || !view.Self.AdminRights.InviteUsers) {
 		return 0, domain.ChannelView{}, tgerr400("CHAT_ADMIN_REQUIRED")
 	}
 	return userID, view, nil
@@ -717,6 +717,8 @@ func (r *Router) channelIDFromLegacyInputPeerChecked(ctx context.Context, userID
 
 func channelInvalidErr(err error) error {
 	switch {
+	case errors.Is(err, domain.ErrChannelSenderBanned):
+		return sendAsPeerInvalidErr()
 	case errors.Is(err, domain.ErrUserFrozen):
 		return frozenMethodInvalidErr()
 	case errors.Is(err, domain.ErrChannelTitleInvalid):

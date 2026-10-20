@@ -562,6 +562,11 @@ func (r *Router) tgStatsPublicForwards(ctx context.Context, viewerUserID int64, 
 		Chats:    tgChannels(viewerUserID, peerChannels),
 		Users:    tgUsersForViewer(viewerUserID, users),
 	}
+	for _, forward := range out.Forwards {
+		if message, ok := forward.(*tg.PublicForwardMessage); ok {
+			r.applyChannelMessageRanks(ctx, viewerUserID, []tg.MessageClass{message.Message})
+		}
+	}
 	if list.NextOffset != "" {
 		out.SetNextOffset(list.NextOffset)
 	}

@@ -79,7 +79,7 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 		if _, ok := botAPIQueuedUpdateKind(botID, item, now); !ok {
 			continue
 		}
-		if item.Ephemeral != nil || item.ChatMember != nil {
+		if item.Ephemeral != nil || item.ChatMember != nil || item.Reaction != nil || item.JoinRequest != nil {
 			continue
 		}
 		if item.Callback != nil && item.Callback.InlineMessage != nil {
@@ -177,6 +177,20 @@ func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate, now time.Time
 	if item.Ephemeral != nil && !botAPIQueuedEphemeralValid(botID, item, now) {
 		return "", false
 	}
+	if item.Kind == domain.BotAPIUpdateChatJoinRequest {
+		err := domain.ValidateBotAPIJoinRequest(domain.EnqueueBotAPIUpdateRequest{BotUserID: botID, Kind: item.Kind, Peer: item.Peer, MessageID: item.MessageID, SourcePts: item.SourcePts, Date: item.Date, JoinRequest: item.JoinRequest})
+		return eventType, err == nil
+	}
+	if item.JoinRequest != nil {
+		return "", false
+	}
+	if item.Kind == domain.BotAPIUpdateMessageReaction || item.Kind == domain.BotAPIUpdateMessageReactionCount {
+		err := domain.ValidateBotAPIReactionRequest(domain.EnqueueBotAPIUpdateRequest{BotUserID: botID, Kind: item.Kind, Peer: item.Peer, MessageID: item.MessageID, Date: item.Date, Reaction: item.Reaction})
+		return eventType, err == nil
+	}
+	if item.Reaction != nil {
+		return "", false
+	}
 	if item.Kind == domain.BotAPIUpdateMyChatMember || item.Kind == domain.BotAPIUpdateChatMember {
 		// 成员更新没有消息：载荷自足，只核对它与队列行一致。
 		if item.ChatMember == nil || item.MessageID != 0 || item.Peer.Type != domain.PeerTypeChannel ||
@@ -261,6 +275,16 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 	if !ok {
 		return domain.UpdateEvent{}, false
 	}
+	if item.JoinRequest != nil {
+		peers := []domain.Peer{{Type: domain.PeerTypeUser, ID: item.JoinRequest.UserID}}
+		if item.JoinRequest.Invite != nil {
+			peers = append(peers, domain.Peer{Type: domain.PeerTypeUser, ID: item.JoinRequest.Invite.AdminUserID})
+		}
+		return domain.UpdateEvent{UserID: botID, Type: eventType, BotAPIUpdateID: item.ID, Date: item.Date, Peer: item.Peer, Peers: peers, BotJoinRequest: item.JoinRequest.Clone()}, true
+	}
+	if item.Reaction != nil {
+		return domain.UpdateEvent{UserID: botID, Type: eventType, BotAPIUpdateID: item.ID, Date: item.Date, Peer: item.Peer, Peers: []domain.Peer{{Type: domain.PeerTypeUser, ID: item.Reaction.ActorUserID}}, BotReaction: item.Reaction.Clone()}, true
+	}
 	if item.Ephemeral != nil {
 		message := item.Ephemeral.EphemeralMessage()
 		event := domain.UpdateEvent{
@@ -286,6 +310,9 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 			if inviter > 0 {
 				peers = append(peers, domain.Peer{Type: domain.PeerTypeUser, ID: inviter})
 			}
+		}
+		if update.Invite != nil {
+			peers = append(peers, domain.Peer{Type: domain.PeerTypeUser, ID: update.Invite.AdminUserID})
 		}
 		return domain.UpdateEvent{
 			UserID:         botID,
@@ -350,7 +377,7 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 				BotCallbackQuery: &callback,
 			}, true
 		}
-		if msg.Out || !botAPIMessageProjectable(msg) {
+		if (msg.Out && eventType != domain.UpdateEventEditMessage) || !botAPIMessageProjectable(msg) {
 			return domain.UpdateEvent{}, false
 		}
 		msg.Pts = int(item.ID)
@@ -418,6 +445,12 @@ func botAPIUpdateEventType(kind domain.BotAPIUpdateKind) (domain.UpdateEventType
 		return domain.UpdateEventBotMyChatMember, true
 	case domain.BotAPIUpdateChatMember:
 		return domain.UpdateEventBotChatMember, true
+	case domain.BotAPIUpdateMessageReaction:
+		return domain.UpdateEventBotMessageReaction, true
+	case domain.BotAPIUpdateMessageReactionCount:
+		return domain.UpdateEventBotMessageReactionCount, true
+	case domain.BotAPIUpdateChatJoinRequest:
+		return domain.UpdateEventBotChatJoinRequest, true
 	default:
 		return "", false
 	}
@@ -474,7 +507,7 @@ func (r *Router) enqueueBotAPIPrivateEditUpdates(ctx context.Context, res domain
 		return
 	}
 	for _, item := range res.Edited {
-		if item.UserID == 0 || item.Message.ID <= 0 || item.Message.Out || !botAPIMessageProjectable(item.Message) {
+		if item.UserID == 0 || item.UserID == res.OwnerUserID || !botAPIMessageProjectable(item.Message) {
 			continue
 		}
 		isBot, err := r.botAPIKnownBot(ctx, item.UserID)
@@ -586,6 +619,7 @@ type botAPIMemberChange struct {
 	Previous                domain.ChannelMember
 	Current                 domain.ChannelMember
 	Date                    int
+	Invite                  *domain.ChannelInvite
 	ViaJoinRequest          bool
 	ViaChatFolderInviteLink bool
 }
@@ -602,6 +636,7 @@ func botAPIJoinedMemberChanges(actorUserID int64, res domain.CreateChannelResult
 		out = append(out, botAPIMemberChange{
 			Channel: res.Channel, ActorUserID: actorUserID, Date: date, Current: member,
 			Previous: res.PreviousMember(member.ChannelID, member.UserID),
+			Invite:   res.Joins[member.UserID].Invite, ViaJoinRequest: res.Joins[member.UserID].ViaJoinRequest,
 		})
 	}
 	return out
@@ -609,11 +644,7 @@ func botAPIJoinedMemberChanges(actorUserID int64, res domain.CreateChannelResult
 
 // botAPIJoinRequestMemberChanges 是批准入群申请产生的加入；拒绝时结果里没有成员。
 func botAPIJoinRequestMemberChanges(adminUserID int64, res domain.CreateChannelResult, date int) []botAPIMemberChange {
-	changes := botAPIJoinedMemberChanges(adminUserID, res, date)
-	for i := range changes {
-		changes[i].ViaJoinRequest = true
-	}
-	return changes
+	return botAPIJoinedMemberChanges(adminUserID, res, date)
 }
 
 // botAPILeftMemberChanges 把退出结果转成成员变化：Members[0] 是退出者（已置 left），
@@ -674,8 +705,14 @@ func (r *Router) enqueueBotAPIMemberChange(ctx context.Context, change botAPIMem
 		Chat: chat, ActorUserID: actorID, Date: date,
 		Old:                     domain.NewBotChatMemberSnapshot(previous),
 		New:                     domain.NewBotChatMemberSnapshot(current),
+		Invite:                  change.Invite,
 		ViaJoinRequest:          change.ViaJoinRequest,
 		ViaChatFolderInviteLink: change.ViaChatFolderInviteLink,
+	}
+	if payload.Invite != nil {
+		invite := *payload.Invite
+		invite.Link = publicLinkWithBaseURL(r.cfg.PublicBaseURL, "+"+invite.Hash)
+		payload.Invite = &invite
 	}
 	if payload.Old == payload.New {
 		return
@@ -760,7 +797,7 @@ func (r *Router) botAPIKnownBot(ctx context.Context, botID int64) (bool, error) 
 }
 
 func botAPIMessageProjectable(msg domain.Message) bool {
-	if msg.ID <= 0 || msg.Out {
+	if msg.ID <= 0 {
 		return false
 	}
 	if msg.Body != "" {
@@ -788,6 +825,8 @@ func botAPIMessageMediaProjectable(media *domain.MessageMedia) bool {
 		return media.Poll != nil
 	case domain.MessageMediaKindGeoLive:
 		return media.GeoLive != nil
+	case domain.MessageMediaKindTodo:
+		return media.Todo != nil
 	case domain.MessageMediaKindService:
 		if media.ServiceAction == nil {
 			return false

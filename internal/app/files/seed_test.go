@@ -499,6 +499,21 @@ func (f *fakeMediaStore) DeleteProfilePhotosKind(_ context.Context, ownerType do
 	}
 	return deleted, nil
 }
+
+// ProfilePhotoInHistory：本 fake 只保留每个 kind 的当前头像，按当前头像近似历史。
+func (f *fakeMediaStore) ProfilePhotoInHistory(_ context.Context, ownerType domain.PeerType, ownerID, photoID int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, kind := range []domain.ProfilePhotoKind{domain.ProfilePhotoKindProfile, domain.ProfilePhotoKindFallback} {
+		if ref, ok := f.profilePhotos[fakeProfilePhotoKey(ownerType, ownerID, kind)]; ok && ref.PhotoID == photoID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (f *fakeMediaStore) OfferProfilePhoto(context.Context, domain.PeerType, int64, int64, int) error {
+	return nil
+}
 func (f *fakeMediaStore) WithTx(_ context.Context, fn func(ctx context.Context, txMedia store.MediaStore) error) error {
 	return fn(context.Background(), f)
 }
