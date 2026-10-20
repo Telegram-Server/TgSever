@@ -251,7 +251,6 @@ func TestSuggestedPhotoNotOfferedWhenSendFails(t *testing.T) {
 	}
 }
 
-
 // TestSuggestedPhotoNotOfferedWhenRecipientBlocksSuggester 守护：收件人拉黑了建议者时，
 // 消息不投递，照片也不进入收件人的头像历史。
 func TestSuggestedPhotoNotOfferedWhenRecipientBlocksSuggester(t *testing.T) {
