@@ -21,7 +21,8 @@ func TestCatalogPathsResolveFromEnvAndFlags(t *testing.T) {
 		want catalogPaths
 	}{
 		{name: "built-in defaults", want: catalogPaths{
-			Manifest: filepath.Join("data", "updates", "manifest.json"),
+			// 内置默认值是字面量，不经过 filepath 处理；文件目录由 filepath.Join 推导。
+			Manifest: "data/updates/manifest.json",
 			FilesDir: filepath.Join("data", "updates", "files"),
 		}},
 		{name: "manifest and key from env", env: map[string]string{"TELESRV_UPDATE_MANIFEST": manifest, "TELESRV_UPDATE_ROOT_PUBLIC_KEY": key},
