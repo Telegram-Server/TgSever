@@ -30,6 +30,11 @@ type LoginPasswordSetter interface {
 	CheckAdminLoginPassword(ctx context.Context, userID int64, password string) (hasPassword bool, err error)
 	// AdminSetLoginPassword 覆盖写入新密码并给账号发 777000 通知。
 	AdminSetLoginPassword(ctx context.Context, userID int64, password string) (hadPassword bool, err error)
+	// ValidateAdminLoginPassword 是建号带密码（account.create）的试运行：只校验明文密码。
+	ValidateAdminLoginPassword(password string) error
+	// AdminAccountCreator 算出 verifier，返回"建号并写入登录密码"的单事务建号步骤，
+	// 交给 AccountCreator.CreateAccountWith。
+	AdminAccountCreator(password string) (auth.CreateAccountFunc, error)
 }
 
 // SetLoginPasswordRequest 设置或重设 UserID 的登录密码。RevokeSessions 为 true 时，设置成功后
@@ -68,6 +73,18 @@ func loginPasswordFingerprint(key []byte, userID int64, password string) string 
 	var id [8]byte
 	binary.BigEndian.PutUint64(id[:], uint64(userID))
 	mac.Write(id[:])
+	mac.Write([]byte(password))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// newAccountPasswordFingerprint 是建号带密码（account.create）的幂等指纹：
+// HMAC-SHA256(key, 域前缀 || phone || 0 || password) 的十六进制。建号时还没有 user_id，用请求里的
+// 号码区分账号；域前缀保证它和 account.set_login_password 的指纹不会相同。
+func newAccountPasswordFingerprint(key []byte, phone, password string) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("account.create\x00"))
+	mac.Write([]byte(phone))
+	mac.Write([]byte{0})
 	mac.Write([]byte(password))
 	return hex.EncodeToString(mac.Sum(nil))
 }

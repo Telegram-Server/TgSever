@@ -234,9 +234,15 @@ type AuthService interface {
 // no authorization is bound. ValidateNewAccount is the dry-run counterpart and
 // returns the account that would be created (no ID). An occupied phone number
 // yields domain.ErrPhoneNumberOccupied.
+//
+// CreateAccountWith is CreateAccount with the store write handed to create:
+// account.create with a login password passes the single-transaction "create
+// the account and its login password" step, so neither is written without
+// the other.
 type AccountCreator interface {
 	ValidateNewAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error)
 	CreateAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error)
+	CreateAccountWith(ctx context.Context, phone, firstName, lastName string, create auth.CreateAccountFunc) (domain.User, error)
 }
 
 type AuthKeyRevoker interface {
@@ -1178,11 +1184,18 @@ type SetPhoneRequest struct {
 }
 
 // CreateAccountRequest creates a regular user account. LastName is optional.
+//
+// Password 是可选的登录密码（#89），处理方式与 account.set_login_password 相同：明文永远不
+// 序列化，不进 RequestJSON、命令日志和审计；PasswordFingerprint 由 CreateAccount 按 Password
+// 填写（调用方传入的值会被覆盖），是服务端密钥派生的 HMAC，只用来让同一个 command id 换了
+// 密码再提交时判为冲突。不带密码时两者都为空，请求记录与以前完全一样。
 type CreateAccountRequest struct {
 	CommandMeta
-	Phone     string `json:"phone"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name,omitempty"`
+	Phone               string `json:"phone"`
+	FirstName           string `json:"first_name"`
+	LastName            string `json:"last_name,omitempty"`
+	Password            string `json:"-"`
+	PasswordFingerprint string `json:"password_fingerprint,omitempty"`
 }
 
 // ResolveUserByPhoneRequest is a read-only account lookup used by the
@@ -2438,9 +2451,25 @@ func (s *Service) SetPhone(ctx context.Context, req SetPhoneRequest) (CommandRes
 // number) are recorded in the command and audit logs too. A dry run only
 // validates; a real run leaves validation to AccountCreator.CreateAccount,
 // which applies the same rules, so the number is checked once per attempt.
+//
+// With a Password the account and its login password are written in one
+// transaction (see CreateAccountWith), so the member can sign in with
+// telesrv.signInWithPassword right away; the password never reaches the
+// command or audit records, only login_password=true in the details.
 func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (CommandResult, error) {
 	if s == nil || s.accountCreator == nil {
 		return CommandResult{}, fmt.Errorf("admin account creator dependency is not configured")
+	}
+	withPassword := req.Password != ""
+	req.PasswordFingerprint = ""
+	if withPassword {
+		if s.loginPasswords == nil {
+			return CommandResult{}, fmt.Errorf("admin login password dependency is not configured")
+		}
+		if len(s.loginPasswordFingerprintKey) == 0 {
+			return CommandResult{}, fmt.Errorf("admin login password fingerprint key is not configured")
+		}
+		req.PasswordFingerprint = newAccountPasswordFingerprint(s.loginPasswordFingerprintKey, req.Phone, req.Password)
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionCreateAccount, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		if req.DryRun {
@@ -2448,25 +2477,46 @@ func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (
 			if err != nil {
 				return CommandResult{}, createAccountError(err)
 			}
-			return CommandResult{Message: "account creation validated", Details: createAccountDetails(pending)}, nil
+			if withPassword {
+				if err := s.loginPasswords.ValidateAdminLoginPassword(req.Password); err != nil {
+					return CommandResult{}, setLoginPasswordError(err)
+				}
+			}
+			return CommandResult{Message: "account creation validated", Details: createAccountDetails(pending, withPassword)}, nil
 		}
-		created, err := s.accountCreator.CreateAccount(ctx, req.Phone, req.FirstName, req.LastName)
+		var created domain.User
+		var err error
+		if withPassword {
+			// 先算 verifier：密码不合规时还没有建号。
+			create, perr := s.loginPasswords.AdminAccountCreator(req.Password)
+			if perr != nil {
+				return CommandResult{}, setLoginPasswordError(perr)
+			}
+			created, err = s.accountCreator.CreateAccountWith(ctx, req.Phone, req.FirstName, req.LastName, create)
+		} else {
+			created, err = s.accountCreator.CreateAccount(ctx, req.Phone, req.FirstName, req.LastName)
+		}
 		if err != nil {
 			return CommandResult{}, createAccountError(err)
 		}
-		details := createAccountDetails(created)
+		details := createAccountDetails(created, withPassword)
 		details["user_id"] = created.ID
 		return CommandResult{Message: "account created", Details: details}, nil
 	})
 }
 
-func createAccountDetails(u domain.User) map[string]any {
-	return map[string]any{
+// createAccountDetails 是建号命令的结果详情；带登录密码时只记 login_password=true。
+func createAccountDetails(u domain.User, withPassword bool) map[string]any {
+	details := map[string]any{
 		"phone":         u.Phone,
 		"first_name":    u.FirstName,
 		"last_name":     u.LastName,
 		"premium_until": u.PremiumUntil,
 	}
+	if withPassword {
+		details["login_password"] = true
+	}
+	return details
 }
 
 // createAccountError attaches a stable code to the rejections an operator can

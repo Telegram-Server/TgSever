@@ -1577,6 +1577,16 @@ func (s *Service) ValidateNewAccount(ctx context.Context, phone, firstName, last
 // 首次用验证码登录时按普通登录流程发送。号码已被占用时返回 domain.ErrPhoneNumberOccupied
 // （并发建号由存储的唯一约束兜底）。
 func (s *Service) CreateAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error) {
+	return s.CreateAccountWith(ctx, phone, firstName, lastName, s.users.Create)
+}
+
+// CreateAccountWith 与 CreateAccount 相同，只是建号这一步交给 create：后台建号时带登录密码，
+// create 就是"建号并写入登录密码"的单事务操作（store.LoginPasswordStore.CreateUserWithLoginPassword），
+// 账号和密码要么一起写入，要么都不写。create 为 nil 时退回普通建号。
+func (s *Service) CreateAccountWith(ctx context.Context, phone, firstName, lastName string, create CreateAccountFunc) (domain.User, error) {
+	if create == nil {
+		create = s.users.Create
+	}
 	pending, err := s.ValidateNewAccount(ctx, phone, firstName, lastName)
 	if err != nil {
 		return domain.User{}, err
@@ -1585,7 +1595,7 @@ func (s *Service) CreateAccount(ctx context.Context, phone, firstName, lastName 
 	if err != nil {
 		return domain.User{}, err
 	}
-	return s.users.Create(ctx, newUser)
+	return create(ctx, newUser)
 }
 
 // SignInBot 处理 auth.importBotAuthorization：校验 bot token 并把当前 auth_key

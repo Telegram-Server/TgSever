@@ -1103,21 +1103,36 @@ type createAccountAPIRequest struct {
 	Phone     string `json:"phone"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
+	Password  string `json:"password"`
+}
+
+// createAccountUpstreamRequest 是转发给服务端 POST /v1/accounts/create 的请求体。
+// admin.CreateAccountRequest 的明文密码字段不序列化（不进命令记录），所以这一跳单独带上
+// password（不填时省略），由服务端算 verifier 和幂等指纹。
+type createAccountUpstreamRequest struct {
+	admin.CommandMeta
+	Phone     string `json:"phone"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name,omitempty"`
+	Password  string `json:"password,omitempty"`
 }
 
 // handleCreateAccountAPI creates a regular user account (phone, first name,
-// optional last name) through the server's admin command channel. Only the
-// account is created; the member signs in with a login code afterwards.
+// optional last name, optional login password) through the server's admin
+// command channel. Without a password only the account is created and the
+// member signs in with a login code; with one the member can sign in with
+// the password right away. The panel neither stores nor logs the password.
 func (s *server) handleCreateAccountAPI(w http.ResponseWriter, r *http.Request) {
 	var body createAccountAPIRequest
 	if !decodeAction(w, r, &body) {
 		return
 	}
-	req := admin.CreateAccountRequest{
+	req := createAccountUpstreamRequest{
 		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-account"),
 		Phone:       body.Phone,
 		FirstName:   body.FirstName,
 		LastName:    body.LastName,
+		Password:    body.Password,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/create", req)
 	writeCommandResultAPI(w, result, err)

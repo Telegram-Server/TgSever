@@ -8,6 +8,7 @@ import (
 
 	tdsrp "github.com/iamxvbaba/td/crypto/srp"
 
+	"telesrv/internal/app/auth"
 	"telesrv/internal/domain"
 	"telesrv/internal/srp"
 )
@@ -32,8 +33,8 @@ const MaxPlaintextPasswordBytes = 256
 // 密码至少 1 个字符、至多 MaxPlaintextPasswordBytes 字节，必须是合法的 UTF-8，否则返回
 // domain.ErrLoginPasswordInvalid。
 func NewLoginPasswordFromPlaintext(password string) (domain.LoginPassword, error) {
-	if password == "" || len(password) > MaxPlaintextPasswordBytes || !utf8.ValidString(password) {
-		return domain.LoginPassword{}, domain.ErrLoginPasswordInvalid
+	if err := ValidatePlaintextPassword(password); err != nil {
+		return domain.LoginPassword{}, err
 	}
 	algo := srp.DefaultAlgo()
 	hash, salt1, err := tdsrp.NewSRP(rand.Reader).NewHash([]byte(password), tdsrp.Input{
@@ -51,6 +52,16 @@ func NewLoginPasswordFromPlaintext(password string) (domain.LoginPassword, error
 	})
 }
 
+// ValidatePlaintextPassword 检查后台输入的明文密码：至少 1 个字符、至多
+// MaxPlaintextPasswordBytes 字节、合法 UTF-8，否则返回 domain.ErrLoginPasswordInvalid。
+// 只做校验，不算 verifier，供试运行使用。
+func ValidatePlaintextPassword(password string) error {
+	if password == "" || len(password) > MaxPlaintextPasswordBytes || !utf8.ValidString(password) {
+		return domain.ErrLoginPasswordInvalid
+	}
+	return nil
+}
+
 // CheckAdminLoginPassword 是后台设置登录密码的试运行：校验账号和密码，报告账号现在是否已有
 // 登录密码，不写任何东西。系统账号、bot、已注销或不存在的账号返回
 // auth.ErrSystemUserLoginForbidden；密码不合规返回 domain.ErrLoginPasswordInvalid。
@@ -58,8 +69,8 @@ func (s *Service) CheckAdminLoginPassword(ctx context.Context, userID int64, pas
 	if err := s.adminReady(); err != nil {
 		return false, err
 	}
-	if password == "" || len(password) > MaxPlaintextPasswordBytes || !utf8.ValidString(password) {
-		return false, domain.ErrLoginPasswordInvalid
+	if err := ValidatePlaintextPassword(password); err != nil {
+		return false, err
 	}
 	u, err := s.manageableUser(ctx, userID)
 	if err != nil {
@@ -98,6 +109,32 @@ func (s *Service) AdminSetLoginPassword(ctx context.Context, userID int64, passw
 	}
 	s.sendChangeNotice(ctx, u.ID, change)
 	return had, nil
+}
+
+// ValidateAdminLoginPassword 是后台建号带登录密码时的试运行：只校验明文密码，规则同
+// ValidatePlaintextPassword，不算 verifier、不写任何东西。
+func (s *Service) ValidateAdminLoginPassword(password string) error {
+	if err := s.adminReady(); err != nil {
+		return err
+	}
+	return ValidatePlaintextPassword(password)
+}
+
+// AdminAccountCreator 是后台建号带登录密码（#89）的建号步骤：先按客户端设置新密码的算法从
+// 明文算出 verifier（密码不合规返回 domain.ErrLoginPasswordInvalid，此时还没有建号），再返回
+// 一个 auth.CreateAccountFunc，用 CreateUserWithLoginPassword 在同一个事务里建号并写入登录密码。
+// 不受密码登录总开关限制；新账号还没有任何会话，不发 777000 通知。
+func (s *Service) AdminAccountCreator(password string) (auth.CreateAccountFunc, error) {
+	if err := s.adminReady(); err != nil {
+		return nil, err
+	}
+	next, err := NewLoginPasswordFromPlaintext(password)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, u domain.User) (domain.User, error) {
+		return s.passwords.CreateUserWithLoginPassword(ctx, u, next)
+	}, nil
 }
 
 // adminReady 检查后台设置密码需要的依赖。与 Enabled 不同，不看密码登录总开关。

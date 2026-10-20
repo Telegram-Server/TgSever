@@ -721,12 +721,29 @@ func (s *Server) handleSetPhone(w http.ResponseWriter, r *http.Request) {
 	writeCommandResult(w, result, err)
 }
 
+// createAccountWire 是 POST /v1/accounts/create 的请求体。admin.CreateAccountRequest 的
+// Password 是 json:"-"（不进命令记录），所以可选的登录密码在这里单独解码；密码指纹只由服务端
+// 计算，请求体里带 password_fingerprint 按未知字段拒绝。
+type createAccountWire struct {
+	admin.CommandMeta
+	Phone     string `json:"phone"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name,omitempty"`
+	Password  string `json:"password,omitempty"`
+}
+
 func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
-	var req admin.CreateAccountRequest
-	if !decodeJSON(w, r, &req) {
+	var body createAccountWire
+	if !decodeJSON(w, r, &body) {
 		return
 	}
-	result, err := s.svc.CreateAccount(r.Context(), req)
+	result, err := s.svc.CreateAccount(r.Context(), admin.CreateAccountRequest{
+		CommandMeta: body.CommandMeta,
+		Phone:       body.Phone,
+		FirstName:   body.FirstName,
+		LastName:    body.LastName,
+		Password:    body.Password,
+	})
 	writeCommandResult(w, result, err)
 }
 
