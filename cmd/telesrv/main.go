@@ -1194,6 +1194,12 @@ func run(logger *zap.Logger) error {
 		accountOptions = append(accountOptions,
 			account.WithLoginEmailVerification(codeStore, loginEmailSender, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength))
 	}
+	// 登录邮箱 setup 属于登录流程，经 auth.CheckCodeLoginAllowed（全服唯一的判断点）受
+	// 验证码登录开关约束。account 服务先于 auth 服务构造，这里延迟绑定，authService 建好后赋值。
+	var codeLoginAuth *auth.Service
+	accountOptions = append(accountOptions, account.WithCodeLoginGate(func(ctx context.Context) error {
+		return codeLoginAuth.CheckCodeLoginAllowed(ctx)
+	}))
 	accountService := account.NewService(passwordStore, accountOptions...)
 	botsService := botsapp.NewService(userStore, botStore, messageStore,
 		botsapp.WithLogger(logger.Named("bots")),
@@ -1678,6 +1684,9 @@ func run(logger *zap.Logger) error {
 		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，
 		// help.getAppConfig 下发的 telesrv_sign_up_disabled 也读它。
 		auth.WithSignUpAllowed(auth.IdentitySignUpAllowed(identityStore, cfg.SignUpEnabled)),
+		// 验证码登录开关：目前只有 TELESRV_CODE_LOGIN_ENABLED 一个来源；auth.CodeLoginAllowed
+		// 是全服唯一的判断点，help.getAppConfig 下发的 telesrv_code_login_disabled 也读它。
+		auth.WithCodeLoginAllowed(auth.StaticCodeLoginAllowed(cfg.CodeLoginEnabled)),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1695,6 +1704,10 @@ func run(logger *zap.Logger) error {
 			Store:        accountService,
 			Sender:       loginEmailSender,
 		}))
+	codeLoginAuth = authService
+	if !cfg.CodeLoginEnabled {
+		logger.Warn("验证码登录已关闭：不签发、不投递任何登录验证码，只能用密码、扫码或 passkey 登录")
+	}
 	// 手机号 + 密码登录（telesrv 扩展协议）。总开关默认关闭；关闭时服务照常构造，
 	// telesrv. 方法由服务自己返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
 	// 密码登录的 SRP challenge 只存进程内存（与 passkey 挑战、QR 登录 token 相同，单体
@@ -1949,6 +1962,7 @@ func run(logger *zap.Logger) error {
 			help.WithWalletAvailable(cfg.WalletStateDir != ""),
 			help.WithPasswordLogin(loginPasswordService.Enabled()),
 			help.WithSignUpAllowed(authService.SignUpAllowed),
+			help.WithCodeLoginAllowed(authService.CodeLoginAllowed),
 			help.WithAccountFreezeProvider(adminService)),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
