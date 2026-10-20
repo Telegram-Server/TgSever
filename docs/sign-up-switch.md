@@ -31,7 +31,9 @@ config instead of `help.appConfigNotModified`.
 
 ## Error: `400 SIGN_UP_DISABLED`
 
-Returned only for a phone number that has **no** account:
+Returned only to requests that would create an account, i.e. for a phone
+number that has **no** account (`telesrv.signUpWithPassword` can only create
+one, so it gets the error for any number):
 
 | Method | When |
 |---|---|
@@ -39,8 +41,12 @@ Returned only for a phone number that has **no** account:
 | `auth.resendCode` | The code was issued while sign-up was open and sign-up has been closed since. |
 | `auth.signIn` | Where the server would have answered `auth.authorizationSignUpRequired` (sign-up was closed after the code was sent). |
 | `auth.signUp` | Last-resort check right before the account is created. |
-| `telesrv.getLoginPassword` | Instead of the sign-up answer (`has_password` false), when password login is enabled. |
-| `telesrv.signUpWithPassword` | Before the account is created, when password login is enabled. |
+| `telesrv.getLoginPassword` | Instead of the sign-up answer (`has_password` false), when password login is enabled. Numbers with an account get the usual answer (`has_password` true or `PASSWORD_LOGIN_NOT_SET`). |
+| `telesrv.signUpWithPassword` | Whenever sign-up is closed and password login is enabled, before the account is created (this method only ever creates accounts). |
+
+Error-check order for the two `telesrv.*` methods is in
+[password-login.md](password-login.md#errors): the password-login switch and the
+shared login-code quota come first, then the sign-up switch.
 
 Existing accounts are never affected: login code, 2FA, QR login, passkey login
 and password login all behave as before, and bots are not affected either.

@@ -75,11 +75,12 @@ Each step is one RPC on the same connection (the same auth key) unless noted.
 
 ### Choosing sign-in or sign-up
 
-`telesrv.getLoginPassword(phone_number)` has three outcomes:
+`telesrv.getLoginPassword(phone_number)` has four outcomes:
 
 | Result | Meaning | Next step |
 |---|---|---|
 | `account.password` with `has_password` false | No account has this number | Sign-up |
+| `400 SIGN_UP_DISABLED` | No account has this number and the operator has closed sign-up ([sign-up-switch.md](sign-up-switch.md)) | Show "Sign-up is closed on this server, please contact the administrator" and return to the phone-number screen; do not open the sign-up page |
 | `400 PASSWORD_LOGIN_NOT_SET` | The account exists but has no login password | Offer code login |
 | `account.password` with `has_password` true, `current_algo`, `srp_B`, `srp_id` | The account has a login password | Sign-in |
 
@@ -239,24 +240,29 @@ methods.
 ### `telesrv.getLoginPassword`
 
 Checks: switch → login-code quota shared with `auth.sendCode` (per auth key,
-then per phone) → phone → account.
+then per phone) → phone → account → sign-up switch (only when the number has
+no account).
 
 | Error | When | Client handling |
 |---|---|---|
 | `406 PHONE_NUMBER_INVALID` | Malformed number, or a reserved system-account number | Ask for a valid number |
 | `420 FLOOD_WAIT_X` | The shared login-code quota is used up (operator defaults: 20 per auth key and 5 per phone per 10 minutes); every call counts, including the ones you make to retry a sign-in | Show the wait |
 | `400 PASSWORD_LOGIN_NOT_SET` | The account exists but has no login password | Offer code login |
+| `400 SIGN_UP_DISABLED` | The number has no account and sign-up is closed. Existing accounts never get it | "Sign-up is closed on this server, please contact the administrator"; back to the phone-number screen |
 
 ### `telesrv.signUpWithPassword`
 
 Checks: switch → shared login-code quota (it counts even when the request is
-rejected later) → `new_settings` algorithm → phone → name → `new_settings` →
-create the account.
+rejected later) → `new_settings` algorithm → sign-up switch → phone → name →
+`new_settings` → create the account. Only the algorithm *type* is checked
+before the sign-up switch, so a client that sends a well-formed request gets
+`SIGN_UP_DISABLED` whenever sign-up is closed.
 
 | Error | When | Client handling |
 |---|---|---|
 | `406 PHONE_NUMBER_INVALID` | Malformed or reserved number | Ask for a valid number |
 | `420 FLOOD_WAIT_X` | Shared login-code quota | Show the wait |
+| `400 SIGN_UP_DISABLED` | The operator closed sign-up (possibly after `getLoginPassword` answered `has_password` false). No account is created | "Sign-up is closed on this server, please contact the administrator"; back to the phone-number screen |
 | `400 FIRSTNAME_INVALID` | First name empty after trimming, or first/last name longer than 64 characters | Ask for a name |
 | `400 PASSWORD_HASH_INVALID` | `new_algo` is not the SHA256-SHA256-PBKDF2-ModPow algorithm, or `new_password_hash` is out of range | Client bug: recompute from `new_algo` |
 | `400 NEW_SETTINGS_INVALID` | `email` is set, or `new_algo`/`new_password_hash` is missing | Client bug: send only `new_algo` and the hash |

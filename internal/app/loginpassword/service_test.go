@@ -25,10 +25,16 @@ import (
 
 var testAuthKey = [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
 
-// fakeFlows 记录登录收尾是否被调用；注册路径直接建号。
+// fakeFlows 记录登录收尾是否被调用；注册路径直接建号。注册开关的判断交给 gate
+// （真实的 auth.Service，nil 表示开放注册），不另写一套。
 type fakeFlows struct {
 	mu       sync.Mutex
 	signedIn []int64
+	gate     *auth.Service
+}
+
+func (f *fakeFlows) CheckSignUpAllowed(ctx context.Context) error {
+	return f.gate.CheckSignUpAllowed(ctx)
 }
 
 func (f *fakeFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create auth.CreateAccountFunc) (domain.User, error) {
