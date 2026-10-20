@@ -48,7 +48,7 @@ func TestChannelRestrictionExpiryGatesSendMessage(t *testing.T) {
 }
 
 // 被限制（非踢出）的非成员仍能经 channels.joinChannel 自行加入。限制保留与记录形状由
-// storetest.ChannelRestrictNonMember 覆盖，投影由 tgChannelParticipantForUpdate 的纯函数测试覆盖。
+// storetest.ChannelRestrictNonMember 覆盖，投影由 tgChannelParticipant 的纯函数测试覆盖。
 func TestChannelRestrictNonMemberStaysJoinable(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 	now := int(time.Now().Unix())

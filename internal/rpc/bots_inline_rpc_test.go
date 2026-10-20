@@ -1946,7 +1946,6 @@ func TestInlineBotValidation(t *testing.T) {
 		result tg.InputBotInlineResultClass
 		want   string
 	}{
-		{name: "geo live fields", result: inlineGeoResultWithPeriod("geo-live", 1, 2), want: "MEDIA_INVALID"},
 		{name: "empty venue title", result: inlineVenueResult("venue-empty", "", 1, 2), want: "MEDIA_EMPTY"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

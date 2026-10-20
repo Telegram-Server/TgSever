@@ -220,6 +220,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		return nil, err
 	}
 	full := tgChannelFull(view, r.cfg.PublicBaseURL)
+	if err := r.applyStickerSetToChannelFull(ctx, view.Channel, full); err != nil {
+		return nil, err
+	}
 	r.applyChannelStatsCapability(full)
 	r.applyStarGiftsCountToChannelFull(ctx, view.Channel.ID, full)
 	userIDs := []int64{view.Channel.CreatorUserID, view.Self.UserID}

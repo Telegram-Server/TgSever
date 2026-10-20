@@ -350,6 +350,8 @@ type BotsService interface {
 	GetBotInfo(ctx context.Context, botUserID int64) (name, about, description string, err error)
 	SetBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (int, error)
 	GetBotMenuButton(ctx context.Context, botUserID int64) (domain.BotMenuButton, error)
+	SetBotDefaultAdminRights(ctx context.Context, botUserID int64, broadcast bool, rights domain.ChannelAdminRights) (bool, error)
+	GetBotDefaultAdminRights(ctx context.Context, botUserID int64, broadcast bool) (domain.ChannelAdminRights, error)
 	// SetBotMenuButtonForUser 设置单个用户的专属菜单按钮（default = 删除，回落到全局默认）。
 	SetBotMenuButtonForUser(ctx context.Context, botUserID, userID int64, button domain.BotMenuButton) error
 	// BotMenuButtonForUser 返回 userID 看到的菜单按钮：专属按钮优先，否则全局默认。
@@ -756,6 +758,7 @@ type ChannelsService interface {
 	GetJoinableChannel(ctx context.Context, userID, channelID int64) (domain.Channel, error)
 	GetParticipants(ctx context.Context, userID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error)
 	GetParticipant(ctx context.Context, userID, channelID, participantUserID int64) (domain.ChannelMember, error)
+	GetChannelSenderBan(ctx context.Context, userID, channelID, senderChannelID int64) (domain.ChannelMember, error)
 	FutureCreatorAfterLeave(ctx context.Context, userID, channelID int64) (domain.ChannelMember, error)
 	InviteToChannel(ctx context.Context, userID, channelID int64, userIDs []int64, date int) (domain.CreateChannelResult, error)
 	JoinChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
@@ -787,6 +790,7 @@ type ChannelsService interface {
 	SetPaidMessagesPrice(ctx context.Context, userID, channelID int64, stars int64, broadcastMessagesAllowed bool) (domain.ChannelPaidMessagesPriceResult, error)
 	SetAntiSpam(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetSlowMode(ctx context.Context, userID, channelID int64, seconds int) (domain.Channel, error)
+	SetStickers(ctx context.Context, userID, channelID, stickerSetID int64) (domain.Channel, error)
 	SetBoostsToUnblockRestrictions(ctx context.Context, userID, channelID int64, boosts int) (domain.Channel, error)
 	SetNoForwards(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetJoinToSend(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
@@ -853,6 +857,7 @@ type ChannelsService interface {
 	SetDiscussionGroup(ctx context.Context, userID, broadcastID, groupID int64) (domain.DiscussionGroupUpdateResult, error)
 	SetViewForumAsMessages(ctx context.Context, userID, channelID int64, enabled bool) (bool, error)
 	GetHistory(ctx context.Context, userID int64, filter domain.ChannelHistoryFilter) (domain.ChannelHistory, error)
+	GetPersonalChannelHistory(ctx context.Context, botUserID, ownerUserID int64, filter domain.ChannelHistoryFilter) (domain.ChannelHistory, error)
 	SearchChannelMedia(ctx context.Context, userID, channelID int64, req domain.MediaSearchRequest) (domain.ChannelHistory, error)
 	CountChannelMediaCategories(ctx context.Context, userID, channelID int64) (domain.MediaCategoryCounts, error)
 	GetStats(ctx context.Context, userID int64, req domain.ChannelStatsRequest) (domain.ChannelStats, error)
@@ -968,6 +973,9 @@ type FilesService interface {
 	// getWebPagePreview 已解析过，则 echo 直接带 done 卡片（与官方一致），不依赖异步换卡。
 	LookupWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, bool)
 	CreateAvatarFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error)
+	// 专用头像字节入口，保留 s/a/c renditions，不使用消息照片尺寸规则。
+	CreateAvatarFromBytes(ctx context.Context, data []byte) (domain.Photo, error)
+	CreateAvatarVideoFromBytes(ctx context.Context, data []byte, videoStartTs float64) (domain.Photo, error)
 	CreateAvatarVideoFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64) (domain.Photo, error)
 	CreateAvatarVideoMarkupFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, markup domain.PhotoSize) (domain.Photo, error)
 	CreateAvatarMarkup(ctx context.Context, size domain.PhotoSize) (domain.Photo, error)

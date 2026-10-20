@@ -34,6 +34,9 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validMemoryTodoParticipantEdit(req, target) {
 		return res, domain.ErrMessageAuthorRequired
 	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindGeoLive && target.Media != nil && target.Media.Kind == domain.MessageMediaKindGeoLive && !target.Media.GeoLive.Active(target.Date, req.EditDate) {
+		return res, domain.ErrMessageNotModified
+	}
 	// WebPageResolve：服务端内部链接预览就地替换。幂等——仅当目标当前 media 仍是匹配 id 的
 	// pending 占位才替换；只换 media、不碰 body/entities/edit_date，事件为 web_page。
 	if req.WebPageResolve {

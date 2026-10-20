@@ -193,8 +193,23 @@ func (r *Router) onMessagesToggleTodoCompleted(ctx context.Context, req *tg.Mess
 	})
 }
 
+func (r *Router) onEditMessageTodo(ctx context.Context, req *tg.MessagesEditMessageRequest, media *tg.InputMediaTodo) (tg.UpdatesClass, error) {
+	todo, err := domainTodoFromInput(media.Todo)
+	if err != nil {
+		return nil, err
+	}
+	return r.mutateTodoMediaWithMarkup(ctx, req.Peer, req.ID, req.ReplyMarkup, nil, func(_ int64, current *domain.MessageTodo, _ int) (*domain.ChannelMessageAction, error) {
+		*current = *todo
+		return nil, nil
+	})
+}
+
 // mutateTodoMedia 加载目标 todo 消息、应用变更并经 editMessage 媒体替换链路落库推送。
 func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClass, msgID int, participantAllowed func(todo *domain.MessageTodo) bool, mutate func(userID int64, todo *domain.MessageTodo, now int) (*domain.ChannelMessageAction, error)) (tg.UpdatesClass, error) {
+	return r.mutateTodoMediaWithMarkup(ctx, inputPeer, msgID, nil, participantAllowed, mutate)
+}
+
+func (r *Router) mutateTodoMediaWithMarkup(ctx context.Context, inputPeer tg.InputPeerClass, msgID int, markup tg.ReplyMarkupClass, participantAllowed func(todo *domain.MessageTodo) bool, mutate func(userID int64, todo *domain.MessageTodo, now int) (*domain.ChannelMessageAction, error)) (tg.UpdatesClass, error) {
 	userID, peer, err := r.reactionPeer(ctx, inputPeer, nil)
 	if err != nil {
 		return nil, err
@@ -203,6 +218,13 @@ func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClas
 	current, found := r.loadTodoMessage(ctx, userID, peer, msgID)
 	if !found {
 		return nil, messageIDInvalidErr()
+	}
+	if participantAllowed == nil && !current.out {
+		return nil, messageAuthorRequiredErr()
+	}
+	replyMarkup, setReplyMarkup, err := r.editReplyMarkup(ctx, userID, peer, markup)
+	if err != nil {
+		return nil, err
 	}
 	todo := *current.media.Todo
 	todo.Items = append([]domain.MessageTodoItem(nil), current.media.Todo.Items...)
@@ -231,6 +253,8 @@ func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClas
 			AllowTodoParticipantMutation: participantAllowed != nil && participantAllowed(&todo),
 			TodoServiceAction:            serviceAction,
 			EditDate:                     now,
+			SetReplyMarkup:               setReplyMarkup,
+			ReplyMarkup:                  replyMarkup,
 		})
 		if err != nil {
 			return nil, channelEditErr(err)
@@ -242,6 +266,13 @@ func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClas
 	if peer.Type != domain.PeerTypeUser || r.deps.Messages == nil {
 		return nil, peerIDInvalidErr()
 	}
+	blocked, err := r.peerBlocksUser(ctx, userID, peer.ID)
+	if err != nil {
+		return nil, err
+	}
+	if blocked {
+		return nil, messageEditForbiddenErr()
+	}
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.EditMessage(ctx, userID, domain.EditMessageRequest{
 		OwnerUserID:                  userID,
@@ -251,6 +282,8 @@ func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClas
 		Entities:                     current.entities,
 		Media:                        newMedia,
 		EditDate:                     now,
+		SetReplyMarkup:               setReplyMarkup,
+		ReplyMarkup:                  replyMarkup,
 		OriginAuthKeyID:              rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:              sessionID,
 		AllowTodoParticipantMutation: participantEdit,
@@ -265,13 +298,7 @@ func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClas
 			zap.Error(err))
 		return nil, messageEditErr(err)
 	}
-	self := res.Self()
-	if self.Event.Pts == 0 || self.Message.ID == 0 {
-		return nil, messageIDInvalidErr()
-	}
-	users := r.usersForMessageUpdate(ctx, userID, self.Message)
-	chats := r.chatsForMessageUpdate(ctx, userID, self.Message)
-	return tgEditMessageUpdates(self.Event, self.Message, users, chats), nil
+	return r.privateEditMessageUpdates(ctx, userID, res)
 }
 
 type todoMessageTarget struct {
@@ -293,7 +320,7 @@ func (r *Router) loadTodoMessage(ctx context.Context, userID int64, peer domain.
 		}
 		for _, msg := range history.Messages {
 			if msg.ID == msgID && msg.Media != nil && msg.Media.Kind == domain.MessageMediaKindTodo && msg.Media.Todo != nil {
-				return todoMessageTarget{media: msg.Media, body: msg.Body, entities: msg.Entities}, true
+				return todoMessageTarget{media: msg.Media, body: msg.Body, entities: msg.Entities, out: msg.SenderUserID == userID}, true
 			}
 		}
 	case domain.PeerTypeUser:

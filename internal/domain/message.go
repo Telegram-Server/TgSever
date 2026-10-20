@@ -438,6 +438,7 @@ type PrivateMessageReactionsRequest struct {
 
 // PrivateMessageReactionsResult describes private reaction updates in owner-visible boxes.
 type PrivateMessageReactionsResult struct {
+	MessageReactionChange
 	Messages  []Message
 	Reactions ChannelMessageReactions
 }

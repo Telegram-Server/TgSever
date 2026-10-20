@@ -547,7 +547,7 @@ func channelScanDest(ch *domain.Channel, rights, reactionPolicy *string, wallpap
 		wallpaper, &ch.ParticipantsCount, &ch.AdminsCount, &ch.KickedCount, &ch.BannedCount, &ch.TopMessageID,
 		&ch.PinnedMessageID, &ch.Pts, &ch.TTLPeriod, &ch.Date, &ch.Deleted,
 		&ch.PhotoID, &ch.PhotoDCID, &ch.PhotoStripped,
-		&ch.ActiveCallID, &ch.ActiveCallAccessHash, &ch.ActiveCallNotEmpty,
+		&ch.ActiveCallID, &ch.ActiveCallAccessHash, &ch.ActiveCallNotEmpty, &ch.StickerSetID,
 	}
 }
 

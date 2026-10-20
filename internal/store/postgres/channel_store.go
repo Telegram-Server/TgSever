@@ -159,7 +159,7 @@ c.linked_chat_id, c.linked_community_id, c.monoforum, c.linked_monoforum_id, c.s
 c.available_reactions::text, c.color_set, c.color, c.color_background_emoji_id, c.profile_color_set, c.profile_color, c.profile_color_background_emoji_id, c.emoji_status_document_id, c.emoji_status_until,
 c.wallpaper::text, c.participants_count, c.admins_count, c.kicked_count, c.banned_count, c.top_message_id, c.pinned_message_id, c.pts,
 c.ttl_period, c.date, c.deleted, c.photo_id, c.photo_dc_id, c.photo_stripped,
-c.active_call_id, c.active_call_access_hash, c.active_call_not_empty`
+c.active_call_id, c.active_call_access_hash, c.active_call_not_empty, c.sticker_set_id`
 
 const channelMessageColumns = `channel_id, id, random_id, sender_user_id, from_peer_type, from_peer_id,
 send_as_peer_type, send_as_peer_id, message_date, edit_date, post, silent, noforwards, body,

@@ -603,6 +603,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesGetExtendedMediaRequest](d, tlprofile.SemanticMethodMessagesGetExtendedMedia, func(ctx context.Context, layerRequest *tg.MessagesGetExtendedMediaRequest) (any, error) {
 		return r.onMessagesGetExtendedMedia(ctx, layerRequest)
 	})
+	registerRPC[*tg.MessagesGetPersonalChannelHistoryRequest](d, tlprofile.SemanticMethodMessagesGetPersonalChannelHistory, func(ctx context.Context, req *tg.MessagesGetPersonalChannelHistoryRequest) (any, error) {
+		return r.onMessagesGetPersonalChannelHistory(ctx, req)
+	})
 	registerRPC[*tg.MessagesGetHistoryRequest](d, tlprofile.SemanticMethodMessagesGetHistory, func(ctx context.Context, req *tg.MessagesGetHistoryRequest) (any, error) {
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {

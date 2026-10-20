@@ -73,7 +73,8 @@ func (s *ChannelStore) ImportInvite(ctx context.Context, req domain.ImportChanne
 			return domain.CreateChannelResult{}, fmt.Errorf("commit pending channel invite request: %w", err)
 		}
 		committed = true
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		invite.RequestedCount++
+		return domain.CreateChannelResult{Channel: channel, JoinRequest: domain.NewChannelJoinRequest(channel.ID, req.UserID, req.Date, &invite)}, domain.ErrInviteRequestSent
 	}
 	result, err := s.approveInviteImporterTx(ctx, tx, channel, invite, req.UserID, 0, req.Date)
 	if err != nil {
@@ -164,6 +165,10 @@ SET usage_count = usage_count + 1,
 WHERE channel_id = $1 AND invite_id = $2`, channelID, invite.InviteID); err != nil {
 			return domain.CreateChannelResult{}, fmt.Errorf("increment channel invite usage: %w", err)
 		}
+		invite.UsageCount++
+		if approvedBy != 0 && invite.RequestedCount > 0 {
+			invite.RequestedCount--
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO channel_invite_importers (channel_id, invite_id, user_id, date, requested, approved_by)
@@ -183,8 +188,12 @@ SET invite_id = EXCLUDED.invite_id,
 	var msg domain.ChannelMessage
 	var event domain.ChannelUpdateEvent
 	if channel.Megagroup {
+		actionType := domain.ChannelActionChatJoinedByLink
+		if approvedBy != 0 {
+			actionType = domain.ChannelActionChatJoinedByRequest
+		}
 		msg, event, err = s.insertServiceMessage(ctx, tx, channel, userID, date, domain.ChannelMessageAction{
-			Type:          domain.ChannelActionChatJoinedByLink,
+			Type:          actionType,
 			InviterUserID: invite.AdminUserID,
 			UserIDs:       []int64{userID},
 		})
@@ -215,7 +224,7 @@ WHERE channel_id = $1 AND user_id = $2`, channel.ID, userID, member.ReadInboxMax
 	if err := enqueueWelcomeMessageDeliveriesTx(ctx, tx, channel.ID, []domain.ChannelMember{member}); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous, Message: msg, Event: event}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous, Joins: map[int64]domain.ChannelMemberJoin{userID: domain.NewChannelMemberJoin(invite, approvedBy, msg, event)}, Message: msg, Event: event}, nil
 }
 
 func (s *ChannelStore) recordPendingInviteImporterTx(ctx context.Context, tx pgx.Tx, invite domain.ChannelInvite, userID int64, date int) error {

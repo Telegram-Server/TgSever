@@ -516,7 +516,13 @@ type MessageGeoLive struct {
 	Geo                         MessageGeoPoint `json:"geo"`
 	Heading                     int             `json:"heading,omitempty"`
 	Period                      int             `json:"period"`
+	Stopped                     bool            `json:"stopped,omitempty"`
 	ProximityNotificationRadius int             `json:"proximity_notification_radius,omitempty"`
+}
+
+func (g *MessageGeoLive) Active(date, now int) bool {
+	return g != nil && !g.Stopped && g.Period > 0 &&
+		(g.Period == 0x7fffffff || int64(date)+int64(g.Period) > int64(now))
 }
 
 // MessageStory is a story shared as messageMediaStory. Peer+ID are the stable

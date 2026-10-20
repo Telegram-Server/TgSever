@@ -291,6 +291,12 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(ctx context.Context, req domain.
 	if err := validateBotAPIUpdateRequest(req); err != nil {
 		return domain.BotAPIUpdate{}, false, err
 	}
+	if req.JoinRequest != nil {
+		return s.enqueueJoinRequestUpdate(ctx, req)
+	}
+	if req.Reaction != nil {
+		return s.enqueueReactionUpdate(ctx, req)
+	}
 	var callbackQueryID, callbackUserID, callbackChatInstance int64
 	var callbackInlineDCID, callbackInlineMessageID int
 	var callbackInlineOwnerID, callbackInlineAccessHash int64
@@ -360,7 +366,7 @@ WHERE NOT EXISTS (
  RETURNING id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
            callback_query_id, callback_user_id, callback_chat_instance, callback_data,
            callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-           ephemeral_payload, pre_checkout_payload, member_payload
+           ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload
 ), wake_webhook AS (
  UPDATE bot_api_webhooks
  SET next_attempt_at = now(), updated_at = now()
@@ -370,7 +376,7 @@ WHERE NOT EXISTS (
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload, member_payload
+       ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload
 FROM inserted
 `, req.BotUserID, string(req.Kind), string(req.Peer.Type), req.Peer.ID, req.MessageID, req.SourcePts, req.Date,
 		callbackQueryID, callbackUserID, callbackChatInstance, callbackData,
@@ -390,7 +396,7 @@ FROM inserted
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload, member_payload
+       ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload
 FROM bot_api_updates
 WHERE bot_user_id = $1
   AND update_kind = $2
@@ -427,12 +433,12 @@ func (s *BotAPIUpdateStore) ListTailBotAPIUpdates(ctx context.Context, botUserID
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload, member_payload
+       ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload
 FROM (
   SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
          callback_query_id, callback_user_id, callback_chat_instance, callback_data,
          callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-         ephemeral_payload, pre_checkout_payload, member_payload
+         ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload
   FROM bot_api_updates
   WHERE bot_user_id = $1
     AND id > COALESCE((SELECT confirmed_update_id FROM bot_api_update_states WHERE bot_user_id = $1), 0)
@@ -474,7 +480,7 @@ func (s *BotAPIUpdateStore) ListBotAPIUpdates(ctx context.Context, botUserID, fr
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload, member_payload
+       ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload
 FROM bot_api_updates
 WHERE bot_user_id = $1 AND id >= $2
 ORDER BY id
@@ -676,15 +682,29 @@ func scanBotAPIUpdateRows(row botAPIUpdateScanner) (domain.BotAPIUpdate, error) 
 	var callbackInlineDCID, callbackInlineMessageID int
 	var callbackInlineOwnerID, callbackInlineAccessHash int64
 	var callbackData []byte
-	var ephemeralPayload, preCheckoutPayload, memberPayload []byte
+	var ephemeralPayload, preCheckoutPayload, memberPayload, reactionPayload, joinRequestPayload []byte
 	if err := row.Scan(&item.ID, &item.BotUserID, &kind, &peerType, &item.Peer.ID, &item.MessageID, &item.SourcePts, &item.Date,
 		&callbackQueryID, &callbackUserID, &callbackChatInstance, &callbackData,
 		&callbackInlineDCID, &callbackInlineOwnerID, &callbackInlineMessageID, &callbackInlineAccessHash,
-		&ephemeralPayload, &preCheckoutPayload, &memberPayload); err != nil {
+		&ephemeralPayload, &preCheckoutPayload, &memberPayload, &reactionPayload, &joinRequestPayload); err != nil {
 		return domain.BotAPIUpdate{}, err
 	}
 	item.Kind = domain.BotAPIUpdateKind(kind)
 	item.Peer.Type = domain.PeerType(peerType)
+	if len(joinRequestPayload) != 0 {
+		var payload domain.BotChatJoinRequest
+		if err := json.Unmarshal(joinRequestPayload, &payload); err != nil {
+			return domain.BotAPIUpdate{}, fmt.Errorf("decode bot api join request payload: %w", err)
+		}
+		item.JoinRequest = &payload
+	}
+	if len(reactionPayload) != 0 {
+		var payload domain.BotMessageReactionUpdated
+		if err := json.Unmarshal(reactionPayload, &payload); err != nil {
+			return domain.BotAPIUpdate{}, fmt.Errorf("decode bot api reaction payload: %w", err)
+		}
+		item.Reaction = &payload
+	}
 	if len(memberPayload) != 0 {
 		var payload domain.BotChatMemberUpdated
 		if err := json.Unmarshal(memberPayload, &payload); err != nil {
@@ -733,6 +753,18 @@ func scanBotAPIUpdateRows(row botAPIUpdateScanner) (domain.BotAPIUpdate, error) 
 func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	if req.BotUserID == 0 {
 		return fmt.Errorf("invalid bot api update")
+	}
+	if err := domain.ValidateBotAPIJoinRequest(req); err != nil {
+		return err
+	}
+	if req.JoinRequest != nil {
+		return nil
+	}
+	if err := domain.ValidateBotAPIReactionRequest(req); err != nil {
+		return err
+	}
+	if req.Reaction != nil {
+		return nil
 	}
 	// A pre-checkout query is message-less by design: the bot is asked before any
 	// payment exists, so it carries no peer and no message id.

@@ -59,6 +59,11 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
+	if req.SendAs != nil && req.SendAs.Type == domain.PeerTypeChannel {
+		if _, banned := s.senderBans[req.ChannelID][req.SendAs.ID]; banned {
+			return domain.SendChannelMessageResult{}, domain.ErrChannelSenderBanned
+		}
+	}
 	if member.Guest && channel.JoinToSend {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
 	}
@@ -92,7 +97,8 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	skipDelivery := channelDeliverySkipSet(req.SkipDeliveryUserIDs)
 	var discussion *domain.SendChannelDiscussionResult
 	var discussionRef *domain.ChannelDiscussionRef
-	if channel.Broadcast && channel.LinkedChatID != 0 {
+	_, linkedSenderBanned := s.senderBans[channel.LinkedChatID][channel.ID]
+	if channel.Broadcast && channel.LinkedChatID != 0 && !linkedSenderBanned {
 		if linked, ok := s.channels[channel.LinkedChatID]; ok && !linked.Deleted && linked.Megagroup {
 			discussionPts := s.nextChannelPtsLocked(linked.ID)
 			discussionMsgID := s.nextChannelMessageIDLocked(linked.ID)

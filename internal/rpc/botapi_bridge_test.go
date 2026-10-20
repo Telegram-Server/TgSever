@@ -22,19 +22,20 @@ import (
 // 需要管理员身份的测试用 promote/promoteBot 提升）。文件服务与投票服务默认就绪，
 // 媒体组、投票、媒体编辑和群头像测试直接可用。
 type botAPIBridgeFixture struct {
-	ctx      context.Context
-	owner    domain.User
-	member   domain.User
-	bot      domain.User
-	channel  domain.Channel
-	chatID   int64 // channel 的 Bot API chat_id（-100 前缀）
-	router   *Router
-	users    *appusers.Service
-	channels *appchannels.Service
-	messages *appmessages.Service
-	bots     *appbots.Service
-	sessions *captureSessions
-	files    *fakeFiles
+	ctx       context.Context
+	owner     domain.User
+	member    domain.User
+	bot       domain.User
+	channel   domain.Channel
+	chatID    int64 // channel 的 Bot API chat_id（-100 前缀）
+	router    *Router
+	users     *appusers.Service
+	userStore *memory.UserStore
+	channels  *appchannels.Service
+	messages  *appmessages.Service
+	bots      *appbots.Service
+	sessions  *captureSessions
+	files     *fakeFiles
 }
 
 func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
@@ -95,19 +96,20 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 		Sessions:      sessions,
 	}, zaptest.NewLogger(t), clock.System)
 	return botAPIBridgeFixture{
-		ctx:      ctx,
-		owner:    owner,
-		member:   member,
-		bot:      bot,
-		channel:  channel,
-		chatID:   -botAPIChannelChatIDBase - channel.ID,
-		router:   router,
-		users:    usersService,
-		channels: channelsService,
-		messages: messagesService,
-		bots:     botsService,
-		sessions: sessions,
-		files:    files,
+		ctx:       ctx,
+		owner:     owner,
+		member:    member,
+		bot:       bot,
+		channel:   channel,
+		chatID:    -botAPIChannelChatIDBase - channel.ID,
+		router:    router,
+		users:     usersService,
+		userStore: userStore,
+		channels:  channelsService,
+		messages:  messagesService,
+		bots:      botsService,
+		sessions:  sessions,
+		files:     files,
 	}
 }
 

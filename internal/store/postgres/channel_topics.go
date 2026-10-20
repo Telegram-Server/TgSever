@@ -415,7 +415,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(ctx context.Context, req domain.D
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
-	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !canDeleteAnyChannelMessage(member) {
+	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
 	rows, err := tx.Query(ctx, `
@@ -442,7 +442,7 @@ LIMIT $3`, req.ChannelID, req.TopicID, domain.MaxDeleteHistoryBatch)
 	}
 	rows.Close()
 	audit := domain.UserDeletionAudit(domain.DeletionSourceTopicHistory, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
-	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date, audit)
+	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date, audit, false)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
@@ -736,9 +736,10 @@ func (s *ChannelStore) populateChannelMessageReplies(ctx context.Context, db sql
 			rootID = messages[i].Discussion.MessageID
 			replies.Comments = true
 			replies.ChannelID = messages[i].Discussion.ChannelID
-		} else if channel.Broadcast && channel.LinkedChatID != 0 && messages[i].Post {
-			replies.Comments = true
-			replies.ChannelID = channel.LinkedChatID
+		} else if channel.Broadcast && messages[i].Post {
+			// Only the persisted discussion reference proves a comments root.
+			messages[i].Replies = nil
+			continue
 		}
 		if _, ok := readMaxByChannel[targetChannelID]; !ok {
 			readInbox, _ := s.channelReadWatermarks(ctx, targetChannelID, viewerUserID)
