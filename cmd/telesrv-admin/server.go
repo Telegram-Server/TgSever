@@ -265,6 +265,8 @@ func (s *server) routes() http.Handler {
 	// inside telesrv next to the update catalog: the panel never touches the
 	// update volume.
 	mux.Handle("GET /api/client-updates", s.scopedRoute(permissionUpdatesRead, http.HandlerFunc(s.handleClientUpdatesAPI)))
+	mux.Handle("POST /api/actions/client-update-upload", s.scopedRoute(permissionUpdatesPublish, http.HandlerFunc(s.handleClientUpdateUploadAPI)))
+	mux.Handle("POST /api/actions/client-update-publish", s.scopedRoute(permissionUpdatesPublish, http.HandlerFunc(s.handleClientUpdatePublishAPI)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
