@@ -42,6 +42,8 @@ func serverSettingsChain(t *testing.T) (*server, *readStore, string) {
 	t.Cleanup(api.Close)
 	srv.cfg.AdminAPIURL, srv.cfg.AdminAPIToken = api.URL, "chain-token"
 	srv.identity = identity.NewStore(serverDir)
+	// 后台与服务端共用同一份 .env：密码登录同样开启，否则验证码登录的"关闭"覆盖值被忽略。
+	srv.cfg.PasswordLoginEnabled = true
 	return srv, store, serverDir
 }
 
