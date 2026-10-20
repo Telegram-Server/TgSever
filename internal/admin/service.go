@@ -2482,7 +2482,9 @@ func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (
 		if len(s.loginPasswordFingerprintKey) == 0 {
 			return CommandResult{}, fmt.Errorf("admin login password fingerprint key is not configured")
 		}
-		req.PasswordFingerprint = newAccountPasswordFingerprint(s.loginPasswordFingerprintKey, req.Phone, req.Password)
+		// 指纹用规范化后的号码（与建号时 auth.NormalizeSignUpPhone 的规范化一致），同一个号码的
+		// 不同写法对应同一个账号、同一个指纹。
+		req.PasswordFingerprint = newAccountPasswordFingerprint(s.loginPasswordFingerprintKey, domain.NormalizePhone(req.Phone), req.Password)
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionCreateAccount, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		if req.DryRun {

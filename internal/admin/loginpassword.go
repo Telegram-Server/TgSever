@@ -78,8 +78,8 @@ func loginPasswordFingerprint(key []byte, userID int64, password string) string 
 }
 
 // newAccountPasswordFingerprint 是建号带密码（account.create）的幂等指纹：
-// HMAC-SHA256(key, 域前缀 || phone || 0 || password) 的十六进制。建号时还没有 user_id，用请求里的
-// 号码区分账号；域前缀保证它和 account.set_login_password 的指纹不会相同。
+// HMAC-SHA256(key, 域前缀 || phone || 0 || password) 的十六进制。建号时还没有 user_id，用规范化后的
+// 号码（domain.NormalizePhone，调用方负责）区分账号；域前缀保证它和 account.set_login_password 的指纹不会相同。
 func newAccountPasswordFingerprint(key []byte, phone, password string) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("account.create\x00"))
