@@ -1141,7 +1141,10 @@ type BotVerificationService interface {
 
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
-	Auth                AuthService
+	Auth AuthService
+	// LoginPassword 是手机号 + 密码登录（telesrv.* 扩展）。为 nil 时这些方法一律
+	// 返回 PASSWORD_LOGIN_DISABLED，与总开关关闭相同。
+	LoginPassword       LoginPasswordService
 	AuthDeliveryReports AuthDeliveryReportService
 	ClientTelemetry     ClientTelemetryService
 	// AuthKeySessionLayers is the protocol-only durable ordering boundary for

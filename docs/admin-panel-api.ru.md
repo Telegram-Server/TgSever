@@ -465,6 +465,7 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 | `set-account-username` | `user_id` (int64), `username` (string) | — |
 | `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | — |
 | `set-account-phone` | `user_id` (int64), `phone` (string) | — |
+| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, необязательно); создаёт обычный аккаунт без сессии, работает и при закрытой регистрации; занятый номер даёт `PHONE_NUMBER_OCCUPIED` | — |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | — |
 | `set-account-avatar` | **multipart**: поле `metadata` (JSON с общими полями + `user_id` (int64)) и файл в поле `file` | — |
 | `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |

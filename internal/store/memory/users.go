@@ -470,6 +470,21 @@ func userMatchesSearch(u domain.User, query, phoneQuery string) bool {
 func (s *UserStore) Create(_ context.Context, u domain.User) (domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createLocked(u)
+}
+
+// createLocked 是建号主体，调用方必须持有 s.mu 写锁。与 postgres 的 createUserTx 对应：
+// 调用方可以在同一次持锁中先建号、再写入其它数据。手机号已被未删除账号占用时返回
+// domain.ErrPhoneNumberOccupied（空号码不参与唯一性，与 users_phone_unique_idx 一致），
+// 用户名冲突返回 domain.ErrUsernameOccupied；出错时不改动任何状态。
+func (s *UserStore) createLocked(u domain.User) (domain.User, error) {
+	if u.Phone != "" {
+		for _, existing := range s.byID {
+			if !existing.Deleted && existing.Phone == u.Phone {
+				return domain.User{}, domain.ErrPhoneNumberOccupied
+			}
+		}
+	}
 	username := strings.ToLower(strings.TrimSpace(u.Username))
 	if username != "" {
 		for _, existing := range s.byID {

@@ -124,6 +124,9 @@ services:
       TELESRV_BOT_API_ADDR: ${TELESRV_BOT_API_ADDR:-}
       TELESRV_BOT_API_UPDATE_RETENTION: ${TELESRV_BOT_API_UPDATE_RETENTION:-24h}
       TELESRV_DEV_AUTH_CODE: ${TELESRV_DEV_AUTH_CODE:-12345}
+      # Sign-up switch default; the admin service gets the same value so the
+      # panel's "from environment" state matches what this server enforces.
+      TELESRV_SIGN_UP_ENABLED: ${TELESRV_SIGN_UP_ENABLED:-true}
       TELESRV_PHONE_CODE_DELIVERY_PROVIDER: ${TELESRV_PHONE_CODE_DELIVERY_PROVIDER:-development}
       TELESRV_OTP_WEBHOOK_URL: ${TELESRV_OTP_WEBHOOK_URL:-}
       TELESRV_OTP_WEBHOOK_SECRET: ${TELESRV_OTP_WEBHOOK_SECRET:-}
@@ -140,6 +143,15 @@ services:
       # wallet.* answer WALLET_UNAVAILABLE and wallet_available false.
       TELESRV_WALLET_STATE_DIR: ${TELESRV_WALLET_STATE_DIR:-/var/lib/telesrv/wallet}
       TELESRV_WALLET_KEY_FILE: ${TELESRV_WALLET_KEY_FILE:-/var/lib/telesrv/wallet/keys.key}
+      # Admin → Server Settings (777000 name/description/icon, login templates,
+      # sign-up override). The default is the relative data/identity, which in
+      # this container lands on the read-only rootfs. Only this server writes
+      # it -- the admin panel hands its edits over the admin API -- and the
+      # admin service reads the same path through its read-only mount of the
+      # volume, so the two values must stay identical. Deliberately not
+      # overridable from deploy/docker/.env, so the two services cannot
+      # drift apart (CI asserts they are equal and on the volume).
+      TELESRV_IDENTITY_DIR: /var/lib/telesrv/identity
       TELESRV_RSA_IDENTITY_MODE: ${TELESRV_RSA_IDENTITY_MODE:-test}
       # Desktop client updates are off while TELESRV_UPDATE_MANIFEST is empty.
       # A non-empty manifest path turns on the in-process update service under
@@ -230,6 +242,10 @@ services:
       TELESRV_ADMIN_UI_PASSWORD: ${TELESRV_ADMIN_UI_PASSWORD:?set TELESRV_ADMIN_UI_PASSWORD in deploy/docker/.env}
       TELESRV_ADMIN_UI_TOKEN: ${TELESRV_ADMIN_UI_TOKEN:-}
       TELESRV_ADMIN_SESSION_KEY: ${TELESRV_ADMIN_SESSION_KEY:?set TELESRV_ADMIN_SESSION_KEY in deploy/docker/.env}
+      TELESRV_SIGN_UP_ENABLED: ${TELESRV_SIGN_UP_ENABLED:-true}
+      # Read-only here (see the server's TELESRV_IDENTITY_DIR): the panel shows
+      # the current settings from it and sends every change to the server.
+      TELESRV_IDENTITY_DIR: /var/lib/telesrv/identity
       TELESRV_BLOB_BACKEND: ${TELESRV_BLOB_BACKEND:-localfs}
       TELESRV_BLOB_DIR: /var/lib/telesrv/blobs
       TELESRV_BLOB_STAGING_DIR: /var/lib/telesrv/blob-staging

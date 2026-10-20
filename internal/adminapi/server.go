@@ -57,6 +57,7 @@ type Service interface {
 	SetUsername(ctx context.Context, req admin.SetUsernameRequest) (admin.CommandResult, error)
 	SetProfile(ctx context.Context, req admin.SetProfileRequest) (admin.CommandResult, error)
 	SetPhone(ctx context.Context, req admin.SetPhoneRequest) (admin.CommandResult, error)
+	CreateAccount(ctx context.Context, req admin.CreateAccountRequest) (admin.CommandResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
@@ -213,10 +214,9 @@ func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http
 	if log == nil {
 		log = zap.NewNop()
 	}
-	server := &Server{token: cfg.Token, scoped: cfg.ScopedTokens, svc: svc, log: log}
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           server.routes(),
+		Handler:           NewHandler(cfg, svc, log),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -232,6 +232,16 @@ func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 	return httpServer, nil
+}
+
+// NewHandler 返回 admin API 的路由（含鉴权），不监听端口。Start 用它起服务；
+// 跨进程的集成测试用它把真实的 admin API 挂进 httptest.Server。
+func NewHandler(cfg Config, svc Service, log *zap.Logger) http.Handler {
+	if log == nil {
+		log = zap.NewNop()
+	}
+	server := &Server{token: cfg.Token, scoped: cfg.ScopedTokens, svc: svc, log: log}
+	return server.routes()
 }
 
 type Server struct {
@@ -276,6 +286,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/media/documents/{id}", s.authenticated(s.handleMessageDocument))
 	mux.HandleFunc("POST /v1/accounts/set-profile", s.authenticated(s.handleSetProfile))
 	mux.HandleFunc("POST /v1/accounts/set-phone", s.authenticated(s.handleSetPhone))
+	mux.HandleFunc("POST /v1/accounts/create", s.authenticated(s.handleCreateAccount))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
@@ -381,6 +392,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/botverification/icons/set-active", s.authorized(PermissionBotVerificationManage, s.handleSetVerificationIconActive))
 	mux.HandleFunc("POST /v1/botverification/marks/revoke", s.authorized(PermissionBotVerificationManage, s.handleRevokeCustomVerification))
 	mux.HandleFunc("POST /v1/botverification/marks/grant", s.authorized(PermissionBotVerificationManage, s.handleGrantBotVerificationMark))
+	// 服务器设置（identity 存储）只由主服务器写，见 serversettings.go。
+	s.registerServerSettingsRoutes(mux)
 	return mux
 }
 
@@ -706,6 +719,15 @@ func (s *Server) handleSetPhone(w http.ResponseWriter, r *http.Request) {
 	writeCommandResult(w, result, err)
 }
 
+func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
+	var req admin.CreateAccountRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.CreateAccount(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
 func (s *Server) handleResolveUserByPhone(w http.ResponseWriter, r *http.Request) {
 	var req admin.ResolveUserByPhoneRequest
 	if !decodeJSON(w, r, &req) {
@@ -780,7 +802,13 @@ func (s *Server) handleSetChannelAvatar(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) decodeAvatarUpload(w http.ResponseWriter, r *http.Request, fileName *string, data *[]byte) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, admin.MaxAccountAvatarBytes+(1<<20))
+	return decodeFileUpload(w, r, admin.MaxAccountAvatarBytes, "avatar file", fileName, data)
+}
+
+// decodeFileUpload 解析 multipart 上传里的 "file" 字段：请求体按 maxBytes 加 1MiB 表单
+// 余量限制，文件必须非空且不超过 maxBytes。label 用在错误信息里。
+func decodeFileUpload(w http.ResponseWriter, r *http.Request, maxBytes int64, label string, fileName *string, data *[]byte) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+(1<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
 		return false
@@ -790,13 +818,13 @@ func (s *Server) decodeAvatarUpload(w http.ResponseWriter, r *http.Request, file
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "avatar file is required")
+		writeError(w, http.StatusBadRequest, label+" is required")
 		return false
 	}
 	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, admin.MaxAccountAvatarBytes+1))
-	if err != nil || len(raw) == 0 || int64(len(raw)) > admin.MaxAccountAvatarBytes {
-		writeError(w, http.StatusBadRequest, "avatar file is empty or too large")
+	raw, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil || len(raw) == 0 || int64(len(raw)) > maxBytes {
+		writeError(w, http.StatusBadRequest, label+" is empty or too large")
 		return false
 	}
 	*fileName = header.Filename

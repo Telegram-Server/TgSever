@@ -441,6 +441,7 @@ body always contains the **common command fields** (`command_id`, `reason`,
 | `set-account-username` | `user_id` (int64), `username` (string) | — |
 | `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | — |
 | `set-account-phone` | `user_id` (int64), `phone` (string) | — |
+| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED` | — |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | — |
 | `set-account-avatar` | **multipart**: `metadata` field (JSON with common fields + `user_id` (int64)) and a file in `file` | — |
 | `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |

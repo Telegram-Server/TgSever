@@ -117,6 +117,9 @@ type Service struct {
 	// 不分渠道，故只有一份 env 默认值（而非每渠道一份）。
 	loginCodeMessageIdentity   *identity.Store
 	loginCodeMessageEnvDefault string
+	// signUpAllowed 是"是否允许注册"的唯一来源，每次判断都实时调用（不缓存）。
+	// nil 表示开放注册（默认行为不变）。见 WithSignUpAllowed 与 CheckSignUpAllowed。
+	signUpAllowed SignUpAllowedFunc
 }
 
 type loginEmailStore interface {
@@ -203,6 +206,44 @@ func WithLoginCodeDelivery(delivery store.LoginCodeDeliveryStore) Option {
 // delivery, allowing Admin identity changes to take effect without a restart.
 func WithLoginCodeMessageTemplateResolver(resolve func() (string, error)) Option {
 	return func(s *Service) { s.loginCodeTemplate = resolve }
+}
+
+// SignUpAllowedFunc 报告当前是否允许注册新账号。每次判断都会实时调用，
+// 实现应当现读来源（环境变量默认值、管理后台覆盖值等），不要自行缓存，
+// 这样后台切换开关无需重启即可生效。返回 error 时按关闭处理（fail closed）。
+type SignUpAllowedFunc func(ctx context.Context) (bool, error)
+
+// StaticSignUpAllowed 返回固定结果的 SignUpAllowedFunc，用于只有环境变量
+// （TELESRV_SIGN_UP_ENABLED）一个来源的部署。
+func StaticSignUpAllowed(enabled bool) SignUpAllowedFunc {
+	return func(context.Context) (bool, error) { return enabled, nil }
+}
+
+// IdentitySignUpAllowed 返回现读 identity 存储的 SignUpAllowedFunc：每次判断都
+// 读取 identity.json 里的管理面板覆盖值，按 domain.ResolveSignUpEnabled 与环境变量
+// 默认值 envDefault 合并，不缓存，所以面板切换无需重启即可生效。identity.json 读不出
+// 时返回错误（按 SignUpAllowedFunc 的约定 fail closed）：文件损坏时宁可暂停注册，
+// 也不要在运营者关闭注册之后悄悄放开。nil store 等价于只有环境变量一个来源。
+func IdentitySignUpAllowed(store *identity.Store, envDefault bool) SignUpAllowedFunc {
+	if store == nil {
+		return StaticSignUpAllowed(envDefault)
+	}
+	return func(context.Context) (bool, error) {
+		info, err := store.Get()
+		if err != nil {
+			return false, err
+		}
+		return domain.ResolveSignUpEnabled(info.SignUpEnabled, envDefault), nil
+	}
+}
+
+// WithSignUpAllowed 注入"是否允许注册"的来源。所有会为没有账号的号码创建新账号
+// 的入口（发码、重发、登录、注册、密码注册）都经 CheckSignUpAllowed 调用它；
+// 已有账号的登录和 bot 不经过它。nil 等价于始终允许。
+func WithSignUpAllowed(fn SignUpAllowedFunc) Option {
+	return func(s *Service) {
+		s.signUpAllowed = fn
+	}
 }
 
 // WithPasswords lets sign-in stop at SESSION_PASSWORD_NEEDED for 2FA accounts.
@@ -419,6 +460,30 @@ func (s *Service) CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte,
 	return nil
 }
 
+// SignUpAllowed 报告当前是否允许注册新账号（唯一的判断点）。未配置来源时允许。
+// help.getAppConfig 用它下发 telesrv_sign_up_disabled，保证客户端看到的状态与
+// 服务端拦截使用同一个来源。
+func (s *Service) SignUpAllowed(ctx context.Context) (bool, error) {
+	if s == nil || s.signUpAllowed == nil {
+		return true, nil
+	}
+	return s.signUpAllowed(ctx)
+}
+
+// CheckSignUpAllowed 在即将为没有账号的号码创建账号（或签发注册用验证码）之前调用：
+// 注册关闭时返回 domain.ErrSignUpDisabled；来源出错时返回该错误（fail closed）。
+// 只能对没有账号的号码调用，已有账号的登录路径不得经过这里。
+func (s *Service) CheckSignUpAllowed(ctx context.Context) error {
+	allowed, err := s.SignUpAllowed(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve sign-up switch: %w", err)
+	}
+	if !allowed {
+		return domain.ErrSignUpDisabled
+	}
+	return nil
+}
+
 // SendCode 为 phone 生成 phone_code_hash，按配置选择开发 app code、登录邮箱 code
 // 或登录邮箱 setup-required 状态，返回 hash。
 func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
@@ -439,6 +504,9 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	issuedUserID := int64(0)
 	if found {
 		issuedUserID = existing.ID
+	} else if err := s.CheckSignUpAllowed(ctx); err != nil {
+		// 注册关闭时，未注册号码在发码这一步就被拒绝：不签发、不投递短信或邮件。
+		return "", err
 	}
 	if s.loginEmailEnabled && s.loginEmails != nil {
 		email, found, err := s.loginEmails.LoginEmailByPhone(ctx, phone)
@@ -799,6 +867,12 @@ func (s *Service) resendCode(ctx context.Context, authKeyID [8]byte, phone, phon
 		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
 		return "", ErrCodeInvalid
 	}
+	if rec.IssuedUserID == 0 {
+		// 签发给未注册号码的码：注册在发码之后才关闭时，重发同样不签发、不投递。
+		if err := s.CheckSignUpAllowed(ctx); err != nil {
+			return "", err
+		}
+	}
 	consumed, ok, err := s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
 	if err != nil {
 		return "", err
@@ -1021,7 +1095,7 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, false, err
 	}
 	if !found {
-		return domain.User{}, domain.Message{}, true, nil
+		return s.signUpRequired(ctx)
 	}
 	return s.finishSignIn(ctx, auth, existing)
 }
@@ -1041,9 +1115,18 @@ func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization
 		return domain.User{}, domain.Message{}, false, err
 	}
 	if !found {
-		return domain.User{}, domain.Message{}, true, nil
+		return s.signUpRequired(ctx)
 	}
 	return s.finishSignIn(ctx, auth, existing)
+}
+
+// signUpRequired 是验证码正确但号码没有账号时的结果：注册开放时返回
+// needSignUp=true 引导客户端注册；注册在发码之后才关闭时返回 domain.ErrSignUpDisabled。
+func (s *Service) signUpRequired(ctx context.Context) (domain.User, domain.Message, bool, error) {
+	if err := s.CheckSignUpAllowed(ctx); err != nil {
+		return domain.User{}, domain.Message{}, false, err
+	}
+	return domain.User{}, domain.Message{}, true, nil
 }
 
 // verifyLoginCode closes the login-code state transition around one atomic
@@ -1170,21 +1253,33 @@ func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, e
 	return existing, domain.Message{}, false, nil
 }
 
+// FinishVerifiedSignIn 是"凭据已由调用方验证、用户已存在"的登录收尾，供不经验证码的
+// 登录路径（手机号 + 登录密码）复用验证码登录的 finishSignIn：系统账号和已注销账号
+// 拒绝（ErrSystemUserLoginForbidden）；开了 2FA 的账号以 password_pending 绑定并返回
+// domain.ErrSessionPasswordNeeded（同时返回用户，供 RPC 层把 session 置为未授权）；
+// 否则绑定授权并写欢迎消息。bot 账号不走手机号登录，这里同样拒绝。
+func (s *Service) FinishVerifiedSignIn(ctx context.Context, auth domain.Authorization, existing domain.User) (domain.User, error) {
+	if s == nil || existing.ID == 0 {
+		return domain.User{}, errors.New("auth: verified sign-in without user")
+	}
+	if existing.Bot {
+		return domain.User{}, ErrSystemUserLoginForbidden
+	}
+	u, _, _, err := s.finishSignIn(ctx, auth, existing)
+	return u, err
+}
+
 // SignUp 在 SignIn 判定需注册后创建用户并绑定授权。
 // signUp 的 TL 请求不带验证码，因此只消费由正确 SignIn/email setup 原子
 // 标记过的 hash。直接 SendCode→SignUp 永远不能创建账号。
 func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, firstName, lastName string) (domain.User, domain.Message, error) {
-	phone = normalizePhone(phone)
-	if !validPhone(phone) {
-		return domain.User{}, domain.Message{}, ErrPhoneNumberInvalid
+	phone, err := NormalizeSignUpPhone(phone)
+	if err != nil {
+		return domain.User{}, domain.Message{}, err
 	}
-	if systemLoginPhoneForbidden(phone) {
-		return domain.User{}, domain.Message{}, ErrSystemUserLoginForbidden
-	}
-	firstName = strings.TrimSpace(firstName)
-	lastName = strings.TrimSpace(lastName)
-	if firstName == "" || utf8.RuneCountInString(firstName) > 64 || utf8.RuneCountInString(lastName) > 64 {
-		return domain.User{}, domain.Message{}, domain.ErrFirstNameInvalid
+	firstName, lastName, err = NormalizeSignUpName(firstName, lastName)
+	if err != nil {
+		return domain.User{}, domain.Message{}, err
 	}
 	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
 	if err != nil {
@@ -1219,6 +1314,11 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
+	// 最后一道兜底：注册在 signIn 之后才关闭时也不能建号。先于消费已验证标记，
+	// 重新开放后同一份码仍可完成注册。
+	if err := s.CheckSignUpAllowed(ctx); err != nil {
+		return domain.User{}, domain.Message{}, err
+	}
 	consumed, consumedOK, err := s.codes.ConsumeSignUpVerified(ctx, phoneCodeHash, phone)
 	if err != nil {
 		return domain.User{}, domain.Message{}, err
@@ -1236,45 +1336,180 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 
-	accessHash, err := randomInt64()
+	create := func(ctx context.Context, newUser domain.User) (domain.User, error) {
+		u, err := s.users.Create(ctx, newUser)
+		if err != nil {
+			return domain.User{}, err
+		}
+		if rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) != "" && s.loginEmails != nil {
+			if err := s.loginEmails.SetLoginEmail(ctx, u.ID, rec.PendingEmail); err != nil {
+				return domain.User{}, err
+			}
+		}
+		return u, nil
+	}
+	loginMessage := domain.Message{}
+	afterBind := func(ctx context.Context, u domain.User) error {
+		// A new account has no owner/dialog at issuance time. Only the development
+		// phone/App registration path creates its bootstrap 777000 message here;
+		// external SMS and email setup registration retain only their verified fact.
+		if rec.Channel != codeChannelPhone {
+			return nil
+		}
+		var err error
+		loginMessage, err = s.recordLoginMessage(ctx, u.ID, rec.Code)
+		return err
+	}
+	u, err := s.signUpAccount(ctx, auth, phone, firstName, lastName, create, afterBind)
 	if err != nil {
 		return domain.User{}, domain.Message{}, err
 	}
+	return u, loginMessage, nil
+}
+
+// CreateAccountFunc 把新账号写入存储，返回带 ID 的用户。注册后半段的建号这一步由调用方
+// 提供：验证码注册是普通建号（外加写入已验证的登录邮箱），密码注册是"建号并写入登录密码"
+// 的单事务操作。号码已被占用时应返回 domain.ErrPhoneNumberOccupied。
+type CreateAccountFunc func(ctx context.Context, u domain.User) (domain.User, error)
+
+// NormalizeSignUpPhone 规范化并校验注册/登录用的手机号：格式不合法返回 ErrPhoneNumberInvalid，
+// 系统账号号段返回 ErrSystemUserLoginForbidden。规则与 auth.signUp 一致。
+func NormalizeSignUpPhone(phone string) (string, error) {
+	phone = normalizePhone(phone)
+	if !validPhone(phone) {
+		return "", ErrPhoneNumberInvalid
+	}
+	if systemLoginPhoneForbidden(phone) {
+		return "", ErrSystemUserLoginForbidden
+	}
+	return phone, nil
+}
+
+// NormalizeSignUpName 去掉名字首尾空白并校验：first_name 必填，两者各不超过 64 个字符，
+// 不合法返回 domain.ErrFirstNameInvalid。规则与 auth.signUp 一致。
+func NormalizeSignUpName(firstName, lastName string) (string, string, error) {
+	firstName = strings.TrimSpace(firstName)
+	lastName = strings.TrimSpace(lastName)
+	if firstName == "" || utf8.RuneCountInString(firstName) > 64 || utf8.RuneCountInString(lastName) > 64 {
+		return "", "", domain.ErrFirstNameInvalid
+	}
+	return firstName, lastName, nil
+}
+
+// SignUpWithAccountCreator 用调用方提供的建号步骤完成一次不经验证码的注册（密码注册），
+// 号码和名字按 auth.signUp 的规则校验。建号之后的流程与验证码注册完全一致：
+// 生成 access_hash、按配置赠送会员、绑定授权、写欢迎消息。
+func (s *Service) SignUpWithAccountCreator(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create CreateAccountFunc) (domain.User, error) {
+	if s == nil || create == nil {
+		return domain.User{}, errors.New("auth: sign up without account creator")
+	}
+	phone, err := NormalizeSignUpPhone(phone)
+	if err != nil {
+		return domain.User{}, err
+	}
+	firstName, lastName, err = NormalizeSignUpName(firstName, lastName)
+	if err != nil {
+		return domain.User{}, err
+	}
+	// 注册开关的最后一道兜底（调用方 loginpassword.SignUp 已先检查过一次）。
+	if err := s.CheckSignUpAllowed(ctx); err != nil {
+		return domain.User{}, err
+	}
+	// 建号会立即提交，而这条路径没有验证码可作废：先确认当前 auth key 能绑定授权，
+	// 否则 bind 失败时号码已被一个没人登录的新账号占住。
+	if err := s.checkPermanentAuthKey(ctx, auth.AuthKeyID); err != nil {
+		return domain.User{}, err
+	}
+	return s.signUpAccount(ctx, auth, phone, firstName, lastName, create, nil)
+}
+
+// signUpAccount 是各条注册路径共用的后半段：生成 access_hash、按配置赠送会员、经 create
+// 建号、绑定授权，然后（afterBind 成功后）写欢迎消息。phone 和名字必须已经校验过。
+// afterBind 用于验证码注册在欢迎消息之前写入的 bootstrap 登录码消息，可以为 nil。
+func (s *Service) signUpAccount(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create CreateAccountFunc, afterBind func(context.Context, domain.User) error) (domain.User, error) {
+	newUser, err := s.newSignUpUser(phone, firstName, lastName)
+	if err != nil {
+		return domain.User{}, err
+	}
+	u, err := create(ctx, newUser)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if err := s.bind(ctx, auth, u.ID); err != nil {
+		return domain.User{}, err
+	}
+	if afterBind != nil {
+		if err := afterBind(ctx, u); err != nil {
+			return domain.User{}, err
+		}
+	}
+	s.recordWelcomeMessage(ctx, u)
+	return u, nil
+}
+
+// newSignUpUser 构造一个待写入的新账号：生成 access_hash，按配置赠送会员。
+// 所有建号路径（验证码注册、密码注册、后台建号）共用，保证新账号默认待遇一致。
+// phone 和名字必须已经校验过。
+func (s *Service) newSignUpUser(phone, firstName, lastName string) (domain.User, error) {
+	accessHash, err := randomInt64()
+	if err != nil {
+		return domain.User{}, err
+	}
+	newUser := s.signUpUserDefaults(phone, firstName, lastName)
+	newUser.AccessHash = accessHash
+	return newUser, nil
+}
+
+// signUpUserDefaults 是新账号除 access_hash 以外的默认字段。
+func (s *Service) signUpUserDefaults(phone, firstName, lastName string) domain.User {
 	newUser := domain.User{
-		AccessHash: accessHash,
-		Phone:      phone,
-		FirstName:  firstName,
-		LastName:   lastName,
+		Phone:     phone,
+		FirstName: firstName,
+		LastName:  lastName,
 	}
 	// 新账号默认赠送会员：到期时间 = 注册时刻 + N 个月（与迁移 0094 对存量
 	// 账号的 backfill 同一语义）。premium 状态由下发路径按该时间即时派生。
 	if s.premiumGrantMonths > 0 {
 		newUser.PremiumUntil = int(time.Now().AddDate(0, s.premiumGrantMonths, 0).Unix())
 	}
-	u, err := s.users.Create(ctx, newUser)
+	return newUser
+}
+
+// ValidateNewAccount 按普通注册的规则校验后台建号参数（号码格式、保留号段、名字），
+// 并确认号码未被占用（占用时返回 domain.ErrPhoneNumberOccupied）。返回将要创建的账号
+// （规范化后的号码和名字、按配置赠送的会员到期时间；没有 ID 和 access_hash），不建号，
+// 用于试运行。不受注册开关限制。
+func (s *Service) ValidateNewAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error) {
+	phone, err := NormalizeSignUpPhone(phone)
 	if err != nil {
-		return domain.User{}, domain.Message{}, err
+		return domain.User{}, err
 	}
-	if rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) != "" && s.loginEmails != nil {
-		if err := s.loginEmails.SetLoginEmail(ctx, u.ID, rec.PendingEmail); err != nil {
-			return domain.User{}, domain.Message{}, err
-		}
+	firstName, lastName, err = NormalizeSignUpName(firstName, lastName)
+	if err != nil {
+		return domain.User{}, err
 	}
-	if err := s.bind(ctx, auth, u.ID); err != nil {
-		return domain.User{}, domain.Message{}, err
+	if _, found, err := s.currentPhoneOwner(ctx, phone); err != nil {
+		return domain.User{}, err
+	} else if found {
+		return domain.User{}, domain.ErrPhoneNumberOccupied
 	}
-	loginMessage := domain.Message{}
-	// A new account has no owner/dialog at issuance time. Only the development
-	// phone/App registration path creates its bootstrap 777000 message here;
-	// external SMS and email setup registration retain only their verified fact.
-	if rec.Channel == codeChannelPhone {
-		loginMessage, err = s.recordLoginMessage(ctx, u.ID, rec.Code)
-		if err != nil {
-			return domain.User{}, domain.Message{}, err
-		}
+	return s.signUpUserDefaults(phone, firstName, lastName), nil
+}
+
+// CreateAccount 是后台建号：按普通注册的规则校验并建号（含会员赠送），
+// 但不受注册开关限制，不绑定任何授权，也不写欢迎消息——欢迎消息在新成员
+// 首次用验证码登录时按普通登录流程发送。号码已被占用时返回 domain.ErrPhoneNumberOccupied
+// （并发建号由存储的唯一约束兜底）。
+func (s *Service) CreateAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error) {
+	pending, err := s.ValidateNewAccount(ctx, phone, firstName, lastName)
+	if err != nil {
+		return domain.User{}, err
 	}
-	s.recordWelcomeMessage(ctx, u)
-	return u, loginMessage, nil
+	newUser, err := s.newSignUpUser(pending.Phone, pending.FirstName, pending.LastName)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return s.users.Create(ctx, newUser)
 }
 
 // SignInBot 处理 auth.importBotAuthorization：校验 bot token 并把当前 auth_key
@@ -1481,17 +1716,8 @@ func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID in
 	if !found || systemUserLoginForbidden(u) {
 		return ErrSystemUserLoginForbidden
 	}
-	if s.authKeys != nil {
-		key, found, err := s.authKeys.Get(ctx, auth.AuthKeyID)
-		if err != nil {
-			return err
-		}
-		// Defense in depth: Router normally converts a bound temp key to its perm
-		// identity and edge rejects expired temp keys. Never let an unbound/sticky
-		// temp key create authorization even if either outer boundary regresses.
-		if !found || key.ExpiresAt != 0 {
-			return ErrAuthKeyPermEmpty
-		}
+	if err := s.checkPermanentAuthKey(ctx, auth.AuthKeyID); err != nil {
+		return err
 	}
 	auth.UserID = userID
 	// Bind 是授权切换的持久化状态边界：生产 store 会先清同 auth key 的旧用户
@@ -1505,6 +1731,24 @@ func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID in
 			return ErrSystemUserLoginForbidden
 		}
 		return err
+	}
+	return nil
+}
+
+// checkPermanentAuthKey 确认 authKeyID 是已知的永久 auth key，只有它能绑定授权。
+func (s *Service) checkPermanentAuthKey(ctx context.Context, authKeyID [8]byte) error {
+	if s.authKeys == nil {
+		return nil
+	}
+	key, found, err := s.authKeys.Get(ctx, authKeyID)
+	if err != nil {
+		return err
+	}
+	// Defense in depth: Router normally converts a bound temp key to its perm
+	// identity and edge rejects expired temp keys. Never let an unbound/sticky
+	// temp key create authorization even if either outer boundary regresses.
+	if !found || key.ExpiresAt != 0 {
+		return ErrAuthKeyPermEmpty
 	}
 	return nil
 }

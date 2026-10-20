@@ -1117,6 +1117,53 @@ func TestLoadLoginEmailDefaultsDisabled(t *testing.T) {
 	}
 }
 
+func TestLoadSignUpEnabledDefaultsOpen(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.SignUpEnabled {
+		t.Fatal("SignUpEnabled = false by default, want true (existing deployments keep open sign-up)")
+	}
+
+	t.Setenv("TELESRV_SIGN_UP_ENABLED", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SignUpEnabled {
+		t.Fatal("SignUpEnabled = true with TELESRV_SIGN_UP_ENABLED=false")
+	}
+}
+
+func TestLoadPasswordLoginSwitch(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PasswordLoginEnabled {
+		t.Fatal("PasswordLoginEnabled = true by default, want false")
+	}
+
+	t.Setenv("TELESRV_PASSWORD_LOGIN_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.PasswordLoginEnabled {
+		t.Fatal("PasswordLoginEnabled = false with TELESRV_PASSWORD_LOGIN_ENABLED=true")
+	}
+
+	// 密码注册没有设置登录邮箱的环节，不能和"必须先设置登录邮箱"同时打开。
+	t.Setenv("TELESRV_LOGIN_EMAIL_ENABLE", "true")
+	t.Setenv("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", "true")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TELESRV_PASSWORD_LOGIN_ENABLED") {
+		t.Fatalf("Load with password login and required login email err=%v, want a TELESRV_PASSWORD_LOGIN_ENABLED conflict", err)
+	}
+}
+
 func TestLoadLoginEmailSMTPConfig(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_LOGIN_EMAIL_ENABLE", "true")

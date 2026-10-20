@@ -47,6 +47,7 @@ import (
 	"telesrv/internal/app/help"
 	"telesrv/internal/app/langpack"
 	"telesrv/internal/app/livestream"
+	loginpasswordapp "telesrv/internal/app/loginpassword"
 	"telesrv/internal/app/maintenance"
 	messageapp "telesrv/internal/app/messages"
 	moderationapp "telesrv/internal/app/moderation"
@@ -611,10 +612,11 @@ func run(logger *zap.Logger) error {
 	if !domain.ConfigurePremiumBotUsername(cfg.PremiumBotUsername) {
 		return fmt.Errorf("configure Premium bot username %q", cfg.PremiumBotUsername)
 	}
-	// 服务器身份由管理面板（Server Settings → Server identity）在
-	// cfg.IdentityDir 下维护；这里启动时读取一次自定义服务器名，用作 777000 官方
-	// 系统账号的展示名与登录通知 {{server_name}} 占位符（见
-	// domain.SetOfficialSystemUserDisplayName）。登录通知模板在 internal/app/auth
+	// 服务器身份由管理面板（Server Settings → Server identity）编辑，由本进程经
+	// admin API 的服务器设置命令写入 cfg.IdentityDir（后台只读该目录）；这里启动时
+	// 读取一次自定义服务器名，用作 777000 官方系统账号的展示名与登录通知
+	// {{server_name}} 占位符（见 domain.SetOfficialSystemUserDisplayName）。
+	// 登录通知模板在 internal/app/auth
 	// 内部每次发送时实时读取；名称与图标随后由 systemidentity.Watcher 在运行期
 	// 持续跟随面板改动，无需重启。
 	identityStore := identity.NewStore(cfg.IdentityDir)
@@ -1076,6 +1078,10 @@ func run(logger *zap.Logger) error {
 		Commands:      adminStore,
 		Restrictions:  adminStore,
 		OfficialGifts: officialgifts.New(cfg.OfficialGiftsDir),
+		// 服务器设置只由本进程写入 identity 存储：管理后台经 admin API 下发命令，
+		// 后台自己只读同一目录（Docker 下它的挂载是只读的）。
+		ServerIdentity:       identityStore,
+		SignUpEnabledDefault: func() bool { return cfg.SignUpEnabled },
 	})
 	userProjectionFacts := userprojection.NewDurableUserProjectionFacts(
 		adminService,
@@ -1332,8 +1338,9 @@ func run(logger *zap.Logger) error {
 	// its display name was already set from identityStore above, and here its
 	// avatar is seeded from the operator's icon (falling back to the bundled
 	// default when none is configured). The watcher then keeps both in sync
-	// with later admin-panel edits without a restart, since the panel is a
-	// separate process that only writes identity.json.
+	// with later admin-panel edits without a restart: the panel hands those
+	// edits to this process as admin API commands, which write identity.json,
+	// and the watcher polls the directory regardless of who wrote it.
 	seedOfficialAvatar := func(ctx context.Context, icon []byte, now int64) (bool, error) {
 		return botavatars.SeedOfficialSystemAvatar(ctx, filesService, icon, now)
 	}
@@ -1667,6 +1674,10 @@ func run(logger *zap.Logger) error {
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
+		// 注册开关：管理面板覆盖值（identity.json，每次现读）优先，未设置时跟随
+		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，
+		// help.getAppConfig 下发的 telesrv_sign_up_disabled 也读它。
+		auth.WithSignUpAllowed(auth.IdentitySignUpAllowed(identityStore, cfg.SignUpEnabled)),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1684,6 +1695,22 @@ func run(logger *zap.Logger) error {
 			Store:        accountService,
 			Sender:       loginEmailSender,
 		}))
+	// 手机号 + 密码登录（telesrv 扩展协议）。总开关默认关闭；关闭时服务照常构造，
+	// telesrv. 方法由服务自己返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
+	// 密码登录的 SRP challenge 只存进程内存（与 passkey 挑战、QR 登录 token 相同，单体
+	// 部署不跨实例），不写进用户记录。
+	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool),
+		memory.NewLoginPasswordChallengeStore(nil), authService,
+		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled),
+		loginpasswordapp.WithUserRateLimit(rateLimiter, cfg.PasswordLoginUserRateLimit, cfg.PasswordLoginUserRateWindow),
+		// 设置、修改、删除登录密码后由 777000 通知该账号：消息与 outbox 同事务落库，再推给所有在线会话。
+		loginpasswordapp.WithChangeNotices(messageStore, logger.Named("login-password")),
+		// 忘记登录密码：授权创建时间在窗口内可以不填旧密码直接重设。窗口从任何新授权（含扫码批准的新设备）
+		// 算起，默认 0 关闭，见 WithResetWindow。
+		loginpasswordapp.WithResetWindow(cfg.PasswordLoginResetWindow))
+	if cfg.PasswordLoginEnabled {
+		logger.Warn("手机号 + 密码登录已启用：任何人都可以不经验证码用任意号码注册")
+	}
 	// Collectible (NFT) usernames and the gramsrv composite account rating are
 	// optional read models projected at the protocol edge. The rating worker
 	// computes and persists scores; profile reads never recompute them.
@@ -1905,6 +1932,7 @@ func run(logger *zap.Logger) error {
 		PresenceLastSeenDrainTimeout:   cfg.PresenceLastSeenDrainTimeout,
 	}, rpc.Deps{
 		Auth:                 authService,
+		LoginPassword:        loginPasswordService,
 		AuthDeliveryReports:  authDeliveryReportService,
 		ClientTelemetry:      clientTelemetryService,
 		AuthKeySessionLayers: authKeySessionLayerStore,
@@ -1919,6 +1947,8 @@ func run(logger *zap.Logger) error {
 			// operator turns it off, and that is exactly when a client must be told
 			// the wallet is unavailable rather than shown an entry that cannot work.
 			help.WithWalletAvailable(cfg.WalletStateDir != ""),
+			help.WithPasswordLogin(loginPasswordService.Enabled()),
+			help.WithSignUpAllowed(authService.SignUpAllowed),
 			help.WithAccountFreezeProvider(adminService)),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
@@ -2003,6 +2033,7 @@ func run(logger *zap.Logger) error {
 	activeSessions.SetLifecycleObserver(router)
 	adminService.Configure(adminapp.Dependencies{
 		Auth:                    authService,
+		AccountCreator:          authService,
 		Revoker:                 router,
 		Users:                   usersService,
 		UserLookup:              userStore,

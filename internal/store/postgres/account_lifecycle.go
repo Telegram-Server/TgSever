@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 // AccountLifecycleStore is the PostgreSQL implementation of the unified
@@ -187,6 +188,11 @@ func (s *AccountLifecycleStore) ExecuteAccountDeletion(ctx context.Context, user
 UPDATE profile_photos SET active = false
 WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND active`, userID); err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("deactivate deleted account profile photos: %w", err)
+	}
+	// 登录密码（手机号 + 密码登录）随账号一起删除。用户是软删除，账号行还在，
+	// login_passwords 的外键级联不会发生，必须在同一个事务里显式删掉。
+	if _, err := sqlcgen.New(tx).DeleteLoginPassword(ctx, userID); err != nil {
+		return domain.AccountDeletionResult{}, fmt.Errorf("delete deleted account login password: %w", err)
 	}
 	reason = strings.TrimSpace(reason)
 	reason = truncateUTF8Bytes(reason, 1024)

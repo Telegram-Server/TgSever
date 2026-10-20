@@ -408,6 +408,9 @@ func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest
 			errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 			return nil, phoneNumberInvalidErr()
 		}
+		if errors.Is(err, domain.ErrSignUpDisabled) {
+			return nil, signUpDisabledErr()
+		}
 		// The public MTProto error intentionally stays opaque, but operators need
 		// the wrapped store/provider cause to repair an update-related failure.
 		// Hash the normalized phone so neither the number nor the OTP reaches logs.

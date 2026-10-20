@@ -110,6 +110,11 @@ type Service struct {
 	mapboxToken   string
 	premiumBot    string
 	walletEnabled bool
+	// telesrvFeatures 是下发给自有客户端的 telesrv 扩展能力（app config 的 telesrv_features）。
+	telesrvFeatures []string
+	// signUpAllowed 是 auth 服务"是否允许注册"的同一个来源，每次 GetAppConfig 都实时
+	// 读取（不缓存），据此按请求注入 telesrv_sign_up_disabled。nil 表示开放注册。
+	signUpAllowed func(context.Context) (bool, error)
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -154,6 +159,31 @@ func WithPremiumBotUsername(username string) Option {
 func WithWalletAvailable(available bool) Option {
 	return func(s *Service) {
 		s.walletEnabled = available
+	}
+}
+
+// telesrvFeaturePasswordLogin 是手机号 + 密码登录（telesrv.getLoginPassword 等方法）的能力名。
+const telesrvFeaturePasswordLogin = "password_login"
+
+// WithPasswordLogin 按总开关决定是否下发 "telesrv_features": ["password_login"]。
+// 自有客户端据此显示密码登录入口；官方客户端不认识这个 key，不受影响。
+func WithPasswordLogin(enabled bool) Option {
+	return func(s *Service) {
+		if enabled {
+			s.telesrvFeatures = append(s.telesrvFeatures, telesrvFeaturePasswordLogin)
+		}
+	}
+}
+
+// appConfigKeySignUpDisabled 是注册关闭时下发给客户端的服务器状态 key。它与
+// telesrv_features 分开：后者表示能力，这个表示服务器当前状态。注册开放时不出现。
+const appConfigKeySignUpDisabled = "telesrv_sign_up_disabled"
+
+// WithSignUpAllowed 注入"是否允许注册"的来源（通常是 auth.Service.SignUpAllowed，
+// 保证下发状态与服务端拦截同源）。每次 GetAppConfig 都实时调用；返回 error 时按关闭下发。
+func WithSignUpAllowed(fn func(context.Context) (bool, error)) Option {
+	return func(s *Service) {
+		s.signUpAllowed = fn
 	}
 }
 
@@ -231,9 +261,11 @@ func defaultAppConfigHashForPremiumBot(mapboxToken, premiumBotUsername string, w
 	return hash + 1 + int(crc32.ChecksumIEEE([]byte(mapboxToken))&0x1fffffff)
 }
 
-// GetAppConfig returns the cached global app config plus an authenticated,
-// per-account freeze overlay. Only active freezes add account fields; an
-// inactive account receives the field-free base config. The overlay owns its
+// GetAppConfig returns the cached global app config plus a per-request
+// telesrv_sign_up_disabled overlay (read live from the sign-up switch) and an
+// authenticated, per-account freeze overlay. The cached base already carries the
+// server-wide telesrv_features (see withTelesrvFeatures). Only active freezes
+// add account fields; an inactive account receives that base config. The overlay owns its
 // own deterministic hash so a FROZEN_METHOD_INVALID-triggered refresh and a
 // later unfreeze can never be answered notModified against the other state.
 func (s *Service) GetAppConfig(ctx context.Context, userID int64, hash int) (domain.AppConfig, bool, error) {
@@ -252,11 +284,15 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 		return domain.AppConfig{}, fmt.Errorf("decode base app config: %w", err)
 	}
 	changed := false
-	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url"} {
+	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled} {
 		if _, exists := values[key]; exists {
 			delete(values, key)
 			changed = true
 		}
+	}
+	if s.signUpDisabled(ctx) {
+		values[appConfigKeySignUpDisabled] = json.RawMessage("true")
+		changed = true
 	}
 	if userID > 0 {
 		if s != nil && s.accountFreeze != nil {
@@ -280,12 +316,55 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 	if err != nil {
 		return domain.AppConfig{}, fmt.Errorf("encode account app config: %w", err)
 	}
-	hashInput := append([]byte(strconv.Itoa(base.Hash)+"\x00"), body...)
-	overlayHash := int(crc32.ChecksumIEEE(hashInput) & 0x7fffffff)
-	if overlayHash == 0 || overlayHash == base.Hash {
-		overlayHash = base.Hash + 1
+	return domain.AppConfig{Client: base.Client, Hash: overlayAppConfigHash(base.Hash, body), JSON: body}, nil
+}
+
+// signUpDisabled 实时读取注册开关；读取失败按关闭处理，与 auth 的 fail-closed 拦截一致。
+func (s *Service) signUpDisabled(ctx context.Context) bool {
+	if s == nil || s.signUpAllowed == nil {
+		return false
 	}
-	return domain.AppConfig{Client: base.Client, Hash: overlayHash, JSON: body}, nil
+	allowed, err := s.signUpAllowed(ctx)
+	return err != nil || !allowed
+}
+
+// overlayAppConfigHash 为在 base 之上改写过的 config 算一个确定的新 hash，保证与 base 不同，
+// 持有 base hash 的客户端会重新拉取而不是收到 notModified。
+func overlayAppConfigHash(baseHash int, body []byte) int {
+	hashInput := append([]byte(strconv.Itoa(baseHash)+"\x00"), body...)
+	overlayHash := int(crc32.ChecksumIEEE(hashInput) & 0x7fffffff)
+	if overlayHash == 0 || overlayHash == baseHash {
+		overlayHash = baseHash + 1
+	}
+	return overlayHash
+}
+
+// withTelesrvFeatures 把 telesrv_features 写进进程级缓存的 base config（只在加载时做一次）。
+// 这个 key 只由服务端配置决定：DB 覆盖行里带的一律剔除，开关打开时写入服务端的能力列表。
+// 内容变了就换一个新 hash，开关打开前缓存的 hash 不会再命中 notModified。
+func (s *Service) withTelesrvFeatures(base domain.AppConfig) domain.AppConfig {
+	values := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(base.JSON, &values); err != nil {
+		// 解析失败的 config 原样缓存；accountAppConfig 会对它报错，与之前的行为一致。
+		return base
+	}
+	_, existed := values["telesrv_features"]
+	delete(values, "telesrv_features")
+	if len(s.telesrvFeatures) == 0 && !existed {
+		return base
+	}
+	if len(s.telesrvFeatures) > 0 {
+		features, err := json.Marshal(s.telesrvFeatures)
+		if err != nil {
+			return base
+		}
+		values["telesrv_features"] = features
+	}
+	body, err := json.Marshal(values)
+	if err != nil {
+		return base
+	}
+	return domain.AppConfig{Client: base.Client, Hash: overlayAppConfigHash(base.Hash, body), JSON: body}
 }
 
 func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
@@ -295,7 +374,7 @@ func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
 	defaultCfg := defaultAppConfigWithPremiumBot(s.mapboxToken, s.premiumBot, s.walletEnabled)
 	s.appConfigOnce.Do(func() {
 		if s.appConfigs == nil {
-			s.appConfigCache = defaultCfg
+			s.appConfigCache = s.withTelesrvFeatures(defaultCfg)
 			return
 		}
 		cfg, found, err := s.appConfigs.GetAppConfig(ctx, tdesktopClient)
@@ -305,7 +384,7 @@ func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
 		if err != nil || !found || cfg.Hash < defaultAppConfigHash {
 			cfg = defaultCfg
 		}
-		s.appConfigCache = cfg
+		s.appConfigCache = s.withTelesrvFeatures(cfg)
 	})
 	return s.appConfigCache
 }
