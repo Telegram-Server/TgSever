@@ -44,6 +44,11 @@ type Info struct {
 	// domain.ResolveLoginCodeMessageTemplate）。与欢迎消息不同，它只有一份——消息不随
 	// 投递渠道变化。空表示「未配置」，语义同上。
 	LoginCodeMessageTemplate string `json:"login_code_message_template,omitempty"`
+	// SignUpEnabled 是管理面板对注册开关的三态覆盖：nil 表示「未设置」，跟随
+	// TELESRV_SIGN_UP_ENABLED 环境变量；true/false 表示以面板为准。主服务器每次判断
+	// 是否允许注册时都现读本字段（见 cmd/telesrv 中 auth.WithSignUpAllowed 的接线）。
+	// 旧版 identity.json 没有这个键，读出来就是 nil，行为不变。
+	SignUpEnabled *bool `json:"sign_up_enabled,omitempty"`
 }
 
 // Store 在指定目录（通常为 Config.IdentityDir）下读写 Info 与图标文件。所有方法均可
@@ -116,6 +121,22 @@ func (s *Store) SetLoginCodeMessageTemplate(template string) error {
 		return err
 	}
 	info.LoginCodeMessageTemplate = strings.TrimSpace(template)
+	return s.save(info)
+}
+
+// SetSignUpOverride 设置或清除注册开关的管理面板覆盖，保留其余身份字段。
+// nil 清除覆盖（恢复跟随环境变量），非 nil 以其值为准。
+func (s *Store) SetSignUpOverride(enabled *bool) error {
+	info, err := s.Get()
+	if err != nil {
+		return err
+	}
+	if enabled == nil {
+		info.SignUpEnabled = nil
+	} else {
+		v := *enabled
+		info.SignUpEnabled = &v
+	}
 	return s.save(info)
 }
 

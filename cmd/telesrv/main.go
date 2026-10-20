@@ -1668,9 +1668,10 @@ func run(logger *zap.Logger) error {
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
-		// 注册开关：目前只有环境变量这一个来源；auth.SignUpAllowed 是全服唯一的判断点，
+		// 注册开关：管理面板覆盖值（identity.json，每次现读）优先，未设置时跟随
+		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，
 		// help.getAppConfig 下发的 telesrv_sign_up_disabled 也读它。
-		auth.WithSignUpAllowed(auth.StaticSignUpAllowed(cfg.SignUpEnabled)),
+		auth.WithSignUpAllowed(auth.IdentitySignUpAllowed(identityStore, cfg.SignUpEnabled)),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),

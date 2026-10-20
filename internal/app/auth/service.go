@@ -219,6 +219,24 @@ func StaticSignUpAllowed(enabled bool) SignUpAllowedFunc {
 	return func(context.Context) (bool, error) { return enabled, nil }
 }
 
+// IdentitySignUpAllowed 返回现读 identity 存储的 SignUpAllowedFunc：每次判断都
+// 读取 identity.json 里的管理面板覆盖值，按 domain.ResolveSignUpEnabled 与环境变量
+// 默认值 envDefault 合并，不缓存，所以面板切换无需重启即可生效。identity.json 读不出
+// 时返回错误（按 SignUpAllowedFunc 的约定 fail closed）：文件损坏时宁可暂停注册，
+// 也不要在运营者关闭注册之后悄悄放开。nil store 等价于只有环境变量一个来源。
+func IdentitySignUpAllowed(store *identity.Store, envDefault bool) SignUpAllowedFunc {
+	if store == nil {
+		return StaticSignUpAllowed(envDefault)
+	}
+	return func(context.Context) (bool, error) {
+		info, err := store.Get()
+		if err != nil {
+			return false, err
+		}
+		return domain.ResolveSignUpEnabled(info.SignUpEnabled, envDefault), nil
+	}
+}
+
 // WithSignUpAllowed 注入"是否允许注册"的来源。所有会为没有账号的号码创建新账号
 // 的入口（发码、重发、登录、注册、密码注册）都经 CheckSignUpAllowed 调用它；
 // 已有账号的登录和 bot 不经过它。nil 等价于始终允许。

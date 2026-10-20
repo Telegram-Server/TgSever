@@ -36,6 +36,15 @@ var (
 	ErrSignUpDisabled = errors.New("sign up disabled")
 )
 
+// ResolveSignUpEnabled 按优先级给出实际的注册开关：管理面板覆盖值（非 nil）优先，
+// 否则跟随环境变量 TELESRV_SIGN_UP_ENABLED。服务端判断与管理面板展示共用这一处。
+func ResolveSignUpEnabled(panelOverride *bool, envDefault bool) bool {
+	if panelOverride != nil {
+		return *panelOverride
+	}
+	return envDefault
+}
+
 type AuthCodeDeliveryKind string
 
 const (
