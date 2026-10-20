@@ -117,6 +117,9 @@ type Service struct {
 	// 不分渠道，故只有一份 env 默认值（而非每渠道一份）。
 	loginCodeMessageIdentity   *identity.Store
 	loginCodeMessageEnvDefault string
+	// signUpAllowed 是"是否允许注册"的唯一来源，每次判断都实时调用（不缓存）。
+	// nil 表示开放注册（默认行为不变）。见 WithSignUpAllowed 与 CheckSignUpAllowed。
+	signUpAllowed SignUpAllowedFunc
 }
 
 type loginEmailStore interface {
@@ -203,6 +206,26 @@ func WithLoginCodeDelivery(delivery store.LoginCodeDeliveryStore) Option {
 // delivery, allowing Admin identity changes to take effect without a restart.
 func WithLoginCodeMessageTemplateResolver(resolve func() (string, error)) Option {
 	return func(s *Service) { s.loginCodeTemplate = resolve }
+}
+
+// SignUpAllowedFunc 报告当前是否允许注册新账号。每次判断都会实时调用，
+// 实现应当现读来源（环境变量默认值、管理后台覆盖值等），不要自行缓存，
+// 这样后台切换开关无需重启即可生效。返回 error 时按关闭处理（fail closed）。
+type SignUpAllowedFunc func(ctx context.Context) (bool, error)
+
+// StaticSignUpAllowed 返回固定结果的 SignUpAllowedFunc，用于只有环境变量
+// （TELESRV_SIGN_UP_ENABLED）一个来源的部署。
+func StaticSignUpAllowed(enabled bool) SignUpAllowedFunc {
+	return func(context.Context) (bool, error) { return enabled, nil }
+}
+
+// WithSignUpAllowed 注入"是否允许注册"的来源。所有会为没有账号的号码创建新账号
+// 的入口（发码、重发、登录、注册、密码注册）都经 CheckSignUpAllowed 调用它；
+// 已有账号的登录和 bot 不经过它。nil 等价于始终允许。
+func WithSignUpAllowed(fn SignUpAllowedFunc) Option {
+	return func(s *Service) {
+		s.signUpAllowed = fn
+	}
 }
 
 // WithPasswords lets sign-in stop at SESSION_PASSWORD_NEEDED for 2FA accounts.
@@ -419,6 +442,30 @@ func (s *Service) CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte,
 	return nil
 }
 
+// SignUpAllowed 报告当前是否允许注册新账号（唯一的判断点）。未配置来源时允许。
+// help.getAppConfig 用它下发 telesrv_sign_up_disabled，保证客户端看到的状态与
+// 服务端拦截使用同一个来源。
+func (s *Service) SignUpAllowed(ctx context.Context) (bool, error) {
+	if s == nil || s.signUpAllowed == nil {
+		return true, nil
+	}
+	return s.signUpAllowed(ctx)
+}
+
+// CheckSignUpAllowed 在即将为没有账号的号码创建账号（或签发注册用验证码）之前调用：
+// 注册关闭时返回 domain.ErrSignUpDisabled；来源出错时返回该错误（fail closed）。
+// 只能对没有账号的号码调用，已有账号的登录路径不得经过这里。
+func (s *Service) CheckSignUpAllowed(ctx context.Context) error {
+	allowed, err := s.SignUpAllowed(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve sign-up switch: %w", err)
+	}
+	if !allowed {
+		return domain.ErrSignUpDisabled
+	}
+	return nil
+}
+
 // SendCode 为 phone 生成 phone_code_hash，按配置选择开发 app code、登录邮箱 code
 // 或登录邮箱 setup-required 状态，返回 hash。
 func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
@@ -439,6 +486,9 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	issuedUserID := int64(0)
 	if found {
 		issuedUserID = existing.ID
+	} else if err := s.CheckSignUpAllowed(ctx); err != nil {
+		// 注册关闭时，未注册号码在发码这一步就被拒绝：不签发、不投递短信或邮件。
+		return "", err
 	}
 	if s.loginEmailEnabled && s.loginEmails != nil {
 		email, found, err := s.loginEmails.LoginEmailByPhone(ctx, phone)
@@ -799,6 +849,12 @@ func (s *Service) resendCode(ctx context.Context, authKeyID [8]byte, phone, phon
 		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
 		return "", ErrCodeInvalid
 	}
+	if rec.IssuedUserID == 0 {
+		// 签发给未注册号码的码：注册在发码之后才关闭时，重发同样不签发、不投递。
+		if err := s.CheckSignUpAllowed(ctx); err != nil {
+			return "", err
+		}
+	}
 	consumed, ok, err := s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
 	if err != nil {
 		return "", err
@@ -1021,7 +1077,7 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, false, err
 	}
 	if !found {
-		return domain.User{}, domain.Message{}, true, nil
+		return s.signUpRequired(ctx)
 	}
 	return s.finishSignIn(ctx, auth, existing)
 }
@@ -1041,9 +1097,18 @@ func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization
 		return domain.User{}, domain.Message{}, false, err
 	}
 	if !found {
-		return domain.User{}, domain.Message{}, true, nil
+		return s.signUpRequired(ctx)
 	}
 	return s.finishSignIn(ctx, auth, existing)
+}
+
+// signUpRequired 是验证码正确但号码没有账号时的结果：注册开放时返回
+// needSignUp=true 引导客户端注册；注册在发码之后才关闭时返回 domain.ErrSignUpDisabled。
+func (s *Service) signUpRequired(ctx context.Context) (domain.User, domain.Message, bool, error) {
+	if err := s.CheckSignUpAllowed(ctx); err != nil {
+		return domain.User{}, domain.Message{}, false, err
+	}
+	return domain.User{}, domain.Message{}, true, nil
 }
 
 // verifyLoginCode closes the login-code state transition around one atomic
@@ -1230,6 +1295,11 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	} else if currentFound || current.ID != 0 {
 		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
+	}
+	// 最后一道兜底：注册在 signIn 之后才关闭时也不能建号。先于消费已验证标记，
+	// 重新开放后同一份码仍可完成注册。
+	if err := s.CheckSignUpAllowed(ctx); err != nil {
+		return domain.User{}, domain.Message{}, err
 	}
 	consumed, consumedOK, err := s.codes.ConsumeSignUpVerified(ctx, phoneCodeHash, phone)
 	if err != nil {

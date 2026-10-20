@@ -31,6 +31,9 @@ var (
 	ErrPhoneCodeExpired        = errors.New("phone code expired")
 	ErrPhoneChangeAuthInvalid  = errors.New("phone change auth invalid")
 	ErrPhoneChangeForbidden    = errors.New("phone change forbidden")
+	// ErrSignUpDisabled 表示服务器已关闭注册：没有账号的号码不能创建新账号。
+	// 已有账号的登录不受影响；RPC 层映射为 400 SIGN_UP_DISABLED。
+	ErrSignUpDisabled = errors.New("sign up disabled")
 )
 
 type AuthCodeDeliveryKind string
