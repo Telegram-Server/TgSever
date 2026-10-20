@@ -22,9 +22,10 @@ import (
 // 暂存文件名就是暂存 id（16 字节随机数的十六进制），写入中的文件带 .part 后缀；查找
 // 时 id 必须恰好是 32 个小写十六进制字符，任何路径都拼不出来。暂存按修改时间过期
 // （默认 DefaultStagingTTL），每次暂存与发布时顺带清理过期的暂存与中断上传留下的
-// .part 文件；发布成功后删除对应的暂存文件。确认发布时先把暂存改名为 <id>.claim
-// 认领，同一个 id 的两次确认只有一次能发布。同时暂存的数量与总字节有上限
-// （stagingMaxPending、stagingMaxPendingBytes），反复上传占不满更新数据卷。
+// .part 文件；发布成功后删除对应的暂存文件。确认发布时先排他创建标记文件 <id>.claim
+// 认领，同一个 id 的两次确认只有一次能发布；暂存文件本身不改名，Windows 上抢输的
+// 一方不会碰到正在被读取的文件。认领期间该暂存不按有效期清理。同时暂存的数量与总
+// 字节有上限（stagingMaxPending、stagingMaxPendingBytes），反复上传占不满更新数据卷。
 
 // DefaultStagingTTL 是暂存包的默认有效期：过期后要重新上传，不能用很久以前预检的
 // 结果去发布。
@@ -33,7 +34,7 @@ const DefaultStagingTTL = 30 * time.Minute
 const (
 	stagingDirName    = ".staging"
 	stagingPartSuffix = ".part"
-	// stagingClaimSuffix 标记正在发布的暂存（见 PublishStagedPackage）。
+	// stagingClaimSuffix 是正在发布的暂存旁的认领标记（见 PublishStagedPackage）。
 	stagingClaimSuffix = ".claim"
 	stagingIDBytes     = 16
 )
@@ -163,7 +164,8 @@ func checkStagingCapacity(dir string) error {
 	}
 	count, total := 0, int64(0)
 	for _, entry := range entries {
-		if _, ok := stagingEntryID(entry.Name()); !ok {
+		// 认领标记是空文件，它的暂存已经单独计入。
+		if _, ok := stagingEntryID(entry.Name()); !ok || strings.HasSuffix(entry.Name(), stagingClaimSuffix) {
 			continue
 		}
 		info, err := entry.Info()
@@ -217,10 +219,20 @@ func StagedPackagePath(manifestPath, id string, now time.Time, ttl time.Duration
 		return "", ErrStagingNotFound
 	}
 	if stagingExpired(info, now, ttl) {
-		_ = os.Remove(path)
+		// 正在发布的暂存不删：发布可能正在读它。
+		if !stagingClaimActive(path, now, ttl) {
+			_ = os.Remove(path)
+		}
 		return "", ErrStagingExpired
 	}
 	return path, nil
+}
+
+// stagingClaimActive 报告暂存 path 旁是否有未过期的认领标记（两倍有效期内）；更旧
+// 的标记是没有完成的发布留下的残留。
+func stagingClaimActive(path string, now time.Time, ttl time.Duration) bool {
+	info, err := os.Lstat(path + stagingClaimSuffix)
+	return err == nil && !stagingExpired(info, now, 2*ttl)
 }
 
 // DiscardStagedPackage removes the staged package id.
@@ -239,11 +251,12 @@ func DiscardStagedPackage(manifestPath, id string) error {
 }
 
 // CleanupStagedPackages removes the stagings, and the part files of uploads
-// that never finished, last modified more than ttl before now. A claim (a
-// staging being published) is left for twice ttl, so a publish confirmed just
-// before its staging expired is not pulled from under it; an older claim was
-// left by a publish that never finished. A missing staging directory is not
-// an error. Files that are not stagings are left alone.
+// that never finished, last modified more than ttl before now. A staging with
+// a claim (it is being published) is kept, and the claim marker itself is
+// left for twice ttl, so a publish confirmed just before its staging expired
+// is not pulled from under it; an older claim was left by a publish that never
+// finished. A missing staging directory is not an error. Files that are not
+// stagings are left alone.
 func CleanupStagedPackages(manifestPath string, now time.Time, ttl time.Duration) (int, error) {
 	dir := StagingDir(manifestPath)
 	entries, err := os.ReadDir(dir)
@@ -259,6 +272,7 @@ func CleanupStagedPackages(manifestPath string, now time.Time, ttl time.Duration
 		if _, ok := stagingEntryID(entry.Name()); !ok {
 			continue
 		}
+		path := filepath.Join(dir, entry.Name())
 		expiry := ttl
 		if strings.HasSuffix(entry.Name(), stagingClaimSuffix) {
 			expiry = 2 * ttl
@@ -267,7 +281,10 @@ func CleanupStagedPackages(manifestPath string, now time.Time, ttl time.Duration
 		if err != nil || !stagingExpired(info, now, expiry) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if !strings.HasSuffix(entry.Name(), stagingClaimSuffix) && !strings.HasSuffix(entry.Name(), stagingPartSuffix) && stagingClaimActive(path, now, ttl) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("remove expired staging: %w", err)
 			}
@@ -286,10 +303,12 @@ func CleanupStagedPackages(manifestPath string, now time.Time, ttl time.Duration
 // concurrent publish released the lock) until it expires. Expired stagings are
 // cleaned first.
 //
-// A publish first claims the staging by renaming it, so of two confirms of one
-// id only one publishes; the other reports ErrStagingNotFound. A failed
-// publish renames the claim back. A preview claims nothing: previews only
-// read, and any number may run side by side.
+// A publish first claims the staging by creating its claim marker exclusively,
+// so of two confirms of one id only one publishes; the other reports
+// ErrStagingNotFound. The staging itself is never renamed: on Windows a rename
+// onto a file another goroutine is reading fails that reader. A failed publish
+// drops the claim and keeps the staging. A preview claims nothing: previews
+// only read, and any number may run side by side.
 func PublishStagedPackage(manifestPath, filesDir, id string, opts PublishOptions, ttl time.Duration) (*PublishResult, error) {
 	now := opts.now()
 	_, _ = CleanupStagedPackages(manifestPath, now, ttl)
@@ -300,20 +319,28 @@ func PublishStagedPackage(manifestPath, filesDir, id string, opts PublishOptions
 	if opts.DryRun {
 		return PublishDesktopPackage(manifestPath, filesDir, path, opts)
 	}
-	claimed := path + stagingClaimSuffix
-	if err := os.Rename(path, claimed); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+	claim := path + stagingClaimSuffix
+	marker, err := os.OpenFile(claim, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
 			return nil, ErrStagingNotFound
 		}
 		return nil, fmt.Errorf("claim staged package: %w", err)
 	}
-	result, err := PublishDesktopPackage(manifestPath, filesDir, claimed, opts)
+	_ = marker.Close()
+	// 标记的修改时间按 now 记，与暂存的有效期用同一个时钟。
+	_ = os.Chtimes(claim, now, now)
+	defer os.Remove(claim)
+	// 认领之前，先赢的确认可能已经发布完、删掉了暂存。
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrStagingNotFound
+	}
+	result, err := PublishDesktopPackage(manifestPath, filesDir, path, opts)
 	if err != nil {
-		// 认领时文件名改了、修改时间没变，恢复后有效期照旧。
-		_ = os.Rename(claimed, path)
 		return nil, err
 	}
-	_ = os.Remove(claimed)
+	// 先删暂存再（经 defer）删标记：标记还在时，别的确认认领不到这个 id。
+	_ = os.Remove(path)
 	return result, nil
 }
 
