@@ -195,7 +195,11 @@ jobs:
           # The container rootfs is read_only, so a data path with a relative
           # default that compose forgets to pin kills the server at startup --
           # which is exactly how TELESRV_WALLET_STATE_DIR took the stack down once.
-          "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; assert s["server"].get("network_mode") == "host"; assert s["admin"].get("network_mode") == "host"; assert len(s["server"].get("ports", [])) == 0; assert len(s["admin"].get("ports", [])) == 0; assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12999"; _e = s["server"]["environment"]; assert _e["TELESRV_WALLET_STATE_DIR"].startswith("/var/lib/telesrv"); assert _e["TELESRV_WALLET_KEY_FILE"].startswith("/var/lib/telesrv")'
+          # TELESRV_IDENTITY_DIR is written by the server and read by the admin
+          # (which mounts the volume read-only), so both must name the same
+          # directory on the volume -- with the relative default the panel's
+          # server settings were silently never saved.
+          "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; assert s["server"].get("network_mode") == "host"; assert s["admin"].get("network_mode") == "host"; assert len(s["server"].get("ports", [])) == 0; assert len(s["admin"].get("ports", [])) == 0; assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12999"; _e = s["server"]["environment"]; assert _e["TELESRV_WALLET_STATE_DIR"].startswith("/var/lib/telesrv"); assert _e["TELESRV_WALLET_KEY_FILE"].startswith("/var/lib/telesrv"); _a = s["admin"]["environment"]; assert _e["TELESRV_IDENTITY_DIR"].startswith("/var/lib/telesrv"); assert _a["TELESRV_IDENTITY_DIR"].startswith("/var/lib/telesrv"); assert _e["TELESRV_IDENTITY_DIR"] == _a["TELESRV_IDENTITY_DIR"]'
           "${bridge[@]}" config --quiet
           "${bridge[@]}" config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin); s=c["services"]; assert s["server"].get("network_mode") != "host"; assert s["admin"].get("network_mode") != "host"; assert len(s["server"].get("ports", [])) == 69; assert len(s["admin"].get("ports", [])) == 1; assert "admin_host_access" in s["admin"]["networks"]; assert not c["networks"]["admin_host_access"].get("internal", False); assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12563"'
 
