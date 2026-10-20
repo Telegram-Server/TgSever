@@ -76,6 +76,13 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
 
 // --- Identity ---------------------------------------------------------
 
+// Tells everything showing identity.json (the shell's sidebar/tab brand, the
+// sign-up card) to re-read it, so a save shows up at once.
+const identityChangedEvent = "telesrv:identity-changed";
+function notifyIdentityChanged() {
+  window.dispatchEvent(new Event(identityChangedEvent));
+}
+
 function IdentitySection() {
   const { t } = useI18n();
   const [identity, setIdentity] = useState<ServerIdentity | null>(null);
@@ -100,11 +107,6 @@ function IdentitySection() {
   }
 
   useEffect(() => { void load(); }, []);
-
-  // Tells the shell to re-read identity so the sidebar/tab rebrand at once.
-  function notifyIdentityChanged() {
-    window.dispatchEvent(new Event("telesrv:identity-changed"));
-  }
 
   return (
     <section id="serversettings-identity" className="section-block scroll-anchor">
@@ -357,7 +359,12 @@ function SignUpSection() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const reload = () => { void load(); };
+    reload();
+    window.addEventListener(identityChangedEvent, reload);
+    return () => window.removeEventListener(identityChangedEvent, reload);
+  }, []);
 
   const openWord = (open: boolean) => (open ? t("serverSettings.signUpOpen") : t("serverSettings.signUpClosed"));
   const override = identity?.sign_up_enabled;
@@ -386,7 +393,7 @@ function SignUpSection() {
               path="/api/actions/set-sign-up-enabled"
               payload={() => ({ mode: "on" })}
               disabled={override === true}
-              onDone={() => void load()}
+              onDone={notifyIdentityChanged}
             />
             <ActionButton
               tone="danger"
@@ -394,7 +401,7 @@ function SignUpSection() {
               path="/api/actions/set-sign-up-enabled"
               payload={() => ({ mode: "off" })}
               disabled={override === false}
-              onDone={() => void load()}
+              onDone={notifyIdentityChanged}
             />
             <ActionButton
               tone="neutral"
@@ -402,7 +409,7 @@ function SignUpSection() {
               path="/api/actions/set-sign-up-enabled"
               payload={() => ({ mode: "follow_env" })}
               disabled={override === undefined || override === null}
-              onDone={() => void load()}
+              onDone={notifyIdentityChanged}
             />
           </div>
         </div>
