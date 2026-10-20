@@ -268,6 +268,13 @@ func (s *Service) GetPassword(ctx context.Context, userID int64) (domain.Passwor
 	return settings, nil
 }
 
+// NoPasswordSettings 返回"尚未设置密码"时下发给客户端的参数：默认 new_algo、
+// new_secure_algo 和 secure_random，与 account.getPassword 对无密码账号的返回一致。
+// 登录密码注册（telesrv.getLoginPassword）复用同一套参数。
+func NoPasswordSettings() domain.PasswordSettings {
+	return defaultPasswordSettings()
+}
+
 func defaultPasswordSettings() domain.PasswordSettings {
 	return normalizePasswordSettings(domain.PasswordSettings{SecureRandom: append([]byte(nil), defaultSecureRandom...)})
 }
@@ -360,7 +367,10 @@ func (s *Service) UpdatePasswordSettings(ctx context.Context, userID int64, chec
 		algo := *input.NewAlgo
 		settings.CurrentAlgo = &algo
 		settings.NewAlgo = defaultPasswordAlgo()
-		settings.SRPVerifier = padToHash(input.NewPasswordHash)
+		settings.SRPVerifier, err = padVerifier(input.NewPasswordHash)
+		if err != nil {
+			return err
+		}
 		secret, b, err := makeSRPChallenge(settings.SRPVerifier)
 		if err != nil {
 			return err
@@ -479,7 +489,10 @@ func (s *Service) RecoverPassword(ctx context.Context, userID int64, code string
 		return err
 	}
 	settings.CurrentAlgo = input.NewAlgo
-	settings.SRPVerifier = padToHash(input.NewPasswordHash)
+	settings.SRPVerifier, err = padVerifier(input.NewPasswordHash)
+	if err != nil {
+		return err
+	}
 	settings.SRPID, err = randomInt64()
 	if err != nil {
 		return err

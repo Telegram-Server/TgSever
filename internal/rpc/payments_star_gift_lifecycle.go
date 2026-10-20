@@ -694,15 +694,11 @@ func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg
 			return nil, tgerr.New(400, fmt.Sprintf("PASSWORD_TOO_FRESH_%d", wait))
 		}
 	}
-	authKeyID, ok := AuthKeyIDFrom(ctx)
-	if !ok || authKeyID == ([8]byte{}) {
-		return nil, authKeyUnregisteredErr()
-	}
-	authorization, found, err := r.deps.Auth.Authorization(ctx, authKeyID)
+	authorization, signedIn, err := r.signedInAuthorization(ctx, userID)
 	if err != nil {
-		return nil, internalErr()
+		return nil, err
 	}
-	if !found || authorization.AuthKeyID != authKeyID || authorization.UserID != userID || authorization.PasswordPending {
+	if !signedIn {
 		return nil, authKeyUnregisteredErr()
 	}
 	if wait := revenueWithdrawalFreshWait(authorization.CreatedAt, now); wait < 0 {

@@ -9,6 +9,7 @@ import (
 	"github.com/iamxvbaba/td/clock"
 	"go.uber.org/zap"
 
+	loginpasswordapp "telesrv/internal/app/loginpassword"
 	telegramloginapp "telesrv/internal/app/telegramlogin"
 )
 
@@ -25,6 +26,20 @@ func TestAssertNoTypedNilDepsRejectsTelegramLogin(t *testing.T) {
 		}
 	}()
 	New(Config{}, Deps{TelegramLogin: service}, zap.NewNop(), clock.System)
+}
+
+func TestAssertNoTypedNilDepsRejectsLoginPassword(t *testing.T) {
+	var service *loginpasswordapp.Service
+	defer func() {
+		value := recover()
+		if value == nil {
+			t.Fatal("assertNoTypedNilDeps accepted a typed-nil login password service")
+		}
+		if message := fmt.Sprint(value); !strings.Contains(message, "dependency LoginPassword is a typed nil *loginpassword.Service") {
+			t.Fatalf("panic = %q, want LoginPassword typed-nil diagnostic", message)
+		}
+	}()
+	New(Config{}, Deps{LoginPassword: service}, zap.NewNop(), clock.System)
 }
 
 func TestAssertNoTypedNilDepsAcceptsAbsentTelegramLogin(t *testing.T) {

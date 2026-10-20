@@ -64,3 +64,22 @@ func (r *Router) currentUserID(ctx context.Context) (int64, bool, error) {
 	r.bindSessionUser(ctx, userID)
 	return userID, true, nil
 }
+
+// signedInAuthorization 返回当前连接的 auth_key 对应、属于 userID 且已完成登录（不是 2FA
+// password_pending）的授权。ok=false 表示 context 里没有 auth_key、读不到授权，或授权不属于
+// userID / 仍在等 2FA；err 只在读取失败时非空，已映射为 INTERNAL_SERVER_ERROR。
+// 提现前的"刚登录"校验（payments）与忘记登录密码的重设窗口共用它。
+func (r *Router) signedInAuthorization(ctx context.Context, userID int64) (domain.Authorization, bool, error) {
+	authKeyID, ok := AuthKeyIDFrom(ctx)
+	if !ok || authKeyID == ([8]byte{}) || r.deps.Auth == nil {
+		return domain.Authorization{}, false, nil
+	}
+	authorization, found, err := r.deps.Auth.Authorization(ctx, authKeyID)
+	if err != nil {
+		return domain.Authorization{}, false, internalErr()
+	}
+	if !found || authorization.AuthKeyID != authKeyID || authorization.UserID != userID || authorization.PasswordPending {
+		return domain.Authorization{}, false, nil
+	}
+	return authorization, true, nil
+}

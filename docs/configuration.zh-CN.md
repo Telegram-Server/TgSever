@@ -486,6 +486,30 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_SMTP_TIMEOUT` | duration / `10s` | SMTP 操作超时；使用 SMTP provider 时必须为正数。 |
 | `TELESRV_PASSKEY_RP_ID` | hostname / `telesrv.net` | WebAuthn relying-party ID，用于校验 `rpIdHash`；Android Credential Manager 必须与公网 `assetlinks.json` 对齐。 |
 | `TELESRV_PASSKEY_ALLOWED_ORIGINS` | list / 空 | WebAuthn origin 白名单；空值不做显式 origin 校验，因为服务端可能无法预知 Android APK-key-hash origin。 |
+| `TELESRV_SRP_RATE_LIMIT` | int / `10` | 敏感 SRP 方法组（`auth.checkPassword`、`account.getPassword`、`account.updatePasswordSettings`、`account.deleteAccount`、`messages.editChatCreator`、`telesrv.signInWithPassword`）在窗口内的次数上限；已登录按用户计，未登录按 raw auth key 计，超额返回 `FLOOD_WAIT_X`。`<=0` 关闭这一组。 |
+| `TELESRV_SRP_RATE_WINDOW` | duration / `1m` | `TELESRV_SRP_RATE_LIMIT` 的窗口；非正值回退为 `1m`。 |
+
+### 5.1 手机号 + 密码登录
+
+telesrv 扩展协议（不是官方 Telegram 功能）：客户端不经验证码，用手机号和一个独立的"登录密码"（SRP，算法与 2FA 相同）注册和登录。客户端对接说明见 [password-login.md](password-login.md)。
+
+| 参数 | 类型 / 代码默认值 | 说明与约束 |
+|---|---|---|
+| `TELESRV_PASSWORD_LOGIN_ENABLED` | bool / `false` | 总开关。关闭时五个 `telesrv.*` 密码方法一律返回 `403 PASSWORD_LOGIN_DISABLED`，`help.getAppConfig` 的 `telesrv_features` 里也不列 `password_login`。与 `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` 同时打开会导致启动失败（密码注册没有设置登录邮箱的环节）。打开时启动日志会打一条警告。 |
+| `TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT` | int / `10` | 每个目标账号在窗口内被 `telesrv.signInWithPassword` 尝试的次数上限，跨所有 auth key 合计，证明对错都算。超额返回 `FLOOD_WAIT_X`。`<=0` 关闭这个维度。 |
+| `TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW` | duration / `1h` | 按账号限流的窗口；`<=0` 关闭这个维度。 |
+| `TELESRV_PASSWORD_LOGIN_RESET_WINDOW` | duration / `0`（关闭） | 忘记密码的重设窗口，默认关闭。当前授权的创建时间距今不到这么久时，`telesrv.updateLoginPassword` 的 `current` 可以为空，不用旧密码直接设新密码（或删除）。窗口从**任何一次**新授权算起，不区分登录方式：验证码登录、完成 2FA、扫码登录（`auth.acceptLoginToken`）、passkey 登录、密码登录或注册。`<=0` 关闭：已有登录密码的账号一律要提交旧密码证明。先读下面的风险，接受了再设正值（例如 `10m`）。 |
+
+`telesrv.getLoginPassword` 和 `telesrv.signUpWithPassword` 每次调用都会消耗上面与 `auth.sendCode` 共用的发码额度（`TELESRV_AUTH_CODE_PHONE_RATE_LIMIT`、`TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT`、`TELESRV_AUTH_CODE_RATE_WINDOW`）。`telesrv.signInWithPassword` 属于 SRP 方法组（`TELESRV_SRP_RATE_LIMIT`）。SRP challenge 只存在进程内存里（5 分钟有效，每个 auth key 最多 5 个、全局最多 10000 个，超出时淘汰最旧的），因此密码登录按单进程部署设计。
+
+打开开关意味着运营者接受这些风险：
+
+- **号码不经验证。** 任何人都能用一个还没有账号的号码注册，包括别人的号码。号码的真正主人之后注册会得到 `PHONE_NUMBER_OCCUPIED`；他仍可以用发到这个号码的验证码登录、接管账号，并删除或修改登录密码。
+- **号码是否已注册会被暴露。** `telesrv.getLoginPassword` 能区分"没有账号"、"有账号但没设登录密码"（`PASSWORD_LOGIN_NOT_SET`）和"有账号且设了登录密码"。能拖慢批量探测的只有按手机号摘要和按 auth key 的共用发码额度。
+- **按账号限流可被用来锁人。** 攻击者对某个账号猜错 `TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT` 次，就能让这个账号的密码登录最多锁住一个窗口；验证码登录不受影响。反过来，关掉这个限流就允许换 auth key 无限次猜密码。
+- **忘记密码窗口（默认关闭）。** 把 `TELESRV_PASSWORD_LOGIN_RESET_WINDOW` 设为正值后，窗口内任何新授权都能不知道旧密码就换掉登录密码，不只是验证码登录。尤其是：持有这个账号任意一个现有会话的人（被盗或遗忘的设备）可以扫码批准一台新设备，再从新会话重设登录密码。也就是说，登录密码挡不住已经拿到会话的人。只有接受这一点才开启。免旧密码的重设会由 777000 给这个账号的所有会话单独发一条 "Login password reset." 通知。
+- **与强制登录邮箱不兼容。** 不能同时打开 `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP`，否则启动失败。
+- **会员赠送。** 密码注册就是普通注册：和验证码注册完全一样，按 `TELESRV_PREMIUM_GRANT_MONTHS` 赠送会员，并收到常规的 777000 欢迎消息。未经验证的注册因此能按发码额度允许的速度产生会员账号；如果在意，把 `TELESRV_PREMIUM_GRANT_MONTHS` 设为 `0`。
 
 ## 6. 地图、外链媒体、链接预览与上传
 
@@ -701,7 +725,7 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 
 ## 12. 生产部署最低检查清单
 
-生产至少应显式检查并替换这些开发值：PostgreSQL DSN 与 TLS、Redis 密码和网络暴露、RSA 私钥持久化、固定开发验证码暴露、Admin 凭证/session key、OTP Webhook/SMTP secret、AI/Mapbox API key、TURN secret 与防火墙端口、公开 URL/scheme 与客户端一致性，以及真机所需的非 loopback SFU/TURN advertise IP。
+生产至少应显式检查并替换这些开发值：PostgreSQL DSN 与 TLS、Redis 密码和网络暴露、RSA 私钥持久化、固定开发验证码暴露、Admin 凭证/session key、OTP Webhook/SMTP secret、AI/Mapbox API key、TURN secret 与防火墙端口、公开 URL/scheme 与客户端一致性，以及真机所需的非 loopback SFU/TURN advertise IP。打开了 `TELESRV_PASSWORD_LOGIN_ENABLED` 时，还要逐条确认 5.1 节的风险（号码不经验证、号码是否注册会被暴露、未经验证的注册也赠送会员），并且除非接受"任何会话都能通过扫码批准的新设备重设登录密码"，否则让 `TELESRV_PASSWORD_LOGIN_RESET_WINDOW` 保持 `0`。
 
 ## Cross-collection gift crafting
 

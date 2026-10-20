@@ -543,7 +543,6 @@ WHERE target.id = locked.id
 }
 
 func (s *UserStore) Create(ctx context.Context, u domain.User) (domain.User, error) {
-	u.Username = strings.TrimSpace(strings.TrimPrefix(u.Username, "@"))
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
 		return domain.User{}, fmt.Errorf("create user: db does not support transactions")
@@ -558,7 +557,25 @@ func (s *UserStore) Create(ctx context.Context, u domain.User) (domain.User, err
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	qtx := s.q.WithTx(tx)
+	created, err := createUserTx(ctx, tx, s.q.WithTx(tx), u)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.User{}, fmt.Errorf("commit create user: %w", err)
+	}
+	committed = true
+	return created, nil
+}
+
+// createUserTx 是建号的事务主体：插入 users 行并登记用户名，不开启也不提交事务。
+// 调用方传入自己的事务（qtx 必须绑定在同一个 tx 上），可以在提交前继续写入与新账号
+// 相关的其它数据，使建号与这些写入一起原子生效。
+//
+// 手机号唯一索引冲突（含并发建号中后到的一方）映射为 domain.ErrPhoneNumberOccupied，
+// 用户名冲突映射为 domain.ErrUsernameOccupied。返回错误后该事务已不可用，调用方只能回滚。
+func createUserTx(ctx context.Context, tx pgx.Tx, qtx *sqlcgen.Queries, u domain.User) (domain.User, error) {
+	u.Username = strings.TrimSpace(strings.TrimPrefix(u.Username, "@"))
 	row, err := qtx.CreateUser(ctx, sqlcgen.CreateUserParams{
 		AccessHash:       u.AccessHash,
 		Phone:            u.Phone,
@@ -569,6 +586,9 @@ func (s *UserStore) Create(ctx context.Context, u domain.User) (domain.User, err
 		PremiumExpiresAt: premiumUntilToModel(u.PremiumUntil),
 	})
 	if err != nil {
+		if isUniqueConstraint(err, "users_phone_unique_idx") {
+			return domain.User{}, domain.ErrPhoneNumberOccupied
+		}
 		if isUniqueConstraint(err, "users_username_lower_unique_idx") {
 			return domain.User{}, domain.ErrUsernameOccupied
 		}
@@ -580,10 +600,6 @@ func (s *UserStore) Create(ctx context.Context, u domain.User) (domain.User, err
 			return domain.User{}, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.User{}, fmt.Errorf("commit create user: %w", err)
-	}
-	committed = true
 	return userFromModel(row), nil
 }
 

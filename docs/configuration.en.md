@@ -506,6 +506,30 @@ objects, verified size/SHA-256, and updated `file_blobs.backend`.
 | `TELESRV_SMTP_TIMEOUT` | duration / `10s` | SMTP operation timeout; must be positive when the SMTP provider is used. |
 | `TELESRV_PASSKEY_RP_ID` | hostname / `telesrv.net` | WebAuthn relying-party ID used for `rpIdHash`. Android Credential Manager requires alignment with hosted `assetlinks.json`. |
 | `TELESRV_PASSKEY_ALLOWED_ORIGINS` | list / empty | Allowed WebAuthn origins. Empty disables explicit origin enforcement because Android APK-key-hash origins may not be known in advance. |
+| `TELESRV_SRP_RATE_LIMIT` | int / `10` | Attempts per window for the sensitive SRP RPC group (`auth.checkPassword`, `account.getPassword`, `account.updatePasswordSettings`, `account.deleteAccount`, `messages.editChatCreator`, `telesrv.signInWithPassword`). Counted per user once signed in, per raw auth key before sign-in; over budget returns `FLOOD_WAIT_X`. `<=0` disables the group. |
+| `TELESRV_SRP_RATE_WINDOW` | duration / `1m` | Window for `TELESRV_SRP_RATE_LIMIT`; a non-positive value falls back to `1m`. |
+
+### 5.1 Phone number + password login
+
+An optional telesrv extension (not official Telegram): clients sign up and sign in with a phone number and a separate *login password* (SRP, same math as 2FA) without a login code. The client integration contract is [password-login.md](password-login.md).
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_PASSWORD_LOGIN_ENABLED` | bool / `false` | Master switch. When off, all five `telesrv.*` password methods return `403 PASSWORD_LOGIN_DISABLED` and `help.getAppConfig` does not list `password_login` in `telesrv_features`. Startup fails if it is on together with `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` (password sign-up has no login-email setup step). The server logs a warning at startup while it is on. |
+| `TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT` | int / `10` | `telesrv.signInWithPassword` attempts per target account per window, across all auth keys, counted whether the proof is right or wrong. Over budget returns `FLOOD_WAIT_X`. `<=0` disables this dimension. |
+| `TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW` | duration / `1h` | Window for the per-account limit; `<=0` disables this dimension. |
+| `TELESRV_PASSWORD_LOGIN_RESET_WINDOW` | duration / `0` (off) | Forgotten-password window, off by default. While the current authorization was created less than this long ago, `telesrv.updateLoginPassword` accepts an empty `current` and sets (or removes) the login password without the old one. The window starts from **any** new authorization, whatever the sign-in method: login code, completing 2FA, QR login (`auth.acceptLoginToken`), passkey, password sign-in or sign-up. `<=0` disables: an account that has a login password must always prove it. Set a positive value (for example `10m`) only after reading the risk below. |
+
+Each `telesrv.getLoginPassword` and `telesrv.signUpWithPassword` call also spends the login-code issuance quotas above (`TELESRV_AUTH_CODE_PHONE_RATE_LIMIT`, `TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT`, `TELESRV_AUTH_CODE_RATE_WINDOW`), shared with `auth.sendCode`. `telesrv.signInWithPassword` is in the SRP group (`TELESRV_SRP_RATE_LIMIT`). The SRP challenges live in process memory only (5-minute lifetime, at most 5 per auth key and 10000 in total; older ones are evicted), so password sign-in assumes a single server process.
+
+Risks the operator accepts by turning the switch on:
+
+- **Phone numbers are not verified.** Anyone can register any number that has no account yet, including one that belongs to somebody else. That person later finds the number taken (`PHONE_NUMBER_OCCUPIED` on sign-up); they can still sign in with a login code delivered to the number, take the account over, and remove or change its login password.
+- **Account existence is exposed.** `telesrv.getLoginPassword` tells apart "no account", "account without a login password" (`PASSWORD_LOGIN_NOT_SET`) and "account with a login password". The only brake on enumeration is the shared login-code quota per phone digest and per auth key.
+- **Per-account limit can be used to lock someone out.** An attacker who guesses wrong `TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT` times locks that account's password sign-in for up to one window. Login-code sign-in keeps working. Disabling the limit instead allows unlimited guessing from fresh auth keys.
+- **Forgotten-password window (off by default).** If you set `TELESRV_PASSWORD_LOGIN_RESET_WINDOW` above `0`, every new authorization can replace the login password without knowing it during the window, not only a code sign-in. In particular, anyone who holds one existing session of the account (a stolen or forgotten device) can approve a new device by QR login and, from that new session, reset the login password. The login password then no longer protects the account against someone who already has a session. Enable it only if you accept that. A reset without the old password makes 777000 send a separate "Login password reset." notice to all of the account's sessions.
+- **Incompatible with mandatory login email.** `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` cannot be on at the same time; startup fails.
+- **Premium grant.** A password sign-up is a normal sign-up: it gets `TELESRV_PREMIUM_GRANT_MONTHS` of Premium and the regular 777000 welcome message, exactly like a code sign-up. Unverified sign-ups therefore mint Premium accounts at the rate the login-code quotas allow; set `TELESRV_PREMIUM_GRANT_MONTHS` to `0` if that matters.
 
 ## 6. Maps, external media, previews, and uploads
 
@@ -794,7 +818,7 @@ that cannot do what it says fails startup instead of being silently unreachable.
 
 ## 12. Production minimum checklist
 
-At minimum, production operators should explicitly review and override the development credentials/endpoints: PostgreSQL DSN and TLS, Redis password/network exposure, RSA key persistence, fixed development auth code exposure, Admin credentials/session key, OTP Webhook/SMTP secrets, AI/Mapbox API keys, TURN secret and firewall ports, public URLs/scheme alignment, and non-loopback SFU/TURN advertise addresses for real devices.
+At minimum, production operators should explicitly review and override the development credentials/endpoints: PostgreSQL DSN and TLS, Redis password/network exposure, RSA key persistence, fixed development auth code exposure, Admin credentials/session key, OTP Webhook/SMTP secrets, AI/Mapbox API keys, TURN secret and firewall ports, public URLs/scheme alignment, and non-loopback SFU/TURN advertise addresses for real devices. If `TELESRV_PASSWORD_LOGIN_ENABLED` is on, review the risks in section 5.1 (unverified phone numbers, exposed account existence, Premium grants for unverified sign-ups), and leave `TELESRV_PASSWORD_LOGIN_RESET_WINDOW` at `0` unless you accept that any session can reset the login password through a fresh QR-approved device.
 
 ## Cross-collection gift crafting
 

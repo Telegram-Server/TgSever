@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1016,6 +1017,33 @@ func TestLoadLoginEmailDefaultsDisabled(t *testing.T) {
 		t.Fatalf("auth/login email defaults = ttl=%v attempts=%d length=%d phone_limit=%d key_limit=%d window=%v",
 			cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength,
 			cfg.AuthCodePhoneRateLimit, cfg.AuthCodeAuthKeyRateLimit, cfg.AuthCodeRateWindow)
+	}
+}
+
+func TestLoadPasswordLoginSwitch(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PasswordLoginEnabled {
+		t.Fatal("PasswordLoginEnabled = true by default, want false")
+	}
+
+	t.Setenv("TELESRV_PASSWORD_LOGIN_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.PasswordLoginEnabled {
+		t.Fatal("PasswordLoginEnabled = false with TELESRV_PASSWORD_LOGIN_ENABLED=true")
+	}
+
+	// 密码注册没有设置登录邮箱的环节，不能和"必须先设置登录邮箱"同时打开。
+	t.Setenv("TELESRV_LOGIN_EMAIL_ENABLE", "true")
+	t.Setenv("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", "true")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TELESRV_PASSWORD_LOGIN_ENABLED") {
+		t.Fatalf("Load with password login and required login email err=%v, want a TELESRV_PASSWORD_LOGIN_ENABLED conflict", err)
 	}
 }
 

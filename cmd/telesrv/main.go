@@ -47,6 +47,7 @@ import (
 	"telesrv/internal/app/help"
 	"telesrv/internal/app/langpack"
 	"telesrv/internal/app/livestream"
+	loginpasswordapp "telesrv/internal/app/loginpassword"
 	"telesrv/internal/app/maintenance"
 	messageapp "telesrv/internal/app/messages"
 	moderationapp "telesrv/internal/app/moderation"
@@ -1684,6 +1685,22 @@ func run(logger *zap.Logger) error {
 			Store:        accountService,
 			Sender:       loginEmailSender,
 		}))
+	// 手机号 + 密码登录（telesrv 扩展协议）。总开关默认关闭；关闭时服务照常构造，
+	// telesrv. 方法由服务自己返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
+	// 密码登录的 SRP challenge 只存进程内存（与 passkey 挑战、QR 登录 token 相同，单体
+	// 部署不跨实例），不写进用户记录。
+	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool),
+		memory.NewLoginPasswordChallengeStore(nil), authService,
+		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled),
+		loginpasswordapp.WithUserRateLimit(rateLimiter, cfg.PasswordLoginUserRateLimit, cfg.PasswordLoginUserRateWindow),
+		// 设置、修改、删除登录密码后由 777000 通知该账号：消息与 outbox 同事务落库，再推给所有在线会话。
+		loginpasswordapp.WithChangeNotices(messageStore, logger.Named("login-password")),
+		// 忘记登录密码：授权创建时间在窗口内可以不填旧密码直接重设。窗口从任何新授权（含扫码批准的新设备）
+		// 算起，默认 0 关闭，见 WithResetWindow。
+		loginpasswordapp.WithResetWindow(cfg.PasswordLoginResetWindow))
+	if cfg.PasswordLoginEnabled {
+		logger.Warn("手机号 + 密码登录已启用：任何人都可以不经验证码用任意号码注册")
+	}
 	// Collectible (NFT) usernames and the gramsrv composite account rating are
 	// optional read models projected at the protocol edge. The rating worker
 	// computes and persists scores; profile reads never recompute them.
@@ -1866,6 +1883,7 @@ func run(logger *zap.Logger) error {
 		PresenceLastSeenDrainTimeout:   cfg.PresenceLastSeenDrainTimeout,
 	}, rpc.Deps{
 		Auth:                 authService,
+		LoginPassword:        loginPasswordService,
 		AuthDeliveryReports:  authDeliveryReportService,
 		ClientTelemetry:      clientTelemetryService,
 		AuthKeySessionLayers: authKeySessionLayerStore,
@@ -1880,6 +1898,7 @@ func run(logger *zap.Logger) error {
 			// operator turns it off, and that is exactly when a client must be told
 			// the wallet is unavailable rather than shown an entry that cannot work.
 			help.WithWalletAvailable(cfg.WalletStateDir != ""),
+			help.WithPasswordLogin(loginPasswordService.Enabled()),
 			help.WithAccountFreezeProvider(adminService)),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
