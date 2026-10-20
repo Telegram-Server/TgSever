@@ -16,6 +16,9 @@ func (s *ChannelStore) ExportInvite(ctx context.Context, req domain.ExportChanne
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.ExportChannelInviteResult{}, domain.ErrChannelInvalid
 	}
+	if err := domain.ValidateChannelInviteParameters(req.Title, req.ExpireDate, req.UsageLimit, req.RequestNeeded, req.Date); err != nil {
+		return domain.ExportChannelInviteResult{}, err
+	}
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
 		return domain.ExportChannelInviteResult{}, fmt.Errorf("export channel invite: db does not support transactions")
@@ -33,6 +36,12 @@ func (s *ChannelStore) ExportInvite(ctx context.Context, req domain.ExportChanne
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	// pgx advisory locks serialize main-link rotation with EnsurePermanentInvite.
+	if req.LegacyRevokePermanent {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, req.ChannelID); err != nil {
+			return domain.ExportChannelInviteResult{}, fmt.Errorf("lock main invite rotation: %w", err)
+		}
+	}
 	channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.ExportChannelInviteResult{}, err
@@ -62,7 +71,7 @@ WHERE channel_id = $1 AND admin_user_id = $2 AND permanent AND NOT revoked`, req
 		Hash:          hash,
 		AdminUserID:   req.UserID,
 		Title:         req.Title,
-		Permanent:     req.ExpireDate == 0 && req.UsageLimit == 0 && !req.RequestNeeded && req.Title == "",
+		Permanent:     req.LegacyRevokePermanent,
 		RequestNeeded: req.RequestNeeded,
 		ExpireDate:    req.ExpireDate,
 		UsageLimit:    req.UsageLimit,
@@ -176,7 +185,7 @@ func (s *ChannelStore) ListExportedInvites(ctx context.Context, req domain.Chann
 	if err != nil {
 		return domain.ChannelInviteList{}, err
 	}
-	if !canExportChannelInvite(member) {
+	if !canManageChannelInvite(member, req.AdminUserID) {
 		return domain.ChannelInviteList{}, domain.ErrChannelAdminRequired
 	}
 	var total int
@@ -249,7 +258,14 @@ func (s *ChannelStore) GetExportedInvite(ctx context.Context, req domain.GetChan
 	if !canExportChannelInvite(member) {
 		return domain.ChannelInvite{}, domain.ErrChannelAdminRequired
 	}
-	return s.getInviteByChannelHash(ctx, s.db, req.ChannelID, req.Hash, false)
+	invite, err := s.getInviteByChannelHash(ctx, s.db, req.ChannelID, req.Hash, false)
+	if err != nil {
+		return domain.ChannelInvite{}, err
+	}
+	if !canManageChannelInvite(member, invite.AdminUserID) {
+		return domain.ChannelInvite{}, domain.ErrChannelAdminRequired
+	}
+	return invite, nil
 }
 
 func (s *ChannelStore) EditExportedInvite(ctx context.Context, req domain.EditChannelInviteRequest) (domain.EditChannelInviteResult, error) {
@@ -273,14 +289,26 @@ func (s *ChannelStore) EditExportedInvite(ctx context.Context, req domain.EditCh
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	if _, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID); err != nil {
+	// Keep lock order identical to ExportInvite/EnsurePermanentInvite so two
+	// concurrent rotations cannot create competing main links.
+	if req.Revoked {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, req.ChannelID); err != nil {
+			return domain.EditChannelInviteResult{}, fmt.Errorf("lock main invite revocation: %w", err)
+		}
+	}
+	_, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
+	if err != nil {
 		return domain.EditChannelInviteResult{}, err
-	} else if !canExportChannelInvite(member) {
+	}
+	if !canExportChannelInvite(member) {
 		return domain.EditChannelInviteResult{}, domain.ErrChannelAdminRequired
 	}
 	invite, err := s.getInviteByChannelHash(ctx, tx, req.ChannelID, req.Hash, true)
 	if err != nil {
 		return domain.EditChannelInviteResult{}, err
+	}
+	if !canManageChannelInvite(member, invite.AdminUserID) {
+		return domain.EditChannelInviteResult{}, domain.ErrChannelAdminRequired
 	}
 	if req.Revoked {
 		if invite.Revoked {
@@ -325,17 +353,18 @@ func (s *ChannelStore) EditExportedInvite(ctx context.Context, req domain.EditCh
 	if req.HasTitle {
 		invite.Title = req.Title
 	}
-	invite.Permanent = invite.ExpireDate == 0 && invite.UsageLimit == 0 && !invite.RequestNeeded && invite.Title == ""
-	if _, err := tx.Exec(ctx, `
-UPDATE channel_invites
-SET title = $3,
-    expire_date = NULLIF($4, 0),
-    usage_limit = NULLIF($5, 0),
-    request_needed = $6,
-    permanent = $7,
-    updated_at = now()
-WHERE channel_id = $1 AND invite_id = $2`,
-		invite.ChannelID, invite.InviteID, invite.Title, invite.ExpireDate, invite.UsageLimit, invite.RequestNeeded, invite.Permanent); err != nil {
+	expireDate := 0
+	if req.HasExpireDate {
+		expireDate = invite.ExpireDate
+	}
+	if err := domain.ValidateChannelInviteParameters(invite.Title, expireDate, invite.UsageLimit, invite.RequestNeeded, req.Date); err != nil {
+		return domain.EditChannelInviteResult{}, err
+	}
+	if err := sqlcgen.New(tx).UpdateExportedChannelInvite(ctx, sqlcgen.UpdateExportedChannelInviteParams{
+		ChannelID: invite.ChannelID, InviteID: invite.InviteID, Title: invite.Title,
+		ExpireDate: int32(invite.ExpireDate), UsageLimit: int32(invite.UsageLimit),
+		RequestNeeded: invite.RequestNeeded,
+	}); err != nil {
 		return domain.EditChannelInviteResult{}, fmt.Errorf("update channel invite: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -349,22 +378,24 @@ func (s *ChannelStore) DeleteExportedInvite(ctx context.Context, req domain.Dele
 	if req.UserID == 0 || req.ChannelID == 0 || strings.TrimSpace(req.Hash) == "" {
 		return domain.ErrInviteHashEmpty
 	}
-	if _, member, err := s.getChannelForMember(ctx, s.db, req.UserID, req.ChannelID); err != nil {
+	_, member, err := s.getChannelForMember(ctx, s.db, req.UserID, req.ChannelID)
+	if err != nil {
 		return err
-	} else if !canExportChannelInvite(member) {
+	}
+	invite, err := s.getInviteByChannelHash(ctx, s.db, req.ChannelID, req.Hash, false)
+	if err != nil {
+		return err
+	}
+	if !canManageChannelInvite(member, invite.AdminUserID) {
 		return domain.ErrChannelAdminRequired
 	}
-	tag, err := s.db.Exec(ctx, `
-WITH deleted AS (
-    DELETE FROM channel_invites
-    WHERE channel_id = $1 AND hash = $2
-    RETURNING hash
-)
-DELETE FROM channel_invite_hashes h USING deleted d WHERE h.hash = d.hash`, req.ChannelID, strings.TrimSpace(req.Hash))
+	affected, err := sqlcgen.New(s.db).DeleteExportedChannelInvite(ctx, sqlcgen.DeleteExportedChannelInviteParams{
+		ChannelID: req.ChannelID, Hash: strings.TrimSpace(req.Hash),
+	})
 	if err != nil {
 		return fmt.Errorf("delete channel invite: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if affected == 0 {
 		return domain.ErrInviteRevokedMissing
 	}
 	return nil
@@ -376,28 +407,14 @@ func (s *ChannelStore) DeleteRevokedExportedInvites(ctx context.Context, req dom
 	}
 	if _, member, err := s.getChannelForMember(ctx, s.db, req.UserID, req.ChannelID); err != nil {
 		return err
-	} else if !canExportChannelInvite(member) {
+	} else if !canManageChannelInvite(member, req.AdminUserID) {
 		return domain.ErrChannelAdminRequired
 	}
 	limit := req.Limit
 	if limit <= 0 || limit > domain.MaxChannelHideJoinRequests {
 		limit = domain.MaxChannelHideJoinRequests
 	}
-	// channel_invites 是普通非分区表；先在带 channel_id 的子查询里按主键 (channel_id, invite_id)
-	// 选出 LIMIT 条待删的已撤销邀请，再按主键删除并级联清理 channel_invite_hashes。
-	if _, err := s.db.Exec(ctx, `
-WITH victims AS (
-    SELECT channel_id, invite_id FROM channel_invites
-    WHERE channel_id = $1 AND admin_user_id = $2 AND revoked
-    ORDER BY updated_at ASC
-    LIMIT $3
-), deleted AS (
-    DELETE FROM channel_invites ci
-    USING victims v
-    WHERE ci.channel_id = v.channel_id AND ci.invite_id = v.invite_id
-    RETURNING ci.hash
-)
-DELETE FROM channel_invite_hashes h USING deleted d WHERE h.hash = d.hash`, req.ChannelID, req.AdminUserID, limit); err != nil {
+	if err := sqlcgen.New(s.db).DeleteRevokedChannelInvites(ctx, sqlcgen.DeleteRevokedChannelInvitesParams{ChannelID: req.ChannelID, AdminUserID: req.AdminUserID, Limit: int32(limit)}); err != nil {
 		return fmt.Errorf("delete revoked channel invites: %w", err)
 	}
 	return nil
@@ -407,32 +424,26 @@ func (s *ChannelStore) ListAdminsWithInvites(ctx context.Context, userID, channe
 	if userID == 0 || channelID == 0 {
 		return nil, domain.ErrChannelInvalid
 	}
-	if _, member, err := s.getChannelForMember(ctx, s.db, userID, channelID); err != nil {
-		return nil, err
-	} else if !canExportChannelInvite(member) {
-		return nil, domain.ErrChannelAdminRequired
-	}
-	rows, err := s.db.Query(ctx, `
-SELECT admin_user_id,
-       COUNT(*) FILTER (WHERE NOT revoked)::int,
-       COUNT(*) FILTER (WHERE revoked)::int
-FROM channel_invites
-WHERE channel_id = $1
-GROUP BY admin_user_id
-ORDER BY admin_user_id ASC`, channelID)
+	_, member, err := s.getChannelForMember(ctx, s.db, userID, channelID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]domain.ChannelAdminInviteCount, 0)
-	for rows.Next() {
-		var count domain.ChannelAdminInviteCount
-		if err := rows.Scan(&count.AdminUserID, &count.InvitesCount, &count.RevokedInvitesCount); err != nil {
-			return nil, err
-		}
-		out = append(out, count)
+	if !canExportChannelInvite(member) {
+		return nil, domain.ErrChannelAdminRequired
 	}
-	return out, rows.Err()
+	rows, err := sqlcgen.New(s.db).ListChannelInviteAdminCounts(ctx, sqlcgen.ListChannelInviteAdminCountsParams{
+		ChannelID: channelID, Creator: member.Role == domain.ChannelRoleCreator, AdminUserID: userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.ChannelAdminInviteCount, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.ChannelAdminInviteCount{
+			AdminUserID: row.AdminUserID, InvitesCount: int(row.ActiveCount), RevokedInvitesCount: int(row.RevokedCount),
+		})
+	}
+	return out, nil
 }
 
 func insertChannelInviteTx(ctx context.Context, tx pgx.Tx, invite domain.ChannelInvite) error {

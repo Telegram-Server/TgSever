@@ -344,20 +344,22 @@ func (i BotInvoice) Valid() bool {
 func (i BotInvoice) Settled() bool { return i.Paid && i.ChargeID != "" }
 
 type BotProfile struct {
-	BotUserID         int64
-	OwnerUserID       int64
-	TokenSecret       string
-	Description       string
-	Commands          []BotCommand
-	ChatHistory       bool // privacy mode 关闭 = true（bot_chat_history flag）
-	Nochats           bool // true = 不允许加群（bot_nochats flag）
-	InlineGeo         bool
-	InlinePlaceholder string
-	MenuButton        BotMenuButton
-	HasMainApp        bool
-	HasAttachMenu     bool
-	HasPreviewMedias  bool
-	AppSettings       *BotAppSettings
+	BotUserID            int64
+	OwnerUserID          int64
+	TokenSecret          string
+	Description          string
+	Commands             []BotCommand
+	ChatHistory          bool // privacy mode 关闭 = true（bot_chat_history flag）
+	Nochats              bool // true = 不允许加群（bot_nochats flag）
+	InlineGeo            bool
+	InlinePlaceholder    string
+	MenuButton           BotMenuButton
+	GroupAdminRights     ChannelAdminRights
+	BroadcastAdminRights ChannelAdminRights
+	HasMainApp           bool
+	HasAttachMenu        bool
+	HasPreviewMedias     bool
+	AppSettings          *BotAppSettings
 }
 
 // BotChatState 是内置 bot（当前仅 BotFather）与某用户的对话状态机持久态。

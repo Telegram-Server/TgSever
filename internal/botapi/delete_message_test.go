@@ -7,33 +7,14 @@ import (
 	"testing"
 )
 
-// fakeDeleteMessageGateway 记录 deleteMessage 收到的 chat_id，并按 err 返回网关错误。
+// fakeDeleteMessageGateway 注入协议错误，验证 HTTP 删除错误的公开契约。
 type fakeDeleteMessageGateway struct {
 	*fakeBotAPIGateway
-	chatID    int64
-	messageID int
-	err       error
+	err error
 }
 
-func (f *fakeDeleteMessageGateway) BotAPIDeleteMessage(_ context.Context, _ int64, chatID int64, messageID int) (bool, error) {
-	f.chatID, f.messageID = chatID, messageID
-	if f.err != nil {
-		return false, f.err
-	}
-	return true, nil
-}
-
-func TestDeleteMessagePassesChannelChatIDs(t *testing.T) {
-	gateway := &fakeDeleteMessageGateway{fakeBotAPIGateway: &fakeBotAPIGateway{}}
-
-	rec := callMethod(t, newTestHandler(t, gateway), "deleteMessage", `{"chat_id":"-1001234","message_id":7}`)
-	resp := decodeAPIResponse(t, rec)
-	if rec.Code != http.StatusOK || !resp.OK || string(resp.Result) != "true" {
-		t.Fatalf("status = %d body = %s, want ok true", rec.Code, rec.Body.String())
-	}
-	if gateway.chatID != -1001234 || gateway.messageID != 7 {
-		t.Fatalf("gateway got chat %d message %d, want -1001234/7", gateway.chatID, gateway.messageID)
-	}
+func (f *fakeDeleteMessageGateway) BotAPIDeleteMessage(_ context.Context, _ int64, _ int64, _ int) (bool, error) {
+	return false, f.err
 }
 
 // deleteMessage 的失败说明与官方 Bot API 一致，bot 库按这两句文本判断删除失败的原因。

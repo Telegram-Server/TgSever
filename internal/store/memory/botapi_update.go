@@ -239,7 +239,7 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 	} else if domain.BotAPIUpdateKindNeedsOptIn(req.Kind) {
 		return domain.BotAPIUpdate{}, false, nil
 	}
-	if req.ChatMember != nil {
+	if req.ChatMember != nil || req.Reaction != nil || req.JoinRequest != nil {
 		// 成员变化没有消息去重键，每次变化都是独立的一条。
 		key = fmt.Sprintf("%d:%s:member:%d", req.BotUserID, req.Kind, s.nextID)
 	}
@@ -262,6 +262,8 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 		PreCheckout: cloneBotAPIPreCheckout(req.PreCheckout),
 		Ephemeral:   cloneBotAPIEphemeral(req.Ephemeral),
 		ChatMember:  cloneBotAPIChatMember(req.ChatMember),
+		Reaction:    req.Reaction.Clone(),
+		JoinRequest: req.JoinRequest.Clone(),
 	}
 	s.nextID++
 	s.rows = append(s.rows, row)
@@ -427,6 +429,18 @@ func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	if req.BotUserID == 0 {
 		return fmt.Errorf("invalid bot api update")
 	}
+	if err := domain.ValidateBotAPIJoinRequest(req); err != nil {
+		return err
+	}
+	if req.JoinRequest != nil {
+		return nil
+	}
+	if err := domain.ValidateBotAPIReactionRequest(req); err != nil {
+		return err
+	}
+	if req.Reaction != nil {
+		return nil
+	}
 	// A pre-checkout query is message-less by design: the bot is asked before any
 	// payment exists, so it carries no peer and no message id.
 	if req.Kind != domain.BotAPIUpdateMessage && req.Kind != domain.BotAPIUpdateEditedMessage &&
@@ -504,6 +518,8 @@ func cloneBotAPIUpdate(row domain.BotAPIUpdate) domain.BotAPIUpdate {
 	row.PreCheckout = cloneBotAPIPreCheckout(row.PreCheckout)
 	row.Ephemeral = cloneBotAPIEphemeral(row.Ephemeral)
 	row.ChatMember = cloneBotAPIChatMember(row.ChatMember)
+	row.Reaction = row.Reaction.Clone()
+	row.JoinRequest = row.JoinRequest.Clone()
 	return row
 }
 
@@ -512,6 +528,10 @@ func cloneBotAPIChatMember(in *domain.BotChatMemberUpdated) *domain.BotChatMembe
 		return nil
 	}
 	out := *in
+	if in.Invite != nil {
+		invite := *in.Invite
+		out.Invite = &invite
+	}
 	return &out
 }
 

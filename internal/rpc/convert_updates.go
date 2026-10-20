@@ -242,10 +242,10 @@ func tgChannelUpdate(viewerUserID int64, event domain.ChannelUpdateEvent) tg.Upd
 			UserID:    userID,
 		}
 		if event.Previous.UserID != 0 {
-			update.SetPrevParticipant(tgChannelParticipantForUpdate(viewerUserID, event.Previous))
+			update.SetPrevParticipant(tgChannelParticipant(viewerUserID, event.Previous))
 		}
 		if event.Participant.UserID != 0 {
-			update.SetNewParticipant(tgChannelParticipantForUpdate(viewerUserID, event.Participant))
+			update.SetNewParticipant(tgChannelParticipant(viewerUserID, event.Participant))
 		}
 		return update
 	default:
@@ -563,25 +563,6 @@ func channelChatID(chat tg.ChatClass) (int64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func tgChannelParticipantForUpdate(selfUserID int64, member domain.ChannelMember) tg.ChannelParticipantClass {
-	if member.UserID == 0 {
-		return nil
-	}
-	if member.Status == domain.ChannelMemberKicked || member.Status == domain.ChannelMemberBanned || member.BannedRights.ViewMessages {
-		return &tg.ChannelParticipantBanned{
-			Left:         member.Status != domain.ChannelMemberActive,
-			Peer:         &tg.PeerUser{UserID: member.UserID},
-			KickedBy:     member.InviterUserID,
-			Date:         member.LeftAt,
-			BannedRights: tgChatBannedRights(member.BannedRights),
-		}
-	}
-	if member.Status == domain.ChannelMemberLeft {
-		return &tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: member.UserID}}
-	}
-	return tgChannelParticipant(selfUserID, member)
 }
 
 func tgLangPackDifference(pack domain.LangPack) *tg.LangPackDifference {

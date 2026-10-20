@@ -69,6 +69,10 @@ func (s *ChannelStore) SetChannelMessageReactions(ctx context.Context, req domai
 		!channelMessageVisibleToViewer(channel, member, req.UserID, msg) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
+	old, err := actorChannelReactions(ctx, tx, req.ChannelID, req.MessageID, req.UserID)
+	if err != nil {
+		return domain.ChannelMessageReactionsResult{}, err
+	}
 	// 仅新增/替换受策略约束；空向量是撤销，策略收紧后也必须允许撤销存量 reaction。
 	for _, reaction := range req.Reactions {
 		if !channel.ReactionPolicy.AllowsReaction(reaction) {
@@ -165,12 +169,8 @@ DO UPDATE SET reaction_count = user_top_reactions.reaction_count + 1, reaction_d
 			return domain.ChannelMessageReactionsResult{}, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.ChannelMessageReactionsResult{}, fmt.Errorf("commit set channel message reactions: %w", err)
-	}
-	committed = true
 	messages := []domain.ChannelMessage{msg}
-	if err := s.populateChannelMessagesReactions(ctx, s.db, req.UserID, []domain.Channel{channel}, messages); err != nil {
+	if err := s.populateChannelMessagesReactions(ctx, tx, req.UserID, []domain.Channel{channel}, messages); err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
 	}
 	msg = messages[0]
@@ -180,13 +180,18 @@ DO UPDATE SET reaction_count = user_top_reactions.reaction_count + 1, reaction_d
 	} else {
 		msg.Reactions = &reactions
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ChannelMessageReactionsResult{}, fmt.Errorf("commit set channel message reactions: %w", err)
+	}
+	committed = true
 	// sendReaction 实时推送走在线 viewer scope（rpc 层封顶），不预热全量成员列表。
 	return domain.ChannelMessageReactionsResult{
-		Channel:    channel,
-		Message:    msg,
-		Messages:   []domain.ChannelMessage{msg},
-		Reactions:  reactions,
-		Recipients: []int64{req.UserID},
+		MessageReactionChange: domain.MessageReactionChange{MessageID: req.MessageID, ActorUserID: req.UserID, OldReactions: old, NewReactions: append([]domain.MessageReaction(nil), req.Reactions...)},
+		Channel:               channel,
+		Message:               msg,
+		Messages:              []domain.ChannelMessage{msg},
+		Reactions:             reactions,
+		Recipients:            []int64{req.UserID},
 	}, nil
 }
 
@@ -710,7 +715,7 @@ func (s *ChannelStore) DeleteChannelParticipantReaction(ctx context.Context, req
 	if err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
 	}
-	if !canDeleteAnyChannelMessage(member) {
+	if !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrChannelAdminRequired
 	}
 	msg, err := s.getChannelMessage(ctx, tx, req.ChannelID, req.MessageID)
@@ -719,6 +724,10 @@ func (s *ChannelStore) DeleteChannelParticipantReaction(ctx context.Context, req
 	}
 	if msg.Deleted || msg.ID <= member.AvailableMinID {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid
+	}
+	old, err := actorChannelReactions(ctx, tx, req.ChannelID, req.MessageID, req.ParticipantUserID)
+	if err != nil {
+		return domain.ChannelMessageReactionsResult{}, err
 	}
 	if _, err := tx.Exec(ctx, `
 DELETE FROM channel_message_reactions
@@ -729,12 +738,8 @@ WHERE channel_id = $1 AND message_id = $2 AND reacted_user_id = $3`,
 	if err := refreshChannelUnreadReactionsCountTx(ctx, tx, msg.SenderUserID, req.ChannelID); err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.ChannelMessageReactionsResult{}, fmt.Errorf("commit delete participant reaction: %w", err)
-	}
-	committed = true
 	messages := []domain.ChannelMessage{msg}
-	if err := s.populateChannelMessagesReactions(ctx, s.db, req.UserID, []domain.Channel{channel}, messages); err != nil {
+	if err := s.populateChannelMessagesReactions(ctx, tx, req.UserID, []domain.Channel{channel}, messages); err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
 	}
 	msg = messages[0]
@@ -744,16 +749,21 @@ WHERE channel_id = $1 AND message_id = $2 AND reacted_user_id = $3`,
 	} else {
 		msg.Reactions = &reactions
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ChannelMessageReactionsResult{}, fmt.Errorf("commit delete participant reaction: %w", err)
+	}
+	committed = true
 	recipients, err := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, domain.MaxChannelRealtimeFanout)
 	if err != nil {
 		recipients = []int64{req.UserID}
 	}
 	return domain.ChannelMessageReactionsResult{
-		Channel:    channel,
-		Message:    msg,
-		Messages:   []domain.ChannelMessage{msg},
-		Reactions:  reactions,
-		Recipients: recipients,
+		MessageReactionChange: domain.MessageReactionChange{MessageID: req.MessageID, ActorUserID: req.ParticipantUserID, OldReactions: old},
+		Channel:               channel,
+		Message:               msg,
+		Messages:              []domain.ChannelMessage{msg},
+		Reactions:             reactions,
+		Recipients:            recipients,
 	}, nil
 }
 
@@ -782,7 +792,7 @@ func (s *ChannelStore) DeleteChannelParticipantReactions(ctx context.Context, re
 	if err != nil {
 		return domain.DeleteChannelParticipantReactionsResult{}, err
 	}
-	if !canDeleteAnyChannelMessage(member) {
+	if !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelParticipantReactionsResult{}, domain.ErrChannelAdminRequired
 	}
 	rows, err := tx.Query(ctx, `
@@ -814,6 +824,11 @@ LIMIT $3`, req.ChannelID, req.ParticipantUserID, req.Limit)
 		return domain.DeleteChannelParticipantReactionsResult{}, err
 	}
 	rows.Close()
+	sort.Ints(ids)
+	changes, err := actorChannelReactionChanges(ctx, tx, req.ChannelID, ids, req.ParticipantUserID)
+	if err != nil {
+		return domain.DeleteChannelParticipantReactionsResult{}, err
+	}
 	if len(ids) > 0 {
 		if _, err := tx.Exec(ctx, `
 DELETE FROM channel_message_reactions
@@ -827,27 +842,29 @@ WHERE channel_id = $1 AND reacted_user_id = $2 AND message_id = ANY($3::int[])`,
 			}
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.DeleteChannelParticipantReactionsResult{}, fmt.Errorf("commit delete participant reactions: %w", err)
-	}
-	committed = true
-	messages := []domain.ChannelMessage{}
-	if len(ids) > 0 {
-		res, err := s.GetChannelMessageReactions(ctx, domain.ChannelMessageReactionsRequest{
-			UserID:    req.UserID,
-			ChannelID: req.ChannelID,
-			IDs:       ids,
+	// Keep the count snapshots in the same transaction as the old selections.
+	// The public read method accepts at most MaxGetMessageIDs per page.
+	messages := make([]domain.ChannelMessage, 0, len(ids))
+	transactionStore := NewChannelStore(tx)
+	for start := 0; start < len(ids); start += domain.MaxGetMessageIDs {
+		res, err := transactionStore.GetChannelMessageReactions(ctx, domain.ChannelMessageReactionsRequest{
+			UserID: req.UserID, ChannelID: req.ChannelID, IDs: ids[start:min(start+domain.MaxGetMessageIDs, len(ids))],
 		})
 		if err != nil {
 			return domain.DeleteChannelParticipantReactionsResult{}, err
 		}
-		messages = res.Messages
+		messages = append(messages, res.Messages...)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.DeleteChannelParticipantReactionsResult{}, fmt.Errorf("commit delete participant reactions: %w", err)
+	}
+	committed = true
 	recipients, err := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, domain.MaxChannelRealtimeFanout)
 	if err != nil {
 		recipients = []int64{req.UserID}
 	}
 	return domain.DeleteChannelParticipantReactionsResult{
+		Changes:    changes,
 		Channel:    channel,
 		Messages:   messages,
 		Recipients: recipients,

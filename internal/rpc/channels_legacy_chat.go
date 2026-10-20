@@ -425,9 +425,6 @@ func (r *Router) onMessagesEditChatParticipantRank(ctx context.Context, req *tg.
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
 	}
-	if len(req.Rank) > domain.MaxChannelAdminRankLength {
-		return nil, channelInvalidErr(domain.ErrChannelInvalid)
-	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()

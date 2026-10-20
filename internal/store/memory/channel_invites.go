@@ -30,6 +30,7 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 	added := make([]int64, 0, len(requested))
 	members := make([]domain.ChannelMember, 0, len(requested))
 	restoredKicked := 0
+	pendingChanged := false
 	previous := make(map[int64]domain.ChannelMember)
 	for _, userID := range requested {
 		existing, hadRecord := s.effectiveMemberLocked(channelID, userID, restrictionNow(date))
@@ -72,6 +73,7 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 			previous[userID] = existing
 			member.BannedRights = rejoinBannedRights(existing, date)
 		}
+		pendingChanged = s.clearPendingDirectInviteLocked(channelID, userID) || pendingChanged
 		s.members[channelID][userID] = member
 		members = append(members, member)
 		added = append(added, userID)
@@ -103,12 +105,13 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 		s.upsertChannelDialogLocked(member.UserID, channel, msg, false)
 	}
 	return domain.CreateChannelResult{
-		Channel:    channel,
-		Members:    cloneChannelMembers(members),
-		Previous:   previous,
-		Message:    cloneChannelMessage(msg),
-		Event:      cloneChannelEvent(event),
-		Recipients: s.activeMemberIDsLocked(channelID, 0, 0),
+		Channel:                channel,
+		Members:                cloneChannelMembers(members),
+		Previous:               previous,
+		PendingRequestsChanged: pendingChanged,
+		Message:                cloneChannelMessage(msg),
+		Event:                  cloneChannelEvent(event),
+		Recipients:             s.activeMemberIDsLocked(channelID, 0, 0),
 	}, nil
 }
 
@@ -161,6 +164,9 @@ func (s *ChannelStore) ExportInvite(_ context.Context, req domain.ExportChannelI
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.ExportChannelInviteResult{}, domain.ErrChannelInvalid
 	}
+	if err := domain.ValidateChannelInviteParameters(req.Title, req.ExpireDate, req.UsageLimit, req.RequestNeeded, req.Date); err != nil {
+		return domain.ExportChannelInviteResult{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	channel, err := s.channelForMemberLocked(req.UserID, req.ChannelID)
@@ -193,7 +199,7 @@ func (s *ChannelStore) ExportInvite(_ context.Context, req domain.ExportChannelI
 		Hash:          hash,
 		AdminUserID:   req.UserID,
 		Title:         req.Title,
-		Permanent:     req.ExpireDate == 0 && req.UsageLimit == 0 && !req.RequestNeeded && req.Title == "",
+		Permanent:     req.LegacyRevokePermanent,
 		RequestNeeded: req.RequestNeeded,
 		ExpireDate:    req.ExpireDate,
 		UsageLimit:    req.UsageLimit,
@@ -309,7 +315,8 @@ func (s *ChannelStore) ImportInvite(_ context.Context, req domain.ImportChannelI
 		if err := s.recordPendingInviteRequestLocked(invite, req.UserID, req.Date); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		invite = s.invites[invite.Hash]
+		return domain.CreateChannelResult{Channel: channel, JoinRequest: domain.NewChannelJoinRequest(channel.ID, req.UserID, req.Date, &invite)}, domain.ErrInviteRequestSent
 	}
 	return s.approveInviteImporterLocked(channel, invite, req.UserID, 0, req.Date)
 }
@@ -324,7 +331,7 @@ func (s *ChannelStore) ListExportedInvites(_ context.Context, req domain.Channel
 		return domain.ChannelInviteList{}, err
 	}
 	member := s.members[req.ChannelID][req.UserID]
-	if !canExportChannelInvite(member) {
+	if !canManageChannelInvite(member, req.AdminUserID) {
 		return domain.ChannelInviteList{}, domain.ErrChannelAdminRequired
 	}
 	all := make([]domain.ChannelInvite, 0)
@@ -394,7 +401,14 @@ func (s *ChannelStore) GetExportedInvite(_ context.Context, req domain.GetChanne
 	if !canExportChannelInvite(member) {
 		return domain.ChannelInvite{}, domain.ErrChannelAdminRequired
 	}
-	return s.inviteByChannelHashLocked(req.ChannelID, req.Hash)
+	invite, err := s.inviteByChannelHashLocked(req.ChannelID, req.Hash)
+	if err != nil {
+		return domain.ChannelInvite{}, err
+	}
+	if !canManageChannelInvite(member, invite.AdminUserID) {
+		return domain.ChannelInvite{}, domain.ErrChannelAdminRequired
+	}
+	return invite, nil
 }
 
 func (s *ChannelStore) EditExportedInvite(_ context.Context, req domain.EditChannelInviteRequest) (domain.EditChannelInviteResult, error) {
@@ -414,6 +428,9 @@ func (s *ChannelStore) EditExportedInvite(_ context.Context, req domain.EditChan
 	if err != nil {
 		return domain.EditChannelInviteResult{}, err
 	}
+	if !canManageChannelInvite(member, invite.AdminUserID) {
+		return domain.EditChannelInviteResult{}, domain.ErrChannelAdminRequired
+	}
 	if req.Revoked {
 		if invite.Revoked {
 			return domain.EditChannelInviteResult{}, domain.ErrInviteRevokedMissing
@@ -432,6 +449,9 @@ func (s *ChannelStore) EditExportedInvite(_ context.Context, req domain.EditChan
 		s.refreshChannelHasLinkLocked(req.ChannelID)
 		return domain.EditChannelInviteResult{Invite: invite, NewInvite: &newInvite}, nil
 	}
+	if invite.Revoked {
+		return domain.EditChannelInviteResult{}, domain.ErrInviteRevokedMissing
+	}
 	if invite.Permanent && ((req.HasExpireDate && req.ExpireDate > 0) || (req.HasUsageLimit && req.UsageLimit > 0) || (req.HasRequestNeeded && req.RequestNeeded)) {
 		return domain.EditChannelInviteResult{}, domain.ErrInvitePermanent
 	}
@@ -447,7 +467,13 @@ func (s *ChannelStore) EditExportedInvite(_ context.Context, req domain.EditChan
 	if req.HasTitle {
 		invite.Title = req.Title
 	}
-	invite.Permanent = invite.ExpireDate == 0 && invite.UsageLimit == 0 && !invite.RequestNeeded && invite.Title == ""
+	expireDate := 0
+	if req.HasExpireDate {
+		expireDate = invite.ExpireDate
+	}
+	if err := domain.ValidateChannelInviteParameters(invite.Title, expireDate, invite.UsageLimit, invite.RequestNeeded, req.Date); err != nil {
+		return domain.EditChannelInviteResult{}, err
+	}
 	s.invites[invite.Hash] = invite
 	s.refreshChannelHasLinkLocked(req.ChannelID)
 	return domain.EditChannelInviteResult{Invite: invite}, nil
@@ -470,6 +496,10 @@ func (s *ChannelStore) DeleteExportedInvite(_ context.Context, req domain.Delete
 	if err != nil {
 		return err
 	}
+	if !canManageChannelInvite(member, invite.AdminUserID) {
+		return domain.ErrChannelAdminRequired
+	}
+	s.deletePendingForInviteLocked(invite)
 	delete(s.invites, invite.Hash)
 	s.refreshChannelHasLinkLocked(req.ChannelID)
 	return nil
@@ -485,7 +515,7 @@ func (s *ChannelStore) DeleteRevokedExportedInvites(_ context.Context, req domai
 		return err
 	}
 	member := s.members[req.ChannelID][req.UserID]
-	if !canExportChannelInvite(member) {
+	if !canManageChannelInvite(member, req.AdminUserID) {
 		return domain.ErrChannelAdminRequired
 	}
 	limit := req.Limit
@@ -495,6 +525,7 @@ func (s *ChannelStore) DeleteRevokedExportedInvites(_ context.Context, req domai
 	deleted := 0
 	for hash, invite := range s.invites {
 		if invite.ChannelID == req.ChannelID && invite.AdminUserID == req.AdminUserID && invite.Revoked {
+			s.deletePendingForInviteLocked(invite)
 			delete(s.invites, hash)
 			deleted++
 			if deleted >= limit {
@@ -520,7 +551,7 @@ func (s *ChannelStore) ListAdminsWithInvites(_ context.Context, userID, channelI
 	}
 	byAdmin := map[int64]*domain.ChannelAdminInviteCount{}
 	for _, invite := range s.invites {
-		if invite.ChannelID != channelID {
+		if invite.ChannelID != channelID || (member.Role != domain.ChannelRoleCreator && invite.AdminUserID != userID) {
 			continue
 		}
 		count := byAdmin[invite.AdminUserID]
@@ -561,10 +592,22 @@ func (s *ChannelStore) ListInviteImporters(_ context.Context, req domain.Channel
 		if err != nil {
 			return domain.ChannelInviteImporterList{}, err
 		}
+		if !canManageChannelInvite(member, invite.AdminUserID) {
+			return domain.ChannelInviteImporterList{}, domain.ErrChannelAdminRequired
+		}
 		inviteID = invite.InviteID
 	}
 	if req.Query != "" {
 		return domain.ChannelInviteImporterList{}, nil
+	}
+	var ownedInvites map[int64]struct{}
+	if !req.Requested && member.Role != domain.ChannelRoleCreator {
+		ownedInvites = make(map[int64]struct{})
+		for _, invite := range s.invites {
+			if invite.ChannelID == req.ChannelID && invite.AdminUserID == req.UserID {
+				ownedInvites[invite.InviteID] = struct{}{}
+			}
+		}
 	}
 	all := make([]domain.ChannelInviteImporter, 0)
 	for _, importer := range s.importers[req.ChannelID] {
@@ -573,6 +616,11 @@ func (s *ChannelStore) ListInviteImporters(_ context.Context, req domain.Channel
 		}
 		if inviteID != 0 && importer.InviteID != inviteID {
 			continue
+		}
+		if ownedInvites != nil {
+			if _, ok := ownedInvites[importer.InviteID]; !ok {
+				continue
+			}
 		}
 		all = append(all, importer)
 	}
@@ -666,6 +714,9 @@ func (s *ChannelStore) HideAllChatJoinRequests(_ context.Context, req domain.Hid
 		if err != nil {
 			return domain.CreateChannelResult{}, err
 		}
+		if !canManageChannelInvite(member, invite.AdminUserID) {
+			return domain.CreateChannelResult{}, domain.ErrChannelAdminRequired
+		}
 		inviteID = invite.InviteID
 	}
 	limit := req.Limit
@@ -681,9 +732,42 @@ func (s *ChannelStore) HideAllChatJoinRequests(_ context.Context, req domain.Hid
 			continue
 		}
 		targets = append(targets, importer)
-		if len(targets) >= limit {
-			break
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].Date != targets[j].Date {
+			return targets[i].Date < targets[j].Date
 		}
+		return targets[i].UserID < targets[j].UserID
+	})
+	if len(targets) > limit {
+		targets = targets[:limit]
+	}
+	// 内存后端没有事务回滚：在任何写入前检查整批，包括同一链接累计的用量。
+	plannedUsage := make(map[int64]int)
+	for _, importer := range targets {
+		invite := domain.ChannelInvite{}
+		if importer.InviteID != 0 {
+			var err error
+			invite, err = s.inviteByIDLocked(req.ChannelID, importer.InviteID)
+			if err != nil {
+				return domain.CreateChannelResult{}, err
+			}
+		}
+		if !req.Approved {
+			continue
+		}
+		if invite.UsageLimit > 0 && invite.UsageCount+plannedUsage[invite.InviteID] >= invite.UsageLimit {
+			return domain.CreateChannelResult{}, domain.ErrUsersTooMuch
+		}
+		if existing, ok := s.effectiveMemberLocked(req.ChannelID, importer.UserID, restrictionNow(req.Date)); ok {
+			if existing.Status == domain.ChannelMemberActive {
+				return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
+			}
+			if existing.IsKicked() {
+				return domain.CreateChannelResult{}, domain.ErrInviteHashInvalid
+			}
+		}
+		plannedUsage[invite.InviteID]++
 	}
 	var result domain.CreateChannelResult
 	for _, importer := range targets {
@@ -786,8 +870,12 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 	var msg domain.ChannelMessage
 	var event domain.ChannelUpdateEvent
 	if channel.Megagroup {
+		actionType := domain.ChannelActionChatJoinedByLink
+		if approvedBy != 0 {
+			actionType = domain.ChannelActionChatJoinedByRequest
+		}
 		msg, event = s.appendChannelServiceMessageLocked(channelID, userID, date, domain.ChannelMessageAction{
-			Type:          domain.ChannelActionChatJoinedByLink,
+			Type:          actionType,
 			InviterUserID: invite.AdminUserID,
 			UserIDs:       []int64{userID},
 		})
@@ -815,6 +903,7 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 		Channel:    channel,
 		Members:    []domain.ChannelMember{member},
 		Previous:   previous,
+		Joins:      map[int64]domain.ChannelMemberJoin{userID: domain.NewChannelMemberJoin(invite, approvedBy, cloneChannelMessage(msg), cloneChannelEvent(event))},
 		Message:    cloneChannelMessage(msg),
 		Event:      cloneChannelEvent(event),
 		Recipients: s.activeMemberIDsLocked(channelID, 0, 0),
@@ -854,6 +943,25 @@ func (s *ChannelStore) deletePendingInviteImporterLocked(invite domain.ChannelIn
 		if invite.InviteID != 0 && invite.Hash != "" && invite.RequestedCount > 0 {
 			invite.RequestedCount--
 			s.invites[invite.Hash] = invite
+		}
+	}
+}
+
+func (s *ChannelStore) clearPendingDirectInviteLocked(channelID, userID int64) bool {
+	importer, ok := s.importers[channelID][userID]
+	if !ok || !importer.Requested {
+		return false
+	}
+	invite, _ := s.inviteByIDLocked(channelID, importer.InviteID)
+	invite.ChannelID = channelID
+	s.deletePendingInviteImporterLocked(invite, userID)
+	return true
+}
+
+func (s *ChannelStore) deletePendingForInviteLocked(invite domain.ChannelInvite) {
+	for userID, importer := range s.importers[invite.ChannelID] {
+		if importer.Requested && importer.InviteID == invite.InviteID {
+			delete(s.importers[invite.ChannelID], userID)
 		}
 	}
 }
@@ -949,7 +1057,7 @@ func (s *ChannelStore) ListChannelInviteAdminMemberIDs(_ context.Context, channe
 			}
 			continue
 		}
-		if member.Role == domain.ChannelRoleAdmin && (member.AdminRights.InviteUsers || member.AdminRights.ChangeInfo) {
+		if member.Role == domain.ChannelRoleAdmin && member.AdminRights.InviteUsers {
 			out = append(out, member.UserID)
 			if len(out) >= limit {
 				break
@@ -980,7 +1088,11 @@ func canInviteToChannel(channel domain.Channel, member domain.ChannelMember) boo
 
 func canExportChannelInvite(member domain.ChannelMember) bool {
 	return member.Role == domain.ChannelRoleCreator ||
-		(member.Role == domain.ChannelRoleAdmin && (member.AdminRights.InviteUsers || member.AdminRights.ChangeInfo))
+		(member.Role == domain.ChannelRoleAdmin && member.AdminRights.InviteUsers)
+}
+
+func canManageChannelInvite(member domain.ChannelMember, adminUserID int64) bool {
+	return canExportChannelInvite(member) && (member.Role == domain.ChannelRoleCreator || member.UserID == adminUserID)
 }
 
 func randomMemoryInviteHash() (string, error) {

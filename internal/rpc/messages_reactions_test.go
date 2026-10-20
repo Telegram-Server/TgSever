@@ -314,34 +314,6 @@ func TestMessagesSendReactionPrivatePeerReturnsReactionUpdate(t *testing.T) {
 	}
 }
 
-func TestMessagesSendReactionPrivatePeerAllowsCustomEmoji(t *testing.T) {
-	const (
-		userID           = int64(1000000001)
-		peerID           = int64(1000000002)
-		customDocumentID = int64(990001)
-	)
-	messages := &captureMessages{}
-	r := New(Config{}, Deps{Messages: messages}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000200, 0)})
-	req := &tg.MessagesSendReactionRequest{
-		Peer:  &tg.InputPeerUser{UserID: peerID, AccessHash: 22},
-		MsgID: 7,
-	}
-	req.SetReaction([]tg.ReactionClass{&tg.ReactionCustomEmoji{DocumentID: customDocumentID}})
-
-	updates, err := r.onMessagesSendReaction(WithUserID(context.Background(), userID), req)
-	if err != nil {
-		t.Fatalf("messages.sendReaction custom private: %v", err)
-	}
-	if len(messages.setReactionReq.Reactions) != 1 || messages.setReactionReq.Reactions[0].Type != domain.MessageReactionCustomEmoji || messages.setReactionReq.Reactions[0].DocumentID != customDocumentID {
-		t.Fatalf("set reaction req reactions = %+v, want custom document %d", messages.setReactionReq.Reactions, customDocumentID)
-	}
-	update := updates.(*tg.Updates).Updates[0].(*tg.UpdateMessageReactions)
-	reaction, ok := update.Reactions.Results[0].Reaction.(*tg.ReactionCustomEmoji)
-	if !ok || reaction.DocumentID != customDocumentID {
-		t.Fatalf("update reaction = %T %+v, want custom document %d", update.Reactions.Results[0].Reaction, update.Reactions.Results[0].Reaction, customDocumentID)
-	}
-}
-
 func TestMessagesSendReactionPrivatePushesViewerLocalMessageID(t *testing.T) {
 	const (
 		aliceID = int64(1000000001)

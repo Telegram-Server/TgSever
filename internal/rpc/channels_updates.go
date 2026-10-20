@@ -105,7 +105,34 @@ func (r *Router) channelOperationUpdatesWithPeerCache(ctx context.Context, viewe
 		}
 	}
 	updates := make([]tg.UpdateClass, 0, 2)
-	if res.Event.Pts != 0 {
+	if len(res.Joins) > 0 {
+		for _, member := range res.Members {
+			join, ok := res.Joins[member.UserID]
+			if !ok {
+				continue
+			}
+			if join.Event.Pts != 0 {
+				if update := tgChannelUpdate(viewerUserID, join.Event); update != nil {
+					updates = append(updates, update)
+				}
+				collectChannelUpdatePeerRefs(join.Event, res.Channel.ID, userIDs, channelIDs)
+				collectChannelMessagePeerRefs(join.Message, res.Channel.ID, userIDs, channelIDs)
+			}
+			actorID := member.UserID
+			if join.ApprovedBy != 0 {
+				actorID = join.ApprovedBy
+				userIDs[actorID] = struct{}{}
+			}
+			update := &tg.UpdateChannelParticipant{ChannelID: res.Channel.ID, Date: member.JoinedAt, ActorID: actorID, UserID: member.UserID}
+			update.SetPrevParticipant(tgChannelParticipant(viewerUserID, res.PreviousMember(res.Channel.ID, member.UserID)))
+			update.SetNewParticipant(tgChannelParticipant(viewerUserID, member))
+			if join.Invite != nil {
+				update.SetInvite(r.tgExportedChannelInvite(*join.Invite))
+				userIDs[join.Invite.AdminUserID] = struct{}{}
+			}
+			updates = append(updates, update)
+		}
+	} else if res.Event.Pts != 0 {
 		if update := tgChannelUpdate(viewerUserID, res.Event); update != nil {
 			updates = append(updates, update)
 		}
@@ -301,6 +328,7 @@ func (r *Router) channelMessagesUpdatesWithPeerCacheAndUsernames(ctx context.Con
 		Date:    date,
 		Seq:     0,
 	}
+	r.applyChannelUpdateRanks(ctx, viewerUserID, out.Updates)
 	applyUsernamesFromRegistry(out.Users, out.Chats, usernames)
 	return out
 }
@@ -347,6 +375,7 @@ func (r *Router) channelEditMessageUpdatesWithPeerCacheAndUsernames(ctx context.
 		Date:    int(r.clock.Now().Unix()),
 		Seq:     0,
 	}
+	r.applyChannelUpdateRanks(ctx, viewerUserID, out.Updates)
 	applyUsernamesFromRegistry(out.Users, out.Chats, usernames)
 	return out
 }

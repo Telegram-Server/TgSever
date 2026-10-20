@@ -49,9 +49,21 @@ func (s *ChannelStore) GetParticipants(_ context.Context, viewerUserID, channelI
 		}
 		items = append(items, member)
 	}
+	if filter.Kind == domain.ChannelParticipantsKicked {
+		for senderID, member := range s.senderBans[channelID] {
+			sender := s.channels[senderID]
+			member.SenderChannelIdentity = domain.SenderIdentity(sender)
+			if query == "" || strings.Contains(strings.ToLower(sender.Title), query) || strings.Contains(strings.ToLower(sender.Username), query) || strings.Contains(strconv.FormatInt(senderID, 10), query) {
+				items = append(items, member)
+			}
+		}
+	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Role != items[j].Role {
 			return channelRoleOrder(items[i].Role) < channelRoleOrder(items[j].Role)
+		}
+		if items[i].UserID == items[j].UserID {
+			return items[i].Peer.ID < items[j].Peer.ID
 		}
 		return items[i].UserID < items[j].UserID
 	})
@@ -150,7 +162,7 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 		if err := s.recordPublicJoinRequestLocked(channel, userID, date); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		return domain.CreateChannelResult{Channel: channel, JoinRequest: domain.NewChannelJoinRequest(channel.ID, userID, date, nil)}, domain.ErrInviteRequestSent
 	}
 	member := domain.ChannelMember{
 		ChannelID: channelID,
@@ -315,6 +327,11 @@ func (s *ChannelStore) LeaveChannel(_ context.Context, channelID, userID int64, 
 }
 
 func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error) {
+	if req.HasRank() {
+		if err := domain.ValidateChannelRank(req.Rank); err != nil {
+			return domain.EditChannelAdminResult{}, err
+		}
+	}
 	if req.UserID == 0 || req.ChannelID == 0 || req.MemberID == 0 {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
@@ -521,6 +538,9 @@ func (s *ChannelStore) TransferChannelOwnership(_ context.Context, req domain.Tr
 }
 
 func (s *ChannelStore) EditChannelMemberRank(_ context.Context, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error) {
+	if err := domain.ValidateChannelRank(req.Rank); err != nil {
+		return domain.EditChannelAdminResult{}, err
+	}
 	if req.UserID == 0 || req.ChannelID == 0 || req.MemberID == 0 {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
@@ -565,6 +585,9 @@ func (s *ChannelStore) EditChannelMemberRank(_ context.Context, req domain.EditC
 }
 
 func (s *ChannelStore) EditChannelBanned(_ context.Context, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error) {
+	if req.Participant.Type == domain.PeerTypeChannel {
+		return s.editChannelSenderBan(req)
+	}
 	if req.UserID == 0 || req.ChannelID == 0 || req.Participant.Type != domain.PeerTypeUser || req.Participant.ID == 0 {
 		return domain.EditChannelBannedResult{}, domain.ErrChannelInvalid
 	}
