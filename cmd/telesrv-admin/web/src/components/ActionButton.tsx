@@ -32,7 +32,9 @@ export function ActionButton({
   // validation is unhappy, so the operator fixes the field instead of reading a
   // backend rejection.
   disabled?: boolean;
-  onDone?: () => void;
+  // onDone runs after a confirmed run succeeds; it gets the command result so a
+  // page can surface a partial outcome recorded in its details.
+  onDone?: (result: CommandResult) => void;
   // onError lets a page react to a failure the operator cannot fix by editing the
   // form — an optimistic-locking 409, say — and replace the raw backend text with
   // an explanation by returning it.
@@ -69,7 +71,7 @@ export function ActionButton({
       const commandResult = await api.action(path, body);
       setResult(commandResult);
       if (confirm) {
-        onDone?.();
+        onDone?.(commandResult);
       }
     } catch (err) {
       setError(onError?.(err) || errorMessage(err));

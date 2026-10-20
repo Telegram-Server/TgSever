@@ -1,6 +1,7 @@
 import { AtSign, KeyRound, LifeBuoy, Mail, Palette, Phone, Settings2, Smile, UserRoundPen } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ActionButton } from "./ActionButton";
+import { Alert } from "./ui";
 import { useI18n } from "../i18n";
 import { toInt } from "../lib/format";
 import type { ChannelRow } from "../types";
@@ -97,6 +98,10 @@ export function LoginEmailAction({ id, current, onDone }: { id: number; current:
 // server: the limit is in UTF-8 bytes, not characters.
 export const maxLoginPasswordBytes = 256;
 
+// passwordMaskFields keeps the plaintext password out of the request preview.
+// Module-level so ActionButton's preview memo sees the same array every render.
+export const passwordMaskFields = ["password"];
+
 // LoginPasswordAction sets or resets the account's login password without the
 // old one. The plaintext goes to the server over HTTPS, which hashes it the way
 // clients do; it is masked in the request preview and never stored here.
@@ -104,6 +109,10 @@ export function LoginPasswordAction({ id, onDone }: { id: number; onDone: () => 
   const { t } = useI18n();
   const [password, setPassword] = useState("");
   const [revokeSessions, setRevokeSessions] = useState(false);
+  // revokeFailed: the password was set but signing out the devices failed, so
+  // the operator has to revoke the sessions separately (retrying would reset
+  // the password and notify the member a second time).
+  const [revokeFailed, setRevokeFailed] = useState(false);
   const tooLong = new TextEncoder().encode(password).length > maxLoginPasswordBytes;
   return (
     <div className="attr-block">
@@ -119,10 +128,16 @@ export function LoginPasswordAction({ id, onDone }: { id: number; onDone: () => 
         tone="warn"
         path="/api/actions/set-login-password"
         payload={() => ({ user_id: id, password, revoke_sessions: revokeSessions })}
-        maskFields={["password"]}
+        maskFields={passwordMaskFields}
         disabled={password === "" || tooLong}
-        onDone={() => { setPassword(""); setRevokeSessions(false); onDone(); }}
+        onDone={(result) => {
+          setRevokeFailed(result.details?.revoke_sessions_failed === true);
+          setPassword("");
+          setRevokeSessions(false);
+          onDone();
+        }}
       />
+      {revokeFailed && <Alert>{t("attr.loginPasswordRevokeFailed")}</Alert>}
     </div>
   );
 }

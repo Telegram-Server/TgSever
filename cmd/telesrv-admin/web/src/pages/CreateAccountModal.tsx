@@ -3,7 +3,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { maxLoginPasswordBytes } from "../components/attributes";
+import { maxLoginPasswordBytes, passwordMaskFields } from "../components/attributes";
 import { useI18n } from "../i18n";
 
 // CreateAccountModal creates a regular user account through the
@@ -79,7 +79,7 @@ export function CreateAccountModal({ onClose, onCreated }: { onClose: () => void
               last_name: lastName.trim(),
               ...(password !== "" ? { password } : {})
             })}
-            maskFields={["password"]}
+            maskFields={passwordMaskFields}
             onError={(err) => {
               const message = errorMessage(err);
               const code = createAccountErrorCodes.find(([c]) => message.includes(c));
