@@ -108,6 +108,12 @@ type uiConfig struct {
 	// identity panel override is unset. Same "effective default" contract as
 	// the two fields above.
 	LoginCodeMessageDefault string
+	// SignUpEnabledDefault mirrors config.SignUpEnabled -- the
+	// TELESRV_SIGN_UP_ENABLED value telesrv follows whenever the panel's
+	// sign-up override in identity.json is unset. Same contract as the
+	// template defaults above: it is this process's own reading of .env, so
+	// it matches the server only when both binaries share the same env.
+	SignUpEnabledDefault bool
 	// RepoRoot is the working directory the .env editor (see
 	// internal/procctl) operates on: it reads .env.example for the field
 	// vocabulary and rewrites .env in place. The panel resolves it the same
@@ -173,6 +179,7 @@ func loadConfig() (uiConfig, error) {
 		WelcomeMessagePhoneDefault: appCfg.WelcomeMessagePhoneTemplate,
 		WelcomeMessageEmailDefault: appCfg.WelcomeMessageEmailTemplate,
 		LoginCodeMessageDefault:    appCfg.LoginCodeMessageTemplate,
+		SignUpEnabledDefault:       appCfg.SignUpEnabled,
 		RepoRoot:                   repoRoot,
 		RedisAddr:                  appCfg.RedisAddr,
 		RedisPassword:              appCfg.RedisPassword,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
 	"telesrv/internal/admin"
@@ -79,6 +81,27 @@ type serverIdentityAPIResponse struct {
 	// same "raw override + effective default" contract as the two fields
 	// above, see their doc comment.
 	DefaultLoginCodeMessageTemplate string `json:"default_login_code_message_template"`
+	// The sign-up switch: identity.Info's raw sign_up_enabled override (absent
+	// = unset) plus what it resolves to and where that comes from, so the
+	// panel can show "Closed -- set here" vs "Open -- from the environment"
+	// without re-implementing domain.ResolveSignUpEnabled. The env default is
+	// s.cfg.SignUpEnabledDefault, under the same "both processes share one
+	// .env" assumption as the template defaults.
+	DefaultSignUpEnabled   bool   `json:"default_sign_up_enabled"`
+	SignUpEnabledEffective bool   `json:"sign_up_enabled_effective"`
+	SignUpSource           string `json:"sign_up_source"`
+}
+
+const (
+	signUpSourceEnv      = "env"
+	signUpSourceOverride = "override"
+)
+
+func signUpSource(override *bool) string {
+	if override != nil {
+		return signUpSourceOverride
+	}
+	return signUpSourceEnv
 }
 
 func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +115,92 @@ func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request)
 		DefaultWelcomeMessagePhoneTemplate: s.cfg.WelcomeMessagePhoneDefault,
 		DefaultWelcomeMessageEmailTemplate: s.cfg.WelcomeMessageEmailDefault,
 		DefaultLoginCodeMessageTemplate:    s.cfg.LoginCodeMessageDefault,
+		DefaultSignUpEnabled:               s.cfg.SignUpEnabledDefault,
+		SignUpEnabledEffective:             domain.ResolveSignUpEnabled(info.SignUpEnabled, s.cfg.SignUpEnabledDefault),
+		SignUpSource:                       signUpSource(info.SignUpEnabled),
 	})
+}
+
+// --- sign-up switch -------------------------------------------------------
+
+type setSignUpEnabledAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	// Mode is "on", "off" or "follow_env". A string rather than a nullable
+	// bool so that a body that simply forgets the field is rejected instead
+	// of silently clearing the override.
+	Mode string `json:"mode"`
+}
+
+// signUpOverrideForMode maps the request's mode onto identity's tri-state
+// override (nil = follow TELESRV_SIGN_UP_ENABLED).
+func signUpOverrideForMode(mode string) (*bool, bool) {
+	switch mode {
+	case "on":
+		v := true
+		return &v, true
+	case "off":
+		v := false
+		return &v, true
+	case "follow_env":
+		return nil, true
+	}
+	return nil, false
+}
+
+// handleSetSignUpEnabledAPI sets or clears the panel's sign-up override in
+// identity.json. telesrv re-reads it on every sign-up decision (see
+// auth.IdentitySignUpAllowed), so the change -- including the
+// telesrv_sign_up_disabled app-config key and its hash -- takes effect
+// without a restart.
+//
+// Unlike the older Server Settings writes it goes through runOperatorCommand,
+// so every preview and every change lands in admin_commands/admin_audit_logs
+// with actor, reason and time, and command_id is idempotent. The file write is
+// not part of the transaction: it is the last step inside fn, so a failure
+// before it leaves the file untouched; a commit failure after it would leave
+// the switch changed without an audit row, and is reported as an error so the
+// operator knows to look.
+func (s *server) handleSetSignUpEnabledAPI(w http.ResponseWriter, r *http.Request) {
+	var body setSignUpEnabledAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	mode := strings.TrimSpace(body.Mode)
+	override, ok := signUpOverrideForMode(mode)
+	if !ok {
+		writeAPIError(w, http.StatusUnprocessableEntity, `mode must be "on", "off" or "follow_env"`)
+		return
+	}
+	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-sign-up-enabled")
+	const action = "server.set_sign_up_enabled"
+	params := map[string]any{"mode": mode}
+	effective := domain.ResolveSignUpEnabled(override, s.cfg.SignUpEnabledDefault)
+	details := map[string]any{
+		"mode":                      mode,
+		"sign_up_enabled_effective": effective,
+		"sign_up_source":            signUpSource(override),
+	}
+
+	fn := func(context.Context, pgx.Tx) (admin.CommandResult, error) {
+		if meta.DryRun {
+			return admin.CommandResult{Message: fmt.Sprintf("Would set sign-up to %s (effective: %s).", mode, openWord(effective)), Details: details}, nil
+		}
+		if err := s.identity.SetSignUpOverride(override); err != nil {
+			return admin.CommandResult{Details: details}, err
+		}
+		return admin.CommandResult{Message: fmt.Sprintf("Sign-up set to %s (effective: %s).", mode, openWord(effective)), Details: details}, nil
+	}
+	result, err := s.runOperatorCommand(r.Context(), meta, action, params, "", fn)
+	writeCommandResultAPI(w, result, err)
+}
+
+func openWord(open bool) string {
+	if open {
+		return "open"
+	}
+	return "closed"
 }
 
 // handleServerIconAPI serves the icon's raw bytes for the panel's own
