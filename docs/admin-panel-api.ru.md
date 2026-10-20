@@ -104,6 +104,8 @@
 | `admins.manage` | Manage operators — Create operators and decide what everyone can do |
 | `audit.read` | View the audit log — See who did what across the console |
 | `server.manage` | Manage server settings — Edit the server identity, login-notification templates and .env, and view service status |
+| `updates.read` | View client updates — See the desktop update service status and every published build |
+| `updates.publish` | Publish client updates — Upload, publish, roll back, disable and re-enable desktop builds |
 | `*` | Every right, including ones added later (wildcard). |
 <!-- END GENERATED:permissions -->
 
@@ -241,6 +243,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Audit log | Audit log | `/audit-log` | `audit.read` |
 | Operators | Operators | `/admin-users` | `admins.manage` |
 | Server Settings | Server Settings | `/server-settings` | `server.manage` |
+| Server Settings | Client updates | `/client-updates` | `updates.read` |
 <!-- END GENERATED:nav -->
 
 Раздел с одной доступной вкладкой не рисует полосу вкладок, и его ссылка в

@@ -48,6 +48,7 @@ import type {
   NftGiftWalletPayload,
   OfficialStarGiftListResponse,
   ItemPricesResponse,
+  ClientUpdateStatus,
   PremiumPlansResponse,
   StarGiftAuctionListResponse,
   StarGiftCollectiblePreview,
@@ -213,6 +214,7 @@ export const api = {
   donationChains: () => request<DonationChainsResponse>("/api/donations/chains"),
   donationDeposits: (params: URLSearchParams) => request<DonationDepositListResponse>(`/api/donations/deposits?${params.toString()}`),
   itemPrices: () => request<ItemPricesResponse>("/api/item-prices"),
+  clientUpdates: () => request<ClientUpdateStatus>("/api/client-updates"),
   storageStats: () => request<StorageStatsResponse>("/api/storage/stats"),
   stats: (days?: number) => {
     const params = days && days > 0 ? `?days=${days}` : "";
