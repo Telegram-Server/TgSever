@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"telesrv/internal/app/auth"
 	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
 	"telesrv/internal/officialgifts"
@@ -2436,9 +2437,17 @@ func createAccountDetails(u domain.User) map[string]any {
 }
 
 // createAccountError attaches a stable code to the rejections an operator can
-// act on; anything else is passed through with its own message.
+// act on; anything else is passed through with its own message. A reserved
+// system number (auth.ErrSystemUserLoginForbidden) gets PHONE_NUMBER_RESERVED
+// rather than the PHONE_NUMBER_INVALID the client-facing RPC folds it into:
+// clients must not learn which numbers are system accounts, but the operator
+// needs to know why a well-formed number was refused.
 func createAccountError(err error) error {
 	switch {
+	case errors.Is(err, auth.ErrPhoneNumberInvalid), errors.Is(err, domain.ErrPhoneNumberInvalid):
+		return codedError("PHONE_NUMBER_INVALID", err)
+	case errors.Is(err, auth.ErrSystemUserLoginForbidden):
+		return codedError("PHONE_NUMBER_RESERVED", err)
 	case errors.Is(err, domain.ErrPhoneNumberOccupied):
 		return codedError("PHONE_NUMBER_OCCUPIED", err)
 	case errors.Is(err, domain.ErrFirstNameInvalid):

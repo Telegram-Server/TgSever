@@ -9,6 +9,15 @@ import { useI18n } from "../i18n";
 // create-account admin command. Phone and name rules are enforced server-side
 // by the same code as a normal sign-up; the form only keeps obviously empty
 // fields from opening the confirm flow.
+
+// The stable codes internal/admin's createAccountError attaches, and the
+// message each one is shown as.
+const createAccountErrorCodes = [
+  ["PHONE_NUMBER_OCCUPIED", "account.createPhoneOccupied"],
+  ["PHONE_NUMBER_INVALID", "account.createPhoneInvalid"],
+  ["PHONE_NUMBER_RESERVED", "account.createPhoneReserved"],
+] as const;
+
 export function CreateAccountModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { t } = useI18n();
   const [phone, setPhone] = useState("");
@@ -53,7 +62,11 @@ export function CreateAccountModal({ onClose, onCreated }: { onClose: () => void
             disabled={!valid}
             path="/api/actions/create-account"
             payload={() => ({ phone: phone.trim(), first_name: firstName.trim(), last_name: lastName.trim() })}
-            onError={(err) => errorMessage(err).includes("PHONE_NUMBER_OCCUPIED") ? t("account.createPhoneOccupied") : undefined}
+            onError={(err) => {
+              const message = errorMessage(err);
+              const code = createAccountErrorCodes.find(([c]) => message.includes(c));
+              return code ? t(code[1]) : undefined;
+            }}
             onDone={onCreated}
           />
         </div>
