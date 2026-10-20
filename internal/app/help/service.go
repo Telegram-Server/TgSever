@@ -115,6 +115,9 @@ type Service struct {
 	// signUpAllowed 是 auth 服务"是否允许注册"的同一个来源，每次 GetAppConfig 都实时
 	// 读取（不缓存），据此按请求注入 telesrv_sign_up_disabled。nil 表示开放注册。
 	signUpAllowed func(context.Context) (bool, error)
+	// codeLoginAllowed 是 auth 服务"是否允许验证码登录"的同一个来源，每次 GetAppConfig
+	// 都实时读取，据此按请求注入 telesrv_code_login_disabled。nil 表示允许。
+	codeLoginAllowed func(context.Context) (bool, error)
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -184,6 +187,19 @@ const appConfigKeySignUpDisabled = "telesrv_sign_up_disabled"
 func WithSignUpAllowed(fn func(context.Context) (bool, error)) Option {
 	return func(s *Service) {
 		s.signUpAllowed = fn
+	}
+}
+
+// appConfigKeyCodeLoginDisabled 是验证码登录关闭时下发给客户端的服务器状态 key，
+// 与 telesrv_sign_up_disabled 同一种机制：开启时不出现，参与 hash。
+const appConfigKeyCodeLoginDisabled = "telesrv_code_login_disabled"
+
+// WithCodeLoginAllowed 注入"是否允许验证码登录"的来源（通常是
+// auth.Service.CodeLoginAllowed，保证下发状态与服务端拦截同源）。每次 GetAppConfig
+// 都实时调用；返回 error 时按关闭下发。
+func WithCodeLoginAllowed(fn func(context.Context) (bool, error)) Option {
+	return func(s *Service) {
+		s.codeLoginAllowed = fn
 	}
 }
 
@@ -284,7 +300,7 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 		return domain.AppConfig{}, fmt.Errorf("decode base app config: %w", err)
 	}
 	changed := false
-	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled} {
+	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled, appConfigKeyCodeLoginDisabled} {
 		if _, exists := values[key]; exists {
 			delete(values, key)
 			changed = true
@@ -292,6 +308,10 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 	}
 	if s.signUpDisabled(ctx) {
 		values[appConfigKeySignUpDisabled] = json.RawMessage("true")
+		changed = true
+	}
+	if s.codeLoginDisabled(ctx) {
+		values[appConfigKeyCodeLoginDisabled] = json.RawMessage("true")
 		changed = true
 	}
 	if userID > 0 {
@@ -325,6 +345,15 @@ func (s *Service) signUpDisabled(ctx context.Context) bool {
 		return false
 	}
 	allowed, err := s.signUpAllowed(ctx)
+	return err != nil || !allowed
+}
+
+// codeLoginDisabled 实时读取验证码登录开关；读取失败按关闭处理，与 auth 的 fail-closed 拦截一致。
+func (s *Service) codeLoginDisabled(ctx context.Context) bool {
+	if s == nil || s.codeLoginAllowed == nil {
+		return false
+	}
+	allowed, err := s.codeLoginAllowed(ctx)
 	return err != nil || !allowed
 }
 
