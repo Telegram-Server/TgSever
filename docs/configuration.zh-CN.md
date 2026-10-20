@@ -460,6 +460,7 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
 | `TELESRV_DEV_AUTH_CODE` | sensitive string / `12345` | `PHONE_CODE_DELIVERY_PROVIDER=development` 使用的固定开发登录码；不得把默认值暴露在公网环境。 |
+| `TELESRV_SIGN_UP_ENABLED` | bool / `true` | 注册开关的默认值。为 `false` 时，没有账号的号码在 `auth.sendCode`、`auth.resendCode`、`auth.signIn`、`auth.signUp`、`telesrv.getLoginPassword`、`telesrv.signUpWithPassword` 上得到 `400 SIGN_UP_DISABLED`；`auth.sendCode` 在签发验证码、投递短信或邮件之前就拒绝（上面的发码限流仍然先执行）。注册关闭时 `help.getAppConfig` 下发 `telesrv_sign_up_disabled: true`，开放时不出现这个 key。已有账号（验证码、2FA、扫码、passkey、密码登录）和 bot 不受影响。客户端对接说明见 [sign-up-switch.md](sign-up-switch.md)。由于 `sendCode` 直接拒绝未注册号码，不需要验证码就能知道号码是否注册，速度受发码限流约束。 |
 | `TELESRV_IDENTITY_DIR` | path / `data/identity` | Admin 管理的 777000 名称、头像及登录码模板共用目录；新验证码投递时实时读取模板覆盖。 |
 | `TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE` | text / 内置模板 | 已有账号的 777000 登录码消息默认模板；管理面板覆盖优先。必须恰好含一次 `{{code}}`，可含 `{{server_name}}`；修改仅影响新投递，幂等重试恢复首次内容。 |
 | `TELESRV_AUTH_CODE_TTL` | duration / `5m` | 登录/注册/邮箱验证码有效期，必须为正数。 |
