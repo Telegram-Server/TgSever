@@ -360,6 +360,172 @@ func TestStoreStagesAndPublishesIntoItsOwnManifest(t *testing.T) {
 	}
 }
 
+// 读取上传失败（客户端断开、读取超时）与本机存储失败（磁盘满、建目录失败）分开报告：
+// 前者是客户端的问题，后者是服务器的问题，调用方据此给出不同的错误码。
+func TestStagePackageSeparatesReadAndStorageFailures(t *testing.T) {
+	env := newPublishEnv(t)
+	broken := io.MultiReader(bytes.NewReader(make([]byte, 4096)), errReader{errors.New("connection reset")})
+	_, err := StagePackage(env.manifestPath, broken, testNow, DefaultStagingTTL)
+	if !errors.Is(err, ErrStagingReadFailed) || errors.Is(err, ErrStagingStorage) {
+		t.Fatalf("read failure error = %v, want ErrStagingReadFailed only", err)
+	}
+
+	blocked := newPublishEnv(t)
+	// 暂存目录的位置被一个普通文件占着，建不了目录。
+	if err := os.WriteFile(blocked.stagingDir(), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = StagePackage(blocked.manifestPath, bytes.NewReader([]byte("package")), testNow, DefaultStagingTTL)
+	if !errors.Is(err, ErrStagingStorage) || errors.Is(err, ErrStagingReadFailed) {
+		t.Fatalf("storage failure error = %v, want ErrStagingStorage only", err)
+	}
+}
+
+// setStagingCaps 临时调整同时暂存的数量与总字节上限。
+func setStagingCaps(t *testing.T, count int, total int64) {
+	t.Helper()
+	previousCount, previousTotal := stagingMaxPending, stagingMaxPendingBytes
+	stagingMaxPending, stagingMaxPendingBytes = count, total
+	t.Cleanup(func() { stagingMaxPending, stagingMaxPendingBytes = previousCount, previousTotal })
+}
+
+func TestStagePackageRefusesWhenTooManyArePending(t *testing.T) {
+	env := newPublishEnv(t)
+	setStagingCaps(t, 2, 1<<30)
+	data := testDesktopPackage(t, "linux", "stable", 6000000)
+	env.stage(t, data, testNow.Add(-time.Minute))
+	env.stage(t, data, testNow)
+	reader := &countingReader{r: bytes.NewReader(data)}
+	_, err := StagePackage(env.manifestPath, reader, testNow, DefaultStagingTTL)
+	if !errors.Is(err, ErrStagingFull) {
+		t.Fatalf("third staging error = %v, want ErrStagingFull", err)
+	}
+	if reader.n != 0 {
+		t.Fatalf("read %d bytes of a refused upload, want none", reader.n)
+	}
+	if names := dirNames(t, env.stagingDir()); len(names) != 2 {
+		t.Fatalf("staging directory = %v, want the two earlier stagings", names)
+	}
+	// 过期清理先于上限检查：最早的暂存过期后又能上传。
+	later := testNow.Add(DefaultStagingTTL - 30*time.Second)
+	if _, err := StagePackage(env.manifestPath, bytes.NewReader(data), later, DefaultStagingTTL); err != nil {
+		t.Fatalf("staging after one expired error = %v", err)
+	}
+}
+
+func TestStagePackageRefusesWhenPendingBytesReachTheCap(t *testing.T) {
+	env := newPublishEnv(t)
+	data := testDesktopPackage(t, "linux", "stable", 6000000)
+	setStagingCaps(t, 100, int64(2*len(data)))
+	env.stage(t, data, testNow)
+	env.stage(t, data, testNow)
+	if _, err := StagePackage(env.manifestPath, bytes.NewReader(data), testNow, DefaultStagingTTL); !errors.Is(err, ErrStagingFull) {
+		t.Fatalf("staging past the byte cap error = %v, want ErrStagingFull", err)
+	}
+}
+
+// 未完成的上传（.part）同样占名额。
+func TestStagePackageCountsUnfinishedUploads(t *testing.T) {
+	env := newPublishEnv(t)
+	setStagingCaps(t, 1, 1<<30)
+	if err := os.MkdirAll(env.stagingDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	part := filepath.Join(env.stagingDir(), "0123456789abcdef0123456789abcdef.part")
+	if err := os.WriteFile(part, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(part, testNow, testNow); err != nil {
+		t.Fatal(err)
+	}
+	data := testDesktopPackage(t, "linux", "stable", 6000000)
+	if _, err := StagePackage(env.manifestPath, bytes.NewReader(data), testNow, DefaultStagingTTL); !errors.Is(err, ErrStagingFull) {
+		t.Fatalf("staging beside an unfinished upload error = %v, want ErrStagingFull", err)
+	}
+}
+
+// 同一个暂存 id 的两次确认并发：只发布一次，另一次报告暂存不存在。
+func TestPublishStagedPackageConcurrentConfirmsPublishOnce(t *testing.T) {
+	data := testDesktopPackage(t, "linux", "stable", 6000000)
+	for i := 0; i < 20; i++ {
+		env := newPublishEnv(t)
+		staged := env.stage(t, data, testNow)
+		opts := stagedOptions(t, false, false)
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		for range 2 {
+			go func() {
+				<-start
+				_, err := PublishStagedPackage(env.manifestPath, env.filesDir, staged.ID, opts, DefaultStagingTTL)
+				errs <- err
+			}()
+		}
+		close(start)
+		var published, notFound int
+		for range 2 {
+			switch err := <-errs; {
+			case err == nil:
+				published++
+			case errors.Is(err, ErrStagingNotFound):
+				notFound++
+			default:
+				t.Fatalf("concurrent confirm error = %v, want success or ErrStagingNotFound", err)
+			}
+		}
+		if published != 1 || notFound != 1 {
+			t.Fatalf("concurrent confirms: %d published, %d not found; want exactly one of each", published, notFound)
+		}
+		if names := dirNames(t, env.stagingDir()); len(names) != 0 {
+			t.Fatalf("staging directory holds %v after the publish", names)
+		}
+	}
+}
+
+// 认领后发布失败，暂存恢复原名，可以重试。
+func TestPublishStagedPackageRestoresClaimWhenPublishFails(t *testing.T) {
+	env := newPublishEnv(t)
+	staged := env.stage(t, testDesktopPackage(t, "linux", "stable", 6000000), testNow)
+	if err := os.WriteFile(env.manifestPath+".lock", []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PublishStagedPackage(env.manifestPath, env.filesDir, staged.ID, stagedOptions(t, false, false), DefaultStagingTTL); !errors.Is(err, ErrPublishInProgress) {
+		t.Fatalf("locked publish error = %v, want ErrPublishInProgress", err)
+	}
+	if names := dirNames(t, env.stagingDir()); !reflect.DeepEqual(names, []string{staged.ID}) {
+		t.Fatalf("staging directory = %v, want the staging restored as %s", names, staged.ID)
+	}
+	if err := os.Remove(env.manifestPath + ".lock"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PublishStagedPackage(env.manifestPath, env.filesDir, staged.ID, stagedOptions(t, false, false), DefaultStagingTTL); err != nil {
+		t.Fatalf("retry after the lock cleared error = %v", err)
+	}
+}
+
+// 发布中的认领文件不按普通有效期清理（发布可能正在读它），超过两倍有效期才算残留。
+func TestCleanupStagedPackagesKeepsRecentClaims(t *testing.T) {
+	env := newPublishEnv(t)
+	if err := os.MkdirAll(env.stagingDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	recent := filepath.Join(env.stagingDir(), "0123456789abcdef0123456789abcdef.claim")
+	stale := filepath.Join(env.stagingDir(), "fedcba9876543210fedcba9876543210.claim")
+	for path, age := range map[string]time.Duration{recent: DefaultStagingTTL + time.Minute, stale: 2*DefaultStagingTTL + time.Minute} {
+		if err := os.WriteFile(path, []byte("claimed"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, testNow.Add(-age), testNow.Add(-age)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if removed, err := CleanupStagedPackages(env.manifestPath, testNow, DefaultStagingTTL); err != nil || removed != 1 {
+		t.Fatalf("CleanupStagedPackages() = %d, %v; want the stale claim removed", removed, err)
+	}
+	if names := dirNames(t, env.stagingDir()); !reflect.DeepEqual(names, []string{filepath.Base(recent)}) {
+		t.Fatalf("staging directory = %v, want only the recent claim", names)
+	}
+}
+
 type countingReader struct {
 	r io.Reader
 	n int
