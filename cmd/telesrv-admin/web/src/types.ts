@@ -1202,6 +1202,8 @@ export type CommandResult = {
   message: string;
   details?: Record<string, unknown>;
   error?: string;
+  // Stable admin error code (admin.ErrorCode), e.g. UPDATE_STAGING_EXPIRED.
+  code?: string;
 };
 
 export type StorageBackendRow = {

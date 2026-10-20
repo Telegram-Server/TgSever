@@ -332,3 +332,47 @@ action: (path: string, payload: Record<string, unknown> | FormData) => request<C
     body: payload instanceof FormData ? payload : JSON.stringify(payload)
   })
 };
+
+// uploadClientUpdate sends a desktop update package as the raw request body
+// (application/octet-stream) for the server to stage and preflight. It uses
+// XMLHttpRequest rather than fetch because fetch reports no upload progress,
+// and a package can be a couple of hundred MB. The File is sent as a Blob, so
+// the browser streams it from disk; the panel streams it on to the admin API.
+// The result is the preflight CommandResult; a failed preflight rejects with
+// an APIError carrying that result, like request() does.
+export function uploadClientUpdate(
+  file: File,
+  params: { reason: string; allowDowngrade: boolean },
+  onProgress: (loaded: number, total: number) => void
+): { done: Promise<CommandResult>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const query = new URLSearchParams({ reason: params.reason, allow_downgrade: String(params.allowDowngrade) });
+  const done = new Promise<CommandResult>((resolve, reject) => {
+    xhr.upload.onprogress = (event) => onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
+    xhr.onerror = () => reject(new APIError(0, "network error"));
+    xhr.onabort = () => reject(new APIError(0, "upload cancelled"));
+    xhr.onload = () => {
+      let data: unknown = null;
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        data = { error: xhr.responseText };
+      }
+      const body = data as (Partial<CommandResult> & { Error?: string }) | null;
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new APIError(xhr.status, body?.error || body?.Error || body?.message || xhr.statusText, data));
+        return;
+      }
+      resolve(data as CommandResult);
+    };
+  });
+  xhr.open("POST", `/api/actions/client-update-upload?${query.toString()}`);
+  xhr.withCredentials = true;
+  xhr.setRequestHeader("Content-Type", "application/octet-stream");
+  const token = csrfToken();
+  if (token) {
+    xhr.setRequestHeader(csrfHeaderName, token);
+  }
+  xhr.send(file);
+  return { done, abort: () => xhr.abort() };
+}
