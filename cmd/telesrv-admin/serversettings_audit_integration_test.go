@@ -32,14 +32,18 @@ func serverSettingsChain(t *testing.T) (*server, *readStore, string) {
 	srv, store := operatorServer(t)
 	serverDir := t.TempDir()
 	svc := admin.NewService(admin.Dependencies{
-		Commands:             postgres.NewAdminStore(store.pool),
-		ServerIdentity:       identity.NewStore(serverDir),
-		SignUpEnabledDefault: func() bool { return true },
+		Commands:                postgres.NewAdminStore(store.pool),
+		ServerIdentity:          identity.NewStore(serverDir),
+		SignUpEnabledDefault:    func() bool { return true },
+		CodeLoginEnabledDefault: func() bool { return true },
+		PasswordLoginEnabled:    func() bool { return true },
 	})
 	api := httptest.NewServer(adminapi.NewHandler(adminapi.Config{Token: "chain-token"}, svc, nil))
 	t.Cleanup(api.Close)
 	srv.cfg.AdminAPIURL, srv.cfg.AdminAPIToken = api.URL, "chain-token"
 	srv.identity = identity.NewStore(serverDir)
+	// 后台与服务端共用同一份 .env：密码登录同样开启，否则验证码登录的"关闭"覆盖值被忽略。
+	srv.cfg.PasswordLoginEnabled = true
 	return srv, store, serverDir
 }
 
@@ -138,6 +142,13 @@ func TestServerSettingsWritesAreAudited(t *testing.T) {
 		}, func(t *testing.T) {
 			if info := panelIdentity(t); info.SignUpEnabled == nil || *info.SignUpEnabled || info.SignUpSource != "override" {
 				t.Fatalf("sign-up override not written: %+v", info)
+			}
+		}},
+		{"server.set_code_login_enabled", func(id string) *http.Request {
+			return jsonPost("/api/actions/set-code-login-enabled", fmt.Sprintf(`{"command_id":%q,"reason":"password only","confirm":true,"mode":"off"}`, id))
+		}, func(t *testing.T) {
+			if info := panelIdentity(t); info.CodeLoginEnabled == nil || *info.CodeLoginEnabled || info.CodeLoginEnabledEffective || info.CodeLoginSource != "override" {
+				t.Fatalf("code login override not written: %+v", info)
 			}
 		}},
 		{"server.upload_icon", func(id string) *http.Request {

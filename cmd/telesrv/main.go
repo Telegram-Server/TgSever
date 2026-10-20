@@ -1082,6 +1082,10 @@ func run(logger *zap.Logger) error {
 		// 后台自己只读同一目录（Docker 下它的挂载是只读的）。
 		ServerIdentity:       identityStore,
 		SignUpEnabledDefault: func() bool { return cfg.SignUpEnabled },
+		// 验证码登录开关的环境默认值与密码登录总开关：后者用于防锁死——密码登录关闭时
+		// 服务端命令拒绝关闭验证码登录。
+		CodeLoginEnabledDefault: func() bool { return cfg.CodeLoginEnabled },
+		PasswordLoginEnabled:    func() bool { return cfg.PasswordLoginEnabled },
 	})
 	userProjectionFacts := userprojection.NewDurableUserProjectionFacts(
 		adminService,
@@ -1194,6 +1198,11 @@ func run(logger *zap.Logger) error {
 		accountOptions = append(accountOptions,
 			account.WithLoginEmailVerification(codeStore, loginEmailSender, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength))
 	}
+	// 验证码登录开关：管理面板覆盖值（identity.json，每次现读）优先，未设置时跟随
+	// TELESRV_CODE_LOGIN_ENABLED；密码登录总开关关闭时一定开启（防锁死，不读 identity）。
+	// auth 与 account（登录邮箱 setup 属于登录流程）共用这同一个判断函数。
+	codeLoginAllowed := auth.IdentityCodeLoginAllowed(identityStore, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled)
+	accountOptions = append(accountOptions, account.WithCodeLoginGate(auth.CodeLoginGate(codeLoginAllowed)))
 	accountService := account.NewService(passwordStore, accountOptions...)
 	botsService := botsapp.NewService(userStore, botStore, messageStore,
 		botsapp.WithLogger(logger.Named("bots")),
@@ -1678,6 +1687,9 @@ func run(logger *zap.Logger) error {
 		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，
 		// help.getAppConfig 下发的 telesrv_sign_up_disabled 也读它。
 		auth.WithSignUpAllowed(auth.IdentitySignUpAllowed(identityStore, cfg.SignUpEnabled)),
+		// 验证码登录开关：与 account 共用上面的 codeLoginAllowed；help.getAppConfig 下发的
+		// telesrv_code_login_disabled 用同样参数的 auth.IdentityLoginSwitches。
+		auth.WithCodeLoginAllowed(codeLoginAllowed),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1695,6 +1707,10 @@ func run(logger *zap.Logger) error {
 			Store:        accountService,
 			Sender:       loginEmailSender,
 		}))
+	// 启动时按实际状态（含管理面板覆盖）提示；之后的切换由服务端命令写入、每次现读。
+	if msg := codeLoginStartupWarning(identityStore, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled); msg != "" {
+		logger.Warn(msg)
+	}
 	// 手机号 + 密码登录（telesrv 扩展协议）。总开关默认关闭；关闭时服务照常构造，
 	// telesrv. 方法由服务自己返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
 	// 密码登录的 SRP challenge 只存进程内存（与 passkey 挑战、QR 登录 token 相同，单体
@@ -1948,7 +1964,8 @@ func run(logger *zap.Logger) error {
 			// the wallet is unavailable rather than shown an entry that cannot work.
 			help.WithWalletAvailable(cfg.WalletStateDir != ""),
 			help.WithPasswordLogin(loginPasswordService.Enabled()),
-			help.WithSignUpAllowed(authService.SignUpAllowed),
+			// 每次 getAppConfig 只读一次 identity，同时得出两个开关；参数与 auth 的两个判断函数相同。
+			help.WithLoginSwitches(auth.IdentityLoginSwitches(identityStore, cfg.SignUpEnabled, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled)),
 			help.WithAccountFreezeProvider(adminService)),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
@@ -2069,6 +2086,12 @@ func run(logger *zap.Logger) error {
 		TonDNS:                  tondns.New(cfg.CustomFragmentLiteserverConfigURL),
 		UsernameWallets:         postgres.NewStarGiftClaimStore(pool),
 		ClientUpdates:           adminClientUpdates,
+	})
+	// 后台设置/重设登录密码（account.set_login_password）：不受密码登录总开关限制。
+	// 幂等指纹的 HMAC 子密钥从 admin API token 派生，命令记录里只有这个带密钥的指纹。
+	adminService.Configure(adminapp.Dependencies{
+		LoginPasswords:              loginPasswordService,
+		LoginPasswordFingerprintKey: adminapp.DeriveLoginPasswordFingerprintKey(cfg.AdminAPIToken),
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are

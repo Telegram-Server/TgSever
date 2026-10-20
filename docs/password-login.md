@@ -68,6 +68,13 @@ Show the password entry points only when the server advertises them. Call
 
 Test: `TestLoginPasswordEndToEnd/getAppConfig advertises password_login`.
 
+The operator can also turn login codes off (`TELESRV_CODE_LOGIN_ENABLED=false`,
+only allowed while password login is on). The app config then carries
+`telesrv_code_login_disabled: true`, the code methods answer
+`400 CODE_LOGIN_DISABLED`, and password login is the way in; see
+[code-login-switch.md](code-login-switch.md). "Offer code login" below then
+means "contact the administrator".
+
 ## Call sequences
 
 `srp` below is the client's existing 2FA SRP code (see [SRP](#srp-parameters)).

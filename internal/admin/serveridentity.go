@@ -11,11 +11,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 服务器设置（Server Settings → Server identity / 登录通知模板 / 注册开关）的写入命令。
+// 服务器设置（Server Settings → Server identity / 登录通知模板 / 注册开关 / 验证码登录开关）的写入命令。
 //
 // identity 存储（internal/identity，目录为 Config.IdentityDir）只由主服务器写：
 // Docker 部署下管理后台的根文件系统是只读的，server_state 卷也以只读方式挂给后台，
-// 后台进程根本写不进去。所以后台把这 6 种写操作作为管理命令经 admin API 交给主服务器，
+// 后台进程根本写不进去。所以后台把这 7 种写操作作为管理命令经 admin API 交给主服务器，
 // 由这里写入服务端自己的 identity.Store；后台只读同一目录用来展示当前设置。
 //
 // 与其他管理命令一样走 runCommand：带 command_id、理由、试运行，按 command_id 幂等，
@@ -28,6 +28,7 @@ const (
 	ActionSetWelcomeMessageTemplates  = "server.set_welcome_message_templates"
 	ActionSetLoginCodeMessageTemplate = "server.set_login_code_message_template"
 	ActionSetSignUpEnabled            = "server.set_sign_up_enabled"
+	ActionSetCodeLoginEnabled         = "server.set_code_login_enabled"
 	ActionUploadServerIcon            = "server.upload_icon"
 	ActionRemoveServerIcon            = "server.remove_icon"
 )
@@ -37,7 +38,10 @@ const (
 	CodeServerIdentityUnavailable = "SERVER_IDENTITY_UNAVAILABLE"
 	CodeLoginCodeTemplateInvalid  = "LOGIN_CODE_TEMPLATE_INVALID"
 	CodeSignUpModeInvalid         = "SIGN_UP_MODE_INVALID"
-	CodeServerIconInvalid         = "SERVER_ICON_INVALID"
+	CodeCodeLoginModeInvalid      = "CODE_LOGIN_MODE_INVALID"
+	// CodeCodeLoginLockout：密码登录总开关关闭时拒绝关闭验证码登录，否则没有人能登录。
+	CodeCodeLoginLockout  = "CODE_LOGIN_LOCKOUT"
+	CodeServerIconInvalid = "SERVER_ICON_INVALID"
 )
 
 // MaxServerIconBytes 是服务器图标的大小上限。admin API 的 multipart 上传按它加 1MiB
@@ -54,6 +58,7 @@ type ServerIdentityStore interface {
 	SetWelcomeMessageTemplates(phone, email string) error
 	SetLoginCodeMessageTemplate(template string) error
 	SetSignUpOverride(enabled *bool) error
+	SetCodeLoginOverride(enabled *bool) error
 	SetIcon(data []byte, ext string) error
 	RemoveIcon() error
 }
@@ -78,6 +83,13 @@ type SetLoginCodeMessageTemplateRequest struct {
 // SetSignUpEnabledRequest 的 Mode 取 "on"、"off" 或 "follow_env"。用字符串而不是可空
 // 布尔值，是为了让漏掉这个字段的请求被拒绝，而不是悄悄清除覆盖。
 type SetSignUpEnabledRequest struct {
+	CommandMeta
+	Mode string `json:"mode"`
+}
+
+// SetCodeLoginEnabledRequest 与 SetSignUpEnabledRequest 同构，Mode 取 "on"、"off" 或
+// "follow_env"。
+type SetCodeLoginEnabledRequest struct {
 	CommandMeta
 	Mode string `json:"mode"`
 }
@@ -112,18 +124,24 @@ func SignUpOverrideForMode(mode string) (override *bool, ok bool) {
 	return nil, false
 }
 
-// 注册开关状态的来源：未设置覆盖时跟随环境变量，否则以面板覆盖为准。
+// CodeLoginOverrideForMode 把验证码登录开关的 mode 映射为 identity 的三态覆盖
+// （nil = 跟随 TELESRV_CODE_LOGIN_ENABLED），取值与注册开关相同。
+func CodeLoginOverrideForMode(mode string) (override *bool, ok bool) {
+	return SignUpOverrideForMode(mode)
+}
+
+// 三态开关（注册开关、验证码登录开关）状态的来源：未设置覆盖时跟随环境变量，否则以面板覆盖为准。
 const (
-	SignUpSourceEnv      = "env"
-	SignUpSourceOverride = "override"
+	OverrideSourceEnv      = "env"
+	OverrideSourceOverride = "override"
 )
 
-// SignUpSource 返回给定覆盖值下注册开关状态的来源。
-func SignUpSource(override *bool) string {
+// OverrideSource 返回给定覆盖值下三态开关状态的来源。
+func OverrideSource(override *bool) string {
 	if override != nil {
-		return SignUpSourceOverride
+		return OverrideSourceOverride
 	}
-	return SignUpSourceEnv
+	return OverrideSourceEnv
 }
 
 // ServerIconExt 校验图标上传并返回小写扩展名（带前导点）：扩展名必须是 png/jpg/jpeg/
@@ -146,7 +164,7 @@ func (s *Service) serverIdentityStore() (ServerIdentityStore, error) {
 	return s.serverIdentity, nil
 }
 
-// runServerIdentityCommand 是 6 种写操作共用的命令体：试运行只返回 dryMessage，
+// runServerIdentityCommand 是 7 种写操作共用的命令体：试运行只返回 dryMessage，
 // 正式执行调用 apply 写入 identity 存储。
 //
 // 文件写入无法回滚，所以命令记录不跟随请求取消：后台的请求在写入之后被掐断时，
@@ -234,7 +252,7 @@ func (s *Service) SetSignUpEnabled(ctx context.Context, req SetSignUpEnabledRequ
 	details := map[string]any{
 		"mode":                      mode,
 		"sign_up_enabled_effective": effective,
-		"sign_up_source":            SignUpSource(override),
+		"sign_up_source":            OverrideSource(override),
 	}
 	state := "closed"
 	if effective {
@@ -244,6 +262,49 @@ func (s *Service) SetSignUpEnabled(ctx context.Context, req SetSignUpEnabledRequ
 		fmt.Sprintf("Would set sign-up to %s (effective: %s).", mode, state),
 		fmt.Sprintf("Sign-up set to %s (effective: %s).", mode, state),
 		func() error { return store.SetSignUpOverride(override) })
+}
+
+// SetCodeLoginEnabled 设置或清除验证码登录开关的覆盖。主服务器每次判断是否允许验证码
+// 登录都现读 identity.json（auth.IdentityCodeLoginAllowed），因此无需重启即生效。
+//
+// 防锁死：密码登录总开关关闭时，按服务端自己的环境变量算出的实际状态若为关闭，就拒绝
+// （试运行同样拒绝），返回 CodeCodeLoginLockout，不产生命令记录。follow_env 在合法的
+// 启动配置下不会落到这里（启动校验已拒绝两者都关的环境变量组合），但仍按实际状态判断。
+func (s *Service) SetCodeLoginEnabled(ctx context.Context, req SetCodeLoginEnabledRequest) (CommandResult, error) {
+	mode := strings.TrimSpace(req.Mode)
+	override, ok := CodeLoginOverrideForMode(mode)
+	if !ok {
+		return CommandResult{}, codedError(CodeCodeLoginModeInvalid, fmt.Errorf(`mode must be "on", "off" or "follow_env"`))
+	}
+	store, err := s.serverIdentityStore()
+	if err != nil {
+		return CommandResult{}, err
+	}
+	// 两个环境值都不猜：猜错默认值会误报实际状态，猜错密码登录总开关会放过锁死。
+	if s.codeLoginEnabledDefault == nil || s.passwordLoginEnabled == nil {
+		return CommandResult{}, codedError(CodeServerIdentityUnavailable, fmt.Errorf("code login environment defaults are not configured"))
+	}
+	// 防锁死看的是覆盖值与环境变量合并出的结果；实际状态还要叠加"密码登录关闭时验证码登录
+	// 一定开启"的不变量（与主服务器 auth.IdentityCodeLoginAllowed 相同）。
+	passwordLogin := s.passwordLoginEnabled()
+	if !domain.ResolveOverride(override, s.codeLoginEnabledDefault()) && !passwordLogin {
+		return CommandResult{}, codedError(CodeCodeLoginLockout, fmt.Errorf("password login is disabled (TELESRV_PASSWORD_LOGIN_ENABLED=false); turning code login off would lock everyone out"))
+	}
+	effective := domain.ResolveCodeLoginEnabled(override, s.codeLoginEnabledDefault(), passwordLogin)
+	req.Mode = mode
+	details := map[string]any{
+		"mode":                         mode,
+		"code_login_enabled_effective": effective,
+		"code_login_source":            OverrideSource(override),
+	}
+	state := "off"
+	if effective {
+		state = "on"
+	}
+	return s.runServerIdentityCommand(ctx, req.CommandMeta, ActionSetCodeLoginEnabled, req, details,
+		fmt.Sprintf("Would set code login to %s (effective: %s).", mode, state),
+		fmt.Sprintf("Code login set to %s (effective: %s).", mode, state),
+		func() error { return store.SetCodeLoginOverride(override) })
 }
 
 // UploadServerIcon 替换服务器图标。图标同时是 777000 的头像来源，由

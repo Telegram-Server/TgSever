@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	authapp "telesrv/internal/app/auth"
 	"telesrv/internal/domain"
 )
 
@@ -39,6 +40,10 @@ func (f *fakeAccountCreator) ValidateNewAccount(_ context.Context, phone, firstN
 }
 
 func (f *fakeAccountCreator) CreateAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error) {
+	return f.CreateAccountWith(ctx, phone, firstName, lastName, nil)
+}
+
+func (f *fakeAccountCreator) CreateAccountWith(ctx context.Context, phone, firstName, lastName string, create authapp.CreateAccountFunc) (domain.User, error) {
 	u, err := f.ValidateNewAccount(ctx, phone, firstName, lastName)
 	if err != nil {
 		return domain.User{}, err
@@ -46,6 +51,11 @@ func (f *fakeAccountCreator) CreateAccount(ctx context.Context, phone, firstName
 	f.createCalls++
 	f.nextID++
 	u.ID = f.nextID
+	if create != nil {
+		if u, err = create(ctx, u); err != nil {
+			return domain.User{}, err
+		}
+	}
 	f.byPhone[u.Phone] = u
 	return u, nil
 }

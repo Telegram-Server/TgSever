@@ -19,7 +19,8 @@ export function ActionButton({
   disabled = false,
   onDone,
   onError,
-  secretField
+  secretField,
+  maskFields
 }: {
   label: string;
   path: string;
@@ -31,12 +32,17 @@ export function ActionButton({
   // validation is unhappy, so the operator fixes the field instead of reading a
   // backend rejection.
   disabled?: boolean;
-  onDone?: () => void;
+  // onDone runs after a confirmed run succeeds; it gets the command result so a
+  // page can surface a partial outcome recorded in its details.
+  onDone?: (result: CommandResult) => void;
   // onError lets a page react to a failure the operator cannot fix by editing the
   // form — an optimistic-locking 409, say — and replace the raw backend text with
   // an explanation by returning it.
   onError?: (error: unknown) => string | undefined;
   secretField?: string;
+  // maskFields are payload keys whose values never show in the request preview
+  // (a plaintext password typed for the server to hash). They are still sent.
+  maskFields?: string[];
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -65,7 +71,7 @@ export function ActionButton({
       const commandResult = await api.action(path, body);
       setResult(commandResult);
       if (confirm) {
-        onDone?.();
+        onDone?.(commandResult);
       }
     } catch (err) {
       setError(onError?.(err) || errorMessage(err));
@@ -78,11 +84,15 @@ export function ActionButton({
   const triggerClass = `btn ${tone === "danger" ? "danger" : tone === "warn" ? "warn" : tone === "primary" ? "primary" : ""} ${compact ? "compact-btn" : ""}`;
   const previewPayload = useMemo(() => {
     try {
-      return payload();
+      const value = payload();
+      if (!maskFields?.length) {
+        return value;
+      }
+      return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, maskFields.includes(key) ? "••••••" : field]));
     } catch (err) {
       return { payload_error: errorMessage(err) };
     }
-  }, [open, payload]);
+  }, [open, payload, maskFields]);
   const secretValue = secretField && result?.details && typeof result.details[secretField] === "string"
     ? result.details[secretField] as string
     : "";

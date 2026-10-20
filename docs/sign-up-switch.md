@@ -49,6 +49,10 @@ Error-check order for the two `telesrv.*` methods is in
 [password-login.md](password-login.md#errors): the password-login switch and the
 shared login-code quota come first, then the sign-up switch.
 
+When the operator has also turned login codes off, the four `auth.*` methods
+answer `400 CODE_LOGIN_DISABLED` instead, for every number: the code login
+switch is checked first ([code-login-switch.md](code-login-switch.md)).
+
 Existing accounts are never affected: login code, 2FA, QR login, passkey login
 and password login all behave as before, and bots are not affected either.
 

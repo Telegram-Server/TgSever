@@ -364,6 +364,11 @@ func phoneCodeExpiredErr() error    { return tgerr.New(400, "PHONE_CODE_EXPIRED"
 // auth.sendCode/resendCode/signIn/signUp 与 telesrv.getLoginPassword/signUpWithPassword。
 func signUpDisabledErr() error { return tgerr.New(400, "SIGN_UP_DISABLED") }
 
+// codeLoginDisabledErr 表示服务器已关闭验证码登录（domain.ErrCodeLoginDisabled）。可能出现在
+// auth.sendCode/resendCode/signIn/signUp/resetLoginEmail 与 account.sendVerifyEmailCode/
+// verifyEmail 的 loginSetup。
+func codeLoginDisabledErr() error { return tgerr.New(400, "CODE_LOGIN_DISABLED") }
+
 func phoneChangeErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrPhoneNumberInvalid):
@@ -459,6 +464,8 @@ func signInErr(err error) error {
 		return sessionPasswordNeededErr()
 	case errors.Is(err, domain.ErrSignUpDisabled):
 		return signUpDisabledErr()
+	case errors.Is(err, domain.ErrCodeLoginDisabled):
+		return codeLoginDisabledErr()
 	default:
 		return internalErr()
 	}
@@ -509,6 +516,9 @@ func passwordErr(err error) error {
 		return tgerr.New(400, "PASSWORD_RECOVERY_EXPIRED")
 	case errors.Is(err, domain.ErrPasswordRecoveryNA):
 		return passwordRecoveryNAErr()
+	case errors.Is(err, domain.ErrCodeLoginDisabled):
+		// 登录邮箱 setup 属于登录流程，受验证码登录开关约束。
+		return codeLoginDisabledErr()
 	default:
 		return internalErr()
 	}

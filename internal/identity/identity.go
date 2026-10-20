@@ -54,6 +54,10 @@ type Info struct {
 	// 是否允许注册时都现读本字段（见 cmd/telesrv 中 auth.WithSignUpAllowed 的接线）。
 	// 旧版 identity.json 没有这个键，读出来就是 nil，行为不变。
 	SignUpEnabled *bool `json:"sign_up_enabled,omitempty"`
+	// CodeLoginEnabled 是管理面板对验证码登录开关的三态覆盖：nil 表示「未设置」，跟随
+	// TELESRV_CODE_LOGIN_ENABLED 环境变量；true/false 表示以面板为准。与 SignUpEnabled
+	// 同构，主服务器每次判断都现读（见 auth.IdentityCodeLoginAllowed）。
+	CodeLoginEnabled *bool `json:"code_login_enabled,omitempty"`
 }
 
 // Store 在指定目录（通常为 Config.IdentityDir）下读写 Info 与图标文件。所有方法均可
@@ -132,6 +136,21 @@ func (s *Store) SetSignUpOverride(enabled *bool) error {
 		} else {
 			v := *enabled
 			info.SignUpEnabled = &v
+		}
+		return nil
+	})
+}
+
+// SetCodeLoginOverride 设置或清除验证码登录开关的管理面板覆盖，保留其余身份字段。
+// nil 清除覆盖（恢复跟随环境变量），非 nil 以其值为准。防锁死校验由调用方
+// （internal/admin 的服务端命令）负责，本包不依赖配置。
+func (s *Store) SetCodeLoginOverride(enabled *bool) error {
+	return s.update(func(info *Info) error {
+		if enabled == nil {
+			info.CodeLoginEnabled = nil
+		} else {
+			v := *enabled
+			info.CodeLoginEnabled = &v
 		}
 		return nil
 	})

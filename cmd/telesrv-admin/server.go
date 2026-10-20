@@ -164,6 +164,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-account-profile", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetProfileAPI)))
 	mux.Handle("POST /api/actions/set-account-phone", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPhoneAPI)))
 	mux.Handle("POST /api/actions/create-account", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleCreateAccountAPI)))
+	mux.Handle("POST /api/actions/set-login-password", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginPasswordAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
 	mux.Handle("POST /api/actions/set-account-color", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserColorAPI)))
@@ -257,6 +258,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-welcome-message-templates", s.serverManage(s.handleSetWelcomeMessageTemplatesAPI))
 	mux.Handle("POST /api/actions/set-login-code-message-template", s.serverManage(s.handleSetLoginCodeMessageTemplateAPI))
 	mux.Handle("POST /api/actions/set-sign-up-enabled", s.serverManage(s.handleSetSignUpEnabledAPI))
+	mux.Handle("POST /api/actions/set-code-login-enabled", s.serverManage(s.handleSetCodeLoginEnabledAPI))
 	mux.Handle("POST /api/actions/upload-server-icon", s.serverManage(s.handleUploadServerIconAPI))
 	mux.Handle("POST /api/actions/remove-server-icon", s.serverManage(s.handleRemoveServerIconAPI))
 	mux.Handle("GET /api/server/env", s.serverManage(s.handleServerEnvAPI))
@@ -1102,23 +1104,74 @@ type createAccountAPIRequest struct {
 	Phone     string `json:"phone"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
+	Password  string `json:"password"`
+}
+
+// createAccountUpstreamRequest 是转发给服务端 POST /v1/accounts/create 的请求体。
+// admin.CreateAccountRequest 的明文密码字段不序列化（不进命令记录），所以这一跳单独带上
+// password（不填时省略），由服务端算 verifier 和幂等指纹。
+type createAccountUpstreamRequest struct {
+	admin.CommandMeta
+	Phone     string `json:"phone"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name,omitempty"`
+	Password  string `json:"password,omitempty"`
 }
 
 // handleCreateAccountAPI creates a regular user account (phone, first name,
-// optional last name) through the server's admin command channel. Only the
-// account is created; the member signs in with a login code afterwards.
+// optional last name, optional login password) through the server's admin
+// command channel. Without a password only the account is created and the
+// member signs in with a login code; with one the member can sign in with
+// the password right away. The panel neither stores nor logs the password.
 func (s *server) handleCreateAccountAPI(w http.ResponseWriter, r *http.Request) {
 	var body createAccountAPIRequest
 	if !decodeAction(w, r, &body) {
 		return
 	}
-	req := admin.CreateAccountRequest{
+	req := createAccountUpstreamRequest{
 		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-account"),
 		Phone:       body.Phone,
 		FirstName:   body.FirstName,
 		LastName:    body.LastName,
+		Password:    body.Password,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/create", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setLoginPasswordAPIRequest struct {
+	CommandID      string `json:"command_id"`
+	Reason         string `json:"reason"`
+	Confirm        bool   `json:"confirm"`
+	UserID         int64  `json:"user_id"`
+	Password       string `json:"password"`
+	RevokeSessions bool   `json:"revoke_sessions"`
+}
+
+// setLoginPasswordUpstreamRequest 是转发给服务端 POST /v1/accounts/set-login-password 的请求体。
+// admin.SetLoginPasswordRequest 的明文密码字段不序列化（不进命令记录），所以这一跳单独带上
+// password，由服务端算 verifier 和幂等指纹。
+type setLoginPasswordUpstreamRequest struct {
+	admin.CommandMeta
+	UserID         int64  `json:"user_id"`
+	Password       string `json:"password"`
+	RevokeSessions bool   `json:"revoke_sessions,omitempty"`
+}
+
+// handleSetLoginPasswordAPI 给已有账号设置或重设登录密码（不需要旧密码），可选同时登出所有
+// 设备。明文密码经 HTTPS 交给服务端，面板不保存、不记录，响应里也不回显。
+func (s *server) handleSetLoginPasswordAPI(w http.ResponseWriter, r *http.Request) {
+	var body setLoginPasswordAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := setLoginPasswordUpstreamRequest{
+		CommandMeta:    s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-login-password"),
+		UserID:         body.UserID,
+		Password:       body.Password,
+		RevokeSessions: body.RevokeSessions,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-login-password", req)
 	writeCommandResultAPI(w, result, err)
 }
 

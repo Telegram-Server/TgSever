@@ -115,6 +115,12 @@ type Service struct {
 	// signUpAllowed 是 auth 服务"是否允许注册"的同一个来源，每次 GetAppConfig 都实时
 	// 读取（不缓存），据此按请求注入 telesrv_sign_up_disabled。nil 表示开放注册。
 	signUpAllowed func(context.Context) (bool, error)
+	// codeLoginAllowed 是 auth 服务"是否允许验证码登录"的同一个来源，每次 GetAppConfig
+	// 都实时读取，据此按请求注入 telesrv_code_login_disabled。nil 表示允许。
+	codeLoginAllowed func(context.Context) (bool, error)
+	// loginSwitches 一次读取同时给出两个开关（生产接线：auth.IdentityLoginSwitches，
+	// 每次 GetAppConfig 只读一次 identity）。设置后优先于上面两个单独的来源。
+	loginSwitches func(context.Context) domain.LoginSwitches
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -184,6 +190,29 @@ const appConfigKeySignUpDisabled = "telesrv_sign_up_disabled"
 func WithSignUpAllowed(fn func(context.Context) (bool, error)) Option {
 	return func(s *Service) {
 		s.signUpAllowed = fn
+	}
+}
+
+// appConfigKeyCodeLoginDisabled 是验证码登录关闭时下发给客户端的服务器状态 key，
+// 与 telesrv_sign_up_disabled 同一种机制：开启时不出现，参与 hash。
+const appConfigKeyCodeLoginDisabled = "telesrv_code_login_disabled"
+
+// WithCodeLoginAllowed 注入"是否允许验证码登录"的来源（通常是
+// auth.Service.CodeLoginAllowed，保证下发状态与服务端拦截同源）。每次 GetAppConfig
+// 都实时调用；返回 error 时按关闭下发。
+func WithCodeLoginAllowed(fn func(context.Context) (bool, error)) Option {
+	return func(s *Service) {
+		s.codeLoginAllowed = fn
+	}
+}
+
+// WithLoginSwitches 注入一次读取同时给出注册开关与验证码登录开关的快照函数（通常是
+// auth.IdentityLoginSwitches，与 auth 的两个判断函数取同样的参数，保证下发状态与服务端
+// 拦截同源）。每次 GetAppConfig 只调用一次；返回值已按 fail-closed 与"密码登录关闭时
+// 验证码登录一定开启"处理过。设置后 WithSignUpAllowed / WithCodeLoginAllowed 不再生效。
+func WithLoginSwitches(fn func(context.Context) domain.LoginSwitches) Option {
+	return func(s *Service) {
+		s.loginSwitches = fn
 	}
 }
 
@@ -284,14 +313,19 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 		return domain.AppConfig{}, fmt.Errorf("decode base app config: %w", err)
 	}
 	changed := false
-	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled} {
+	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled, appConfigKeyCodeLoginDisabled} {
 		if _, exists := values[key]; exists {
 			delete(values, key)
 			changed = true
 		}
 	}
-	if s.signUpDisabled(ctx) {
+	switches := s.loginSwitchState(ctx)
+	if !switches.SignUpAllowed {
 		values[appConfigKeySignUpDisabled] = json.RawMessage("true")
+		changed = true
+	}
+	if !switches.CodeLoginAllowed {
+		values[appConfigKeyCodeLoginDisabled] = json.RawMessage("true")
 		changed = true
 	}
 	if userID > 0 {
@@ -319,13 +353,29 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 	return domain.AppConfig{Client: base.Client, Hash: overlayAppConfigHash(base.Hash, body), JSON: body}, nil
 }
 
-// signUpDisabled 实时读取注册开关；读取失败按关闭处理，与 auth 的 fail-closed 拦截一致。
-func (s *Service) signUpDisabled(ctx context.Context) bool {
-	if s == nil || s.signUpAllowed == nil {
-		return false
+// loginSwitchState 实时读取注册开关与验证码登录开关。有 loginSwitches 时只调用它一次；
+// 否则分别读取两个单独的来源（未设置的视为允许），读取失败按关闭处理，与 auth 的
+// fail-closed 拦截一致。
+func (s *Service) loginSwitchState(ctx context.Context) domain.LoginSwitches {
+	if s == nil {
+		return domain.LoginSwitches{SignUpAllowed: true, CodeLoginAllowed: true}
 	}
-	allowed, err := s.signUpAllowed(ctx)
-	return err != nil || !allowed
+	if s.loginSwitches != nil {
+		return s.loginSwitches(ctx)
+	}
+	return domain.LoginSwitches{
+		SignUpAllowed:    sourceAllows(ctx, s.signUpAllowed),
+		CodeLoginAllowed: sourceAllows(ctx, s.codeLoginAllowed),
+	}
+}
+
+// sourceAllows 调用单个开关来源；nil 视为允许，出错视为关闭。
+func sourceAllows(ctx context.Context, fn func(context.Context) (bool, error)) bool {
+	if fn == nil {
+		return true
+	}
+	allowed, err := fn(ctx)
+	return err == nil && allowed
 }
 
 // overlayAppConfigHash 为在 base 之上改写过的 config 算一个确定的新 hash，保证与 base 不同，

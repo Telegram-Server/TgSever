@@ -26,7 +26,10 @@ func newServerIdentityService(t *testing.T, signUpDefault bool) (*Service, *memo
 		Commands:             repo,
 		ServerIdentity:       store,
 		SignUpEnabledDefault: func() bool { return signUpDefault },
-		Now:                  fixedNow,
+		// 验证码登录跟随环境默认开启、密码登录总开关打开，关闭验证码登录不会触发防锁死。
+		CodeLoginEnabledDefault: func() bool { return true },
+		PasswordLoginEnabled:    func() bool { return true },
+		Now:                     fixedNow,
 	})
 	return svc, repo, store, dir
 }
@@ -110,6 +113,18 @@ func serverIdentityCases() []serverIdentityCase {
 				}
 			},
 			details: map[string]any{"mode": "off", "sign_up_enabled_effective": false, "sign_up_source": "override"},
+		},
+		{
+			action: ActionSetCodeLoginEnabled,
+			run: func(svc *Service, meta CommandMeta) (CommandResult, error) {
+				return svc.SetCodeLoginEnabled(ctx, SetCodeLoginEnabledRequest{CommandMeta: meta, Mode: "off"})
+			},
+			check: func(t *testing.T, store *identity.Store) {
+				if info, err := store.Get(); err != nil || info.CodeLoginEnabled == nil || *info.CodeLoginEnabled {
+					t.Fatalf("identity = %+v err=%v, want code login override false", info, err)
+				}
+			},
+			details: map[string]any{"mode": "off", "code_login_enabled_effective": false, "code_login_source": "override"},
 		},
 		{
 			action: ActionUploadServerIcon,
@@ -251,6 +266,12 @@ func TestServerIdentityCommandsRejectInvalidInput(t *testing.T) {
 		}},
 		{"sign-up mode unknown", func(meta CommandMeta) (CommandResult, error) {
 			return svc.SetSignUpEnabled(ctx, SetSignUpEnabledRequest{CommandMeta: meta, Mode: "maybe"})
+		}},
+		{"code login mode missing", func(meta CommandMeta) (CommandResult, error) {
+			return svc.SetCodeLoginEnabled(ctx, SetCodeLoginEnabledRequest{CommandMeta: meta})
+		}},
+		{"code login mode unknown", func(meta CommandMeta) (CommandResult, error) {
+			return svc.SetCodeLoginEnabled(ctx, SetCodeLoginEnabledRequest{CommandMeta: meta, Mode: "maybe"})
 		}},
 		{"icon extension", func(meta CommandMeta) (CommandResult, error) {
 			return svc.UploadServerIcon(ctx, UploadServerIconRequest{CommandMeta: meta, FileName: "logo.bmp", Data: pngIcon})
@@ -408,6 +429,7 @@ func (failingIdentityStore) SetWelcomeMessageTemplates(string, string) error {
 }
 func (failingIdentityStore) SetLoginCodeMessageTemplate(string) error { return errReadOnlyIdentity }
 func (failingIdentityStore) SetSignUpOverride(*bool) error            { return errReadOnlyIdentity }
+func (failingIdentityStore) SetCodeLoginOverride(*bool) error         { return errReadOnlyIdentity }
 func (failingIdentityStore) SetIcon([]byte, string) error             { return errReadOnlyIdentity }
 func (failingIdentityStore) RemoveIcon() error                        { return errReadOnlyIdentity }
 

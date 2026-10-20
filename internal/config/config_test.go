@@ -1164,6 +1164,42 @@ func TestLoadPasswordLoginSwitch(t *testing.T) {
 	}
 }
 
+func TestLoadCodeLoginEnabledDefaultsOn(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.CodeLoginEnabled {
+		t.Fatal("CodeLoginEnabled = false by default, want true (existing deployments keep code login)")
+	}
+
+	t.Setenv("TELESRV_PASSWORD_LOGIN_ENABLED", "true")
+	t.Setenv("TELESRV_CODE_LOGIN_ENABLED", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load with password login on and code login off: %v", err)
+	}
+	if cfg.CodeLoginEnabled {
+		t.Fatal("CodeLoginEnabled = true with TELESRV_CODE_LOGIN_ENABLED=false")
+	}
+}
+
+// 防锁死：密码登录总开关关闭时不允许关闭验证码登录，否则没有任何人能登录。
+func TestLoadRejectsDisablingCodeLoginWithoutPasswordLogin(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_CODE_LOGIN_ENABLED", "false")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load with code login and password login both off succeeded, want a lock-out error")
+	}
+	for _, want := range []string{"TELESRV_CODE_LOGIN_ENABLED", "TELESRV_PASSWORD_LOGIN_ENABLED"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load err=%q, want it to name %s", err, want)
+		}
+	}
+}
+
 func TestLoadLoginEmailSMTPConfig(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_LOGIN_EMAIL_ENABLE", "true")

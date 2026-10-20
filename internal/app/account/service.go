@@ -61,6 +61,8 @@ type Service struct {
 	loginEmailCodeTTL         time.Duration
 	loginEmailCodeMaxAttempts int
 	loginEmailCodeLength      int
+	// codeLoginGate 见 WithCodeLoginGate；nil 表示不限制。
+	codeLoginGate func(ctx context.Context) error
 }
 
 // ServiceOption 调整 account 服务依赖。
@@ -160,6 +162,25 @@ func WithLoginEmailVerification(codes store.CodeStore, sender otpdelivery.Sender
 			s.loginEmailCodeLength = length
 		}
 	}
+}
+
+// WithCodeLoginGate 注入"是否允许验证码登录"的唯一判断（生产中是
+// auth.Service.CheckCodeLoginAllowed）。登录邮箱 setup 属于登录流程：验证码登录
+// 关闭时，SendLoginEmailCode / VerifyLoginEmail 的 setup 分支返回 gate 的错误
+// （domain.ErrCodeLoginDisabled），不签发、不投递、不消费邮箱码。已登录用户修改登录
+// 邮箱（loginChange）是会话内流程，不经过它。nil 等价于始终允许。
+func WithCodeLoginGate(gate func(ctx context.Context) error) ServiceOption {
+	return func(s *Service) {
+		s.codeLoginGate = gate
+	}
+}
+
+// checkCodeLogin 在登录邮箱 setup 分支调用 codeLoginGate。
+func (s *Service) checkCodeLogin(ctx context.Context) error {
+	if s.codeLoginGate == nil {
+		return nil
+	}
+	return s.codeLoginGate(ctx)
 }
 
 // WithPhoneCodeDelivery replaces the fixed development code used by the
@@ -771,6 +792,9 @@ func (s *Service) SendLoginEmailCode(ctx context.Context, userID int64, phone, p
 		if s.users == nil {
 			return "", 0, domain.ErrEmailNotAllowed
 		}
+		if err := s.checkCodeLogin(ctx); err != nil {
+			return "", 0, err
+		}
 		phone = domain.NormalizePhone(phone)
 		phoneRec, found, err := s.codes.Get(ctx, phoneCodeHash)
 		if err != nil {
@@ -862,6 +886,10 @@ func (s *Service) VerifyLoginEmail(ctx context.Context, userID int64, phone, pho
 	}
 	key := loginEmailVerifyChangePrefix + fmt.Sprint(userID)
 	if setup {
+		// 先于读取与校验邮箱码：关闭时不计尝试次数、不消费。
+		if err := s.checkCodeLogin(ctx); err != nil {
+			return "", err
+		}
 		key = loginEmailVerifySetupPrefix + phoneCodeHash
 	}
 	snapshot, found, err := s.codes.GetSnapshot(ctx, key)

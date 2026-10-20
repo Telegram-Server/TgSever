@@ -90,6 +90,9 @@ type loginPasswordServerOptions struct {
 	// signUpDisabled 关闭注册（TELESRV_SIGN_UP_ENABLED=false），见 sign_up_switch_e2e_test.go。
 	// 零值保持注册开放。
 	signUpDisabled bool
+	// codeLoginDisabled 关闭验证码登录（TELESRV_CODE_LOGIN_ENABLED=false），见
+	// code_login_switch_e2e_test.go。零值保持验证码登录开启。
+	codeLoginDisabled bool
 }
 
 // loginPasswordServer 是一个跑在随机端口上的完整服务端，供多个子测试并发使用。
@@ -102,6 +105,9 @@ type loginPasswordServer struct {
 	loginPasswords *memory.LoginPasswordStore
 	// auth 是服务端用的 auth 服务，供后台建号（admin.AccountCreator）在进程内接上。
 	auth *auth.Service
+	// loginPasswordService 是服务端用的登录密码服务，供后台设置登录密码
+	// （admin.LoginPasswordSetter）在进程内接上。
+	loginPasswordService *loginpasswordapp.Service
 }
 
 // tombstoningUserStore 在内存 UserStore 外面加一层"已注销"标记。内存 store 没有账号
@@ -168,7 +174,8 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore)),
 		auth.WithPasswords(cloudPasswords),
-		auth.WithSignUpAllowed(auth.StaticSignUpAllowed(!opts.signUpDisabled)))
+		auth.WithSignUpAllowed(auth.StaticSignUpAllowed(!opts.signUpDisabled)),
+		auth.WithCodeLoginAllowed(auth.StaticCodeLoginAllowed(!opts.codeLoginDisabled)))
 	limiter := newCountingRateLimiter()
 	loginPasswordStore := memory.NewLoginPasswordStore(baseUsers)
 	loginPasswords := loginpasswordapp.NewService(userStore, loginPasswordStore,
@@ -185,12 +192,13 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		LoginPassword: loginPasswords,
 		Sessions:      activeSessions,
 		Account:       account.NewService(cloudPasswords, account.WithUsers(userStore), account.WithAccountLifecycle(lifecycle)),
-		Help:          help.NewService(helpStore, helpStore, help.WithPasswordLogin(opts.enabled), help.WithSignUpAllowed(authService.SignUpAllowed)),
-		Users:         users.NewService(userStore),
-		Updates:       updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
-		Contacts:      contacts.NewService(memory.NewContactStore()),
-		Dialogs:       dialogs.NewService(dialogStore),
-		Messages:      messageapp.NewService(messageStore, dialogStore),
+		Help: help.NewService(helpStore, helpStore, help.WithPasswordLogin(opts.enabled), help.WithSignUpAllowed(authService.SignUpAllowed),
+			help.WithCodeLoginAllowed(authService.CodeLoginAllowed)),
+		Users:    users.NewService(userStore),
+		Updates:  updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
+		Contacts: contacts.NewService(memory.NewContactStore()),
+		Dialogs:  dialogs.NewService(dialogStore),
+		Messages: messageapp.NewService(messageStore, dialogStore),
 	}
 	rpcCfg := rpc.Config{DC: loginPasswordTestDC, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}
 	opts.rateLimits.apply(&rpcCfg, &deps, limiter)
@@ -216,7 +224,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		}
 		<-outboxDone
 	})
-	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService}
+	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords}
 }
 
 // run 用一个全新的 auth key 连上服务端执行 fn。fn 里的断言失败要 return error，

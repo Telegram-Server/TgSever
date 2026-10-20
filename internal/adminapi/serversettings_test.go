@@ -42,6 +42,10 @@ func (s *serverSettingsCaptureService) SetSignUpEnabled(_ context.Context, req a
 	return s.record(req, req.CommandMeta, admin.ActionSetSignUpEnabled)
 }
 
+func (s *serverSettingsCaptureService) SetCodeLoginEnabled(_ context.Context, req admin.SetCodeLoginEnabledRequest) (admin.CommandResult, error) {
+	return s.record(req, req.CommandMeta, admin.ActionSetCodeLoginEnabled)
+}
+
 func (s *serverSettingsCaptureService) UploadServerIcon(_ context.Context, req admin.UploadServerIconRequest) (admin.CommandResult, error) {
 	return s.record(req, req.CommandMeta, admin.ActionUploadServerIcon)
 }
@@ -96,6 +100,10 @@ func TestAdminAPIServerSettingsRoutes(t *testing.T) {
 			return httptest.NewRequest(http.MethodPost, "/v1/server-settings/set-sign-up-enabled",
 				strings.NewReader(`{`+metaJSON+`,"mode":"off"}`))
 		}, admin.ActionSetSignUpEnabled, admin.SetSignUpEnabledRequest{CommandMeta: meta, Mode: "off"}},
+		{"set code login", func(*testing.T) *http.Request {
+			return httptest.NewRequest(http.MethodPost, "/v1/server-settings/set-code-login-enabled",
+				strings.NewReader(`{`+metaJSON+`,"mode":"follow_env"}`))
+		}, admin.ActionSetCodeLoginEnabled, admin.SetCodeLoginEnabledRequest{CommandMeta: meta, Mode: "follow_env"}},
 		{"upload icon", func(t *testing.T) *http.Request {
 			return iconUploadRequest(t, `{`+metaJSON+`}`, "logo.png", icon)
 		}, admin.ActionUploadServerIcon, admin.UploadServerIconRequest{CommandMeta: meta, FileName: "logo.png", Data: icon}},

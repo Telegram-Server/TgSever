@@ -90,6 +90,10 @@ const (
 	// passwordReset / passwordResetRemoved 是重设窗口内不带旧密码的修改 / 删除。
 	passwordReset
 	passwordResetRemoved
+	// passwordAdminSet / passwordAdminReset 是运营者在后台设置（账号原来没有登录密码）/
+	// 重设（原来已有）的登录密码，见 admin.go。
+	passwordAdminSet
+	passwordAdminReset
 )
 
 // GetMyLoginPassword 处理 telesrv.getMyLoginPassword（必须已登录）：
@@ -304,6 +308,7 @@ func (s *Service) sendChangeNotice(ctx context.Context, userID int64, change pas
 // 点明没有用到旧密码、是从一个刚登录的会话做的。
 func changeNoticeText(change passwordChange) (title, body string) {
 	const unknown = "\n\nIf this wasn't you, terminate unknown sessions in Settings > Devices (or Privacy & Security > Active Sessions) and change your login password."
+	const adminUnknown = "\n\nIf you didn't ask for this, contact the server administrator and check your active sessions in Settings > Devices (or Privacy & Security > Active Sessions)."
 	const resetUnknown = "\n\nIf this wasn't you, check your active sessions in Settings > Devices (or Privacy & Security > Active Sessions) now, terminate the ones you don't recognize and set a new login password."
 	switch change {
 	case passwordSet:
@@ -314,6 +319,10 @@ func changeNoticeText(change passwordChange) (title, body string) {
 		return "Login password reset.", "The login password of your account was reset without the old password from a session that signed in recently. Sign in with the new password from now on." + resetUnknown
 	case passwordResetRemoved:
 		return "Login password reset.", "The login password of your account was removed without the old password from a session that signed in recently. You can only sign in with a login code now." + resetUnknown
+	case passwordAdminSet:
+		return "Login password set by an administrator.", "An administrator of this server set a login password for your account. You can now sign in with your phone number and this password." + adminUnknown
+	case passwordAdminReset:
+		return "Login password reset by an administrator.", "An administrator of this server reset the login password of your account. Sign in with the new password from now on." + adminUnknown
 	case passwordRemoved:
 		return "Login password removed.", "The login password of your account was removed. You can only sign in with a login code now." +
 			"\n\nIf this wasn't you, terminate unknown sessions in Settings > Devices (or Privacy & Security > Active Sessions)."

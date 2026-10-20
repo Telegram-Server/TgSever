@@ -37,10 +37,10 @@ func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
 // Server Settings writes fall into two groups.
 //
 // The identity store (internal/identity: the 777000 name and description, the
-// icon, the welcome and login-code templates, the sign-up override) is written
-// by the telesrv server only. In Docker this process runs on a read-only root
-// filesystem with the server_state volume mounted read-only, so it could never
-// write there; instead each of the six identity writes below is handed to the
+// icon, the welcome and login-code templates, the sign-up and code login
+// overrides) is written by the telesrv server only. In Docker this process
+// runs on a read-only root filesystem with the server_state volume mounted
+// read-only, so it could never write there; instead each of the seven identity writes below is handed to the
 // server as an admin command over the admin API (callAdminAPI /
 // callAdminMultipart, like account freezing), and the server writes its own
 // identity.Store. The server's command runner owns the command_id idempotency
@@ -97,6 +97,20 @@ type serverIdentityAPIResponse struct {
 	DefaultSignUpEnabled   bool   `json:"default_sign_up_enabled"`
 	SignUpEnabledEffective bool   `json:"sign_up_enabled_effective"`
 	SignUpSource           string `json:"sign_up_source"`
+	// The code login switch, reported exactly like the sign-up switch above:
+	// identity.Info's raw code_login_enabled override plus its resolved state
+	// and source (domain.ResolveCodeLoginEnabled over
+	// s.cfg.CodeLoginEnabledDefault and s.cfg.PasswordLoginEnabled: with
+	// password login disabled code login is always on). PasswordLoginEnabled
+	// lets the panel explain up front that the server refuses to turn code
+	// login off while password login is disabled (admin.CodeCodeLoginLockout);
+	// CodeLoginOverrideIgnored says a stored "off" override is being ignored
+	// for that reason.
+	DefaultCodeLoginEnabled   bool   `json:"default_code_login_enabled"`
+	CodeLoginEnabledEffective bool   `json:"code_login_enabled_effective"`
+	CodeLoginSource           string `json:"code_login_source"`
+	PasswordLoginEnabled      bool   `json:"password_login_enabled"`
+	CodeLoginOverrideIgnored  bool   `json:"code_login_override_ignored"`
 }
 
 func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +126,12 @@ func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request)
 		DefaultLoginCodeMessageTemplate:    s.cfg.LoginCodeMessageDefault,
 		DefaultSignUpEnabled:               s.cfg.SignUpEnabledDefault,
 		SignUpEnabledEffective:             domain.ResolveSignUpEnabled(info.SignUpEnabled, s.cfg.SignUpEnabledDefault),
-		SignUpSource:                       admin.SignUpSource(info.SignUpEnabled),
+		SignUpSource:                       admin.OverrideSource(info.SignUpEnabled),
+		DefaultCodeLoginEnabled:            s.cfg.CodeLoginEnabledDefault,
+		CodeLoginEnabledEffective:          domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, s.cfg.CodeLoginEnabledDefault, s.cfg.PasswordLoginEnabled),
+		CodeLoginSource:                    admin.OverrideSource(info.CodeLoginEnabled),
+		PasswordLoginEnabled:               s.cfg.PasswordLoginEnabled,
+		CodeLoginOverrideIgnored:           !s.cfg.PasswordLoginEnabled && info.CodeLoginEnabled != nil && !*info.CodeLoginEnabled,
 	})
 }
 
@@ -151,6 +170,45 @@ func (s *server) handleSetSignUpEnabledAPI(w http.ResponseWriter, r *http.Reques
 		Mode:        mode,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/set-sign-up-enabled", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+// --- code login switch ----------------------------------------------------
+
+type setCodeLoginEnabledAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	// Mode is "on", "off" or "follow_env", as for the sign-up switch.
+	Mode string `json:"mode"`
+}
+
+// handleSetCodeLoginEnabledAPI sets or clears the code login override in
+// identity.json, through the server (admin.Service.SetCodeLoginEnabled).
+// telesrv re-reads it on every code login decision (see
+// auth.IdentityCodeLoginAllowed), so the change -- including the
+// telesrv_code_login_disabled app-config key and its hash -- takes effect
+// without a restart.
+//
+// An unknown mode is refused here with 422 before anything is forwarded. The
+// lock-out rule (no turning code login off while password login is disabled)
+// is the server's alone: it knows its own TELESRV_PASSWORD_LOGIN_ENABLED, and
+// its CODE_LOGIN_LOCKOUT refusal is passed through unchanged.
+func (s *server) handleSetCodeLoginEnabledAPI(w http.ResponseWriter, r *http.Request) {
+	var body setCodeLoginEnabledAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	mode := strings.TrimSpace(body.Mode)
+	if _, ok := admin.CodeLoginOverrideForMode(mode); !ok {
+		writeAPIError(w, http.StatusUnprocessableEntity, `mode must be "on", "off" or "follow_env"`)
+		return
+	}
+	req := admin.SetCodeLoginEnabledRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-code-login-enabled"),
+		Mode:        mode,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/set-code-login-enabled", req)
 	writeCommandResultAPI(w, result, err)
 }
 

@@ -66,6 +66,7 @@ export function ServerSettingsPage({ search, navigate }: { search?: URLSearchPar
           <IdentitySection />
           <LoginNotificationsSection />
           <SignUpSection />
+          <CodeLoginSection />
           <EnvSection />
         </div>
       ) : (
@@ -410,6 +411,85 @@ function SignUpSection() {
               tone="neutral"
               label={t("serverSettings.signUpFollowEnv")}
               path="/api/actions/set-sign-up-enabled"
+              payload={() => ({ mode: "follow_env" })}
+              disabled={override === undefined || override === null}
+              onDone={notifyIdentityChanged}
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// CodeLoginSection mirrors SignUpSection for the code login switch. The
+// server owns the lock-out rule (no turning code login off while password
+// login is disabled); the panel only disables the button and explains why.
+function CodeLoginSection() {
+  const { t } = useI18n();
+  const [identity, setIdentity] = useState<ServerIdentity | null>(null);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setError("");
+    try {
+      setIdentity(await api.serverIdentity());
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  useEffect(() => {
+    const reload = () => { void load(); };
+    reload();
+    window.addEventListener(identityChangedEvent, reload);
+    return () => window.removeEventListener(identityChangedEvent, reload);
+  }, []);
+
+  const onWord = (on: boolean) => (on ? t("serverSettings.codeLoginOn") : t("serverSettings.codeLoginOff"));
+  const override = identity?.code_login_enabled;
+  const lockedOut = identity ? !identity.password_login_enabled : false;
+
+  return (
+    <section id="serversettings-codelogin" className="section-block scroll-anchor">
+      <SectionHead title={t("serverSettings.codeLoginTitle")} />
+      {error && <Alert>{error}</Alert>}
+      {!identity ? (
+        <LoadingSurface label={t("serverSettings.loadingCodeLogin")} />
+      ) : (
+        <div className="card-body">
+          <p className="muted-lead">{t("serverSettings.codeLoginDesc")}</p>
+          <p>
+            <span className={`badge ${identity.code_login_enabled_effective ? "good" : "danger"}`}>{onWord(identity.code_login_enabled_effective)}</span>
+            {" "}
+            <span className="badge">
+              {identity.code_login_source === "override" ? t("serverSettings.codeLoginSourceOverride") : t("serverSettings.codeLoginSourceEnv")}
+            </span>
+          </p>
+          <p className="muted-lead">{t("serverSettings.codeLoginEnvDefault", { value: onWord(identity.default_code_login_enabled) })}</p>
+          {lockedOut && <p className="muted-lead">{t("serverSettings.codeLoginLockoutHint")}</p>}
+          {identity.code_login_override_ignored && <p className="muted-lead">{t("serverSettings.codeLoginOverrideIgnored")}</p>}
+          <div className="gift-table-actions identity-save-row">
+            <ActionButton
+              tone="neutral"
+              label={t("serverSettings.codeLoginSetOn")}
+              path="/api/actions/set-code-login-enabled"
+              payload={() => ({ mode: "on" })}
+              disabled={override === true}
+              onDone={notifyIdentityChanged}
+            />
+            <ActionButton
+              tone="danger"
+              label={t("serverSettings.codeLoginSetOff")}
+              path="/api/actions/set-code-login-enabled"
+              payload={() => ({ mode: "off" })}
+              disabled={override === false || lockedOut}
+              onDone={notifyIdentityChanged}
+            />
+            <ActionButton
+              tone="neutral"
+              label={t("serverSettings.codeLoginFollowEnv")}
+              path="/api/actions/set-code-login-enabled"
               payload={() => ({ mode: "follow_env" })}
               disabled={override === undefined || override === null}
               onDone={notifyIdentityChanged}

@@ -234,9 +234,15 @@ type AuthService interface {
 // no authorization is bound. ValidateNewAccount is the dry-run counterpart and
 // returns the account that would be created (no ID). An occupied phone number
 // yields domain.ErrPhoneNumberOccupied.
+//
+// CreateAccountWith is CreateAccount with the store write handed to create:
+// account.create with a login password passes the single-transaction "create
+// the account and its login password" step, so neither is written without
+// the other.
 type AccountCreator interface {
 	ValidateNewAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error)
 	CreateAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error)
+	CreateAccountWith(ctx context.Context, phone, firstName, lastName string, create auth.CreateAccountFunc) (domain.User, error)
 }
 
 type AuthKeyRevoker interface {
@@ -548,7 +554,17 @@ type Dependencies struct {
 	// TELESRV_SIGN_UP_ENABLED，用来在命令结果里报告注册开关的实际状态。
 	ServerIdentity       ServerIdentityStore
 	SignUpEnabledDefault func() bool
-	Now                  func() time.Time
+	// CodeLoginEnabledDefault 返回服务端的 TELESRV_CODE_LOGIN_ENABLED，用来在命令结果里
+	// 报告验证码登录的实际状态；PasswordLoginEnabled 返回服务端的密码登录总开关
+	// （TELESRV_PASSWORD_LOGIN_ENABLED），供 server.set_code_login_enabled 防锁死。
+	CodeLoginEnabledDefault func() bool
+	PasswordLoginEnabled    func() bool
+	// LoginPasswords 是后台设置登录密码用的登录密码服务（见 loginpassword.go）。
+	// LoginPasswordFingerprintKey 是幂等指纹的 HMAC 子密钥，由 DeriveLoginPasswordFingerprintKey
+	// 从服务端密钥派生；为空时 account.set_login_password 拒绝执行。
+	LoginPasswords              LoginPasswordSetter
+	LoginPasswordFingerprintKey []byte
+	Now                         func() time.Time
 }
 
 type Service struct {
@@ -594,7 +610,12 @@ type Service struct {
 	clientUpdates           *ClientUpdates
 	serverIdentity          ServerIdentityStore
 	signUpEnabledDefault    func() bool
-	now                     func() time.Time
+	codeLoginEnabledDefault func() bool
+	passwordLoginEnabled    func() bool
+	loginPasswords          LoginPasswordSetter
+	// loginPasswordFingerprintKey 见 Dependencies.LoginPasswordFingerprintKey。
+	loginPasswordFingerprintKey []byte
+	now                         func() time.Time
 }
 
 func NewService(deps Dependencies) *Service {
@@ -728,6 +749,18 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.SignUpEnabledDefault != nil {
 		s.signUpEnabledDefault = deps.SignUpEnabledDefault
+	}
+	if deps.CodeLoginEnabledDefault != nil {
+		s.codeLoginEnabledDefault = deps.CodeLoginEnabledDefault
+	}
+	if deps.PasswordLoginEnabled != nil {
+		s.passwordLoginEnabled = deps.PasswordLoginEnabled
+	}
+	if deps.LoginPasswords != nil {
+		s.loginPasswords = deps.LoginPasswords
+	}
+	if len(deps.LoginPasswordFingerprintKey) > 0 {
+		s.loginPasswordFingerprintKey = append([]byte(nil), deps.LoginPasswordFingerprintKey...)
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -1164,11 +1197,18 @@ type SetPhoneRequest struct {
 }
 
 // CreateAccountRequest creates a regular user account. LastName is optional.
+//
+// Password 是可选的登录密码（#89），处理方式与 account.set_login_password 相同：明文永远不
+// 序列化，不进 RequestJSON、命令日志和审计；PasswordFingerprint 由 CreateAccount 按 Password
+// 填写（调用方传入的值会被覆盖），是服务端密钥派生的 HMAC，只用来让同一个 command id 换了
+// 密码再提交时判为冲突。不带密码时两者都为空，请求记录与以前完全一样。
 type CreateAccountRequest struct {
 	CommandMeta
-	Phone     string `json:"phone"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name,omitempty"`
+	Phone               string `json:"phone"`
+	FirstName           string `json:"first_name"`
+	LastName            string `json:"last_name,omitempty"`
+	Password            string `json:"-"`
+	PasswordFingerprint string `json:"password_fingerprint,omitempty"`
 }
 
 // ResolveUserByPhoneRequest is a read-only account lookup used by the
@@ -2424,9 +2464,27 @@ func (s *Service) SetPhone(ctx context.Context, req SetPhoneRequest) (CommandRes
 // number) are recorded in the command and audit logs too. A dry run only
 // validates; a real run leaves validation to AccountCreator.CreateAccount,
 // which applies the same rules, so the number is checked once per attempt.
+//
+// With a Password the account and its login password are written in one
+// transaction (see CreateAccountWith), so the member can sign in with
+// telesrv.signInWithPassword right away; the password never reaches the
+// command or audit records, only login_password=true in the details.
 func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (CommandResult, error) {
 	if s == nil || s.accountCreator == nil {
 		return CommandResult{}, fmt.Errorf("admin account creator dependency is not configured")
+	}
+	withPassword := req.Password != ""
+	req.PasswordFingerprint = ""
+	if withPassword {
+		if s.loginPasswords == nil {
+			return CommandResult{}, fmt.Errorf("admin login password dependency is not configured")
+		}
+		if len(s.loginPasswordFingerprintKey) == 0 {
+			return CommandResult{}, fmt.Errorf("admin login password fingerprint key is not configured")
+		}
+		// 指纹用规范化后的号码（与建号时 auth.NormalizeSignUpPhone 的规范化一致），同一个号码的
+		// 不同写法对应同一个账号、同一个指纹。
+		req.PasswordFingerprint = newAccountPasswordFingerprint(s.loginPasswordFingerprintKey, domain.NormalizePhone(req.Phone), req.Password)
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionCreateAccount, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		if req.DryRun {
@@ -2434,25 +2492,46 @@ func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (
 			if err != nil {
 				return CommandResult{}, createAccountError(err)
 			}
-			return CommandResult{Message: "account creation validated", Details: createAccountDetails(pending)}, nil
+			if withPassword {
+				if err := s.loginPasswords.ValidateAdminLoginPassword(req.Password); err != nil {
+					return CommandResult{}, setLoginPasswordError(err)
+				}
+			}
+			return CommandResult{Message: "account creation validated", Details: createAccountDetails(pending, withPassword)}, nil
 		}
-		created, err := s.accountCreator.CreateAccount(ctx, req.Phone, req.FirstName, req.LastName)
+		var created domain.User
+		var err error
+		if withPassword {
+			// 先算 verifier：密码不合规时还没有建号。
+			create, perr := s.loginPasswords.AdminAccountCreator(req.Password)
+			if perr != nil {
+				return CommandResult{}, setLoginPasswordError(perr)
+			}
+			created, err = s.accountCreator.CreateAccountWith(ctx, req.Phone, req.FirstName, req.LastName, create)
+		} else {
+			created, err = s.accountCreator.CreateAccount(ctx, req.Phone, req.FirstName, req.LastName)
+		}
 		if err != nil {
 			return CommandResult{}, createAccountError(err)
 		}
-		details := createAccountDetails(created)
+		details := createAccountDetails(created, withPassword)
 		details["user_id"] = created.ID
 		return CommandResult{Message: "account created", Details: details}, nil
 	})
 }
 
-func createAccountDetails(u domain.User) map[string]any {
-	return map[string]any{
+// createAccountDetails 是建号命令的结果详情；带登录密码时只记 login_password=true。
+func createAccountDetails(u domain.User, withPassword bool) map[string]any {
+	details := map[string]any{
 		"phone":         u.Phone,
 		"first_name":    u.FirstName,
 		"last_name":     u.LastName,
 		"premium_until": u.PremiumUntil,
 	}
+	if withPassword {
+		details["login_password"] = true
+	}
+	return details
 }
 
 // createAccountError attaches a stable code to the rejections an operator can
@@ -3801,22 +3880,41 @@ func (s *Service) RevokeSessions(ctx context.Context, req RevokeSessionsRequest)
 				return CommandResult{}, fmt.Errorf("authorization hash not found")
 			}
 			revoked = append(revoked, deleted)
+			if err := s.revokeAuthKeys(ctx, req.UserID, revoked); err != nil {
+				return CommandResult{}, err
+			}
 		} else {
-			deleted, err := s.auth.ResetAuthorizations(ctx, req.UserID, keep.AuthKeyID)
+			deleted, err := s.revokeAllAuthorizations(ctx, req.UserID, keep.AuthKeyID)
 			if err != nil {
 				return CommandResult{}, err
 			}
 			revoked = append(revoked, deleted...)
 		}
-		for _, a := range revoked {
-			if err := s.revoker.RevokeAuthorizationAuthKey(ctx, a.AuthKeyID, req.UserID); err != nil {
-				return CommandResult{}, err
-			}
-		}
 		details["revoked_hashes"] = authorizationHashes(revoked)
 		details["revoked_count"] = len(revoked)
 		return CommandResult{Message: "sessions revoked", Details: details}, nil
 	})
+}
+
+// revokeAllAuthorizations 删除 userID 除 keepAuthKeyID 之外的全部授权，并关闭对应的 auth key
+// 上的连接。account.revoke_sessions（revoke_all / keep_hash）和设置登录密码时的"同时登出所有
+// 设备"共用它。返回已删除的授权；关闭连接出错时，授权已经删掉了，照样返回它们。
+func (s *Service) revokeAllAuthorizations(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
+	deleted, err := s.auth.ResetAuthorizations(ctx, userID, keepAuthKeyID)
+	if err != nil {
+		return nil, err
+	}
+	return deleted, s.revokeAuthKeys(ctx, userID, deleted)
+}
+
+// revokeAuthKeys 关闭已删除授权的 auth key 上的连接。
+func (s *Service) revokeAuthKeys(ctx context.Context, userID int64, revoked []domain.Authorization) error {
+	for _, a := range revoked {
+		if err := s.revoker.RevokeAuthorizationAuthKey(ctx, a.AuthKeyID, userID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) DeletePrivateMessages(ctx context.Context, req DeletePrivateMessagesRequest) (CommandResult, error) {
