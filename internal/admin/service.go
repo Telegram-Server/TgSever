@@ -548,6 +548,11 @@ type Dependencies struct {
 	// TELESRV_SIGN_UP_ENABLED，用来在命令结果里报告注册开关的实际状态。
 	ServerIdentity       ServerIdentityStore
 	SignUpEnabledDefault func() bool
+	// CodeLoginEnabledDefault 返回服务端的 TELESRV_CODE_LOGIN_ENABLED，用来在命令结果里
+	// 报告验证码登录的实际状态；PasswordLoginEnabled 返回服务端的密码登录总开关
+	// （TELESRV_PASSWORD_LOGIN_ENABLED），供 server.set_code_login_enabled 防锁死。
+	CodeLoginEnabledDefault func() bool
+	PasswordLoginEnabled    func() bool
 	// LoginPasswords 是后台设置登录密码用的登录密码服务（见 loginpassword.go）。
 	// LoginPasswordFingerprintKey 是幂等指纹的 HMAC 子密钥，由 DeriveLoginPasswordFingerprintKey
 	// 从服务端密钥派生；为空时 account.set_login_password 拒绝执行。
@@ -599,6 +604,8 @@ type Service struct {
 	clientUpdates           *ClientUpdates
 	serverIdentity          ServerIdentityStore
 	signUpEnabledDefault    func() bool
+	codeLoginEnabledDefault func() bool
+	passwordLoginEnabled    func() bool
 	loginPasswords          LoginPasswordSetter
 	// loginPasswordFingerprintKey 见 Dependencies.LoginPasswordFingerprintKey。
 	loginPasswordFingerprintKey []byte
@@ -736,6 +743,12 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.SignUpEnabledDefault != nil {
 		s.signUpEnabledDefault = deps.SignUpEnabledDefault
+	}
+	if deps.CodeLoginEnabledDefault != nil {
+		s.codeLoginEnabledDefault = deps.CodeLoginEnabledDefault
+	}
+	if deps.PasswordLoginEnabled != nil {
+		s.passwordLoginEnabled = deps.PasswordLoginEnabled
 	}
 	if deps.LoginPasswords != nil {
 		s.loginPasswords = deps.LoginPasswords
