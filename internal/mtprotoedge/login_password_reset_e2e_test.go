@@ -10,6 +10,10 @@ import (
 	"github.com/iamxvbaba/td/tg"
 )
 
+// loginPasswordResetNotice 是免旧密码重设后 777000 通知的标题行，与普通修改的
+// loginPasswordChangedNotice 不同。
+const loginPasswordResetNotice = "Login password reset."
+
 // 忘记登录密码（#35）的端到端测试：先用验证码登录，在重设窗口内 telesrv.updateLoginPassword
 // 的 current 可以为空。窗口按当前授权的创建时间算，每次登录都会刷新。
 //
@@ -101,7 +105,7 @@ func TestLoginPasswordResetEndToEnd(t *testing.T) {
 }
 
 // resetForgottenLoginPassword 按忘记密码的流程操作：验证码登录后不填旧密码，把登录密码重设为
-// reset。它还确认重设由 777000 通知，并且这个会话在重设之前拿到的管理用 challenge
+// reset。它还确认 777000 发的是区别于普通修改的"免旧密码重设"通知，并且这个会话在重设之前拿到的管理用 challenge
 // （按 forgotten 算出证明）随之失效。
 func resetForgottenLoginPassword(ctx context.Context, raw *tg.Client, phone, forgotten, reset string) error {
 	if err := signInWithCode(ctx, raw, phone); err != nil {
@@ -129,8 +133,9 @@ func resetForgottenLoginPassword(ctx context.Context, raw *tg.Client, phone, for
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(top, loginPasswordChangedNotice) {
-		return fmt.Errorf("777000 top message after the reset = %q, want one starting with %q", top, loginPasswordChangedNotice)
+	if !strings.HasPrefix(top, loginPasswordResetNotice+"\n") || !strings.Contains(top, "without the old password") ||
+		!strings.Contains(top, "active sessions") {
+		return fmt.Errorf("777000 top message after the reset = %q, want the %q notice that names a reset without the old password and points at active sessions", top, loginPasswordResetNotice)
 	}
 	again, err := newSettingsFromMine(pw, "third")
 	if err != nil {

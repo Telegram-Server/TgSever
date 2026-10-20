@@ -277,8 +277,10 @@ type Config struct {
 	PasswordLoginUserRateLimit  int
 	PasswordLoginUserRateWindow time.Duration
 	// PasswordLoginResetWindow 是忘记登录密码时免旧密码重设的窗口：当前授权的创建时间
-	// （每次登录都会刷新，与提现前"刚登录"校验同一个字段）在窗口内时，telesrv.updateLoginPassword
-	// 的 current 可以为空。默认 10 分钟；<=0 关闭，已有登录密码时一律要求 current。
+	// （与提现前"刚登录"校验同一个字段）在窗口内时，telesrv.updateLoginPassword 的 current
+	// 可以为空。窗口从任何一次新授权算起：验证码登录、完成 2FA、扫码登录、passkey 登录、
+	// 密码登录/注册都算，所以持有现有会话的人可以扫码批准一台新设备，再在窗口内不知道旧密码
+	// 就换掉登录密码。因此默认 0（关闭），已有登录密码时一律要求 current；接受这个风险才设正值。
 	PasswordLoginResetWindow time.Duration
 	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate 是 777000 登录成功后的
 	// 欢迎消息（每次手机号/邮箱登录完成即发送）的回退模板——仅在管理面板未在
@@ -1095,7 +1097,7 @@ func Load() (Config, error) {
 		PasswordLoginEnabled:              envBoolOr("TELESRV_PASSWORD_LOGIN_ENABLED", false),
 		PasswordLoginUserRateLimit:        envIntOr("TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT", 10),
 		PasswordLoginUserRateWindow:       envDurationOr("TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW", time.Hour),
-		PasswordLoginResetWindow:          envDurationOr("TELESRV_PASSWORD_LOGIN_RESET_WINDOW", 10*time.Minute),
+		PasswordLoginResetWindow:          envDurationOr("TELESRV_PASSWORD_LOGIN_RESET_WINDOW", 0),
 		WelcomeMessagePhoneTemplate:       envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),
 		WelcomeMessageEmailTemplate:       envOr("TELESRV_WELCOME_MESSAGE_EMAIL_TEMPLATE", domain.DefaultWelcomeMessageEmailTemplate),
 		LoginCodeMessageTemplate:          envOr("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", domain.DefaultLoginCodeMessageTemplate),

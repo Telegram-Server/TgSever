@@ -19,9 +19,10 @@ type LoginPasswordManager interface {
 	// 和设置用的 new_algo；有登录密码时另带一个只有 rawAuthKeyID 能用的 SRP challenge。
 	GetMyLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, userID int64) (domain.PasswordSettings, error)
 	// UpdateMyLoginPassword 处理 telesrv.updateLoginPassword：校验 current 后设置、修改或
-	// （new_password_hash 为空时）删除登录密码，成功后由 777000 通知这个账号。signedInAt 是
-	// 当前授权的创建时间（零值表示未读取），在忘记密码的重设窗口内时允许 current 为空。
-	UpdateMyLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, userID int64, signedInAt time.Time, current domain.PasswordCheck, settings domain.PasswordInputSettings) error
+	// （new_password_hash 为空时）删除登录密码，成功后由 777000 通知这个账号。signedInAt
+	// 按需读取当前授权的创建时间（读不到时返回零值）：只有账号已有登录密码、current 为空
+	// 且重设窗口打开时才会调用，在窗口内时允许 current 为空。
+	UpdateMyLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, userID int64, signedInAt func(context.Context) (time.Time, error), current domain.PasswordCheck, settings domain.PasswordInputSettings) error
 }
 
 // registerTelesrvLoginPasswordManage 注册已登录才能调用的两个登录密码方法。它们不在
@@ -73,16 +74,13 @@ func (r *Router) onTelesrvUpdateLoginPassword(ctx context.Context, req *tg.Teles
 	} else if email, ok := req.NewSettings.GetEmail(); ok {
 		settings.Email, settings.HasEmail = email, true
 	}
-	current := domainPasswordCheck(req.Current)
-	var signedInAt time.Time
-	if current.Empty {
-		// 只有 current 为空（忘记密码重设）时才需要当前授权的创建时间。
-		if signedInAt, err = r.loginPasswordSignedInAt(ctx, userID); err != nil {
-			return false, err
-		}
+	// 当前授权的创建时间按需读取：业务层只在忘记密码重设（已有登录密码、current 为空、
+	// 窗口打开）时才调用，首次设置和带 current 的修改都不碰授权。
+	signedInAt := func(ctx context.Context) (time.Time, error) {
+		return r.loginPasswordSignedInAt(ctx, userID)
 	}
 	rawAuthKeyID, _ := RawAuthKeyIDFrom(ctx)
-	if err := r.deps.LoginPassword.UpdateMyLoginPassword(ctx, rawAuthKeyID, userID, signedInAt, current, settings); err != nil {
+	if err := r.deps.LoginPassword.UpdateMyLoginPassword(ctx, rawAuthKeyID, userID, signedInAt, domainPasswordCheck(req.Current), settings); err != nil {
 		return false, loginPasswordManageErr(err)
 	}
 	return true, nil
@@ -104,16 +102,9 @@ func (r *Router) loginPasswordManageUserID(ctx context.Context) (int64, error) {
 // "刚登录"校验读的是同一个字段。读不到与 userID 对应、已完成登录的授权时返回零值，
 // 业务层据此不放行免旧密码重设。
 func (r *Router) loginPasswordSignedInAt(ctx context.Context, userID int64) (time.Time, error) {
-	authKeyID, ok := AuthKeyIDFrom(ctx)
-	if !ok || authKeyID == ([8]byte{}) || r.deps.Auth == nil {
-		return time.Time{}, nil
-	}
-	authorization, found, err := r.deps.Auth.Authorization(ctx, authKeyID)
-	if err != nil {
-		return time.Time{}, internalErr()
-	}
-	if !found || authorization.AuthKeyID != authKeyID || authorization.UserID != userID || authorization.PasswordPending {
-		return time.Time{}, nil
+	authorization, ok, err := r.signedInAuthorization(ctx, userID)
+	if err != nil || !ok {
+		return time.Time{}, err
 	}
 	return authorization.CreatedAt, nil
 }
