@@ -236,9 +236,14 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
     permissions: ["premium.manage", "stars.read", "prices.manage", "donations.manage"]
   },
   {
+    title: "Client updates",
+    hint: "The desktop update catalog: which builds custom Telegram Desktop clients are offered",
+    permissions: ["updates.read", "updates.publish"]
+  },
+  {
     title: "The console itself",
     hint: "The rights that can hand out every other right or review the trail",
-    permissions: ["admins.manage", "audit.read", "server.manage", "updates.read", "updates.publish"]
+    permissions: ["admins.manage", "audit.read", "server.manage"]
   }
 ];
 

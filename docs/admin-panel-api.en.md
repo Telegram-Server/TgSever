@@ -91,12 +91,13 @@ to a named operator account.
 | `stars.read` | View the Stars ledger — Browse Stars balances and signed per-account history |
 | `prices.manage` | Manage shop prices — Edit product prices, hide products and set the Stars rate |
 | `donations.manage` | Manage crypto donations — Watch the deposit wallet, configure chains and read the deposit ledger |
+| **Client updates** | |
+| `updates.read` | View client updates — See the desktop update service status and every published build |
+| `updates.publish` | Publish client updates — Upload, publish, roll back, disable and re-enable desktop builds |
 | **The console itself** | |
 | `admins.manage` | Manage operators — Create operators and decide what everyone can do |
 | `audit.read` | View the audit log — See who did what across the console |
 | `server.manage` | Manage server settings — Edit the server identity, login-notification templates and .env, and view service status |
-| `updates.read` | View client updates — See the desktop update service status and every published build |
-| `updates.publish` | Publish client updates — Upload, publish, roll back, disable and re-enable desktop builds |
 | `*` | Every right, including ones added later (wildcard). |
 <!-- END GENERATED:permissions -->
 
