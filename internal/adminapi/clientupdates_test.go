@@ -24,6 +24,18 @@ type clientUpdatesCaptureService struct {
 	// uploadBuffered 记录 Service 收到的是不是已经整体读进内存的请求体。
 	uploadBuffered bool
 	published      []admin.PublishClientUpdateRequest
+	disabled       []admin.ClientUpdateEntryRequest
+	enabled        []admin.ClientUpdateEntryRequest
+}
+
+func (s *clientUpdatesCaptureService) DisableClientUpdate(_ context.Context, req admin.ClientUpdateEntryRequest) (admin.CommandResult, error) {
+	s.disabled = append(s.disabled, req)
+	return admin.CommandResult{CommandID: req.CommandID, Action: admin.ActionDisableClientUpdate, Status: "completed"}, nil
+}
+
+func (s *clientUpdatesCaptureService) EnableClientUpdate(_ context.Context, req admin.ClientUpdateEntryRequest) (admin.CommandResult, error) {
+	s.enabled = append(s.enabled, req)
+	return admin.CommandResult{CommandID: req.CommandID, Action: admin.ActionEnableClientUpdate, Status: "completed"}, nil
 }
 
 func (s *clientUpdatesCaptureService) UploadClientUpdate(_ context.Context, req admin.UploadClientUpdateRequest, body io.Reader) (admin.CommandResult, error) {
@@ -139,6 +151,37 @@ func TestAdminAPIClientUpdatePublishRequiresUpdatesPublish(t *testing.T) {
 	srv.routes().ServeHTTP(rec, forbidden)
 	if rec.Code != http.StatusForbidden || len(svc.published) != 1 {
 		t.Fatalf("read-only publish status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminAPIClientUpdateDisableEnableRequireUpdatesPublish(t *testing.T) {
+	svc := &clientUpdatesCaptureService{}
+	srv := clientUpdatesServer(svc)
+	body := `{"command_id":"exec-1","reason":"crashes on start","platform":"linux","channel":"stable"}`
+	captured := map[string]func() []admin.ClientUpdateEntryRequest{
+		"/v1/client-updates/disable": func() []admin.ClientUpdateEntryRequest { return svc.disabled },
+		"/v1/client-updates/enable":  func() []admin.ClientUpdateEntryRequest { return svc.enabled },
+	}
+	for path, calls := range captured {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer publish-token")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || len(calls()) != 1 {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+		got := calls()[0]
+		if got.Platform != "linux" || got.Channel != "stable" || got.Actor != "publisher" || got.Reason != "crashes on start" || got.CommandID != "exec-1" {
+			t.Fatalf("%s request = %+v", path, got)
+		}
+
+		forbidden := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		forbidden.Header.Set("Authorization", "Bearer updates-token")
+		rec = httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, forbidden)
+		if rec.Code != http.StatusForbidden || len(calls()) != 1 || !strings.Contains(rec.Body.String(), PermissionUpdatesPublish) {
+			t.Fatalf("%s read-only status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 

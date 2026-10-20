@@ -1,6 +1,7 @@
 package adminapi
 
 import (
+	"context"
 	"io"
 	"mime"
 	"net/http"
@@ -105,6 +106,32 @@ func (s *Server) handlePublishClientUpdate(w http.ResponseWriter, r *http.Reques
 	}
 	s.applyVerificationPrincipal(r, &req.CommandMeta)
 	result, err := svc.PublishClientUpdate(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// handleDisableClientUpdate and handleEnableClientUpdate take an
+// admin.ClientUpdateEntryRequest (platform, channel and the command
+// metadata) as JSON.
+func (s *Server) handleDisableClientUpdate(w http.ResponseWriter, r *http.Request) {
+	s.handleClientUpdateEntry(w, r, clientUpdatesService.DisableClientUpdate)
+}
+
+func (s *Server) handleEnableClientUpdate(w http.ResponseWriter, r *http.Request) {
+	s.handleClientUpdateEntry(w, r, clientUpdatesService.EnableClientUpdate)
+}
+
+func (s *Server) handleClientUpdateEntry(w http.ResponseWriter, r *http.Request, call func(clientUpdatesService, context.Context, admin.ClientUpdateEntryRequest) (admin.CommandResult, error)) {
+	svc, ok := s.svc.(clientUpdatesService)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "client updates are not configured")
+		return
+	}
+	var req admin.ClientUpdateEntryRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	s.applyVerificationPrincipal(r, &req.CommandMeta)
+	result, err := call(svc, r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
