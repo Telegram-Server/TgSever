@@ -60,6 +60,8 @@ type Service struct {
 	// notices 与 log 见 manage.go 的 WithChangeNotices。
 	notices NoticeSender
 	log     *zap.Logger
+	// resetWindow 见 manage.go 的 WithResetWindow。
+	resetWindow time.Duration
 }
 
 // Option 调整登录密码服务。

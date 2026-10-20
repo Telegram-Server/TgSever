@@ -1694,7 +1694,9 @@ func run(logger *zap.Logger) error {
 		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled),
 		loginpasswordapp.WithUserRateLimit(rateLimiter, cfg.PasswordLoginUserRateLimit, cfg.PasswordLoginUserRateWindow),
 		// 设置、修改、删除登录密码后由 777000 通知该账号：消息与 outbox 同事务落库，再推给所有在线会话。
-		loginpasswordapp.WithChangeNotices(messageStore, logger.Named("login-password")))
+		loginpasswordapp.WithChangeNotices(messageStore, logger.Named("login-password")),
+		// 忘记登录密码：验证码登录后，授权创建时间在窗口内可以不填旧密码直接重设（默认 10 分钟，0 关闭）。
+		loginpasswordapp.WithResetWindow(cfg.PasswordLoginResetWindow))
 	if cfg.PasswordLoginEnabled {
 		logger.Warn("手机号 + 密码登录已启用：任何人都可以不经验证码用任意号码注册")
 	}

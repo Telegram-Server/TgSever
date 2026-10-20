@@ -15,8 +15,9 @@ import (
 
 // 已登录时管理登录密码：telesrv.getMyLoginPassword 与 telesrv.updateLoginPassword。
 // 规则与 2FA 云密码的 account.getPassword / account.updatePasswordSettings 一致：已有登录
-// 密码时，改动必须带上当前密码的 SRP 证明；new_password_hash 为空表示删除。每次改动成功后
-// 由系统账号 777000 给这个账号发一条通知消息。
+// 密码时，改动必须带上当前密码的 SRP 证明（例外是忘记密码：刚登录的授权在重设窗口内可以
+// 不带，见 WithResetWindow）；new_password_hash 为空表示删除。每次改动成功后由系统账号
+// 777000 给这个账号发一条通知消息。
 
 // NoticeSender 落一条私聊消息（store.MessageStore.SendPrivateText）。生产里是 postgres 的
 // MessageStore：消息、pts 事件和 dispatch outbox 在同一个事务里提交，outbox 再把
@@ -34,6 +35,25 @@ func WithChangeNotices(sender NoticeSender, log *zap.Logger) Option {
 		s.notices = sender
 		s.log = log
 	}
+}
+
+// WithResetWindow 设置忘记登录密码时免旧密码重设的窗口（TELESRV_PASSWORD_LOGIN_RESET_WINDOW）。
+// 忘了登录密码的用户先用验证码登录，当前授权的创建时间在 window 内时，updateLoginPassword
+// 的 current 可以为空。授权的创建时间每次登录（含完成 2FA）都会刷新，提现前的"刚登录"
+// 校验用的也是它。window <=0（默认）关闭：已有登录密码时一律要求 current。
+func WithResetWindow(window time.Duration) Option {
+	return func(s *Service) {
+		s.resetWindow = window
+	}
+}
+
+// withinResetWindow 报告创建于 signedInAt 的授权是否还在重设窗口内。signedInAt 为零值
+// （调用方没有读到授权）一律不算。
+func (s *Service) withinResetWindow(signedInAt time.Time) bool {
+	if s.resetWindow <= 0 || signedInAt.IsZero() {
+		return false
+	}
+	return s.now().Sub(signedInAt) < s.resetWindow
 }
 
 // changeNoticeTimeout 是发送改动通知的上限，与请求本身的取消无关。
@@ -94,13 +114,16 @@ func (s *Service) GetMyLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, 
 //   - 账号已有登录密码：current 必须是 getMyLoginPassword（或同一 auth_key 上的
 //     getLoginPassword）签发的 challenge 的正确证明，错误码与 signInWithPassword 相同：
 //     challenge 不存在、过期、不是发给 rawAuthKeyID 或这个账号的 → domain.ErrSRPIDInvalid；
-//     期间密码被改过 → domain.ErrSRPPasswordChanged；证明不成立或 current 为空 →
+//     期间密码被改过 → domain.ErrSRPPasswordChanged；证明不成立 → domain.ErrPasswordHashInvalid；
+//   - 忘记密码：signedInAt（当前授权的创建时间）在重设窗口内时（见 WithResetWindow），
+//     current 可以为空；窗口外或窗口关闭时，已有登录密码而 current 为空 →
 //     domain.ErrPasswordHashInvalid；
 //   - 账号没有登录密码：current 必须是 inputCheckPasswordEmpty；
 //   - new_password_hash 为空表示删除，否则设置或修改。成功后给账号发 777000 通知。
 //
-// 忘记密码时在窗口期内免旧密码重设属于后续票，这里只要有登录密码就一律要求 current。
-func (s *Service) UpdateMyLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, userID int64, current domain.PasswordCheck, in domain.PasswordInputSettings) error {
+// 免旧密码的重设与普通修改走同一条路：同样发 777000 通知；之前签发的 challenge 记着旧
+// verifier，之后再交一律 domain.ErrSRPPasswordChanged。
+func (s *Service) UpdateMyLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, userID int64, signedInAt time.Time, current domain.PasswordCheck, in domain.PasswordInputSettings) error {
 	if !s.Enabled() {
 		return domain.ErrPasswordLoginDisabled
 	}
@@ -120,7 +143,7 @@ func (s *Service) UpdateMyLoginPassword(ctx context.Context, rawAuthKeyID [8]byt
 	if err != nil {
 		return err
 	}
-	if err := s.checkCurrentLoginPassword(ctx, rawAuthKeyID, u.ID, stored, has, current); err != nil {
+	if err := s.checkCurrentLoginPassword(ctx, rawAuthKeyID, u.ID, stored, has, s.withinResetWindow(signedInAt), current); err != nil {
 		return err
 	}
 	var change passwordChange
@@ -167,10 +190,11 @@ func (s *Service) manageableUser(ctx context.Context, userID int64) (domain.User
 	return u, nil
 }
 
-// checkCurrentLoginPassword 校验 updateLoginPassword 的 current。has/stored 是刚读出的登录密码。
-func (s *Service) checkCurrentLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, userID int64, stored domain.LoginPassword, has bool, current domain.PasswordCheck) error {
+// checkCurrentLoginPassword 校验 updateLoginPassword 的 current。has/stored 是刚读出的登录密码；
+// resetting 表示当前授权还在忘记密码的重设窗口内，此时允许 current 为空。
+func (s *Service) checkCurrentLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, userID int64, stored domain.LoginPassword, has, resetting bool, current domain.PasswordCheck) error {
 	if current.Empty {
-		if has {
+		if has && !resetting {
 			return domain.ErrPasswordHashInvalid
 		}
 		return nil

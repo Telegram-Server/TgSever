@@ -46,7 +46,8 @@ import (
 //
 // 结构：TestLoginPasswordEndToEnd 只建一次开关打开的服务端（loginPasswordServer），
 // 每个场景是一个并行子测试、用自己的手机号隔离。#31 注册、#32 登录已在这里；后续票
-// （#33 限流、#34 修改密码、#35 忘记密码）往这里加子测试即可；需要调小阈值或窗口时，
+// （#33 限流、#34 修改密码）往这里加子测试即可；#35 忘记密码的重设窗口是服务端级别配置，
+// 在 login_password_reset_e2e_test.go 里单独起服务端。需要调小阈值或窗口时，
 // 在 loginPasswordServerOptions 里加字段，由 startLoginPasswordServer 传给业务层。
 // 服务端带 SessionManager（观察新设备登录推送），2FA 云密码 store 由 auth 和 account 共用。
 //
@@ -83,6 +84,9 @@ type loginPasswordServerOptions struct {
 	rateLimits *loginPasswordRateLimits
 	// challengeLimits 传给内存 challenge store，用来调小挂起 challenge 的上限。
 	challengeLimits []memory.LoginPasswordChallengeOption
+	// resetWindow 是忘记密码免旧密码重设的窗口（见 login_password_reset_e2e_test.go）；
+	// 零值关闭，已有登录密码时一律要求 current。
+	resetWindow time.Duration
 }
 
 // loginPasswordServer 是一个跑在随机端口上的完整服务端，供多个子测试并发使用。
@@ -164,6 +168,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	loginPasswords := loginpasswordapp.NewService(userStore, loginPasswordStore,
 		memory.NewLoginPasswordChallengeStore(nil, opts.challengeLimits...), authService,
 		loginpasswordapp.WithEnabled(opts.enabled), opts.rateLimits.userRateLimit(limiter),
+		loginpasswordapp.WithResetWindow(opts.resetWindow),
 		loginpasswordapp.WithChangeNotices(messageStore, zaptest.NewLogger(t).Named("login-password")))
 	// 注销账号（account.deleteAccount）走内存的账号生命周期 store，同一事务里删掉登录密码。
 	lifecycle := memory.NewAccountLifecycleStore(baseUsers, loginPasswordStore,

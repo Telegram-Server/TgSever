@@ -20,7 +20,7 @@ import (
 )
 
 // 管理登录密码的业务层单测只覆盖端到端测试构造不出来的情形：管理用 challenge 过期（注入
-// 时钟）、bot 账号、通知发送失败、删除一个本来就不存在的密码。其余行为以
+// 时钟）、重设窗口的边界（注入时钟）、bot 账号、通知发送失败、删除一个本来就不存在的密码。其余行为以
 // internal/mtprotoedge/login_password_manage_e2e_test.go 为准。
 
 // recordingNotices 记录发出的 777000 通知；err 非空时每次发送都失败。
@@ -46,12 +46,12 @@ func (r *recordingNotices) messages() []domain.SendPrivateTextRequest {
 	return append([]domain.SendPrivateTextRequest(nil), r.sent...)
 }
 
-func newManageFixture(t *testing.T, notices *recordingNotices, log *zap.Logger) *fixture {
+func newManageFixture(t *testing.T, notices *recordingNotices, log *zap.Logger, opts ...loginpassword.Option) *fixture {
 	t.Helper()
 	f := &fixture{users: memory.NewUserStore(), flows: &fakeFlows{}, now: time.Unix(1_800_000_000, 0)}
 	f.passwords = memory.NewLoginPasswordStore(f.users)
-	f.svc = loginpassword.NewService(f.users, f.passwords, memory.NewLoginPasswordChallengeStore(f.clock), f.flows,
-		loginpassword.WithEnabled(true), loginpassword.WithClock(f.clock), loginpassword.WithChangeNotices(notices, log))
+	opts = append([]loginpassword.Option{loginpassword.WithEnabled(true), loginpassword.WithClock(f.clock), loginpassword.WithChangeNotices(notices, log)}, opts...)
+	f.svc = loginpassword.NewService(f.users, f.passwords, memory.NewLoginPasswordChallengeStore(f.clock), f.flows, opts...)
 	return f
 }
 
@@ -78,11 +78,42 @@ func TestUpdateMyLoginPasswordRejectsAnExpiredChallenge(t *testing.T) {
 	}
 	check := proof(t, settings, "pw")
 	f.advance(5 * time.Minute)
-	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, check, newSettings(t, "next")); !errors.Is(err, domain.ErrSRPIDInvalid) {
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, time.Time{}, check, newSettings(t, "next")); !errors.Is(err, domain.ErrSRPIDInvalid) {
 		t.Fatalf("UpdateMyLoginPassword after the TTL = %v, want ErrSRPIDInvalid", err)
 	}
 	if len(notices.messages()) != 0 {
 		t.Fatal("a rejected update sent a notice")
+	}
+}
+
+func TestUpdateMyLoginPasswordResetWindowEndsAtTheWindow(t *testing.T) {
+	notices := &recordingNotices{}
+	f := newManageFixture(t, notices, zap.NewNop(), loginpassword.WithResetWindow(10*time.Minute))
+	ctx := context.Background()
+	u := f.account(t, domain.User{Phone: "15550341010", FirstName: "Forgot"}, "forgotten")
+	signedInAt := f.clock()
+	empty := domain.PasswordCheck{Empty: true}
+
+	// 授权创建满 10 分钟：窗口已过，空 current 被拒绝。
+	f.advance(10 * time.Minute)
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, signedInAt, empty, newSettings(t, "late")); !errors.Is(err, domain.ErrPasswordHashInvalid) {
+		t.Fatalf("empty current 10m after login = %v, want ErrPasswordHashInvalid", err)
+	}
+	// 没有读到授权（零值）同样不放行。
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, time.Time{}, empty, newSettings(t, "unknown")); !errors.Is(err, domain.ErrPasswordHashInvalid) {
+		t.Fatalf("empty current without a login time = %v, want ErrPasswordHashInvalid", err)
+	}
+	if len(notices.messages()) != 0 {
+		t.Fatal("a rejected reset sent a notice")
+	}
+
+	// 刚过一秒的授权还在窗口内：重设成功，并且像普通修改一样通知。
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, f.clock().Add(-time.Second), empty, newSettings(t, "reset")); err != nil {
+		t.Fatalf("empty current 1s after login = %v, want nil", err)
+	}
+	got := notices.messages()
+	if len(got) != 1 || !strings.HasPrefix(got[0].Message, "Login password changed.") {
+		t.Fatalf("notices after the reset = %+v, want one \"Login password changed.\"", got)
 	}
 }
 
@@ -96,10 +127,10 @@ func TestManageLoginPasswordRejectsBots(t *testing.T) {
 	if _, err := f.svc.GetMyLoginPassword(ctx, testAuthKey, bot.ID); !errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 		t.Fatalf("GetMyLoginPassword for a bot = %v, want ErrSystemUserLoginForbidden", err)
 	}
-	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, bot.ID, domain.PasswordCheck{Empty: true}, newSettings(t, "bot")); !errors.Is(err, auth.ErrSystemUserLoginForbidden) {
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, bot.ID, time.Time{}, domain.PasswordCheck{Empty: true}, newSettings(t, "bot")); !errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 		t.Fatalf("UpdateMyLoginPassword for a bot = %v, want ErrSystemUserLoginForbidden", err)
 	}
-	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, domain.OfficialSystemUserID, domain.PasswordCheck{Empty: true}, newSettings(t, "system")); !errors.Is(err, auth.ErrSystemUserLoginForbidden) {
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, domain.OfficialSystemUserID, time.Time{}, domain.PasswordCheck{Empty: true}, newSettings(t, "system")); !errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 		t.Fatalf("UpdateMyLoginPassword for 777000 = %v, want ErrSystemUserLoginForbidden", err)
 	}
 }
@@ -113,13 +144,13 @@ func TestLoginPasswordChangeNoticeComesFrom777000(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	// 本来就没有登录密码时删除是空操作：成功、但没有改动可通知。
-	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, domain.PasswordCheck{Empty: true}, domain.PasswordInputSettings{}); err != nil {
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, time.Time{}, domain.PasswordCheck{Empty: true}, domain.PasswordInputSettings{}); err != nil {
 		t.Fatalf("removing a missing login password = %v, want nil", err)
 	}
 	if got := notices.messages(); len(got) != 0 {
 		t.Fatalf("removing a missing login password sent %d notices, want 0", len(got))
 	}
-	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, domain.PasswordCheck{Empty: true}, newSettings(t, "set")); err != nil {
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, time.Time{}, domain.PasswordCheck{Empty: true}, newSettings(t, "set")); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	got := notices.messages()
@@ -147,7 +178,7 @@ func TestLoginPasswordChangeSurvivesAFailedNotice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, domain.PasswordCheck{Empty: true}, newSettings(t, "kept")); err != nil {
+	if err := f.svc.UpdateMyLoginPassword(ctx, testAuthKey, u.ID, time.Time{}, domain.PasswordCheck{Empty: true}, newSettings(t, "kept")); err != nil {
 		t.Fatalf("set with a failing notice = %v, want nil", err)
 	}
 	if _, found, err := f.passwords.GetLoginPassword(ctx, u.ID); err != nil || !found {
