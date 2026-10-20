@@ -1394,6 +1394,14 @@ export type ServerIdentity = {
   default_sign_up_enabled: boolean;
   sign_up_enabled_effective: boolean;
   sign_up_source: "env" | "override";
+  // Code login switch, same shape as sign-up. password_login_enabled is the
+  // server's password login switch: while it is off the server refuses to
+  // turn code login off (CODE_LOGIN_LOCKOUT).
+  code_login_enabled?: boolean;
+  default_code_login_enabled: boolean;
+  code_login_enabled_effective: boolean;
+  code_login_source: "env" | "override";
+  password_login_enabled: boolean;
 };
 
 export type EnvField = {

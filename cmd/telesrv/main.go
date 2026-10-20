@@ -1082,6 +1082,10 @@ func run(logger *zap.Logger) error {
 		// 后台自己只读同一目录（Docker 下它的挂载是只读的）。
 		ServerIdentity:       identityStore,
 		SignUpEnabledDefault: func() bool { return cfg.SignUpEnabled },
+		// 验证码登录开关的环境默认值与密码登录总开关：后者用于防锁死——密码登录关闭时
+		// 服务端命令拒绝关闭验证码登录。
+		CodeLoginEnabledDefault: func() bool { return cfg.CodeLoginEnabled },
+		PasswordLoginEnabled:    func() bool { return cfg.PasswordLoginEnabled },
 	})
 	userProjectionFacts := userprojection.NewDurableUserProjectionFacts(
 		adminService,
@@ -1684,9 +1688,10 @@ func run(logger *zap.Logger) error {
 		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，
 		// help.getAppConfig 下发的 telesrv_sign_up_disabled 也读它。
 		auth.WithSignUpAllowed(auth.IdentitySignUpAllowed(identityStore, cfg.SignUpEnabled)),
-		// 验证码登录开关：目前只有 TELESRV_CODE_LOGIN_ENABLED 一个来源；auth.CodeLoginAllowed
-		// 是全服唯一的判断点，help.getAppConfig 下发的 telesrv_code_login_disabled 也读它。
-		auth.WithCodeLoginAllowed(auth.StaticCodeLoginAllowed(cfg.CodeLoginEnabled)),
+		// 验证码登录开关：与注册开关同构，管理面板覆盖值（identity.json，每次现读）优先，
+		// 未设置时跟随 TELESRV_CODE_LOGIN_ENABLED；auth.CodeLoginAllowed 是全服唯一的判断点，
+		// help.getAppConfig 下发的 telesrv_code_login_disabled 也读它。
+		auth.WithCodeLoginAllowed(auth.IdentityCodeLoginAllowed(identityStore, cfg.CodeLoginEnabled)),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1705,7 +1710,8 @@ func run(logger *zap.Logger) error {
 			Sender:       loginEmailSender,
 		}))
 	codeLoginAuth = authService
-	if !cfg.CodeLoginEnabled {
+	// 启动时按实际状态（含管理面板覆盖）提示；之后的切换由服务端命令写入、每次现读。
+	if allowed, err := authService.CodeLoginAllowed(ctx); err == nil && !allowed {
 		logger.Warn("验证码登录已关闭：不签发、不投递任何登录验证码，只能用密码、扫码或 passkey 登录")
 	}
 	// 手机号 + 密码登录（telesrv 扩展协议）。总开关默认关闭；关闭时服务照常构造，

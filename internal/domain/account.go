@@ -49,6 +49,15 @@ func ResolveSignUpEnabled(panelOverride *bool, envDefault bool) bool {
 	return envDefault
 }
 
+// ResolveCodeLoginEnabled 按优先级给出实际的验证码登录开关：管理面板覆盖值（非 nil）
+// 优先，否则跟随环境变量 TELESRV_CODE_LOGIN_ENABLED。服务端判断与管理面板展示共用这一处。
+func ResolveCodeLoginEnabled(panelOverride *bool, envDefault bool) bool {
+	if panelOverride != nil {
+		return *panelOverride
+	}
+	return envDefault
+}
+
 type AuthCodeDeliveryKind string
 
 const (
