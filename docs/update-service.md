@@ -290,9 +290,9 @@ Semantics:
   not lock the service user out.
 
 The running service notices the new manifest by its modification time and size
-and switches to it without a restart. To withdraw a release, set
-`"disabled": true` on its entry (or publish an older build with
-`-allow-downgrade`). Validate a hand-edited manifest before putting it in place
+and switches to it without a restart. To withdraw a release, disable its entry
+on the admin panel's Client updates page (see below), or set `"disabled": true`
+on it by hand, or publish an older build with `-allow-downgrade`. Validate a hand-edited manifest before putting it in place
 with `telesrv-update -check` (see below).
 
 ## Publishing from the admin panel
@@ -311,7 +311,7 @@ screen:
 | Right | Allows |
 |---|---|
 | `updates.read` | The Client updates tab: service status, update URL, manifest reload errors, every desktop entry (disabled ones included). |
-| `updates.publish` | Uploading, preflighting and publishing packages. It does not include `updates.read`; grant both. |
+| `updates.publish` | Uploading, preflighting and publishing packages, and disabling and re-enabling entries. It does not include `updates.read`; grant both. |
 
 **Upload, preflight, confirm.** The operator picks a package, writes the reason,
 and uploads it once. The upload is streamed (browser → panel → admin API, never
@@ -358,7 +358,33 @@ Only the server container writes the update volume: the admin container
 forwards the upload to the admin API inside `telesrv` and needs neither the
 volume nor the root public key.
 
-<!-- Disabling and re-enabling an entry from the panel (#82) is documented here. -->
+**Disable and re-enable.** With `updates.publish` the entries table has an
+action per row:
+
+- **Disable** stops serving that platform and channel at once: the entry stays
+  in the manifest with `"disabled": true`, `/current*` stops listing it and
+  `/files/` stops serving its package, which stays on disk. Use it to pull a bad
+  build. It is a warn-level confirm (reason, dry run, confirm). Clients that
+  already installed the build keep it; disabling does not downgrade anyone. A
+  later publish still counts the disabled build, so only a newer build, or a
+  rollback, replaces it.
+- **Re-enable** serves a disabled entry again. Because the entry may be a build
+  that was pulled for a reason, it is a danger-level confirm with a required
+  reason and a warning. It skips the "newer than the published build" check
+  (re-enabling is the explicit decision that check exists to force), but the
+  new manifest is fully validated before it replaces the old one: the package
+  must still be in the files directory, match the entry's size and SHA-256, and
+  still verify against the root key. Otherwise the re-enable is refused and the
+  manifest stays as it was.
+
+Both take the same `<manifest>.lock` as a publish, so they are refused with
+`another publish is in progress` while a panel or CLI publish runs (their dry
+runs take no lock). They write the manifest the same way, a temporary file next
+to it renamed into place after validation, and change no other entry. Disabling
+a disabled entry, or re-enabling an enabled one, reports that nothing changed
+and writes nothing. Each one is an audited command, `updates.disable` or
+`updates.enable`, recording the platform, channel, build, file, SHA-256 and
+whether anything changed; failed attempts are recorded with their error.
 
 ## In-process deployment
 
