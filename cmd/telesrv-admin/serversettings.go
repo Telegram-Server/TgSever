@@ -100,13 +100,17 @@ type serverIdentityAPIResponse struct {
 	// The code login switch, reported exactly like the sign-up switch above:
 	// identity.Info's raw code_login_enabled override plus its resolved state
 	// and source (domain.ResolveCodeLoginEnabled over
-	// s.cfg.CodeLoginEnabledDefault). PasswordLoginEnabled lets the panel
-	// explain up front that the server refuses to turn code login off while
-	// password login is disabled (admin.CodeCodeLoginLockout).
+	// s.cfg.CodeLoginEnabledDefault and s.cfg.PasswordLoginEnabled: with
+	// password login disabled code login is always on). PasswordLoginEnabled
+	// lets the panel explain up front that the server refuses to turn code
+	// login off while password login is disabled (admin.CodeCodeLoginLockout);
+	// CodeLoginOverrideIgnored says a stored "off" override is being ignored
+	// for that reason.
 	DefaultCodeLoginEnabled   bool   `json:"default_code_login_enabled"`
 	CodeLoginEnabledEffective bool   `json:"code_login_enabled_effective"`
 	CodeLoginSource           string `json:"code_login_source"`
 	PasswordLoginEnabled      bool   `json:"password_login_enabled"`
+	CodeLoginOverrideIgnored  bool   `json:"code_login_override_ignored"`
 }
 
 func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request) {
@@ -122,11 +126,12 @@ func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request)
 		DefaultLoginCodeMessageTemplate:    s.cfg.LoginCodeMessageDefault,
 		DefaultSignUpEnabled:               s.cfg.SignUpEnabledDefault,
 		SignUpEnabledEffective:             domain.ResolveSignUpEnabled(info.SignUpEnabled, s.cfg.SignUpEnabledDefault),
-		SignUpSource:                       admin.SignUpSource(info.SignUpEnabled),
+		SignUpSource:                       admin.OverrideSource(info.SignUpEnabled),
 		DefaultCodeLoginEnabled:            s.cfg.CodeLoginEnabledDefault,
-		CodeLoginEnabledEffective:          domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, s.cfg.CodeLoginEnabledDefault),
-		CodeLoginSource:                    admin.SignUpSource(info.CodeLoginEnabled),
+		CodeLoginEnabledEffective:          domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, s.cfg.CodeLoginEnabledDefault, s.cfg.PasswordLoginEnabled),
+		CodeLoginSource:                    admin.OverrideSource(info.CodeLoginEnabled),
 		PasswordLoginEnabled:               s.cfg.PasswordLoginEnabled,
+		CodeLoginOverrideIgnored:           !s.cfg.PasswordLoginEnabled && info.CodeLoginEnabled != nil && !*info.CodeLoginEnabled,
 	})
 }
 

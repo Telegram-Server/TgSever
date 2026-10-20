@@ -1396,12 +1396,14 @@ export type ServerIdentity = {
   sign_up_source: "env" | "override";
   // Code login switch, same shape as sign-up. password_login_enabled is the
   // server's password login switch: while it is off the server refuses to
-  // turn code login off (CODE_LOGIN_LOCKOUT).
+  // turn code login off (CODE_LOGIN_LOCKOUT), and code login is always on --
+  // code_login_override_ignored says a saved "off" override is ignored then.
   code_login_enabled?: boolean;
   default_code_login_enabled: boolean;
   code_login_enabled_effective: boolean;
   code_login_source: "env" | "override";
   password_login_enabled: boolean;
+  code_login_override_ignored?: boolean;
 };
 
 export type EnvField = {

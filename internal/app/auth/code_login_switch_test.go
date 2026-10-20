@@ -276,13 +276,13 @@ func TestCodeLoginDisabledLoginEmailSetupRejected(t *testing.T) {
 	codes := memory.NewCodeStore()
 	sender := &testMailSender{}
 	sw := &codeLoginSwitch{}
-	var authSvc *Service
+	// 与 cmd/telesrv 的接线相同：account 与 auth 共用同一个 CodeLoginAllowedFunc。
 	accountSvc := accountapp.NewService(memory.NewPasswordStore(),
 		accountapp.WithUsers(users),
 		accountapp.WithLoginEmailVerification(codes, sender, time.Minute, 3, 6),
-		accountapp.WithCodeLoginGate(func(ctx context.Context) error { return authSvc.CheckCodeLoginAllowed(ctx) }),
+		accountapp.WithCodeLoginGate(CodeLoginGate(sw.allowed)),
 	)
-	authSvc = NewService(users, memory.NewAuthorizationStore(), codes, nil, nil, "12345",
+	authSvc := NewService(users, memory.NewAuthorizationStore(), codes, nil, nil, "12345",
 		WithCodeLoginAllowed(sw.allowed),
 		WithLoginEmail(LoginEmailOptions{
 			Enabled:      true,

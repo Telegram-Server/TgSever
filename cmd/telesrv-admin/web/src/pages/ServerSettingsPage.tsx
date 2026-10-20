@@ -468,6 +468,7 @@ function CodeLoginSection() {
           </p>
           <p className="muted-lead">{t("serverSettings.codeLoginEnvDefault", { value: onWord(identity.default_code_login_enabled) })}</p>
           {lockedOut && <p className="muted-lead">{t("serverSettings.codeLoginLockoutHint")}</p>}
+          {identity.code_login_override_ignored && <p className="muted-lead">{t("serverSettings.codeLoginOverrideIgnored")}</p>}
           <div className="gift-table-actions identity-save-row">
             <ActionButton
               tone="neutral"

@@ -20,6 +20,7 @@ type codeLoginStateResponse struct {
 	CodeLoginSource           string `json:"code_login_source"`
 	DefaultCodeLoginEnabled   bool   `json:"default_code_login_enabled"`
 	PasswordLoginEnabled      bool   `json:"password_login_enabled"`
+	CodeLoginOverrideIgnored  bool   `json:"code_login_override_ignored"`
 }
 
 func getCodeLoginState(t *testing.T, srv *server, cookies []*http.Cookie) codeLoginStateResponse {
@@ -63,6 +64,28 @@ func TestServerIdentityReportsCodeLoginStateAndSource(t *testing.T) {
 	got = getCodeLoginState(t, srv, cookies)
 	if got.CodeLoginEnabled != nil || !got.CodeLoginEnabledEffective || got.CodeLoginSource != "env" {
 		t.Fatalf("cleared override: %+v, want back to env", got)
+	}
+}
+
+// 不变量：密码登录总开关关闭时验证码登录一定开启。持久化的"关闭"覆盖值仍原样报告，
+// 但实际状态显示为开启，并标明覆盖值被忽略。
+func TestServerIdentityReportsCodeLoginOnWhilePasswordLoginDisabled(t *testing.T) {
+	srv := panelServer(t, permissionServerManage)
+	srv.cfg.CodeLoginEnabledDefault = true
+	srv.cfg.PasswordLoginEnabled = false
+	srv.identity = identity.NewStore(t.TempDir())
+	cookies, _ := signIn(t, srv)
+
+	if got := getCodeLoginState(t, srv, cookies); !got.CodeLoginEnabledEffective || got.CodeLoginOverrideIgnored {
+		t.Fatalf("no override: %+v, want effective=true ignored=false", got)
+	}
+	off := false
+	if err := srv.identity.SetCodeLoginOverride(&off); err != nil {
+		t.Fatal(err)
+	}
+	got := getCodeLoginState(t, srv, cookies)
+	if got.CodeLoginEnabled == nil || *got.CodeLoginEnabled || !got.CodeLoginEnabledEffective || !got.CodeLoginOverrideIgnored || got.CodeLoginSource != "override" {
+		t.Fatalf("override off + password login off: %+v, want raw off, effective=true, ignored=true", got)
 	}
 }
 

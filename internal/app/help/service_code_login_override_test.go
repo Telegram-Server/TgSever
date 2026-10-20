@@ -15,7 +15,7 @@ func TestAppConfigHashChangesAfterAdminCodeLoginOverride(t *testing.T) {
 	ctx := context.Background()
 	store := identity.NewStore(t.TempDir())
 	authService := auth.NewService(nil, nil, nil, nil, nil, "12345",
-		auth.WithCodeLoginAllowed(auth.IdentityCodeLoginAllowed(store, true)))
+		auth.WithCodeLoginAllowed(auth.IdentityCodeLoginAllowed(store, true, true)))
 	svc := NewService(nil, nil, WithCodeLoginAllowed(authService.CodeLoginAllowed))
 
 	open, _, err := svc.GetAppConfig(ctx, 0, 0)

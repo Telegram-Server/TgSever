@@ -263,8 +263,15 @@ func StaticCodeLoginAllowed(enabled bool) CodeLoginAllowedFunc {
 // IdentityCodeLoginAllowed 返回现读 identity 存储的 CodeLoginAllowedFunc，与
 // IdentitySignUpAllowed 同构：每次判断都读取 identity.json 里的管理面板覆盖值，按
 // domain.ResolveCodeLoginEnabled 与环境变量默认值 envDefault 合并，不缓存。
-// identity.json 读不出时返回错误（fail closed）。nil store 等价于只有环境变量一个来源。
-func IdentityCodeLoginAllowed(store *identity.Store, envDefault bool) CodeLoginAllowedFunc {
+//
+// 不变量：passwordLoginEnabled（密码登录总开关）为 false 时验证码登录一定开启，直接
+// 返回允许、不读 identity——持久化的"关闭"覆盖值被忽略，identity.json 读不出也不影响。
+// 密码登录开启时 identity.json 读不出返回错误（fail closed），此时还有密码登录可用。
+// nil store 等价于只有环境变量一个来源（同样遵守上面的不变量）。
+func IdentityCodeLoginAllowed(store *identity.Store, envDefault, passwordLoginEnabled bool) CodeLoginAllowedFunc {
+	if !passwordLoginEnabled {
+		return StaticCodeLoginAllowed(true)
+	}
 	if store == nil {
 		return StaticCodeLoginAllowed(envDefault)
 	}
@@ -273,7 +280,47 @@ func IdentityCodeLoginAllowed(store *identity.Store, envDefault bool) CodeLoginA
 		if err != nil {
 			return false, err
 		}
-		return domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, envDefault), nil
+		return domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, envDefault, passwordLoginEnabled), nil
+	}
+}
+
+// IdentityLoginSwitches 返回一次读取 identity.json 就同时得出注册开关与验证码登录开关的
+// 快照函数，供 help.getAppConfig 每次只读一次 identity。合并规则与 IdentitySignUpAllowed、
+// IdentityCodeLoginAllowed 完全相同（参数也应与它们取同样的值）：读失败时两者都按关闭，
+// 但密码登录关闭时验证码登录一定开启。nil store 等价于只有环境变量一个来源。
+func IdentityLoginSwitches(store *identity.Store, signUpEnv, codeLoginEnv, passwordLoginEnabled bool) func(context.Context) domain.LoginSwitches {
+	return func(context.Context) domain.LoginSwitches {
+		var info identity.Info
+		if store != nil {
+			var err error
+			if info, err = store.Get(); err != nil {
+				return domain.LoginSwitches{CodeLoginAllowed: !passwordLoginEnabled}
+			}
+		}
+		return domain.LoginSwitches{
+			SignUpAllowed:    domain.ResolveSignUpEnabled(info.SignUpEnabled, signUpEnv),
+			CodeLoginAllowed: domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, codeLoginEnv, passwordLoginEnabled),
+		}
+	}
+}
+
+// CodeLoginGate 把 CodeLoginAllowedFunc 转成登录流程用的门禁：不允许时返回
+// domain.ErrCodeLoginDisabled，来源出错时返回该错误（fail closed）。auth 的
+// CheckCodeLoginAllowed 与 account 的登录邮箱 setup（account.WithCodeLoginGate）用同一个
+// CodeLoginAllowedFunc 经它判断。nil 等价于始终允许。
+func CodeLoginGate(fn CodeLoginAllowedFunc) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if fn == nil {
+			return nil
+		}
+		allowed, err := fn(ctx)
+		if err != nil {
+			return fmt.Errorf("resolve code login switch: %w", err)
+		}
+		if !allowed {
+			return domain.ErrCodeLoginDisabled
+		}
+		return nil
 	}
 }
 
@@ -539,14 +586,7 @@ func (s *Service) CodeLoginAllowed(ctx context.Context) (bool, error) {
 // 关闭时返回 domain.ErrCodeLoginDisabled；来源出错时返回该错误（fail closed）。
 // 它先于注册开关检查，因此关闭时不论号码是否已注册都只返回 ErrCodeLoginDisabled。
 func (s *Service) CheckCodeLoginAllowed(ctx context.Context) error {
-	allowed, err := s.CodeLoginAllowed(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve code login switch: %w", err)
-	}
-	if !allowed {
-		return domain.ErrCodeLoginDisabled
-	}
-	return nil
+	return CodeLoginGate(s.CodeLoginAllowed)(ctx)
 }
 
 // SendCode 为 phone 生成 phone_code_hash，按配置选择开发 app code、登录邮箱 code

@@ -1198,12 +1198,11 @@ func run(logger *zap.Logger) error {
 		accountOptions = append(accountOptions,
 			account.WithLoginEmailVerification(codeStore, loginEmailSender, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength))
 	}
-	// 登录邮箱 setup 属于登录流程，经 auth.CheckCodeLoginAllowed（全服唯一的判断点）受
-	// 验证码登录开关约束。account 服务先于 auth 服务构造，这里延迟绑定，authService 建好后赋值。
-	var codeLoginAuth *auth.Service
-	accountOptions = append(accountOptions, account.WithCodeLoginGate(func(ctx context.Context) error {
-		return codeLoginAuth.CheckCodeLoginAllowed(ctx)
-	}))
+	// 验证码登录开关：管理面板覆盖值（identity.json，每次现读）优先，未设置时跟随
+	// TELESRV_CODE_LOGIN_ENABLED；密码登录总开关关闭时一定开启（防锁死，不读 identity）。
+	// auth 与 account（登录邮箱 setup 属于登录流程）共用这同一个判断函数。
+	codeLoginAllowed := auth.IdentityCodeLoginAllowed(identityStore, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled)
+	accountOptions = append(accountOptions, account.WithCodeLoginGate(auth.CodeLoginGate(codeLoginAllowed)))
 	accountService := account.NewService(passwordStore, accountOptions...)
 	botsService := botsapp.NewService(userStore, botStore, messageStore,
 		botsapp.WithLogger(logger.Named("bots")),
@@ -1688,10 +1687,9 @@ func run(logger *zap.Logger) error {
 		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，
 		// help.getAppConfig 下发的 telesrv_sign_up_disabled 也读它。
 		auth.WithSignUpAllowed(auth.IdentitySignUpAllowed(identityStore, cfg.SignUpEnabled)),
-		// 验证码登录开关：与注册开关同构，管理面板覆盖值（identity.json，每次现读）优先，
-		// 未设置时跟随 TELESRV_CODE_LOGIN_ENABLED；auth.CodeLoginAllowed 是全服唯一的判断点，
-		// help.getAppConfig 下发的 telesrv_code_login_disabled 也读它。
-		auth.WithCodeLoginAllowed(auth.IdentityCodeLoginAllowed(identityStore, cfg.CodeLoginEnabled)),
+		// 验证码登录开关：与 account 共用上面的 codeLoginAllowed；help.getAppConfig 下发的
+		// telesrv_code_login_disabled 用同样参数的 auth.IdentityLoginSwitches。
+		auth.WithCodeLoginAllowed(codeLoginAllowed),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1709,10 +1707,9 @@ func run(logger *zap.Logger) error {
 			Store:        accountService,
 			Sender:       loginEmailSender,
 		}))
-	codeLoginAuth = authService
 	// 启动时按实际状态（含管理面板覆盖）提示；之后的切换由服务端命令写入、每次现读。
-	if allowed, err := authService.CodeLoginAllowed(ctx); err == nil && !allowed {
-		logger.Warn("验证码登录已关闭：不签发、不投递任何登录验证码，只能用密码、扫码或 passkey 登录")
+	if msg := codeLoginStartupWarning(identityStore, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled); msg != "" {
+		logger.Warn(msg)
 	}
 	// 手机号 + 密码登录（telesrv 扩展协议）。总开关默认关闭；关闭时服务照常构造，
 	// telesrv. 方法由服务自己返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
@@ -1967,8 +1964,8 @@ func run(logger *zap.Logger) error {
 			// the wallet is unavailable rather than shown an entry that cannot work.
 			help.WithWalletAvailable(cfg.WalletStateDir != ""),
 			help.WithPasswordLogin(loginPasswordService.Enabled()),
-			help.WithSignUpAllowed(authService.SignUpAllowed),
-			help.WithCodeLoginAllowed(authService.CodeLoginAllowed),
+			// 每次 getAppConfig 只读一次 identity，同时得出两个开关；参数与 auth 的两个判断函数相同。
+			help.WithLoginSwitches(auth.IdentityLoginSwitches(identityStore, cfg.SignUpEnabled, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled)),
 			help.WithAccountFreezeProvider(adminService)),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,

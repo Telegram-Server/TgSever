@@ -62,10 +62,16 @@ email of a signed-in account (`emailVerifyPurposeLoginChange`).
 
 ## Nobody is locked out
 
-The server refuses to start when `TELESRV_CODE_LOGIN_ENABLED=false` while
-`TELESRV_PASSWORD_LOGIN_ENABLED` is not `true`. So whenever a client sees
-`telesrv_code_login_disabled: true`, the same app config also lists
-`password_login` in `telesrv_features`. The server does not check that every
+Code login is always on while password login is off. The server refuses to
+start when `TELESRV_CODE_LOGIN_ENABLED` is `false` while
+`TELESRV_PASSWORD_LOGIN_ENABLED` is not `true`, and the admin panel cannot turn
+code login off while password login is off. A panel override that was saved as
+"off" while password login was on is ignored once password login is turned
+off: the server issues login codes again, without even reading `identity.json`
+for this switch, and the app config omits the key. While password login is on,
+an unreadable `identity.json` counts as "code login off" (password login still
+works). So whenever a client sees `telesrv_code_login_disabled: true`, the same
+app config also lists `password_login` in `telesrv_features`. The server does not check that every
 account has a login password: an account without one cannot log in while code
 login is off until the operator sets a password for it in the admin panel.
 

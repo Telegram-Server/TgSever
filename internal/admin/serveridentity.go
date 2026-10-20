@@ -130,18 +130,18 @@ func CodeLoginOverrideForMode(mode string) (override *bool, ok bool) {
 	return SignUpOverrideForMode(mode)
 }
 
-// 注册开关状态的来源：未设置覆盖时跟随环境变量，否则以面板覆盖为准。
+// 三态开关（注册开关、验证码登录开关）状态的来源：未设置覆盖时跟随环境变量，否则以面板覆盖为准。
 const (
-	SignUpSourceEnv      = "env"
-	SignUpSourceOverride = "override"
+	OverrideSourceEnv      = "env"
+	OverrideSourceOverride = "override"
 )
 
-// SignUpSource 返回给定覆盖值下注册开关状态的来源。
-func SignUpSource(override *bool) string {
+// OverrideSource 返回给定覆盖值下三态开关状态的来源。
+func OverrideSource(override *bool) string {
 	if override != nil {
-		return SignUpSourceOverride
+		return OverrideSourceOverride
 	}
-	return SignUpSourceEnv
+	return OverrideSourceEnv
 }
 
 // ServerIconExt 校验图标上传并返回小写扩展名（带前导点）：扩展名必须是 png/jpg/jpeg/
@@ -252,7 +252,7 @@ func (s *Service) SetSignUpEnabled(ctx context.Context, req SetSignUpEnabledRequ
 	details := map[string]any{
 		"mode":                      mode,
 		"sign_up_enabled_effective": effective,
-		"sign_up_source":            SignUpSource(override),
+		"sign_up_source":            OverrideSource(override),
 	}
 	state := "closed"
 	if effective {
@@ -284,15 +284,18 @@ func (s *Service) SetCodeLoginEnabled(ctx context.Context, req SetCodeLoginEnabl
 	if s.codeLoginEnabledDefault == nil || s.passwordLoginEnabled == nil {
 		return CommandResult{}, codedError(CodeServerIdentityUnavailable, fmt.Errorf("code login environment defaults are not configured"))
 	}
-	effective := domain.ResolveCodeLoginEnabled(override, s.codeLoginEnabledDefault())
-	if !effective && !s.passwordLoginEnabled() {
+	// 防锁死看的是覆盖值与环境变量合并出的结果；实际状态还要叠加"密码登录关闭时验证码登录
+	// 一定开启"的不变量（与主服务器 auth.IdentityCodeLoginAllowed 相同）。
+	passwordLogin := s.passwordLoginEnabled()
+	if !domain.ResolveOverride(override, s.codeLoginEnabledDefault()) && !passwordLogin {
 		return CommandResult{}, codedError(CodeCodeLoginLockout, fmt.Errorf("password login is disabled (TELESRV_PASSWORD_LOGIN_ENABLED=false); turning code login off would lock everyone out"))
 	}
+	effective := domain.ResolveCodeLoginEnabled(override, s.codeLoginEnabledDefault(), passwordLogin)
 	req.Mode = mode
 	details := map[string]any{
 		"mode":                         mode,
 		"code_login_enabled_effective": effective,
-		"code_login_source":            SignUpSource(override),
+		"code_login_source":            OverrideSource(override),
 	}
 	state := "off"
 	if effective {

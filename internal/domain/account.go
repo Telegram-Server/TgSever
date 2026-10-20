@@ -40,22 +40,37 @@ var (
 	ErrCodeLoginDisabled = errors.New("code login disabled")
 )
 
+// ResolveOverride 是三态开关的通用合并规则：管理面板覆盖值（非 nil）优先，否则跟随
+// 环境变量默认值。
+func ResolveOverride(panel *bool, env bool) bool {
+	if panel != nil {
+		return *panel
+	}
+	return env
+}
+
 // ResolveSignUpEnabled 按优先级给出实际的注册开关：管理面板覆盖值（非 nil）优先，
 // 否则跟随环境变量 TELESRV_SIGN_UP_ENABLED。服务端判断与管理面板展示共用这一处。
 func ResolveSignUpEnabled(panelOverride *bool, envDefault bool) bool {
-	if panelOverride != nil {
-		return *panelOverride
-	}
-	return envDefault
+	return ResolveOverride(panelOverride, envDefault)
 }
 
-// ResolveCodeLoginEnabled 按优先级给出实际的验证码登录开关：管理面板覆盖值（非 nil）
-// 优先，否则跟随环境变量 TELESRV_CODE_LOGIN_ENABLED。服务端判断与管理面板展示共用这一处。
-func ResolveCodeLoginEnabled(panelOverride *bool, envDefault bool) bool {
-	if panelOverride != nil {
-		return *panelOverride
+// ResolveCodeLoginEnabled 给出实际的验证码登录开关。不变量：密码登录总开关关闭时验证码
+// 登录一定开启（否则没有任何人能登录），此时覆盖值与环境变量都被忽略；密码登录开启时
+// 管理面板覆盖值（非 nil）优先，否则跟随环境变量 TELESRV_CODE_LOGIN_ENABLED。服务端判断
+// 与管理面板展示共用这一处。
+func ResolveCodeLoginEnabled(panelOverride *bool, envDefault, passwordLoginEnabled bool) bool {
+	if !passwordLoginEnabled {
+		return true
 	}
-	return envDefault
+	return ResolveOverride(panelOverride, envDefault)
+}
+
+// LoginSwitches 是一次读取得出的注册开关与验证码登录开关的实际状态（已按各自的
+// fail-closed 规则与上面的不变量处理过），help.getAppConfig 据此下发两个状态 key。
+type LoginSwitches struct {
+	SignUpAllowed    bool
+	CodeLoginAllowed bool
 }
 
 type AuthCodeDeliveryKind string
