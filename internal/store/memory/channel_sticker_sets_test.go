@@ -8,7 +8,7 @@ import (
 
 func TestChannelStickerSetsMemory(t *testing.T) {
 	s := NewChannelStore()
-	ids := make([]int64, 100)
+	ids := make([]int64, 150)
 	for i := range ids {
 		ids[i] = int64(i + 1)
 	}

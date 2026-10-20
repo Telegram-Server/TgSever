@@ -883,6 +883,31 @@ func (m *MessageMedia) IsZero() bool {
 	return m == nil || m.Kind == MessageMediaKindNone
 }
 
+// WithTodoCompletionsFrom 替换清单定义时，仅继承当前清单中仍存在任务的完成记录。
+// 调用方须在写锁内传入当前媒体；返回独立快照，不改输入或信任替换中的 completions。
+func (m *MessageMedia) WithTodoCompletionsFrom(current *MessageMedia) *MessageMedia {
+	if m == nil || m.Kind != MessageMediaKindTodo || m.Todo == nil {
+		return m
+	}
+	media := *m
+	todo := *m.Todo
+	todo.Completions = nil
+	media.Todo = &todo
+	if current == nil || current.Kind != MessageMediaKindTodo || current.Todo == nil || len(current.Todo.Completions) == 0 {
+		return &media
+	}
+	ids := make(map[int]struct{}, len(todo.Items))
+	for _, item := range todo.Items {
+		ids[item.ID] = struct{}{}
+	}
+	for _, completion := range current.Todo.Completions {
+		if _, keep := ids[completion.ID]; keep {
+			todo.Completions = append(todo.Completions, completion)
+		}
+	}
+	return &media
+}
+
 // HasUnreadPayload 表示该媒体是否参与 media_unread（"未听"）状态。
 // 只有 voice/round 才有此语义：客户端只为它们渲染未听标记并上报
 // readMessageContents；photo/document 置位只会留下永不清除的脏状态。

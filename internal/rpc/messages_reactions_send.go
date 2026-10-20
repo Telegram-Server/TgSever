@@ -50,7 +50,7 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 			return nil, channelReactionErr(err)
 		}
 		updates := r.channelMessageReactionsUpdates(ctx, userID, res)
-		r.deliverChannelBotReaction(ctx, res, date)
+		r.enqueueChannelBotReaction(ctx, res, date)
 		// 官方保证消息作者收到 updateMessageReactions：作者进 explicit 收件人，
 		// 不依赖在线 viewer 采样（fan-out 封顶后作者可能被挤出采样集）。
 		ids := []int{res.Message.ID}
@@ -100,7 +100,7 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 			}
 		}
 		updates := r.privateMessageReactionsUpdates(ctx, userID, peer, res)
-		r.deliverPrivateBotReaction(ctx, userID, res, date)
+		r.enqueuePrivateBotReaction(ctx, userID, res, date)
 		r.pushUserUpdates(ctx, userID, updates)
 		for _, msg := range res.Messages {
 			if msg.OwnerUserID == 0 || msg.OwnerUserID == userID {

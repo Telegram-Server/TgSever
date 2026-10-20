@@ -258,7 +258,7 @@ func apiChatMemberUpdated(event domain.UpdateEvent) (map[string]any, bool) {
 		"new_chat_member": apiChatMember(updated, subject, domain.CanEditChannelAdmin(viewer, updated)),
 	}
 	if update.Invite != nil {
-		out["invite_link"] = apiInviteLink(*update.Invite, userOf(update.Invite.AdminUserID))
+		out["invite_link"] = apiInviteLink(*update.Invite, userOf(update.Invite.AdminUserID), event.UserID)
 	}
 	if update.ViaJoinRequest {
 		out["via_join_request"] = true

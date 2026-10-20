@@ -60,6 +60,8 @@ type viewerPeerCache struct {
 	users        *peerview.BatchCache
 	channels     map[int64]map[int64]domain.Channel
 	missingChats map[int64]map[int64]struct{}
+	// Only already-visible messages reach this fanout-local, viewer-independent metadata.
+	messageRanks map[domain.ChannelMessageAuthor]string
 }
 
 func newViewerPeerCache(r *Router) *viewerPeerCache {

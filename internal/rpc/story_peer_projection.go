@@ -37,11 +37,13 @@ func (r *Router) tgStoryViewsList(ctx context.Context, viewerUserID int64, list 
 	peerUsers, peerChannels := r.storyPeerObjects(ctx, viewerUserID, storyViewPeers(list.Views))
 	users = mergeDomainUsers(users, peerUsers...)
 	out := tgStoryViewsList(viewerUserID, list, users)
+	var messages []tg.MessageClass
 	for _, view := range out.Views {
 		if forward, ok := view.(*tg.StoryViewPublicForward); ok {
-			r.applyChannelMessageRanks(ctx, viewerUserID, []tg.MessageClass{forward.Message})
+			messages = append(messages, forward.Message)
 		}
 	}
+	r.applyChannelMessageRanks(ctx, viewerUserID, messages)
 	if len(peerChannels) > 0 {
 		out.Chats = appendUniqueTGChats(out.Chats, tgChannels(viewerUserID, peerChannels)...)
 	}
@@ -54,11 +56,13 @@ func (r *Router) tgStoryReactionsList(ctx context.Context, viewerUserID int64, l
 	peerUsers, peerChannels := r.storyPeerObjects(ctx, viewerUserID, storyViewPeers(list.Reactions))
 	users = mergeDomainUsers(users, peerUsers...)
 	out := tgStoryReactionsList(viewerUserID, list, users)
+	var messages []tg.MessageClass
 	for _, reaction := range out.Reactions {
 		if forward, ok := reaction.(*tg.StoryReactionPublicForward); ok {
-			r.applyChannelMessageRanks(ctx, viewerUserID, []tg.MessageClass{forward.Message})
+			messages = append(messages, forward.Message)
 		}
 	}
+	r.applyChannelMessageRanks(ctx, viewerUserID, messages)
 	if len(peerChannels) > 0 {
 		out.Chats = appendUniqueTGChats(out.Chats, tgChannels(viewerUserID, peerChannels)...)
 	}
@@ -233,12 +237,10 @@ func (r *Router) tgUpdatesDifference(ctx context.Context, viewerUserID int64, di
 	out := tgUpdatesDifference(viewerUserID, diff)
 	switch v := out.(type) {
 	case *tg.UpdatesDifference:
-		r.applyChannelMessageRanks(ctx, viewerUserID, v.NewMessages)
-		r.applyChannelUpdateRanks(ctx, viewerUserID, v.OtherUpdates)
+		r.applyChannelMessageRanks(ctx, viewerUserID, channelRankMessages(v.NewMessages, v.OtherUpdates))
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.UpdatesDifferenceSlice:
-		r.applyChannelMessageRanks(ctx, viewerUserID, v.NewMessages)
-		r.applyChannelUpdateRanks(ctx, viewerUserID, v.OtherUpdates)
+		r.applyChannelMessageRanks(ctx, viewerUserID, channelRankMessages(v.NewMessages, v.OtherUpdates))
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	}
 	return out
@@ -248,8 +250,7 @@ func (r *Router) tgChannelDifference(ctx context.Context, viewerUserID int64, di
 	out := tgChannelDifference(viewerUserID, diff)
 	switch v := out.(type) {
 	case *tg.UpdatesChannelDifference:
-		r.applyChannelMessageRanks(ctx, viewerUserID, v.NewMessages)
-		r.applyChannelUpdateRanks(ctx, viewerUserID, v.OtherUpdates)
+		r.applyChannelMessageRanks(ctx, viewerUserID, channelRankMessages(v.NewMessages, v.OtherUpdates))
 		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.UpdatesChannelDifferenceTooLong:
 		r.applyChannelMessageRanks(ctx, viewerUserID, v.Messages)

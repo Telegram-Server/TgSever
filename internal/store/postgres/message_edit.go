@@ -86,6 +86,13 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validTodoParticipantEdit(req, target, oldEntities) {
 		return res, domain.ErrMessageAuthorRequired
 	}
+	if req.ReplaceTodo {
+		targetMedia, err := decodeMessageMedia(target.MediaJson)
+		if err != nil {
+			return res, fmt.Errorf("decode todo for replacement: %w", err)
+		}
+		req.Media = req.Media.WithTodoCompletionsFrom(targetMedia)
+	}
 	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindGeoLive {
 		targetMedia, err := decodeMessageMedia(target.MediaJson)
 		if err != nil {
@@ -288,7 +295,7 @@ WHERE message_sender_id = $1 AND private_message_id = $2`, messageSenderID, targ
 }
 
 func validTodoParticipantEdit(req domain.EditMessageRequest, target sqlcgen.GetMessageBoxForEditRow, oldEntities []domain.MessageEntity) bool {
-	if !req.AllowTodoParticipantMutation || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
+	if !req.AllowTodoParticipantMutation || req.ReplaceTodo || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
 		return false
 	}
 	if target.MessageSenderID == req.OwnerUserID {

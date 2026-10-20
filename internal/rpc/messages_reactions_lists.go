@@ -41,7 +41,7 @@ func (r *Router) onMessagesDeleteParticipantReaction(ctx context.Context, req *t
 		return nil, channelInvalidErr(err)
 	}
 	updates := r.channelMessageReactionsUpdates(ctx, userID, res)
-	r.deliverChannelBotReaction(ctx, res, int(r.clock.Now().Unix()))
+	r.enqueueChannelBotReaction(ctx, res, int(r.clock.Now().Unix()))
 	moderationIDs := []int{res.Message.ID}
 	r.pushChannelViewerUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelReactionsViewerUpdates(ctx, userID, viewerUserID, res, moderationIDs)
@@ -81,24 +81,26 @@ func (r *Router) onMessagesDeleteParticipantReactions(ctx context.Context, req *
 			break
 		}
 		deleted += res.Deleted
-		admins := r.botAPIChannelAdminBots(ctx, res.Channel)
-		if len(admins) > 0 {
-			changes := make(map[int]domain.MessageReactionChange, len(res.Changes))
-			for _, change := range res.Changes {
-				changes[change.MessageID] = change
-			}
-			for _, msg := range res.Messages {
-				change, ok := changes[msg.ID]
-				if !ok {
-					continue
-				}
-				item := domain.ChannelMessageReactionsResult{Channel: res.Channel, Message: msg, MessageReactionChange: change}
-				if msg.Reactions != nil {
-					item.Reactions = *msg.Reactions
-				}
-				r.deliverChannelBotReactionTo(ctx, item, date, admins)
-			}
+		changes := make(map[int]domain.MessageReactionChange, len(res.Changes))
+		for _, change := range res.Changes {
+			changes[change.MessageID] = change
 		}
+		payloads := make([]domain.BotMessageReactionUpdated, 0, len(res.Changes))
+		for _, msg := range res.Messages {
+			change, ok := changes[msg.ID]
+			if !ok {
+				continue
+			}
+			payload := domain.BotMessageReactionUpdated{
+				Chat:                  domain.Peer{Type: domain.PeerTypeChannel, ID: res.Channel.ID},
+				MessageReactionChange: change, Date: date,
+			}
+			if msg.Reactions != nil {
+				payload.Counts = msg.Reactions.Results
+			}
+			payloads = append(payloads, payload)
+		}
+		r.enqueueChannelBotReactions(ctx, res.Channel, payloads)
 		if len(res.Messages) > 0 {
 			reactionRes := domain.ChannelMessageReactionsResult{
 				Channel:    res.Channel,

@@ -35,39 +35,70 @@ func (r *Router) deliverBotReaction(ctx context.Context, botID int64, kind domai
 	}
 }
 
-func (r *Router) deliverChannelBotReaction(ctx context.Context, res domain.ChannelMessageReactionsResult, date int) {
-	r.deliverChannelBotReactionTo(ctx, res, date, r.botAPIChannelAdminBots(ctx, res.Channel))
+// Capture selections and anonymous counts at commit time; the worker must never
+// reconstruct an earlier event from the message's later reaction state.
+func (r *Router) enqueueChannelBotReaction(ctx context.Context, res domain.ChannelMessageReactionsResult, date int) {
+	r.enqueueChannelBotReactions(ctx, res.Channel, []domain.BotMessageReactionUpdated{{
+		Chat:                  domain.Peer{Type: domain.PeerTypeChannel, ID: res.Channel.ID},
+		MessageReactionChange: res.MessageReactionChange, Date: date, Counts: res.Reactions.Results,
+	}})
 }
 
-func (r *Router) deliverChannelBotReactionTo(ctx context.Context, res domain.ChannelMessageReactionsResult, date int, admins []domain.ChannelMember) {
-	if len(admins) == 0 {
+func (r *Router) enqueueChannelBotReactions(ctx context.Context, channel domain.Channel, payloads []domain.BotMessageReactionUpdated) {
+	if len(payloads) == 0 {
 		return
 	}
-	payload := domain.BotMessageReactionUpdated{Chat: domain.Peer{Type: domain.PeerTypeChannel, ID: res.Channel.ID}, MessageReactionChange: res.MessageReactionChange, Date: date, Counts: res.Reactions.Results}
-	kind := domain.BotAPIUpdateMessageReaction
-	if res.Channel.Broadcast && !res.Channel.Megagroup {
-		kind = domain.BotAPIUpdateMessageReactionCount
+	snapshots := make([]domain.BotMessageReactionUpdated, len(payloads))
+	for i := range payloads {
+		snapshots[i] = *payloads[i].Clone()
 	}
-	if kind == domain.BotAPIUpdateMessageReaction && r.userIsBot(ctx, res.ActorUserID) {
-		return
-	}
-	for _, admin := range admins {
-		r.deliverBotReaction(ctx, admin.UserID, kind, payload)
-	}
-}
-
-func (r *Router) deliverPrivateBotReaction(ctx context.Context, actorID int64, res domain.PrivateMessageReactionsResult, date int) {
-	if r.userIsBot(ctx, actorID) {
-		return
-	}
-	for _, msg := range res.Messages {
-		if msg.OwnerUserID == actorID || msg.OwnerUserID == 0 || !r.userIsBot(ctx, msg.OwnerUserID) {
-			continue
+	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
+		admins := r.botAPIChannelAdminBots(jobCtx, channel)
+		kind := domain.BotAPIUpdateMessageReaction
+		if channel.Broadcast && !channel.Megagroup {
+			kind = domain.BotAPIUpdateMessageReactionCount
 		}
-		change := res.MessageReactionChange
-		change.MessageID = msg.ID
-		r.deliverBotReaction(ctx, msg.OwnerUserID, domain.BotAPIUpdateMessageReaction, domain.BotMessageReactionUpdated{Chat: domain.Peer{Type: domain.PeerTypeUser, ID: actorID}, MessageReactionChange: change, Date: date})
+		for _, payload := range snapshots {
+			if kind == domain.BotAPIUpdateMessageReaction && r.userIsBot(jobCtx, payload.ActorUserID) {
+				continue
+			}
+			for _, admin := range admins {
+				r.deliverBotReaction(jobCtx, admin.UserID, kind, payload)
+			}
+		}
+	})
+}
+
+func (r *Router) enqueuePrivateBotReaction(ctx context.Context, actorID int64, res domain.PrivateMessageReactionsResult, date int) {
+	type recipient struct {
+		botID     int64
+		messageID int
 	}
+	recipients := make([]recipient, 0, len(res.Messages))
+	for _, msg := range res.Messages {
+		if msg.OwnerUserID != actorID && msg.OwnerUserID != 0 {
+			recipients = append(recipients, recipient{botID: msg.OwnerUserID, messageID: msg.ID})
+		}
+	}
+	if len(recipients) == 0 {
+		return
+	}
+	payload := (&domain.BotMessageReactionUpdated{
+		Chat:                  domain.Peer{Type: domain.PeerTypeUser, ID: actorID},
+		MessageReactionChange: res.MessageReactionChange, Date: date,
+	}).Clone()
+	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
+		if r.userIsBot(jobCtx, actorID) {
+			return
+		}
+		for _, recipient := range recipients {
+			if r.userIsBot(jobCtx, recipient.botID) {
+				item := *payload
+				item.MessageID = recipient.messageID
+				r.deliverBotReaction(jobCtx, recipient.botID, domain.BotAPIUpdateMessageReaction, item)
+			}
+		}
+	})
 }
 
 func (r *Router) validatePrivateReactionSelection(ctx context.Context, userID int64, peer domain.Peer, id int, reactions []domain.MessageReaction) error {

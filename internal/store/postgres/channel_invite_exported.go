@@ -12,6 +12,17 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
+// Like auth identities, invitations use the two-int keyspace, disjoint from
+// user/bot bigint locks. hashint8 preserves the full channel ID as hash input;
+// collisions only serialize unrelated channels.
+const channelInviteAdvisoryNamespace int32 = 0x494E5654 // INVT
+
+func lockChannelInvites(ctx context.Context, tx pgx.Tx, channelID int64) error {
+	// Advisory locks are pgx-only operations, not sqlc queries.
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1::integer, hashint8($2::bigint))`, channelInviteAdvisoryNamespace, channelID)
+	return err
+}
+
 func (s *ChannelStore) ExportInvite(ctx context.Context, req domain.ExportChannelInviteRequest) (domain.ExportChannelInviteResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.ExportChannelInviteResult{}, domain.ErrChannelInvalid
@@ -38,7 +49,7 @@ func (s *ChannelStore) ExportInvite(ctx context.Context, req domain.ExportChanne
 	}()
 	// pgx advisory locks serialize main-link rotation with EnsurePermanentInvite.
 	if req.LegacyRevokePermanent {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, req.ChannelID); err != nil {
+		if err := lockChannelInvites(ctx, tx, req.ChannelID); err != nil {
 			return domain.ExportChannelInviteResult{}, fmt.Errorf("lock main invite rotation: %w", err)
 		}
 	}
@@ -110,7 +121,7 @@ func (s *ChannelStore) EnsurePermanentInvite(ctx context.Context, channelID, adm
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, channelID); err != nil {
+	if err := lockChannelInvites(ctx, tx, channelID); err != nil {
 		return domain.ChannelInvite{}, fmt.Errorf("lock ensure permanent channel invite: %w", err)
 	}
 	_, member, err := s.getChannelForMember(ctx, tx, adminUserID, channelID)
@@ -292,7 +303,7 @@ func (s *ChannelStore) EditExportedInvite(ctx context.Context, req domain.EditCh
 	// Keep lock order identical to ExportInvite/EnsurePermanentInvite so two
 	// concurrent rotations cannot create competing main links.
 	if req.Revoked {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, req.ChannelID); err != nil {
+		if err := lockChannelInvites(ctx, tx, req.ChannelID); err != nil {
 			return domain.EditChannelInviteResult{}, fmt.Errorf("lock main invite revocation: %w", err)
 		}
 	}

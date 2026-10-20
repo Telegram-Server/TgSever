@@ -19,7 +19,7 @@ import (
 func TestChannelStickerSetsRPC(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
-	ids := make([]int64, 100)
+	ids := make([]int64, 150)
 	for i := range ids {
 		u, err := users.Create(ctx, domain.User{AccessHash: int64(i + 1), Phone: fmt.Sprintf("1555555%04d", i), FirstName: "Sticker member", Bot: i == 1})
 		if err != nil {
@@ -133,23 +133,36 @@ func TestChannelStickerSetsRPC(t *testing.T) {
 	// Telegram documents the 100-member boundary, while TDLib/tdesktop use
 	// channelFull.can_set_stickers: https://telegram.org/blog/replies-mentions-stickers#stickers-of-the-group
 	// https://github.com/tdlib/td/blob/master/td/telegram/ChatManager.cpp (set_channel_sticker_set).
-	t.Run("99 members reject mutations", func(t *testing.T) {
-		if _, err := channels.LeaveChannel(ctx, id, ids[99], 0); err != nil {
-			t.Fatal(err)
+	t.Run("80 members can remove but cannot configure a set", func(t *testing.T) {
+		for _, user := range ids[80:] {
+			if _, err := channels.LeaveChannel(ctx, id, user, 0); err != nil {
+				t.Fatal(err)
+			}
 		}
 		r.invalidateRPCProjectionForChannel(id)
-		if full(bot).CanSetStickers {
-			t.Fatal("99-member group advertises can_set_stickers")
+		if !full(bot).CanSetStickers || full(member).CanSetStickers || full(ids[3]).CanSetStickers {
+			t.Fatal("configured small group deletion capability does not follow change_info")
 		}
 		sessions.clearMessages()
-		for _, pack := range []tg.InputStickerSetClass{&tg.InputStickerSetID{ID: 10, AccessHash: 100}, &tg.InputStickerSetEmpty{}} {
-			if err := set(bot, pack); !tgerr.Is(err, "PARTICIPANTS_TOO_FEW") {
-				t.Fatalf("99-member mutation = %v", err)
+		if err := set(bot, &tg.InputStickerSetID{ID: 10, AccessHash: 100}); !tgerr.Is(err, "PARTICIPANTS_TOO_FEW") {
+			t.Fatalf("80-member configuration = %v", err)
+		}
+		for _, user := range []int64{member, ids[3]} {
+			if err := set(user, &tg.InputStickerSetEmpty{}); !tgerr.Is(err, "CHAT_ADMIN_REQUIRED") {
+				t.Fatalf("unauthorized removal = %v", err)
 			}
 		}
 		assertSet(10)
 		if len(sessions.pushedUserIDs()) != 0 {
 			t.Fatal("rejected mutation pushed an update")
+		}
+		if err := set(bot, &tg.InputStickerSetEmpty{}); err != nil {
+			t.Fatal(err)
+		}
+		assertSet(0)
+		assertUpdate()
+		if full(bot).CanSetStickers {
+			t.Fatal("empty small group advertises configuration capability")
 		}
 	})
 }

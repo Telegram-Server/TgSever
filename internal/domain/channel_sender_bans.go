@@ -24,6 +24,9 @@ func ValidateChannelSenderBan(req EditChannelBannedRequest) error {
 		return ErrChannelInvalid
 	}
 	rights := req.BannedRights
+	if rights.ViewMessages && rights.UntilDate != 0 {
+		return ErrChannelInvalid
+	}
 	if !rights.ViewMessages {
 		rights.UntilDate = 0
 		if rights != (ChannelBannedRights{}) {

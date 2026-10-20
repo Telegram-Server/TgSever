@@ -344,6 +344,15 @@ func (s *Service) GetParticipant(ctx context.Context, userID, channelID, partici
 	return s.channels.GetParticipant(ctx, userID, channelID, participantUserID)
 }
 
+// GetMessageRanks reads current tags after the caller has authorized message visibility.
+// Do not use the returned metadata to authorize access, or retain it across responses.
+func (s *Service) GetMessageRanks(ctx context.Context, authors []domain.ChannelMessageAuthor) (map[domain.ChannelMessageAuthor]string, error) {
+	if s == nil || s.channels == nil {
+		return nil, domain.ErrChannelInvalid
+	}
+	return s.channels.GetMessageRanks(ctx, authors)
+}
+
 // FutureCreatorAfterLeave returns the member that will become creator if userID leaves.
 func (s *Service) FutureCreatorAfterLeave(ctx context.Context, userID, channelID int64) (domain.ChannelMember, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
@@ -514,7 +523,7 @@ func (s *Service) EditBanned(ctx context.Context, userID int64, req domain.EditC
 		return domain.EditChannelBannedResult{}, domain.ErrChannelInvalid
 	}
 	res, err := s.channels.EditChannelBanned(ctx, req)
-	if err == nil {
+	if err == nil && !res.NoChange {
 		if req.Participant.Type == domain.PeerTypeUser {
 			s.invalidateActiveChannelIDs(req.Participant.ID)
 		}

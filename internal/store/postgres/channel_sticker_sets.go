@@ -30,7 +30,7 @@ func (s *ChannelStore) SetStickers(ctx context.Context, userID, channelID, stick
 	if !ch.Megagroup || ch.Broadcast {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
-	if ch.ParticipantsCount < domain.MinChannelStickerSetParticipants {
+	if stickerSetID != 0 && ch.ParticipantsCount < domain.MinChannelStickerSetParticipants {
 		return domain.Channel{}, domain.ErrChannelParticipantsTooFew
 	}
 	if err := sqlcgen.New(tx).SetChannelStickerSet(ctx, sqlcgen.SetChannelStickerSetParams{ID: channelID, StickerSetID: stickerSetID}); err != nil {

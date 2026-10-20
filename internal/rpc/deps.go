@@ -764,6 +764,7 @@ type ChannelsService interface {
 	GetJoinableChannel(ctx context.Context, userID, channelID int64) (domain.Channel, error)
 	GetParticipants(ctx context.Context, userID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error)
 	GetParticipant(ctx context.Context, userID, channelID, participantUserID int64) (domain.ChannelMember, error)
+	GetMessageRanks(ctx context.Context, authors []domain.ChannelMessageAuthor) (map[domain.ChannelMessageAuthor]string, error)
 	GetChannelSenderBan(ctx context.Context, userID, channelID, senderChannelID int64) (domain.ChannelMember, error)
 	FutureCreatorAfterLeave(ctx context.Context, userID, channelID int64) (domain.ChannelMember, error)
 	InviteToChannel(ctx context.Context, userID, channelID int64, userIDs []int64, date int) (domain.CreateChannelResult, error)

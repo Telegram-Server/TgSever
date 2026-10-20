@@ -185,8 +185,8 @@ type Router struct {
 	botAPIUpdates              *botAPIUpdateNotifier
 	instanceID                 string
 	channelFanout              *channelFanoutDispatcher
-	// botAPIEnqueueQueue 把 user→bot 私聊消息的 bot_api_updates 写入移出发送者 RPC 同步
-	// 路径（性能审计 H2）；队列满同步回退，绝不丢（队列行是 Bot API 投递真值）。
+	// botAPIEnqueueQueue 把 bot 候选查询与消息/编辑/反应的队列写入移出 RPC
+	// 同步路径；满时有界背压保持 FIFO，停止时 drain 已接收任务。
 	botAPIEnqueueQueue *botAPIEnqueueDispatcher
 
 	// presenceCandidateCache 缓存 presence fan-out 的候选 peer 集合（联系人 ∪ 私聊对端，

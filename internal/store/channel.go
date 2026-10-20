@@ -26,6 +26,9 @@ type ChannelStore interface {
 	SaveChannelDefaultSendAs(ctx context.Context, req domain.SaveChannelDefaultSendAsRequest) (domain.ChannelView, error)
 	GetParticipants(ctx context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error)
 	GetParticipant(ctx context.Context, viewerUserID, channelID, participantUserID int64) (domain.ChannelMember, error)
+	// GetMessageRanks reads current tags only for already-authorized message authors.
+	// It does not authorize message access; omitted authors have no current tag.
+	GetMessageRanks(ctx context.Context, authors []domain.ChannelMessageAuthor) (map[domain.ChannelMessageAuthor]string, error)
 	GetChannelSenderBan(ctx context.Context, viewerUserID, channelID, senderChannelID int64) (domain.ChannelMember, error)
 	FutureCreatorAfterLeave(ctx context.Context, channelID, userID int64) (domain.ChannelMember, error)
 	InviteToChannel(ctx context.Context, channelID, inviterUserID int64, userIDs []int64, date int) (domain.CreateChannelResult, error)
