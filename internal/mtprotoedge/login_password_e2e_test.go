@@ -105,6 +105,9 @@ type loginPasswordServer struct {
 	loginPasswords *memory.LoginPasswordStore
 	// auth 是服务端用的 auth 服务，供后台建号（admin.AccountCreator）在进程内接上。
 	auth *auth.Service
+	// loginPasswordService 是服务端用的登录密码服务，供后台设置登录密码
+	// （admin.LoginPasswordSetter）在进程内接上。
+	loginPasswordService *loginpasswordapp.Service
 }
 
 // tombstoningUserStore 在内存 UserStore 外面加一层"已注销"标记。内存 store 没有账号
@@ -221,7 +224,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		}
 		<-outboxDone
 	})
-	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService}
+	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords}
 }
 
 // run 用一个全新的 auth key 连上服务端执行 fn。fn 里的断言失败要 return error，

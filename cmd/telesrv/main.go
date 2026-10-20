@@ -2084,6 +2084,12 @@ func run(logger *zap.Logger) error {
 		UsernameWallets:         postgres.NewStarGiftClaimStore(pool),
 		ClientUpdates:           adminClientUpdates,
 	})
+	// 后台设置/重设登录密码（account.set_login_password）：不受密码登录总开关限制。
+	// 幂等指纹的 HMAC 子密钥从 admin API token 派生，命令记录里只有这个带密钥的指纹。
+	adminService.Configure(adminapp.Dependencies{
+		LoginPasswords:              loginPasswordService,
+		LoginPasswordFingerprintKey: adminapp.DeriveLoginPasswordFingerprintKey(cfg.AdminAPIToken),
+	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
 	// visible to online viewers immediately.

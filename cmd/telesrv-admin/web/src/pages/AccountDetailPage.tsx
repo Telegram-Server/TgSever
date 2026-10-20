@@ -7,10 +7,10 @@ import { AvatarModal } from "../components/AvatarModal";
 import { AuthorizationTable } from "../components/AuthorizationTable";
 import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary, UsernameCell } from "../components/ui";
 import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
-import { ColorAction, EmojiStatusAction, LoginEmailAction, PhoneAction, ProfileAction, SupportAction, UsernameAction } from "../components/attributes";
+import { ColorAction, EmojiStatusAction, LoginEmailAction, LoginPasswordAction, PhoneAction, ProfileAction, SupportAction, UsernameAction } from "../components/attributes";
 import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix, toInt } from "../lib/format";
-import { permissionMessagesRead, usePermissions } from "../permissions";
+import { permissionAccountsManage, permissionMessagesRead, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import type { AccountDetail } from "../types";
 import { SectionTabs } from "../components/SectionTabs";
@@ -237,6 +237,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
             <ProfileAction id={account.ID} firstName={account.FirstName} lastName={account.LastName} onDone={load} />
             <PhoneAction id={account.ID} current={account.Phone} onDone={load} />
             <LoginEmailAction id={account.ID} current={detail.LoginEmail} onDone={load} />
+            {can(permissionAccountsManage) && <LoginPasswordAction id={account.ID} onDone={load} />}
             <SupportAction id={account.ID} support={detail.Support} onDone={load} />
             <UsernameAction idKey="user_id" id={account.ID} path="/api/actions/set-account-username" current={account.Username} onDone={load} />
             <ColorAction idKey="user_id" id={account.ID} path="/api/actions/set-account-color" onDone={load} />

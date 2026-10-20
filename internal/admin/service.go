@@ -548,7 +548,12 @@ type Dependencies struct {
 	// TELESRV_SIGN_UP_ENABLED，用来在命令结果里报告注册开关的实际状态。
 	ServerIdentity       ServerIdentityStore
 	SignUpEnabledDefault func() bool
-	Now                  func() time.Time
+	// LoginPasswords 是后台设置登录密码用的登录密码服务（见 loginpassword.go）。
+	// LoginPasswordFingerprintKey 是幂等指纹的 HMAC 子密钥，由 DeriveLoginPasswordFingerprintKey
+	// 从服务端密钥派生；为空时 account.set_login_password 拒绝执行。
+	LoginPasswords              LoginPasswordSetter
+	LoginPasswordFingerprintKey []byte
+	Now                         func() time.Time
 }
 
 type Service struct {
@@ -594,7 +599,10 @@ type Service struct {
 	clientUpdates           *ClientUpdates
 	serverIdentity          ServerIdentityStore
 	signUpEnabledDefault    func() bool
-	now                     func() time.Time
+	loginPasswords          LoginPasswordSetter
+	// loginPasswordFingerprintKey 见 Dependencies.LoginPasswordFingerprintKey。
+	loginPasswordFingerprintKey []byte
+	now                         func() time.Time
 }
 
 func NewService(deps Dependencies) *Service {
@@ -728,6 +736,12 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.SignUpEnabledDefault != nil {
 		s.signUpEnabledDefault = deps.SignUpEnabledDefault
+	}
+	if deps.LoginPasswords != nil {
+		s.loginPasswords = deps.LoginPasswords
+	}
+	if len(deps.LoginPasswordFingerprintKey) > 0 {
+		s.loginPasswordFingerprintKey = append([]byte(nil), deps.LoginPasswordFingerprintKey...)
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -3801,22 +3815,41 @@ func (s *Service) RevokeSessions(ctx context.Context, req RevokeSessionsRequest)
 				return CommandResult{}, fmt.Errorf("authorization hash not found")
 			}
 			revoked = append(revoked, deleted)
+			if err := s.revokeAuthKeys(ctx, req.UserID, revoked); err != nil {
+				return CommandResult{}, err
+			}
 		} else {
-			deleted, err := s.auth.ResetAuthorizations(ctx, req.UserID, keep.AuthKeyID)
+			deleted, err := s.revokeAllAuthorizations(ctx, req.UserID, keep.AuthKeyID)
 			if err != nil {
 				return CommandResult{}, err
 			}
 			revoked = append(revoked, deleted...)
 		}
-		for _, a := range revoked {
-			if err := s.revoker.RevokeAuthorizationAuthKey(ctx, a.AuthKeyID, req.UserID); err != nil {
-				return CommandResult{}, err
-			}
-		}
 		details["revoked_hashes"] = authorizationHashes(revoked)
 		details["revoked_count"] = len(revoked)
 		return CommandResult{Message: "sessions revoked", Details: details}, nil
 	})
+}
+
+// revokeAllAuthorizations 删除 userID 除 keepAuthKeyID 之外的全部授权，并关闭对应的 auth key
+// 上的连接。account.revoke_sessions（revoke_all / keep_hash）和设置登录密码时的"同时登出所有
+// 设备"共用它。返回已删除的授权；关闭连接出错时，授权已经删掉了，照样返回它们。
+func (s *Service) revokeAllAuthorizations(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
+	deleted, err := s.auth.ResetAuthorizations(ctx, userID, keepAuthKeyID)
+	if err != nil {
+		return nil, err
+	}
+	return deleted, s.revokeAuthKeys(ctx, userID, deleted)
+}
+
+// revokeAuthKeys 关闭已删除授权的 auth key 上的连接。
+func (s *Service) revokeAuthKeys(ctx context.Context, userID int64, revoked []domain.Authorization) error {
+	for _, a := range revoked {
+		if err := s.revoker.RevokeAuthorizationAuthKey(ctx, a.AuthKeyID, userID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) DeletePrivateMessages(ctx context.Context, req DeletePrivateMessagesRequest) (CommandResult, error) {

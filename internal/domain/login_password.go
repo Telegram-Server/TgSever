@@ -11,6 +11,9 @@ var (
 	ErrPasswordLoginDisabled = errors.New("password login disabled")
 	// ErrPasswordLoginNotSet 表示号码已有账号，但账号没有设置登录密码。
 	ErrPasswordLoginNotSet = errors.New("password login not set")
+	// ErrLoginPasswordInvalid 表示后台设置登录密码时给的明文密码不合规：为空、超过长度上限
+	// 或不是合法的 UTF-8。
+	ErrLoginPasswordInvalid = errors.New("login password invalid")
 )
 
 // LoginPassword 是账号的登录密码（与 2FA 云密码互相独立）。服务端只保存 SRP verifier，
