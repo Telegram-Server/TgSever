@@ -261,3 +261,21 @@ func TestStaticSignUpAllowedReflectsEnvDefault(t *testing.T) {
 		}
 	}
 }
+
+// 密码注册（SignUpWithAccountCreator）同样经过唯一的注册开关判断：关闭时不调用 create。
+func TestSignUpDisabledSignUpWithAccountCreatorCreatesNoAccount(t *testing.T) {
+	f := newSignUpSwitchFixture(t)
+	f.sw.set(false)
+	created := false
+	_, err := f.svc.SignUpWithAccountCreator(context.Background(), domain.Authorization{}, "+15550007560", "New", "",
+		func(ctx context.Context, u domain.User) (domain.User, error) {
+			created = true
+			return f.users.Create(ctx, u)
+		})
+	if !errors.Is(err, domain.ErrSignUpDisabled) {
+		t.Fatalf("SignUpWithAccountCreator err=%v, want ErrSignUpDisabled", err)
+	}
+	if created {
+		t.Fatal("account creator ran although sign-up is closed")
+	}
+}

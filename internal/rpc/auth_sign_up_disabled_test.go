@@ -35,8 +35,22 @@ func (signUpDisabledAuthService) SignUp(context.Context, domain.Authorization, s
 	return domain.User{}, domain.Message{}, errWrappedSignUpDisabled
 }
 
+// signUpDisabledLoginPassword 让密码登录里会为新号码建号的两个入口返回 domain.ErrSignUpDisabled。
+type signUpDisabledLoginPassword struct{ LoginPasswordService }
+
+func (signUpDisabledLoginPassword) Enabled() bool { return true }
+func (signUpDisabledLoginPassword) GetLoginPassword(context.Context, [8]byte, string) (domain.PasswordSettings, error) {
+	return domain.PasswordSettings{}, errWrappedSignUpDisabled
+}
+func (signUpDisabledLoginPassword) SignUp(context.Context, domain.Authorization, string, string, string, domain.PasswordInputSettings) (domain.User, error) {
+	return domain.User{}, errWrappedSignUpDisabled
+}
+
 func TestSignUpDisabledMapsToSignUpDisabledRPCError(t *testing.T) {
-	r := New(Config{}, Deps{Auth: signUpDisabledAuthService{&captureAuthService{}}}, zaptest.NewLogger(t), clock.System)
+	r := New(Config{}, Deps{
+		Auth:          signUpDisabledAuthService{&captureAuthService{}},
+		LoginPassword: signUpDisabledLoginPassword{},
+	}, zaptest.NewLogger(t), clock.System)
 	ctx := context.Background()
 	const phone = "15550007520"
 
@@ -64,6 +78,14 @@ func TestSignUpDisabledMapsToSignUpDisabledRPCError(t *testing.T) {
 		}},
 		{"auth.signUp", func() error {
 			_, err := r.onAuthSignUp(ctx, &tg.AuthSignUpRequest{PhoneNumber: phone, PhoneCodeHash: "h", FirstName: "New"})
+			return err
+		}},
+		{"telesrv.getLoginPassword", func() error {
+			_, err := r.onTelesrvGetLoginPassword(ctx, &tg.TelesrvGetLoginPasswordRequest{PhoneNumber: phone})
+			return err
+		}},
+		{"telesrv.signUpWithPassword", func() error {
+			_, err := r.onTelesrvSignUpWithPassword(ctx, &tg.TelesrvSignUpWithPasswordRequest{PhoneNumber: phone, FirstName: "New"})
 			return err
 		}},
 	}

@@ -1393,6 +1393,10 @@ func (s *Service) SignUpWithAccountCreator(ctx context.Context, auth domain.Auth
 	if err != nil {
 		return domain.User{}, err
 	}
+	// 注册开关的最后一道兜底（调用方 loginpassword.SignUp 已先检查过一次）。
+	if err := s.CheckSignUpAllowed(ctx); err != nil {
+		return domain.User{}, err
+	}
 	// 建号会立即提交，而这条路径没有验证码可作废：先确认当前 auth key 能绑定授权，
 	// 否则 bind 失败时号码已被一个没人登录的新账号占住。
 	if err := s.checkPermanentAuthKey(ctx, auth.AuthKeyID); err != nil {
