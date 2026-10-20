@@ -7,13 +7,13 @@ import (
 )
 
 // resolvePersonalChannel is shared by profile projection and bot history reads;
-// an owner who lost administration must not keep exposing a stale association.
+// only an active creator may expose the association.
 func (r *Router) resolvePersonalChannel(ctx context.Context, viewerUserID, ownerUserID, channelID int64) (domain.ChannelView, bool) {
 	if channelID == 0 || r.deps.Channels == nil {
 		return domain.ChannelView{}, false
 	}
 	owner, err := r.deps.Channels.ResolveChannel(ctx, ownerUserID, channelID)
-	if err != nil || owner.Self.Status != domain.ChannelMemberActive || !channelMemberIsAdmin(owner.Self) {
+	if err != nil || owner.Self.Status != domain.ChannelMemberActive || owner.Self.Role != domain.ChannelRoleCreator {
 		return domain.ChannelView{}, false
 	}
 	view, err := r.deps.Channels.ResolveChannel(ctx, viewerUserID, channelID)

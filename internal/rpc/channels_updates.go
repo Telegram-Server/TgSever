@@ -81,6 +81,31 @@ func (r *Router) onUpdatesGetChannelDifference(ctx context.Context, req *tg.Upda
 	return out, nil
 }
 
+// Prepare the invite audience once, before building per-recipient updates.
+// A failed membership read hides the link instead of exposing it to everyone.
+func (r *Router) prepareChannelInviteViewers(ctx context.Context, res *domain.CreateChannelResult) {
+	for _, join := range res.Joins {
+		if join.Invite == nil {
+			continue
+		}
+		ids, err := r.deps.Channels.InviteAdminMemberIDs(ctx, res.Channel.ID, domain.MaxChannelRealtimeFanout)
+		if err != nil {
+			r.log.Warn("load invite update audience", zap.Int64("channel_id", res.Channel.ID), zap.Error(err))
+			return
+		}
+		if len(ids) == 0 {
+			return
+		}
+		res.InviteViewers = make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			if id > 0 {
+				res.InviteViewers[id] = struct{}{}
+			}
+		}
+		return
+	}
+}
+
 func (r *Router) channelOperationUpdates(ctx context.Context, viewerUserID int64, res domain.CreateChannelResult) *tg.Updates {
 	return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, res, newViewerPeerCache(r))
 }
@@ -104,6 +129,8 @@ func (r *Router) channelOperationUpdatesWithPeerCache(ctx context.Context, viewe
 			userIDs[member.InviterUserID] = struct{}{}
 		}
 	}
+	_, canViewInvite := res.InviteViewers[viewerUserID]
+	canViewInvite = viewerUserID > 0 && (canViewInvite || viewerUserID == res.Channel.CreatorUserID)
 	updates := make([]tg.UpdateClass, 0, 2)
 	if len(res.Joins) > 0 {
 		for _, member := range res.Members {
@@ -126,7 +153,7 @@ func (r *Router) channelOperationUpdatesWithPeerCache(ctx context.Context, viewe
 			update := &tg.UpdateChannelParticipant{ChannelID: res.Channel.ID, Date: member.JoinedAt, ActorID: actorID, UserID: member.UserID}
 			update.SetPrevParticipant(tgChannelParticipant(viewerUserID, res.PreviousMember(res.Channel.ID, member.UserID)))
 			update.SetNewParticipant(tgChannelParticipant(viewerUserID, member))
-			if join.Invite != nil {
+			if join.Invite != nil && viewerUserID > 0 && (canViewInvite || viewerUserID == join.Invite.AdminUserID) {
 				update.SetInvite(r.tgExportedChannelInvite(*join.Invite))
 				userIDs[join.Invite.AdminUserID] = struct{}{}
 			}
@@ -328,7 +355,7 @@ func (r *Router) channelMessagesUpdatesWithPeerCacheAndUsernames(ctx context.Con
 		Date:    date,
 		Seq:     0,
 	}
-	r.applyChannelUpdateRanks(ctx, viewerUserID, out.Updates)
+	r.applyChannelUpdateRanks(ctx, out.Updates, cache)
 	applyUsernamesFromRegistry(out.Users, out.Chats, usernames)
 	return out
 }
@@ -375,7 +402,7 @@ func (r *Router) channelEditMessageUpdatesWithPeerCacheAndUsernames(ctx context.
 		Date:    int(r.clock.Now().Unix()),
 		Seq:     0,
 	}
-	r.applyChannelUpdateRanks(ctx, viewerUserID, out.Updates)
+	r.applyChannelUpdateRanks(ctx, out.Updates, cache)
 	applyUsernamesFromRegistry(out.Users, out.Chats, usernames)
 	return out
 }

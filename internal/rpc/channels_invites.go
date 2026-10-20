@@ -128,6 +128,7 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 		return nil, channelInviteErr(err)
 	}
 	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
+	r.prepareChannelInviteViewers(ctx, &res)
 	updates := r.channelOperationUpdates(ctx, userID, res)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)

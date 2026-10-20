@@ -34,6 +34,9 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validMemoryTodoParticipantEdit(req, target) {
 		return res, domain.ErrMessageAuthorRequired
 	}
+	if req.ReplaceTodo {
+		req.Media = req.Media.WithTodoCompletionsFrom(target.Media)
+	}
 	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindGeoLive && target.Media != nil && target.Media.Kind == domain.MessageMediaKindGeoLive && !target.Media.GeoLive.Active(target.Date, req.EditDate) {
 		return res, domain.ErrMessageNotModified
 	}
@@ -115,7 +118,7 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 }
 
 func validMemoryTodoParticipantEdit(req domain.EditMessageRequest, target domain.Message) bool {
-	if !req.AllowTodoParticipantMutation || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
+	if !req.AllowTodoParticipantMutation || req.ReplaceTodo || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
 		return false
 	}
 	if target.From.ID == req.OwnerUserID {

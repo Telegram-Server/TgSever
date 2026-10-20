@@ -48,11 +48,24 @@ func ChannelStickerSets(t *testing.T, s store.ChannelStore, reopen func() store.
 	if _, err := s.SetStickers(ctx, owner, id, 73); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.LeaveChannel(ctx, id, users[99], baseNow()); err != nil {
-		t.Fatal(err)
+	for _, user := range users[80:] {
+		if _, err := s.LeaveChannel(ctx, id, user, baseNow()); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := s.SetStickers(ctx, owner, id, 0); !errors.Is(err, domain.ErrChannelParticipantsTooFew) {
+	if _, err := s.SetStickers(ctx, owner, id, 74); !errors.Is(err, domain.ErrChannelParticipantsTooFew) {
+		t.Fatalf("setting below member threshold = %v", err)
+	}
+	if _, err := s.SetStickers(ctx, member, id, 0); !errors.Is(err, domain.ErrChannelAdminRequired) {
+		t.Fatalf("unauthorized removal = %v", err)
+	}
+	if _, err := s.SetStickers(ctx, admin, id, 0); err != nil {
 		t.Fatalf("removing below member threshold = %v", err)
+	}
+	s = reopen()
+	view, err := s.GetChannel(ctx, member, id)
+	if err != nil || view.Channel.StickerSetID != 0 {
+		t.Fatalf("durable removal = %+v, %v", view.Channel, err)
 	}
 	broadcast, err := s.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: "Not a supergroup", Broadcast: true, Date: baseNow()})
 	if err != nil {

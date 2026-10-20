@@ -565,8 +565,7 @@ type OutboxReadDateRequest struct {
 }
 
 // EditMessageRequest 是账号视角下编辑一条已发送私聊消息的命令。
-// Media 非 nil 时整体替换消息媒体快照（当前唯一调用方是 live location 续报/停止，
-// rpc 层负责限定媒体种类）；nil 表示纯文本编辑。
+// Media 非 nil 时替换消息媒体快照；nil 表示纯文本编辑。
 type EditMessageRequest struct {
 	OwnerUserID     int64
 	Peer            Peer
@@ -588,6 +587,9 @@ type EditMessageRequest struct {
 	RichMessage    *MessageRichMessage
 	// ViaBotEditBotID 非零时允许对应 bot 编辑经由它发送的 inline 私聊消息。
 	ViaBotEditBotID int64
+	// ReplaceTodo 表示替换清单定义：store 持锁从当前媒体保留仍存在 ID 的完成记录，
+	// 不信任 Media 中的 completions。append/toggle 不置位，仍写其变更后的快照。
+	ReplaceTodo bool
 	// AllowTodoParticipantMutation 允许 checklist 参与者在 others_can_* 授权下通过
 	// edit 事件替换 todo 媒体快照。仅 RPC todo handler 设置；store 仍会限制为
 	// todo->todo 且正文/entities/markup 不变，避免普通消息越权编辑。

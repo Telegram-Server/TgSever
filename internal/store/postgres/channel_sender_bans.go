@@ -66,6 +66,9 @@ func (s *ChannelStore) editChannelSenderBan(ctx context.Context, req domain.Edit
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.EditChannelBannedResult{}, err
 	}
+	if previous.Status != domain.ChannelMemberKicked && !req.BannedRights.ViewMessages {
+		return domain.EditChannelBannedResult{NoChange: true, Channel: channel, Previous: previous, Participant: previous, Date: req.Date}, nil
+	}
 	member := previous
 	member.InviterUserID = req.UserID
 	member.LeftAt = req.Date
@@ -73,7 +76,13 @@ func (s *ChannelStore) editChannelSenderBan(ctx context.Context, req domain.Edit
 		member = domain.ChannelSenderBanMember(req.ChannelID, req.Participant.ID, req.UserID, req.Date)
 		err = q.PutChannelSenderBan(ctx, sqlcgen.PutChannelSenderBanParams{ChannelID: req.ChannelID, SenderChannelID: req.Participant.ID, BannedBy: req.UserID, BannedAt: int32(req.Date)})
 	} else {
-		err = q.DeleteChannelSenderBan(ctx, sqlcgen.DeleteChannelSenderBanParams{ChannelID: req.ChannelID, SenderChannelID: req.Participant.ID})
+		var deleted int64
+		deleted, err = q.DeleteChannelSenderBan(ctx, sqlcgen.DeleteChannelSenderBanParams{ChannelID: req.ChannelID, SenderChannelID: req.Participant.ID})
+		if err == nil && deleted == 0 {
+			member.Status = domain.ChannelMemberLeft
+			member.BannedRights = domain.ChannelBannedRights{}
+			return domain.EditChannelBannedResult{NoChange: true, Channel: channel, Previous: member, Participant: member, Date: req.Date}, nil
+		}
 		member.Status = domain.ChannelMemberLeft
 		member.BannedRights = domain.ChannelBannedRights{}
 	}

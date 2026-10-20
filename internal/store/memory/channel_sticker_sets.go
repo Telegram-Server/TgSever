@@ -21,7 +21,7 @@ func (s *ChannelStore) SetStickers(_ context.Context, userID, channelID, sticker
 	if !ch.Megagroup || ch.Broadcast {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
-	if ch.ParticipantsCount < domain.MinChannelStickerSetParticipants {
+	if stickerSetID != 0 && ch.ParticipantsCount < domain.MinChannelStickerSetParticipants {
 		return domain.Channel{}, domain.ErrChannelParticipantsTooFew
 	}
 	ch.StickerSetID = stickerSetID

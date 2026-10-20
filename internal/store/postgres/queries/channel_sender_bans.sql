@@ -11,7 +11,7 @@ INSERT INTO channel_sender_bans (channel_id, sender_channel_id, banned_by, banne
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (channel_id, sender_channel_id) DO UPDATE SET banned_by = EXCLUDED.banned_by, banned_at = EXCLUDED.banned_at;
 
--- name: DeleteChannelSenderBan :exec
+-- name: DeleteChannelSenderBan :execrows
 DELETE FROM channel_sender_bans WHERE channel_id = $1 AND sender_channel_id = $2;
 
 -- name: ListChannelKickedPeers :many

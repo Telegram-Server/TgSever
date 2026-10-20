@@ -24,7 +24,59 @@ func ChannelSenderBans(t *testing.T, s store.ChannelStore, reopen func() store.C
 	if _, err := s.EditChannelBanned(ctx, ban); !errors.Is(err, domain.ErrChannelAdminRequired) {
 		t.Fatalf("ordinary member ban = %v", err)
 	}
+	unauthorizedUnban := ban
+	unauthorizedUnban.BannedRights = domain.ChannelBannedRights{}
+	if _, err := s.EditChannelBanned(ctx, unauthorizedUnban); !errors.Is(err, domain.ErrChannelAdminRequired) {
+		t.Fatalf("ordinary member empty unban = %v", err)
+	}
 	ban.UserID = owner
+	assertEmptyUnban := func(participant domain.Peer) {
+		t.Helper()
+		before, err := s.GetChannel(ctx, owner, created.Channel.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		logsBefore, err := s.ListAdminLog(ctx, domain.ChannelAdminLogRequest{UserID: owner, ChannelID: created.Channel.ID, Limit: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := s.EditChannelBanned(ctx, domain.EditChannelBannedRequest{UserID: owner, ChannelID: created.Channel.ID, Participant: participant, Date: baseNow()})
+		if err != nil || !res.NoChange || len(res.Recipients) != 0 || res.Message.ID != 0 || res.Event.Pts != 0 || res.ServiceEvent.Pts != 0 {
+			t.Fatalf("empty unban transition = %+v, %v", res, err)
+		}
+		s = reopen()
+		after, err := s.GetChannel(ctx, owner, created.Channel.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.Channel.Pts != before.Channel.Pts || after.Channel.TopMessageID != before.Channel.TopMessageID || after.Channel.ParticipantsCount != before.Channel.ParticipantsCount {
+			t.Fatalf("empty unban changed channel: before=%+v after=%+v", before.Channel, after.Channel)
+		}
+		logsAfter, err := s.ListAdminLog(ctx, domain.ChannelAdminLogRequest{UserID: owner, ChannelID: created.Channel.ID, Limit: 100})
+		if err != nil || len(logsAfter.Events) != len(logsBefore.Events) {
+			t.Fatalf("empty unban added audit: before=%+v after=%+v, %v", logsBefore.Events, logsAfter.Events, err)
+		}
+	}
+	assertEmptyUnban(peer)
+	rejectedBefore, err := s.ListAdminLog(ctx, domain.ChannelAdminLogRequest{UserID: owner, ChannelID: created.Channel.ID, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, until := range []int{baseNow() + 86400, -1} {
+		temporary := ban
+		temporary.BannedRights.UntilDate = until
+		if _, err := s.EditChannelBanned(ctx, temporary); !errors.Is(err, domain.ErrChannelInvalid) {
+			t.Fatalf("temporary sender ban until=%d: %v", until, err)
+		}
+		s = reopen()
+		if _, err := s.GetChannelSenderBan(ctx, owner, created.Channel.ID, peer.ID); !errors.Is(err, domain.ErrUserNotParticipant) {
+			t.Fatalf("temporary ban persisted: %v", err)
+		}
+		logs, err := s.ListAdminLog(ctx, domain.ChannelAdminLogRequest{UserID: owner, ChannelID: created.Channel.ID, Limit: 100})
+		if err != nil || len(logs.Events) != len(rejectedBefore.Events) {
+			t.Fatalf("rejected ban audit = %+v, %v", logs.Events, err)
+		}
+	}
 	if _, err := s.EditChannelBanned(ctx, ban); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +133,7 @@ func ChannelSenderBans(t *testing.T, s store.ChannelStore, reopen func() store.C
 	if _, err := s.GetChannelSenderBan(ctx, owner, created.Channel.ID, peer.ID); !errors.Is(err, domain.ErrUserNotParticipant) {
 		t.Fatalf("unban query = %v", err)
 	}
+	assertEmptyUnban(peer)
 	sent, err := s.SendChannelMessage(ctx, domain.SendChannelMessageRequest{UserID: member, ChannelID: created.Channel.ID, Message: "restored", SendAs: &peer, Date: baseNow()})
 	if err != nil || sent.Message.SendAs == nil || *sent.Message.SendAs != peer {
 		t.Fatalf("unbanned send = %+v, %v", sent.Message, err)

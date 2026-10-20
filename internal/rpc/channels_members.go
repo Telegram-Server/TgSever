@@ -594,6 +594,9 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	if err != nil {
 		return nil, channelAdminErr(err)
 	}
+	if res.NoChange {
+		return tgEmptyUpdates(res.Date), nil
+	}
 	if participant.Type == domain.PeerTypeChannel {
 		build := func(viewerID int64) *tg.Updates {
 			return &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateChannel{ChannelID: res.Channel.ID}}, Chats: tgChannels(viewerID, []domain.Channel{res.Channel}), Date: res.Date}
@@ -729,6 +732,7 @@ func (r *Router) onMessagesHideChatJoinRequest(ctx context.Context, req *tg.Mess
 	}
 	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
 	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
+	r.prepareChannelInviteViewers(ctx, &res)
 	updates := r.channelOperationUpdates(ctx, userID, res)
 	r.appendPendingJoinRequestsUpdate(ctx, userID, updates, res.Channel)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
@@ -769,6 +773,7 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 	}
 	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
 	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
+	r.prepareChannelInviteViewers(ctx, &res)
 	updates := r.channelOperationUpdates(ctx, userID, res)
 	r.appendPendingJoinRequestsUpdate(ctx, userID, updates, res.Channel)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {

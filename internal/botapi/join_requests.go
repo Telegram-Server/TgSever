@@ -1,11 +1,32 @@
 package botapi
 
-import "telesrv/internal/domain"
+import (
+	"strings"
 
-func apiInviteLink(invite domain.ChannelInvite, creator domain.User) map[string]any {
+	"telesrv/internal/domain"
+)
+
+func apiInviteLink(invite domain.ChannelInvite, creator domain.User, viewerID int64) map[string]any {
+	ownsLink := viewerID > 0 && viewerID == invite.AdminUserID
 	link := invite.Link
 	if link == "" {
-		link = "https://t.me/+" + invite.Hash
+		link = "https://t.me/+..."
+		if ownsLink {
+			link = "https://t.me/+" + invite.Hash
+		}
+	} else if !ownsLink {
+		// Bot API ChatInviteLink hides the secret part of another admin's link.
+		// Strip the entire final component, including any query/fragment.
+		separator := strings.LastIndexByte(link, '/')
+		if separator < 0 {
+			link = "..."
+		} else {
+			prefix := separator + 1
+			if strings.HasPrefix(link[prefix:], "+") {
+				prefix++
+			}
+			link = link[:prefix] + "..."
+		}
 	}
 	out := map[string]any{"invite_link": link, "creator": apiUser(creator), "creates_join_request": invite.RequestNeeded, "is_primary": invite.Permanent, "is_revoked": invite.Revoked}
 	if invite.Title != "" {
@@ -50,7 +71,7 @@ func apiChatJoinRequest(event domain.UpdateEvent) (map[string]any, bool) {
 		out["bio"] = u.About
 	}
 	if u.Invite != nil {
-		out["invite_link"] = apiInviteLink(*u.Invite, userOf(u.Invite.AdminUserID))
+		out["invite_link"] = apiInviteLink(*u.Invite, userOf(u.Invite.AdminUserID), event.UserID)
 	}
 	return out, true
 }

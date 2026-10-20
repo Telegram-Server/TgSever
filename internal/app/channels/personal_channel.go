@@ -22,7 +22,7 @@ func (s *Service) GetPersonalChannelHistory(ctx context.Context, botUserID, owne
 	if err != nil {
 		return domain.ChannelHistory{}, err
 	}
-	if owner.Self.Status != domain.ChannelMemberActive || (owner.Self.Role != domain.ChannelRoleCreator && owner.Self.Role != domain.ChannelRoleAdmin) {
+	if owner.Self.Status != domain.ChannelMemberActive || owner.Self.Role != domain.ChannelRoleCreator {
 		return domain.ChannelHistory{}, domain.ErrChannelAdminRequired
 	}
 	if !owner.Channel.Broadcast || owner.Channel.Megagroup || owner.Channel.Deleted || owner.Channel.Username == "" {

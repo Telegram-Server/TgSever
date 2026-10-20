@@ -556,7 +556,7 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		CanViewParticipants: channelMemberIsAdmin(view.Self) || !ch.MembersListAdminOnly(),
 		CanSetUsername:      view.Self.Role == domain.ChannelRoleCreator,
 		CanDeleteChannel:    view.Self.Role == domain.ChannelRoleCreator,
-		CanSetStickers:      ch.Megagroup && !ch.Broadcast && ch.ParticipantsCount >= domain.MinChannelStickerSetParticipants && view.Self.Status == domain.ChannelMemberActive && channelMemberCanChangeInfo(view.Self),
+		CanSetStickers:      ch.Megagroup && !ch.Broadcast && (ch.ParticipantsCount >= domain.MinChannelStickerSetParticipants || ch.StickerSetID != 0) && view.Self.Status == domain.ChannelMemberActive && channelMemberCanChangeInfo(view.Self),
 		// TDesktop only exposes the Statistics entry after channelFull.can_view_stats.
 		// The stats RPCs enforce the same creator/admin boundary, so project the
 		// capability from the membership instead of leaving a reachable service

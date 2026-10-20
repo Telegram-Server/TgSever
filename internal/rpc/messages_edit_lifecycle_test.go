@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -327,5 +328,89 @@ func TestTodoReplacementChannelAuthorOnlyRPC(t *testing.T) {
 	history, err := f.channels.GetMessages(f.ctx, f.owner.ID, f.channel.ID, []int{sent.ID})
 	if err != nil || len(history.Messages) != 1 || history.Messages[0].Media.Todo.Title != "new" {
 		t.Fatalf("replacement = %+v, %v", history, err)
+	}
+}
+
+func TestTodoReplacementPreservesParticipantCompletionAndBotEditRPC(t *testing.T) {
+	for _, channel := range []bool{false, true} {
+		t.Run(map[bool]string{false: "private", true: "channel"}[channel], func(t *testing.T) {
+			f := newBotAPIReceiveFixture(t, true)
+			f.router.clock = fixedClock{now: time.Unix(1700000000, 0)}
+			var peer tg.InputPeerClass = inputPeerUser(f.bot)
+			var participantPeer tg.InputPeerClass = inputPeerUser(f.owner)
+			if channel {
+				peer = &tg.InputPeerChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash}
+				participantPeer = peer
+			}
+			sent := sendTestTodoWithFlags(t, f.router, f.owner.ID, peer, 99301, true, true)
+			participantID := sent.ID
+			if !channel {
+				participantID = privateMessageForPeer(t, f.router, f.bot.ID, domain.Peer{Type: domain.PeerTypeUser, ID: f.owner.ID}).ID
+			}
+			f.router.clock = fixedClock{now: time.Unix(1700000010, 0)}
+			if _, err := f.router.onMessagesToggleTodoCompleted(WithUserID(f.ctx, f.bot.ID), &tg.MessagesToggleTodoCompletedRequest{
+				Peer: participantPeer, MsgID: participantID, Completed: []int{1, 2},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.router.BotAPIDropPendingUpdates(f.ctx, f.bot.ID); err != nil {
+				t.Fatal(err)
+			}
+			f.router.clock = fixedClock{now: time.Unix(1700000020, 0)}
+			req := &tg.MessagesEditMessageRequest{Peer: peer, ID: sent.ID}
+			req.SetMedia(&tg.InputMediaTodo{Todo: tg.TodoList{
+				Title: tg.TextWithEntities{Text: "corrected list"}, OthersCanAppend: true, OthersCanComplete: true,
+				List: []tg.TodoItem{{ID: 1, Title: tg.TextWithEntities{Text: "corrected item"}}, {ID: 3, Title: tg.TextWithEntities{Text: "new item"}}},
+			}})
+			updates, err := f.router.onMessagesEditMessage(WithUserID(f.ctx, f.owner.ID), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var edited *tg.Message
+			if channel {
+				edited = findUpdate[*tg.UpdateEditChannelMessage](t, updates).Message.(*tg.Message)
+			} else {
+				edited = editedMessageFromUpdates(t, updates)
+			}
+			completions, _ := edited.Media.(*tg.MessageMediaToDo).GetCompletions()
+			if len(completions) != 1 || completions[0].ID != 1 || completions[0].Date != 1700000010 {
+				t.Fatalf("replacement completions = %+v", completions)
+			}
+			if who, ok := completions[0].CompletedBy.(*tg.PeerUser); !ok || who.UserID != f.bot.ID {
+				t.Fatalf("replacement completed_by = %#v", completions[0].CompletedBy)
+			}
+			events, err := f.router.BotAPIUpdates(f.ctx, f.bot.ID, 0)
+			if err != nil || len(events) != 1 || events[0].Type != domain.UpdateEventEditMessage {
+				t.Fatalf("bot edited_message = %+v, %v", events, err)
+			}
+			want := []domain.MessageTodoCompletion{{ID: 1, CompletedBy: f.bot.ID, Date: 1700000010}}
+			if todo := events[0].Message.Media.Todo; todo.Title != "corrected list" || !slices.Equal(todo.Completions, want) {
+				t.Fatalf("bot replacement lost completion: %+v", todo)
+			}
+			// Appending must not discard completions, and toggling must still clear
+			// them rather than being mistaken for a definition replacement.
+			if _, err := f.router.onMessagesAppendTodoList(WithUserID(f.ctx, f.bot.ID), &tg.MessagesAppendTodoListRequest{
+				Peer: participantPeer, MsgID: participantID, List: []tg.TodoItem{{ID: 4, Title: tg.TextWithEntities{Text: "appended"}}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			peerDomain := domain.Peer{Type: domain.PeerTypeUser, ID: f.owner.ID}
+			if channel {
+				peerDomain = domain.Peer{Type: domain.PeerTypeChannel, ID: f.channel.ID}
+			}
+			current, found := f.router.loadTodoMessage(f.ctx, f.bot.ID, peerDomain, participantID)
+			if !found || len(current.media.Todo.Items) != 3 || current.media.Todo.Items[2].ID != 4 || !slices.Equal(current.media.Todo.Completions, want) {
+				t.Fatalf("append snapshot = %+v, found=%v", current, found)
+			}
+			if _, err := f.router.onMessagesToggleTodoCompleted(WithUserID(f.ctx, f.bot.ID), &tg.MessagesToggleTodoCompletedRequest{
+				Peer: participantPeer, MsgID: participantID, Incompleted: []int{1},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			current, found = f.router.loadTodoMessage(f.ctx, f.bot.ID, peerDomain, participantID)
+			if !found || len(current.media.Todo.Completions) != 0 {
+				t.Fatalf("toggle retained completion after replacement: %+v, found=%v", current, found)
+			}
+		})
 	}
 }

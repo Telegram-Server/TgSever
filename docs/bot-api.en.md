@@ -1038,44 +1038,61 @@ units, unknown types are `ENTITY_TYPE_UNSUPPORTED`.
 
 ## MTProto prerequisites for Bot API adapters
 
-[Issue #37](https://github.com/Telegram-Server/TgSever/issues/37) completes
+[Issue #37](https://github.com/Telegram-Server/TgSever/issues/37) tracks
 underlying MTProto/app/store behavior; it does **not** add all corresponding
-HTTP methods. Methods in the next section remain unavailable until their
-separate gateway adapters are implemented.
-
-- Avatar selection requires the target owner's profile/fallback history;
-  albums respect profile-photo privacy. Deleted owners expose neither albums
-  nor saved music, and boost lists use viewer-specific user projections.
-- Main invites have explicit identity, ordinary creation never promotes a
-  link to main, and non-owner administrators manage only their own links.
-  Invite management and pending-request visibility require `InviteUsers`.
-  Batch approvals are atomic; direct invites and link deletion clear stale
-  pending requests and keep counts consistent.
+HTTP methods. The photo/boost privacy prerequisites (#38–40) are delivered
+separately and must be included before these changes. Methods in the next
+section remain unavailable until their separate gateway adapters are implemented.
+- Main invites have explicit identity; ordinary creation never promotes a
+  link to main. Non-owner administrators manage only their own links, and
+  management/pending-request visibility require `InviteUsers`. MTProto member
+  updates include a private invite only for authorized viewers or that link's
+  creator; ordinary members and direct joiners do not receive its secret.
+  Bot API events expose another administrator's link with its secret replaced
+  by `...`, while preserving non-secret metadata. Batch approvals are atomic;
+  direct invites and link deletion clear stale pending requests and counts.
 - Participant queries preserve restrictions, bans and member tags. Tags use
-  at most 16 Unicode characters and reject emoji. Channel-identity bans cover
-  text, media, albums, forwards and automatic linked-discussion copies.
-- Supergroup sticker sets are persisted, require `ChangeInfo` and at least
-  100 members, and are exposed with the caller's `can_set_stickers`.
-- Live locations cannot be revived after expiry/stop; edits support markup
-  and inline messages. Checklist replacement is author-only; allowed
-  collaboration also produces edit updates.
+  at most 16 Unicode characters and reject emoji. Message ranks are loaded
+  once per author batch/event, not per sender or fanout recipient, and are not
+  retained in a long-lived cache. Channel-identity bans cover text, media,
+  albums, forwards and linked-discussion copies; nonzero temporary expiry is
+  rejected. Unbanning an already-unbanned channel identity creates no audit
+  entry, PTS change or membership broadcast.
+- Supergroup sticker sets require `ChangeInfo` and 100 members when setting
+  a non-empty set. Authorized administrators may still remove an existing
+  set below that threshold; `can_set_stickers` includes this removal capability.
+- Live locations reject revival after expiry/stop, including inline edits.
+  Checklist replacement is author-only and merges against current locked
+  completion state: surviving item IDs retain their completer/date, removed
+  IDs lose completion, and new IDs start incomplete. Allowed collaboration
+  continues to produce edit updates.
 - Text/rich streaming drafts are bot-only, validate IDs/text/entities,
   respect blocking, and emit server-side rich constructors. Unsupported paid
   media is no longer advertised; paid reactions remain independent.
-- `messages.getPersonalChannelHistory` lets bots read the owner's valid public
-  personal broadcast channel without weakening ordinary bot history privacy.
-  Default group/channel bot administrator rights persist independently;
-  avatar byte import uses avatar sizing and 512 KiB video parts and notifies
-  the bot owner.
+- `messages.getPersonalChannelHistory` lets bots read a valid public personal
+  broadcast channel only while its associated user is the active creator.
+  Transferring ownership revokes the old association even if that user remains
+  an administrator; ordinary bot history privacy is unchanged. Default bot
+  administrator rights persist separately, and avatar byte import uses avatar
+  sizing/512 KiB video parts and notifies the bot owner.
 - Internal channel deletion has an explicit `SkipUnauthorized` mode for
   future batch adapters. Normal MTProto deletion remains atomic and does not
   silently skip unauthorized messages.
+- Reaction delivery snapshots the committed old/new selections and counts
+  before admission to the bounded FIFO worker. Bot discovery, current role
+  checks and update insertion run there rather than on the reaction RPC's
+  synchronous path. Queue pressure applies FIFO backpressure; cancellation
+  before admission can reject delivery. Admitted work drains on shutdown with
+  a bounded per-job deadline. This is not a durable outbox or an exactly-once
+  delivery guarantee.
 
 The upgrade adds migrations `20261024010000` through `20261024060000`.
-The first repairs duplicate active main invites and enforces uniqueness per
-channel/administrator. Its data correction is not undone on rollback.
-Rolling back reaction/join-request payload migrations discards queued updates
-of the removed kinds; back up the database before upgrading or rolling back.
+Include the photo/privacy prerequisite migration `20261023020000` first:
+adding an older version after applying these migrations would skip it.
+The first Bot API migration repairs duplicate active main invites and enforces
+uniqueness per channel/administrator; its data correction is not undone on
+rollback. Rolling back reaction/join-request payload migrations discards queued
+updates of the removed kinds. Back up the database before upgrading or rolling back.
 
 ## Not implemented
 

@@ -40,6 +40,9 @@ func TestChannelSenderBansRPC(t *testing.T) {
 	if err := edit(bot, tg.ChatBannedRights{SendMessages: true}); err == nil {
 		t.Fatal("partial channel ban accepted")
 	}
+	if err := edit(bot, tg.ChatBannedRights{ViewMessages: true, UntilDate: int(time.Now().Add(24 * time.Hour).Unix())}); err == nil {
+		t.Fatal("temporary channel ban accepted")
+	}
 	if _, err := f.router.onChannelsGetFullChannel(f.userCtx(owner), inputChannel(sender)); err == nil {
 		t.Fatal("ordinary lookup exposed another owner's private channel")
 	}
@@ -239,4 +242,38 @@ func TestChannelSenderBanLinkedDiscussionRPC(t *testing.T) {
 	if !found {
 		t.Fatal("unbanned channel's discussion copy missing")
 	}
+}
+
+func TestEmptyChannelUnbanRPCDoesNotNotify(t *testing.T) {
+	f := newRPCChannelFixture(t)
+	owner := f.user(551, "15550005501", "Owner")
+	member := f.user(552, "15550005502", "Member")
+	group := f.createLegacyMegagroup(owner, "Idempotent unban", member)
+	sender := createBroadcastChannelRPC(t, f.router, member.ID, "Sender")
+	sessions := &captureSessions{onlineUserIDs: []int64{owner.ID, member.ID}}
+	f.router.deps.Sessions = sessions
+	edit := func(rights tg.ChatBannedRights) tg.UpdatesClass {
+		t.Helper()
+		result, err := f.router.onChannelsEditBanned(f.userCtx(owner), &tg.ChannelsEditBannedRequest{Channel: inputChannel(group), Participant: inputPeerChannel(sender), BannedRights: rights})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	assertEmpty := func() {
+		t.Helper()
+		sessions.clearMessages()
+		result := edit(tg.ChatBannedRights{})
+		updates, ok := result.(*tg.Updates)
+		if !ok || len(updates.Updates) != 0 {
+			t.Fatalf("empty unban updates = %#v", result)
+		}
+		if ids := sessions.pushedUserIDs(); len(ids) != 0 {
+			t.Fatalf("empty unban notified viewers: %v", ids)
+		}
+	}
+	assertEmpty()
+	edit(tg.ChatBannedRights{ViewMessages: true})
+	edit(tg.ChatBannedRights{})
+	assertEmpty()
 }

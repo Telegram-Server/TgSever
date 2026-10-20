@@ -35,7 +35,7 @@ func (q *Queries) CountChannelKickedPeers(ctx context.Context, arg CountChannelK
 	return column_1, err
 }
 
-const deleteChannelSenderBan = `-- name: DeleteChannelSenderBan :exec
+const deleteChannelSenderBan = `-- name: DeleteChannelSenderBan :execrows
 DELETE FROM channel_sender_bans WHERE channel_id = $1 AND sender_channel_id = $2
 `
 
@@ -44,9 +44,12 @@ type DeleteChannelSenderBanParams struct {
 	SenderChannelID int64
 }
 
-func (q *Queries) DeleteChannelSenderBan(ctx context.Context, arg DeleteChannelSenderBanParams) error {
-	_, err := q.db.Exec(ctx, deleteChannelSenderBan, arg.ChannelID, arg.SenderChannelID)
-	return err
+func (q *Queries) DeleteChannelSenderBan(ctx context.Context, arg DeleteChannelSenderBanParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteChannelSenderBan, arg.ChannelID, arg.SenderChannelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getChannelSenderBan = `-- name: GetChannelSenderBan :one

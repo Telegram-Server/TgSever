@@ -132,7 +132,7 @@ func TestBotAPIJoinRequestEntrypointsAndSnapshot(t *testing.T) {
 				}
 			} else {
 				link := body["invite_link"].(map[string]any)
-				if !strings.HasSuffix(link["invite_link"].(string), "+"+hash) || link["creates_join_request"] != true || link["creator"].(map[string]any)["id"] != float64(f.owner.ID) {
+				if link["invite_link"] != publicLinkWithBaseURL(f.router.cfg.PublicBaseURL, "+...") || link["creates_join_request"] != true || link["creator"].(map[string]any)["id"] != float64(f.owner.ID) {
 					t.Fatalf("invite=%+v", link)
 				}
 			}
@@ -252,7 +252,7 @@ func TestBotAPIInviteJoinAndBatchApprovalsKeepEachLink(t *testing.T) {
 						t.Fatal(err)
 					}
 					last = result.(*tg.MessagesChatInviteJoinResultOk).Updates
-					assertJoinedInviteUpdates(t, last, map[int64]string{user.ID: hashes[user.ID]}, false)
+					assertJoinedInviteUpdates(t, last, map[int64]string{user.ID: hashes[user.ID]}, false, false)
 				}
 			}
 			if approved {
@@ -260,7 +260,7 @@ func TestBotAPIInviteJoinAndBatchApprovalsKeepEachLink(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				assertJoinedInviteUpdates(t, last, hashes, true)
+				assertJoinedInviteUpdates(t, last, hashes, true, true)
 			}
 			bodies := joinHTTPUpdates(t, f)
 			seen := make(map[int64]bool)
@@ -275,7 +275,7 @@ func TestBotAPIInviteJoinAndBatchApprovalsKeepEachLink(t *testing.T) {
 					t.Fatalf("new member=%+v", member)
 				}
 				link := body["invite_link"].(map[string]any)["invite_link"].(string)
-				if !strings.HasSuffix(link, "+"+hashes[id]) || (body["via_join_request"] == true) != approved {
+				if link != publicLinkWithBaseURL(f.router.cfg.PublicBaseURL, "+...") || (body["via_join_request"] == true) != approved {
 					t.Fatalf("member=%+v", body)
 				}
 				seen[id] = true
@@ -287,7 +287,7 @@ func TestBotAPIInviteJoinAndBatchApprovalsKeepEachLink(t *testing.T) {
 	}
 }
 
-func assertJoinedInviteUpdates(t *testing.T, updates tg.UpdatesClass, hashes map[int64]string, approved bool) {
+func assertJoinedInviteUpdates(t *testing.T, updates tg.UpdatesClass, hashes map[int64]string, approved, canViewInvite bool) {
 	t.Helper()
 	full, ok := updates.(*tg.Updates)
 	if !ok {
@@ -297,9 +297,15 @@ func assertJoinedInviteUpdates(t *testing.T, updates tg.UpdatesClass, hashes map
 	for _, update := range full.Updates {
 		switch u := update.(type) {
 		case *tg.UpdateChannelParticipant:
-			invite, ok := u.Invite.(*tg.ChatInviteExported)
-			if !ok || !strings.HasSuffix(invite.Link, "+"+hashes[u.UserID]) {
-				t.Fatalf("participant=%+v invite=%+v", u, u.Invite)
+			invite, present := u.GetInvite()
+			if present != canViewInvite {
+				t.Fatalf("participant invite visible=%v, want %v", present, canViewInvite)
+			}
+			if canViewInvite {
+				exported, ok := invite.(*tg.ChatInviteExported)
+				if !ok || !strings.HasSuffix(exported.Link, "+"+hashes[u.UserID]) {
+					t.Fatalf("participant=%+v invite=%+v", u, invite)
+				}
 			}
 			seen[u.UserID] = true
 		case *tg.UpdateNewChannelMessage:
@@ -351,7 +357,7 @@ func TestBotAPIJoinRequestDirectInviteThenBatchNotifiesEveryJoin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertJoinedInviteUpdates(t, result, map[int64]string{f.member.ID: hash}, true)
+	assertJoinedInviteUpdates(t, result, map[int64]string{f.member.ID: hash}, true, true)
 	events := botMemberEvents(t, f, domain.UpdateEventBotChatMember)
 	if len(events) != 2 {
 		t.Fatalf("membership events=%+v", events)

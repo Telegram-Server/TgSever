@@ -46,6 +46,9 @@ func (s *ChannelStore) editChannelSenderBan(req domain.EditChannelBannedRequest)
 	if !exists {
 		previous = domain.ChannelMember{ChannelID: req.ChannelID, Peer: req.Participant, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberLeft}
 	}
+	if !exists && !req.BannedRights.ViewMessages {
+		return domain.EditChannelBannedResult{NoChange: true, Channel: channel, Previous: previous, Participant: previous, Date: req.Date}, nil
+	}
 	member := previous
 	member.InviterUserID = req.UserID
 	member.LeftAt = req.Date

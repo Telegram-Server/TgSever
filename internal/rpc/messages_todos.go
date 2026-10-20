@@ -199,6 +199,8 @@ func (r *Router) onEditMessageTodo(ctx context.Context, req *tg.MessagesEditMess
 		return nil, err
 	}
 	return r.mutateTodoMediaWithMarkup(ctx, req.Peer, req.ID, req.ReplyMarkup, nil, func(_ int64, current *domain.MessageTodo, _ int) (*domain.ChannelMessageAction, error) {
+		// InputMediaTodo 不带完成状态；ReplaceTodo 让 store 持锁合并真实当前记录，
+		// 不在这里从旧读快照复制，以免覆盖并发勾选。
 		*current = *todo
 		return nil, nil
 	})
@@ -250,6 +252,7 @@ func (r *Router) mutateTodoMediaWithMarkup(ctx context.Context, inputPeer tg.Inp
 			Message:                      current.body,
 			Entities:                     current.entities,
 			Media:                        newMedia,
+			ReplaceTodo:                  participantAllowed == nil,
 			AllowTodoParticipantMutation: participantAllowed != nil && participantAllowed(&todo),
 			TodoServiceAction:            serviceAction,
 			EditDate:                     now,
@@ -281,6 +284,7 @@ func (r *Router) mutateTodoMediaWithMarkup(ctx context.Context, inputPeer tg.Inp
 		Message:                      current.body,
 		Entities:                     current.entities,
 		Media:                        newMedia,
+		ReplaceTodo:                  participantAllowed == nil,
 		EditDate:                     now,
 		SetReplyMarkup:               setReplyMarkup,
 		ReplyMarkup:                  replyMarkup,

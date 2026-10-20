@@ -3,13 +3,14 @@ package rpc
 import (
 	"context"
 	"github.com/iamxvbaba/td/clock"
+
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 	appaccount "telesrv/internal/app/account"
 	appprivacy "telesrv/internal/app/privacy"
 	appusers "telesrv/internal/app/users"
-	"telesrv/internal/store/memory"
-	"github.com/iamxvbaba/td/tg"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 	"testing"
 )
 
@@ -19,25 +20,29 @@ func TestBotSavedMusicPrivacyRPC(t *testing.T) {
 	create := func(user domain.User) domain.User {
 		t.Helper()
 		created, err := users.Create(ctx, user)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		return created
 	}
 	owner := create(domain.User{AccessHash: 41, Phone: "15550013901", FirstName: "Owner"})
 	contact := create(domain.User{AccessHash: 42, Phone: "15550013902", FirstName: "Contact"})
 	bot := create(domain.User{AccessHash: 44, FirstName: "Music Bot", Username: "music_privacy_bot", Bot: true})
 	contacts := memory.NewContactStore()
-	if _, err := contacts.Upsert(ctx, owner.ID, domain.ContactInput{ContactUserID: contact.ID, FirstName: "Contact"}); err != nil { t.Fatal(err) }
+	if _, err := contacts.Upsert(ctx, owner.ID, domain.ContactInput{ContactUserID: contact.ID, FirstName: "Contact"}); err != nil {
+		t.Fatal(err)
+	}
 	passwords := memory.NewPasswordStore()
 	files := &fakeFiles{}
 	router := New(Config{}, Deps{
-		Users: appusers.NewService(users),
+		Users:   appusers.NewService(users),
 		Privacy: appprivacy.NewService(memory.NewPrivacyStore(), contacts),
 		Account: appaccount.NewService(passwords, appaccount.WithSavedMusic(passwords)),
-		Files: files,
+		Files:   files,
 	}, zaptest.NewLogger(t), clock.System)
 	f := struct {
-		r *Router
-		files *fakeFiles
+		r                   *Router
+		files               *fakeFiles
 		owner, contact, bot domain.User
 	}{r: router, files: files, owner: owner, contact: contact, bot: bot}
 	ownerCtx := WithUserID(ctx, f.owner.ID)

@@ -1457,7 +1457,10 @@ type CreateChannelResult struct {
 	// 同一事务/锁内读出。此前从未有过成员记录的用户不在其中，按 left 处理。
 	Previous map[int64]ChannelMember
 	// Joins 保留每位新成员的邀请、审批与服务消息快照，批量批准时不能覆盖。
-	Joins                  map[int64]ChannelMemberJoin
+	Joins map[int64]ChannelMemberJoin
+	// InviteViewers is prepared once for recipient-specific invite projection.
+	// It is transient and never changes the committed join snapshots.
+	InviteViewers          map[int64]struct{} `json:"-"`
 	JoinRequest            *BotChatJoinRequest
 	PendingRequestsChanged bool
 	Message                ChannelMessage
@@ -1623,6 +1626,8 @@ type EditChannelDefaultBannedRightsRequest struct {
 
 // EditChannelBannedResult describes the participant transition.
 type EditChannelBannedResult struct {
+	// NoChange marks an idempotent removal; callers must not emit updates.
+	NoChange    bool
 	Channel     Channel
 	Previous    ChannelMember
 	Participant ChannelMember
@@ -2053,7 +2058,7 @@ type DeleteChannelForumTopicHistoryRequest struct {
 }
 
 // EditChannelMessageRequest edits one text message in a channel/supergroup.
-// Media 非 nil 时整体替换消息媒体快照（当前唯一调用方是 live location 续报/停止）。
+// Media 非 nil 时替换消息媒体快照。
 type EditChannelMessageRequest struct {
 	UserID    int64
 	ChannelID int64
@@ -2069,6 +2074,9 @@ type EditChannelMessageRequest struct {
 	RichMessage    *MessageRichMessage
 	// ViaBotEditBotID 非零时要求目标消息 via_bot_id 匹配对应 bot。
 	ViaBotEditBotID int64
+	// ReplaceTodo 仅替换清单定义，store 持锁保留当前仍存在 ID 的完整完成记录；
+	// append/toggle 不置位。
+	ReplaceTodo bool
 	// AllowTodoParticipantMutation 允许非作者普通成员在 checklist 的
 	// others_can_* 授权下仅替换 todo media 快照；不放开普通文本/媒体编辑。
 	AllowTodoParticipantMutation bool
