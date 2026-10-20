@@ -349,7 +349,9 @@ export function uploadClientUpdate(
   const query = new URLSearchParams({ reason: params.reason, allow_downgrade: String(params.allowDowngrade) });
   const done = new Promise<CommandResult>((resolve, reject) => {
     xhr.upload.onprogress = (event) => onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
-    xhr.onerror = () => reject(new APIError(0, "network error"));
+    // A dropped connection carries the upload-failed code, so the page shows
+    // the same hint as a transfer the server saw break off.
+    xhr.onerror = () => reject(new APIError(0, "network error", { code: "UPDATE_UPLOAD_FAILED" }));
     xhr.onabort = () => reject(new APIError(0, "upload cancelled"));
     xhr.onload = () => {
       let data: unknown = null;

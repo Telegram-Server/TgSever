@@ -73,7 +73,9 @@ export function ClientUpdatesPage({ navigate }: { navigate: Navigate }) {
       ) : (
         <>
           <StatusCard status={status} />
-          {status.mode === "in_process" && canPublish && <PublishCard onPublished={() => void load()} />}
+          {status.mode === "in_process" && canPublish && (
+            <PublishCard maxSize={status.max_package_size} onPublished={() => void load()} />
+          )}
           {status.mode === "in_process" && (
             <EntriesTable entries={status.entries} canManage={canPublish} onChanged={() => void load()} />
           )}
@@ -120,11 +122,15 @@ function StatusCard({ status }: { status: ClientUpdateStatus }) {
 // Codes the admin API attaches to a failed upload or publish, and the hint
 // that tells the operator what to do next. Other failures (a bad signature, a
 // canary package, a build that is not newer) show the server's own reason.
+// UPDATE_UPLOAD_FAILED is also what a dropped connection reports (api.ts).
 const failureHintKey: Record<string, string> = {
   UPDATE_STAGING_NOT_FOUND: "clientUpdates.errorStaging",
   UPDATE_STAGING_EXPIRED: "clientUpdates.errorStaging",
   UPDATE_PUBLISH_IN_PROGRESS: "clientUpdates.errorLocked",
-  UPDATE_PACKAGE_TOO_LARGE: "clientUpdates.errorTooLarge"
+  UPDATE_PACKAGE_TOO_LARGE: "clientUpdates.errorTooLarge",
+  UPDATE_STAGING_FULL: "clientUpdates.errorStagingFull",
+  UPDATE_UPLOAD_FAILED: "clientUpdates.errorUploadFailed",
+  UPDATE_STAGING_STORAGE_FAILED: "clientUpdates.errorStorage"
 };
 
 type Preflight = { result: CommandResult; reason: string; allowDowngrade: boolean };
@@ -139,7 +145,12 @@ function detail(result: CommandResult, key: string): string {
 // (the server stages the file and runs a full dry-run publish), and the confirm
 // only names the staging id. The confirm goes through CommandFlow, whose dry
 // run verifies the staged file again before the commit is allowed.
-function PublishCard({ onPublished }: { onPublished: () => void }) {
+//
+// A file over maxSize, or a missing reason, is refused here before a byte is
+// sent. The server refuses both up front too, but while the browser is still
+// sending a large body that answer can surface as a bare network error; one
+// that does anyway, for a file over the limit, is reported as too large.
+function PublishCard({ maxSize, onPublished }: { maxSize?: number; onPublished: () => void }) {
   const { t } = useI18n();
   const [file, setFile] = useState<File | null>(null);
   const [reason, setReason] = useState("");
@@ -160,6 +171,10 @@ function PublishCard({ onPublished }: { onPublished: () => void }) {
       setFailure({ message: t("action.reasonRequired") });
       return;
     }
+    if (overLimit(file)) {
+      setFailure({ message: tooLargeMessage(file.size) });
+      return;
+    }
     setFailure(null);
     setPreflight(null);
     setPublished(false);
@@ -176,11 +191,23 @@ function PublishCard({ onPublished }: { onPublished: () => void }) {
       if (carried?.code && message.startsWith(`${carried.code}: `)) {
         message = message.slice(carried.code.length + 2);
       }
-      setFailure({ message, code: carried?.code });
+      if (err instanceof APIError && err.status === 0 && overLimit(file)) {
+        setFailure({ message: tooLargeMessage(file.size) });
+      } else {
+        setFailure({ message, code: carried?.code });
+      }
     } finally {
       abortRef.current = null;
       setProgress(null);
     }
+  }
+
+  function overLimit(candidate: File | null): boolean {
+    return Boolean(candidate && maxSize && candidate.size > maxSize);
+  }
+
+  function tooLargeMessage(size: number): string {
+    return t("clientUpdates.fileTooLarge", { size: formatBytes(String(size)), limit: formatBytes(String(maxSize ?? 0)) });
   }
 
   function closeConfirm() {
@@ -196,7 +223,11 @@ function PublishCard({ onPublished }: { onPublished: () => void }) {
   const result = preflight?.result;
   const stagingID = result ? detail(result, "staging_id") : "";
   const unchanged = result?.details?.unchanged === true;
-  const rollback = Boolean(preflight?.allowDowngrade) || result?.details?.downgrade === true;
+  // Whether the confirm is a rollback is the server preflight's call: the
+  // checkbox only permits one, and a package newer than what is served is a
+  // plain publish even with it ticked.
+  const rollback = result?.details?.downgrade === true;
+  const fileTooLarge = overLimit(file);
   const previous = result?.details?.previous as Record<string, unknown> | undefined;
   const percent = progress && progress.total > 0 ? Math.min(100, Math.floor((progress.loaded / progress.total) * 100)) : 0;
 
@@ -219,6 +250,7 @@ function PublishCard({ onPublished }: { onPublished: () => void }) {
           />
         </label>
         {file && <div className="muted">{file.name} · {formatBytes(String(file.size))}</div>}
+        {file && fileTooLarge && <Alert>{tooLargeMessage(file.size)}</Alert>}
         <label className="form-field">
           <span>{t("action.reason")}</span>
           <textarea
@@ -238,9 +270,9 @@ function PublishCard({ onPublished }: { onPublished: () => void }) {
         </label>
         <div className="toolbar">
           <button
-            className={`btn icon-text ${allowDowngrade ? "danger" : "primary"}`}
+            className="btn icon-text primary"
             type="button"
-            disabled={!file || uploading}
+            disabled={!file || uploading || fileTooLarge}
             onClick={() => void start()}
           >
             <Upload size={15} /> {t("clientUpdates.upload")}

@@ -176,6 +176,9 @@ export type ClientUpdateStatus = {
   // Set while the latest manifest failed to load: entries then come from the
   // previous good manifest, which is still being served.
   reload_error?: string;
+  // In process: the largest package the server accepts, in bytes. The page
+  // checks a file against it before sending a byte.
+  max_package_size?: number;
   entries: ClientUpdateEntry[];
 };
 
