@@ -10,7 +10,8 @@ The server side is one check, `auth.Service.CheckSignUpAllowed`
 (`internal/app/auth/service.go`); the end-to-end wiring test is
 `internal/mtprotoedge/sign_up_switch_e2e_test.go`. The operator setting is
 `TELESRV_SIGN_UP_ENABLED` in [configuration.en.md](configuration.en.md) section 5
-([中文](configuration.zh-CN.md)).
+([中文](configuration.zh-CN.md)), which an operator can override at runtime from
+Admin → Server Settings → Sign-up without a restart.
 
 ## Server state: `telesrv_sign_up_disabled`
 
