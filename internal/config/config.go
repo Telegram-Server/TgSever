@@ -267,6 +267,11 @@ type Config struct {
 	LoginEmailRequireSetup bool
 	// LoginEmailCodeLength 是邮箱验证码长度。
 	LoginEmailCodeLength int
+	// SignUpEnabled 是注册开关的环境变量默认值（TELESRV_SIGN_UP_ENABLED），默认 true。
+	// 关闭后没有账号的号码在 auth.sendCode/resendCode/signIn/signUp 及密码注册处一律得到
+	// SIGN_UP_DISABLED，help.getAppConfig 下发 telesrv_sign_up_disabled: true；已有账号的
+	// 登录与 bot 不受影响。管理后台的实时覆盖值优先于它。
+	SignUpEnabled bool
 	// PasswordLoginEnabled 是手机号 + 密码登录（telesrv 扩展协议）的总开关，默认关闭。
 	// 打开后不经验证码即可用任意号码注册，号码不做归属验证，风险由运营者承担。
 	// 关闭时 telesrv. 密码登录方法一律返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
@@ -1094,6 +1099,7 @@ func Load() (Config, error) {
 		LoginEmailEnable:                  envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
 		LoginEmailRequireSetup:            envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
 		LoginEmailCodeLength:              envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
+		SignUpEnabled:                     envBoolOr("TELESRV_SIGN_UP_ENABLED", true),
 		PasswordLoginEnabled:              envBoolOr("TELESRV_PASSWORD_LOGIN_ENABLED", false),
 		PasswordLoginUserRateLimit:        envIntOr("TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT", 10),
 		PasswordLoginUserRateWindow:       envDurationOr("TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW", time.Hour),

@@ -87,6 +87,9 @@ type loginPasswordServerOptions struct {
 	// resetWindow 是忘记密码免旧密码重设的窗口（见 login_password_reset_e2e_test.go）；
 	// 零值关闭，已有登录密码时一律要求 current。
 	resetWindow time.Duration
+	// signUpDisabled 关闭注册（TELESRV_SIGN_UP_ENABLED=false），见 sign_up_switch_e2e_test.go。
+	// 零值保持注册开放。
+	signUpDisabled bool
 }
 
 // loginPasswordServer 是一个跑在随机端口上的完整服务端，供多个子测试并发使用。
@@ -162,7 +165,8 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	authService := auth.NewService(userStore, authorizations, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), loginPasswordTestCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore)),
-		auth.WithPasswords(cloudPasswords))
+		auth.WithPasswords(cloudPasswords),
+		auth.WithSignUpAllowed(auth.StaticSignUpAllowed(!opts.signUpDisabled)))
 	limiter := newCountingRateLimiter()
 	loginPasswordStore := memory.NewLoginPasswordStore(baseUsers)
 	loginPasswords := loginpasswordapp.NewService(userStore, loginPasswordStore,
@@ -179,7 +183,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		LoginPassword: loginPasswords,
 		Sessions:      activeSessions,
 		Account:       account.NewService(cloudPasswords, account.WithUsers(userStore), account.WithAccountLifecycle(lifecycle)),
-		Help:          help.NewService(helpStore, helpStore, help.WithPasswordLogin(opts.enabled)),
+		Help:          help.NewService(helpStore, helpStore, help.WithPasswordLogin(opts.enabled), help.WithSignUpAllowed(authService.SignUpAllowed)),
 		Users:         users.NewService(userStore),
 		Updates:       updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
 		Contacts:      contacts.NewService(memory.NewContactStore()),

@@ -1668,6 +1668,9 @@ func run(logger *zap.Logger) error {
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
+		// 注册开关：目前只有环境变量这一个来源；auth.SignUpAllowed 是全服唯一的判断点，
+		// help.getAppConfig 下发的 telesrv_sign_up_disabled 也读它。
+		auth.WithSignUpAllowed(auth.StaticSignUpAllowed(cfg.SignUpEnabled)),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1899,6 +1902,7 @@ func run(logger *zap.Logger) error {
 			// the wallet is unavailable rather than shown an entry that cannot work.
 			help.WithWalletAvailable(cfg.WalletStateDir != ""),
 			help.WithPasswordLogin(loginPasswordService.Enabled()),
+			help.WithSignUpAllowed(authService.SignUpAllowed),
 			help.WithAccountFreezeProvider(adminService)),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
