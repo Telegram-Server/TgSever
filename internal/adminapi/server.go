@@ -57,6 +57,7 @@ type Service interface {
 	SetUsername(ctx context.Context, req admin.SetUsernameRequest) (admin.CommandResult, error)
 	SetProfile(ctx context.Context, req admin.SetProfileRequest) (admin.CommandResult, error)
 	SetPhone(ctx context.Context, req admin.SetPhoneRequest) (admin.CommandResult, error)
+	CreateAccount(ctx context.Context, req admin.CreateAccountRequest) (admin.CommandResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
@@ -261,6 +262,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/media/documents/{id}", s.authenticated(s.handleMessageDocument))
 	mux.HandleFunc("POST /v1/accounts/set-profile", s.authenticated(s.handleSetProfile))
 	mux.HandleFunc("POST /v1/accounts/set-phone", s.authenticated(s.handleSetPhone))
+	mux.HandleFunc("POST /v1/accounts/create", s.authenticated(s.handleCreateAccount))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
@@ -688,6 +690,15 @@ func (s *Server) handleSetPhone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.SetPhone(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
+	var req admin.CreateAccountRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.CreateAccount(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

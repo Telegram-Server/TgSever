@@ -89,6 +89,33 @@ func TestAdminAPISetAccountFrozen(t *testing.T) {
 	}
 }
 
+func TestAdminAPICreateAccount(t *testing.T) {
+	svc := &captureCreateAccountService{}
+	srv := &Server{token: "secret", svc: svc}
+	body := `{"command_id":"c-create","actor":"ops","reason":"new hire","dry_run":true,"phone":"+15550007821","first_name":"Fay","last_name":"Lee"}`
+
+	anonymous := httptest.NewRecorder()
+	srv.routes().ServeHTTP(anonymous, httptest.NewRequest(http.MethodPost, "/v1/accounts/create", strings.NewReader(body)))
+	if anonymous.Code != http.StatusUnauthorized {
+		t.Fatalf("create account without token status=%d, want 401", anonymous.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/create", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"command_id":"c-create"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	want := admin.CreateAccountRequest{
+		CommandMeta: admin.CommandMeta{CommandID: "c-create", Actor: "ops", Reason: "new hire", DryRun: true},
+		Phone:       "+15550007821", FirstName: "Fay", LastName: "Lee",
+	}
+	if svc.req != want {
+		t.Fatalf("decoded create account request = %+v, want %+v", svc.req, want)
+	}
+}
+
 func TestAdminAPIDeleteAccount(t *testing.T) {
 	svc := &captureDeleteService{}
 	srv := &Server{token: "secret", svc: svc}
@@ -700,6 +727,16 @@ type captureFreezeService struct {
 	req admin.SetAccountFrozenRequest
 }
 
+type captureCreateAccountService struct {
+	fakeService
+	req admin.CreateAccountRequest
+}
+
+func (s *captureCreateAccountService) CreateAccount(_ context.Context, req admin.CreateAccountRequest) (admin.CommandResult, error) {
+	s.req = req
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 type captureDeleteService struct {
 	fakeService
 	req admin.DeleteAccountRequest
@@ -806,6 +843,10 @@ func (fakeService) SetUsername(_ context.Context, req admin.SetUsernameRequest) 
 }
 
 func (fakeService) SetProfile(_ context.Context, req admin.SetProfileRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) CreateAccount(_ context.Context, req admin.CreateAccountRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
