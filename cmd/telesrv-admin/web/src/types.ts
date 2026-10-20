@@ -1352,6 +1352,12 @@ export type ServerIdentity = {
   default_welcome_message_phone_template: string;
   default_welcome_message_email_template: string;
   default_login_code_message_template: string;
+  // Sign-up switch: the raw panel override (absent = follow the env), the env
+  // default, and what they resolve to together.
+  sign_up_enabled?: boolean;
+  default_sign_up_enabled: boolean;
+  sign_up_enabled_effective: boolean;
+  sign_up_source: "env" | "override";
 };
 
 export type EnvField = {

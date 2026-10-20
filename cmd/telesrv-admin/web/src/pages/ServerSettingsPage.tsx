@@ -18,7 +18,7 @@ import type { DockerService, EnvGroup, ServerIdentity, ServerStatus } from "../t
 //
 // Split into two tabs (deep-linkable with ?tab=settings|services) so the rarely
 // touched identity/.env sits apart from the operational status screen; the
-// settings tab accepts &focus=identity|login|env to jump a specific card.
+// settings tab accepts &focus=identity|login|signup|env to jump a specific card.
 export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
   const { t } = useI18n();
   const initialTab = search?.get("tab") === "services" ? "services" : "settings";
@@ -62,6 +62,7 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
         <div className="stacked-sections">
           <IdentitySection />
           <LoginNotificationsSection />
+          <SignUpSection />
           <EnvSection />
         </div>
       ) : (
@@ -326,6 +327,81 @@ function LoginNotificationsSection() {
               path="/api/actions/set-login-code-message-template"
               payload={() => ({ template: codeTemplate })}
               disabled={codeTemplateInvalid}
+              onDone={() => void load()}
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// --- Sign-up switch ----------------------------------------------------
+
+// SignUpSection shows the effective sign-up state and where it comes from
+// (TELESRV_SIGN_UP_ENABLED or this panel's override in identity.json), and
+// offers on / off / clear. telesrv re-reads the override on every decision, so
+// a change applies without a restart. Each action is an audited command with a
+// reason (see handleSetSignUpEnabledAPI).
+function SignUpSection() {
+  const { t } = useI18n();
+  const [identity, setIdentity] = useState<ServerIdentity | null>(null);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setError("");
+    try {
+      setIdentity(await api.serverIdentity());
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  useEffect(() => { void load(); }, []);
+
+  const openWord = (open: boolean) => (open ? t("serverSettings.signUpOpen") : t("serverSettings.signUpClosed"));
+  const override = identity?.sign_up_enabled;
+
+  return (
+    <section id="serversettings-signup" className="section-block scroll-anchor">
+      <SectionHead title={t("serverSettings.signUpTitle")} />
+      {error && <Alert>{error}</Alert>}
+      {!identity ? (
+        <LoadingSurface label={t("serverSettings.loadingSignUp")} />
+      ) : (
+        <div className="card-body">
+          <p className="muted-lead">{t("serverSettings.signUpDesc")}</p>
+          <p>
+            <span className={`badge ${identity.sign_up_enabled_effective ? "good" : "danger"}`}>{openWord(identity.sign_up_enabled_effective)}</span>
+            {" "}
+            <span className="badge">
+              {identity.sign_up_source === "override" ? t("serverSettings.signUpSourceOverride") : t("serverSettings.signUpSourceEnv")}
+            </span>
+          </p>
+          <p className="muted-lead">{t("serverSettings.signUpEnvDefault", { value: openWord(identity.default_sign_up_enabled) })}</p>
+          <div className="gift-table-actions identity-save-row">
+            <ActionButton
+              tone="neutral"
+              label={t("serverSettings.signUpSetOn")}
+              path="/api/actions/set-sign-up-enabled"
+              payload={() => ({ mode: "on" })}
+              disabled={override === true}
+              onDone={() => void load()}
+            />
+            <ActionButton
+              tone="danger"
+              label={t("serverSettings.signUpSetOff")}
+              path="/api/actions/set-sign-up-enabled"
+              payload={() => ({ mode: "off" })}
+              disabled={override === false}
+              onDone={() => void load()}
+            />
+            <ActionButton
+              tone="neutral"
+              label={t("serverSettings.signUpFollowEnv")}
+              path="/api/actions/set-sign-up-enabled"
+              payload={() => ({ mode: "follow_env" })}
+              disabled={override === undefined || override === null}
               onDone={() => void load()}
             />
           </div>
