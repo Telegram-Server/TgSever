@@ -105,6 +105,9 @@ func (s *Service) SetLoginPassword(ctx context.Context, req SetLoginPasswordRequ
 		return CommandResult{}, fmt.Errorf("admin auth dependencies are not configured")
 	}
 	req.PasswordFingerprint = loginPasswordFingerprint(s.loginPasswordFingerprintKey, req.UserID, req.Password)
+	// 密码写入与 777000 通知无法回滚，所以命令不跟随请求取消（同 runServerIdentityCommand）：
+	// 后台的请求在写入之后被掐断时，撤销会话与 FinishCommand 仍要做完，否则命令停在 running。
+	ctx = context.WithoutCancel(ctx)
 	return s.runCommand(ctx, req.CommandMeta, ActionSetLoginPassword, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"revoke_sessions": req.RevokeSessions}
 		if req.DryRun {
@@ -129,8 +132,11 @@ func (s *Service) SetLoginPassword(ctx context.Context, req SetLoginPasswordRequ
 			details["revoked_hashes"] = authorizationHashes(revoked)
 			details["revoked_count"] = len(revoked)
 			if err != nil {
-				// 密码已经写进去了；撤销失败如实报告，运营者可以再单独撤销会话。
-				return CommandResult{Message: message + ", revoking sessions failed", Details: details}, err
+				// 密码已经写进去了（通知也已发出），命令按成功记录：记为失败会让运营者换个 command id
+				// 重试，导致二次重设、二次通知。撤销失败写进消息与详情，提示另行撤销会话。
+				details["revoke_sessions_failed"] = true
+				details["revoke_sessions_error"] = err.Error()
+				return CommandResult{Message: message + ", revoking sessions failed: revoke the sessions separately", Details: details}, nil
 			}
 		}
 		return CommandResult{Message: message, Details: details}, nil

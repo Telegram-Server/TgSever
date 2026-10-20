@@ -488,7 +488,14 @@ or to help a member who forgot theirs.
   `SRP_PASSWORD_CHANGED`; every session of the account receives a message from
   777000 saying an administrator set or reset the password. With
   `revoke_sessions: true` every authorization of the account is then revoked,
-  exactly like `revoke-sessions` with `revoke_all`.
+  exactly like `revoke-sessions` with `revoke_all`. If the password was written
+  but revoking the sessions fails, the command is still recorded as succeeded
+  (the password is set and the notice was sent) with `revoke_sessions_failed:
+  true` and `revoke_sessions_error` in its details, and the panel says to revoke
+  the sessions separately: running the command again under a new `command_id`
+  would reset the password and notify the member a second time. The command
+  also finishes when the panel request is cancelled midway, so it is never left
+  `running`.
 - **Secrecy:** the panel forwards the plaintext over HTTPS to the server, which
   computes the SRP verifier the way clients do and stores only the verifier and
   salts. The request preview masks the field; the password never appears in the
