@@ -244,12 +244,11 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/revoke-custom-verification", s.botVerificationManage(s.handleRevokeCustomVerificationAPI))
 
 	// Server Settings. One right for the whole surface (see
-	// permissionServerManage in security.go), and -- unlike the sections above
-	// -- none of these handlers touch internal/admin or Postgres: they operate
-	// on local files (the identity.json store and .env) or probe local
-	// services, so there is no admin_commands row to write and the action
-	// result is built by serverCommandResult without going through
-	// runOperatorCommand.
+	// permissionServerManage in security.go). These handlers do not touch
+	// internal/admin: they operate on local files (the identity.json store and
+	// .env) or probe local services. Every write still goes through
+	// runServerSettingsCommand, so it is audited in admin_commands /
+	// admin_audit_logs like any other panel command.
 	mux.Handle("GET /api/server/identity", s.serverManage(s.handleServerIdentityAPI))
 	mux.Handle("GET /api/server/icon", s.serverManage(s.handleServerIconAPI))
 	mux.Handle("POST /api/actions/set-server-identity", s.serverManage(s.handleSetServerIdentityAPI))

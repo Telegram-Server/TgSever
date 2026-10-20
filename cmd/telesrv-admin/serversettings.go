@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,32 +34,32 @@ func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
 	return s.requireAuthAPI(s.requirePermission(permissionServerManage, handler))
 }
 
-// serverCommandResult builds the same admin.CommandResult shape every other
-// action returns, without going through internal/admin's runCommand +
-// Postgres audit log: everything in this file operates on local files (the
-// identity.json store and .env) or probes local services, so there is no
-// admin_commands row to write. The actor/reason are still in meta for
-// structured logging if that's ever added; today they are simply not
-// persisted anywhere.
-func serverCommandResult(meta admin.CommandMeta, action string, err error, message string, details map[string]any) admin.CommandResult {
-	status := "completed"
-	errText := ""
-	if err != nil {
-		status = "failed"
-		errText = err.Error()
-		if message == "" {
-			message = "command failed"
+// runServerSettingsCommand runs one Server Settings write through the panel's
+// command runner (runOperatorCommand), so every preview and every change lands
+// in admin_commands/admin_audit_logs with the operator, the reason and the
+// time, and command_id is idempotent like every other panel command. The
+// writes themselves are local files (identity.json, the icon, .env), which
+// Postgres cannot roll back: apply runs last inside the transaction, so a
+// failure before it leaves the files untouched, and a commit failure after it
+// is reported as an error (the change happened, its audit row did not).
+//
+// params is what the trail stores as the request and must be safe to keep:
+// pass a digest, not the value, for anything secret (see
+// handleUpdateServerEnvAPI). fingerprint additionally binds data that is not in
+// params into command_id's identity, so a reused id with different content
+// conflicts instead of replaying.
+func (s *server) runServerSettingsCommand(w http.ResponseWriter, r *http.Request, meta admin.CommandMeta, action string, params any, fingerprint string, dryMessage, doneMessage string, details map[string]any, apply func() error) {
+	fn := func(context.Context, pgx.Tx) (admin.CommandResult, error) {
+		if meta.DryRun {
+			return admin.CommandResult{Message: dryMessage, Details: details}, nil
 		}
+		if err := apply(); err != nil {
+			return admin.CommandResult{Details: details}, err
+		}
+		return admin.CommandResult{Message: doneMessage, Details: details}, nil
 	}
-	return admin.CommandResult{
-		CommandID: meta.CommandID,
-		Action:    action,
-		Status:    status,
-		DryRun:    meta.DryRun,
-		Message:   message,
-		Details:   details,
-		Error:     errText,
-	}
+	result, err := s.runOperatorCommand(r.Context(), meta, action, params, fingerprint, fn)
+	writeCommandResultAPI(w, result, err)
 }
 
 // --- identity (name/description/icon) ---------------------------------
@@ -155,13 +158,8 @@ func signUpOverrideForMode(mode string) (*bool, bool) {
 // telesrv_sign_up_disabled app-config key and its hash -- takes effect
 // without a restart.
 //
-// Unlike the older Server Settings writes it goes through runOperatorCommand,
-// so every preview and every change lands in admin_commands/admin_audit_logs
-// with actor, reason and time, and command_id is idempotent. The file write is
-// not part of the transaction: it is the last step inside fn, so a failure
-// before it leaves the file untouched; a commit failure after it would leave
-// the switch changed without an audit row, and is reported as an error so the
-// operator knows to look.
+// Audited and idempotent through runServerSettingsCommand, like every Server
+// Settings write.
 func (s *server) handleSetSignUpEnabledAPI(w http.ResponseWriter, r *http.Request) {
 	var body setSignUpEnabledAPIRequest
 	if !decodeAction(w, r, &body) {
@@ -183,17 +181,10 @@ func (s *server) handleSetSignUpEnabledAPI(w http.ResponseWriter, r *http.Reques
 		"sign_up_source":            signUpSource(override),
 	}
 
-	fn := func(context.Context, pgx.Tx) (admin.CommandResult, error) {
-		if meta.DryRun {
-			return admin.CommandResult{Message: fmt.Sprintf("Would set sign-up to %s (effective: %s).", mode, openWord(effective)), Details: details}, nil
-		}
-		if err := s.identity.SetSignUpOverride(override); err != nil {
-			return admin.CommandResult{Details: details}, err
-		}
-		return admin.CommandResult{Message: fmt.Sprintf("Sign-up set to %s (effective: %s).", mode, openWord(effective)), Details: details}, nil
-	}
-	result, err := s.runOperatorCommand(r.Context(), meta, action, params, "", fn)
-	writeCommandResultAPI(w, result, err)
+	s.runServerSettingsCommand(w, r, meta, action, params, "",
+		fmt.Sprintf("Would set sign-up to %s (effective: %s).", mode, openWord(effective)),
+		fmt.Sprintf("Sign-up set to %s (effective: %s).", mode, openWord(effective)),
+		details, func() error { return s.identity.SetSignUpOverride(override) })
 }
 
 func openWord(open bool) string {
@@ -262,12 +253,9 @@ func (s *server) handleSetServerIdentityAPI(w http.ResponseWriter, r *http.Reque
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-server-identity")
 	details := map[string]any{"name": body.Name, "description": body.Description}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_identity", nil, "server identity validated", details))
-		return
-	}
-	err := s.identity.SetText(body.Name, body.Description)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_identity", err, "server identity updated", details))
+	s.runServerSettingsCommand(w, r, meta, "server.set_identity", details, "",
+		"server identity validated", "server identity updated", details,
+		func() error { return s.identity.SetText(body.Name, body.Description) })
 }
 
 // --- login-notification templates ---------------------------------------
@@ -298,12 +286,10 @@ func (s *server) handleSetWelcomeMessageTemplatesAPI(w http.ResponseWriter, r *h
 		"phone_template_set": strings.TrimSpace(body.PhoneTemplate) != "",
 		"email_template_set": strings.TrimSpace(body.EmailTemplate) != "",
 	}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_welcome_message_templates", nil, "login-notification templates validated", details))
-		return
-	}
-	err := s.identity.SetWelcomeMessageTemplates(body.PhoneTemplate, body.EmailTemplate)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_welcome_message_templates", err, "login-notification templates updated", details))
+	params := map[string]any{"phone_template": body.PhoneTemplate, "email_template": body.EmailTemplate}
+	s.runServerSettingsCommand(w, r, meta, "server.set_welcome_message_templates", params, "",
+		"login-notification templates validated", "login-notification templates updated", details,
+		func() error { return s.identity.SetWelcomeMessageTemplates(body.PhoneTemplate, body.EmailTemplate) })
 }
 
 // --- login-code delivery message template --------------------------------
@@ -340,12 +326,10 @@ func (s *server) handleSetLoginCodeMessageTemplateAPI(w http.ResponseWriter, r *
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-login-code-message-template")
 	details := map[string]any{"template_set": strings.TrimSpace(body.Template) != ""}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_login_code_message_template", nil, "login-code message template validated", details))
-		return
-	}
-	err := s.identity.SetLoginCodeMessageTemplate(body.Template)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_login_code_message_template", err, "login-code message template updated", details))
+	params := map[string]any{"template": body.Template}
+	s.runServerSettingsCommand(w, r, meta, "server.set_login_code_message_template", params, "",
+		"login-code message template validated", "login-code message template updated", details,
+		func() error { return s.identity.SetLoginCodeMessageTemplate(body.Template) })
 }
 
 // --- server icon upload/remove -------------------------------------------
@@ -404,13 +388,11 @@ func (s *server) handleUploadServerIconAPI(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "upload-server-icon")
-	details := map[string]any{"bytes": len(data), "ext": ext}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.upload_icon", nil, "server icon validated", details))
-		return
-	}
-	setErr := s.identity.SetIcon(data, ext)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.upload_icon", setErr, "server icon updated", details))
+	sum := sha256.Sum256(data)
+	details := map[string]any{"bytes": len(data), "ext": ext, "sha256": hex.EncodeToString(sum[:])}
+	s.runServerSettingsCommand(w, r, meta, "server.upload_icon", details, "",
+		"server icon validated", "server icon updated", details,
+		func() error { return s.identity.SetIcon(data, ext) })
 }
 
 type removeServerIconAPIRequest struct {
@@ -425,12 +407,9 @@ func (s *server) handleRemoveServerIconAPI(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "remove-server-icon")
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.remove_icon", nil, "server icon removal validated", nil))
-		return
-	}
-	err := s.identity.RemoveIcon()
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.remove_icon", err, "server icon removed", nil))
+	s.runServerSettingsCommand(w, r, meta, "server.remove_icon", map[string]any{}, "",
+		"server icon removal validated", "server icon removed", nil,
+		s.identity.RemoveIcon)
 }
 
 // --- .env editing --------------------------------------------------------
@@ -465,13 +444,22 @@ func (s *server) handleUpdateServerEnvAPI(w http.ResponseWriter, r *http.Request
 		return
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "update-server-env")
-	details := map[string]any{"keys_changed": len(body.Values)}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update_env", nil, "would update .env -- takes effect on telesrv restart", details))
-		return
+	// .env holds secrets (DSNs, tokens, passwords), so the trail records which
+	// keys changed and never their values; the values only feed the command_id
+	// fingerprint, as a digest.
+	keys := make([]string, 0, len(body.Values))
+	for key := range body.Values {
+		keys = append(keys, key)
 	}
-	err := s.envCtl.WriteEnvValues(body.Values)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update_env", err, ".env updated -- restart telesrv for changes to take effect", details))
+	sort.Strings(keys)
+	digest := sha256.New()
+	for _, key := range keys {
+		_, _ = digest.Write([]byte(key + "=" + body.Values[key] + "\x00"))
+	}
+	details := map[string]any{"keys_changed": len(body.Values), "keys": keys}
+	s.runServerSettingsCommand(w, r, meta, "server.update_env", map[string]any{"keys": keys}, hex.EncodeToString(digest.Sum(nil)),
+		"would update .env -- takes effect on telesrv restart", ".env updated -- restart telesrv for changes to take effect", details,
+		func() error { return s.envCtl.WriteEnvValues(body.Values) })
 }
 
 // --- status --------------------------------------------------------------
