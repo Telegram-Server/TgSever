@@ -131,6 +131,9 @@ func serverSettingWrites() []serverSettingWrite {
 		{"sign-up", "/api/actions/set-sign-up-enabled", "/v1/server-settings/set-sign-up-enabled",
 			`{"command_id":"exec-1","reason":"rebrand","confirm":true,"mode":"off"}`, false,
 			map[string]any{"mode": "off"}},
+		{"code login", "/api/actions/set-code-login-enabled", "/v1/server-settings/set-code-login-enabled",
+			`{"command_id":"exec-1","reason":"rebrand","confirm":true,"mode":"follow_env"}`, false,
+			map[string]any{"mode": "follow_env"}},
 		{"upload icon", "/api/actions/upload-server-icon", "/v1/server-settings/upload-icon",
 			`{"command_id":"exec-1","reason":"rebrand","confirm":true}`, true, nil},
 		{"remove icon", "/api/actions/remove-server-icon", "/v1/server-settings/remove-icon",
@@ -267,6 +270,9 @@ func TestServerSettingsRejectInvalidInputBeforeForwarding(t *testing.T) {
 	}
 	if code := post("/api/actions/set-sign-up-enabled", `{"reason":"r","confirm":true,"mode":"maybe"}`); code != http.StatusUnprocessableEntity {
 		t.Fatalf("unknown sign-up mode status=%d, want 422", code)
+	}
+	if code := post("/api/actions/set-code-login-enabled", `{"reason":"r","confirm":true,"mode":"maybe"}`); code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown code login mode status=%d, want 422", code)
 	}
 	form, contentType := serverIconForm(t, `{"reason":"r","confirm":true}`, "logo.bmp", testServerIcon)
 	req := withCookies(httptest.NewRequest(http.MethodPost, "/api/actions/upload-server-icon", form), cookies)
