@@ -285,6 +285,13 @@ type Config struct {
 	// SIGN_UP_DISABLED，help.getAppConfig 下发 telesrv_sign_up_disabled: true；已有账号的
 	// 登录与 bot 不受影响。管理后台的实时覆盖值优先于它。
 	SignUpEnabled bool
+	// CodeLoginEnabled 是验证码登录开关的环境变量默认值（TELESRV_CODE_LOGIN_ENABLED），默认 true。
+	// 关闭后所有登录/注册用验证码入口（auth.sendCode/resendCode/signIn/signUp/resetLoginEmail、
+	// 登录邮箱 setup）一律得到 CODE_LOGIN_DISABLED，服务端不签发、不投递任何登录验证码，
+	// help.getAppConfig 下发 telesrv_code_login_disabled: true。它先于注册开关判断。
+	// 密码登录、扫码、passkey、bot 与会话内验证码流程不受影响。防锁死：PasswordLoginEnabled
+	// 为 false 时不允许关闭，Load 直接报错。
+	CodeLoginEnabled bool
 	// PasswordLoginEnabled 是手机号 + 密码登录（telesrv 扩展协议）的总开关，默认关闭。
 	// 打开后不经验证码即可用任意号码注册，号码不做归属验证，风险由运营者承担。
 	// 关闭时 telesrv. 密码登录方法一律返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
@@ -1144,6 +1151,7 @@ func Load() (Config, error) {
 		LoginEmailRequireSetup:            envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
 		LoginEmailCodeLength:              envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
 		SignUpEnabled:                     envBoolOr("TELESRV_SIGN_UP_ENABLED", true),
+		CodeLoginEnabled:                  envBoolOr("TELESRV_CODE_LOGIN_ENABLED", true),
 		PasswordLoginEnabled:              envBoolOr("TELESRV_PASSWORD_LOGIN_ENABLED", false),
 		PasswordLoginUserRateLimit:        envIntOr("TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT", 10),
 		PasswordLoginUserRateWindow:       envDurationOr("TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW", time.Hour),
@@ -2190,6 +2198,11 @@ func validateLoginEmailConfig(cfg Config) error {
 	// "必须先设置登录邮箱"的策略，因此直接拒绝这种组合。
 	if cfg.LoginEmailRequireSetup && cfg.PasswordLoginEnabled {
 		return fmt.Errorf("TELESRV_PASSWORD_LOGIN_ENABLED cannot be combined with TELESRV_LOGIN_EMAIL_REQUIRE_SETUP: password sign-up has no login email setup step")
+	}
+	// 防锁死：验证码登录和密码登录都关闭时，没有任何人能登录（扫码/passkey 也需要先有
+	// 一个已登录的设备），因此拒绝启动。
+	if !cfg.CodeLoginEnabled && !cfg.PasswordLoginEnabled {
+		return fmt.Errorf("TELESRV_CODE_LOGIN_ENABLED=false requires TELESRV_PASSWORD_LOGIN_ENABLED=true: with both code login and password login disabled nobody could log in")
 	}
 	if cfg.AuthCodeTTL <= 0 {
 		return fmt.Errorf("TELESRV_AUTH_CODE_TTL must be positive")
