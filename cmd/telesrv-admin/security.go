@@ -122,6 +122,13 @@ const (
 	// buttons the operator has to tick to get one section working.
 	permissionServerManage = "server.manage"
 
+	// Desktop client updates (the Client updates tab under Server). Unlike
+	// server.manage these are a read/publish pair: publishing decides which
+	// build every desktop client installs next, so the right to change it is
+	// granted separately from the right to look. Neither implies the other.
+	permissionUpdatesRead    = "updates.read"
+	permissionUpdatesPublish = "updates.publish"
+
 	// permissionSessionOnly marks the handful of routes that need a session but
 	// no right: reading who you are, and signing out. It is not a grantable
 	// name -- scopedRoute treats it as "authenticated is enough" -- so it can
@@ -175,6 +182,8 @@ func assignablePermissions() []string {
 		permissionAuditRead,
 		permissionAdminsManage,
 		permissionServerManage,
+		permissionUpdatesRead,
+		permissionUpdatesPublish,
 	}
 }
 

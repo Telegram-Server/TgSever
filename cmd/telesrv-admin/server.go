@@ -260,6 +260,11 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/server/env", s.serverManage(s.handleServerEnvAPI))
 	mux.Handle("POST /api/actions/update-server-env", s.serverManage(s.handleUpdateServerEnvAPI))
 	mux.Handle("GET /api/server/status", s.serverManage(s.handleServerStatusAPI))
+
+	// Client updates (clientupdates.go). Proxied to the admin API, which runs
+	// inside telesrv next to the update catalog: the panel never touches the
+	// update volume.
+	mux.Handle("GET /api/client-updates", s.scopedRoute(permissionUpdatesRead, http.HandlerFunc(s.handleClientUpdatesAPI)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
