@@ -360,6 +360,10 @@ func phoneCodeEmptyErr() error      { return tgerr.New(400, "PHONE_CODE_EMPTY") 
 func phoneCodeInvalidErr() error    { return tgerr.New(400, "PHONE_CODE_INVALID") }
 func phoneCodeExpiredErr() error    { return tgerr.New(400, "PHONE_CODE_EXPIRED") }
 
+// signUpDisabledErr 表示服务器已关闭注册（domain.ErrSignUpDisabled）。可能出现在
+// auth.sendCode/resendCode/signIn/signUp 与 telesrv.getLoginPassword/signUpWithPassword。
+func signUpDisabledErr() error { return tgerr.New(400, "SIGN_UP_DISABLED") }
+
 func phoneChangeErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrPhoneNumberInvalid):
@@ -453,6 +457,8 @@ func signInErr(err error) error {
 		return phoneNumberOccupiedErr()
 	case errors.Is(err, domain.ErrSessionPasswordNeeded):
 		return sessionPasswordNeededErr()
+	case errors.Is(err, domain.ErrSignUpDisabled):
+		return signUpDisabledErr()
 	default:
 		return internalErr()
 	}

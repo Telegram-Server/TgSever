@@ -42,10 +42,17 @@ type SignInCompleter interface {
 	FinishVerifiedSignIn(ctx context.Context, a domain.Authorization, u domain.User) (domain.User, error)
 }
 
-// AuthFlows 是登录密码复用的 auth 服务两段流程，生产中就是 *auth.Service。
+// SignUpGate 是"是否允许注册"的唯一判断（auth.Service.CheckSignUpAllowed）：注册关闭时
+// 返回 domain.ErrSignUpDisabled。只对会为没有账号的号码建号的请求调用。
+type SignUpGate interface {
+	CheckSignUpAllowed(ctx context.Context) error
+}
+
+// AuthFlows 是登录密码复用的 auth 服务两段流程和注册开关，生产中就是 *auth.Service。
 type AuthFlows interface {
 	SignUpCompleter
 	SignInCompleter
+	SignUpGate
 }
 
 // Service 是登录密码业务服务。
@@ -102,7 +109,8 @@ func (s *Service) Enabled() bool {
 
 // GetLoginPassword 处理 telesrv.getLoginPassword，有三种结果：
 //   - 号码没有账号：返回注册用的参数（has_password=false、new_algo、new_secure_algo、
-//     secure_random），客户端据此进入注册；
+//     secure_random），客户端据此进入注册；注册关闭时改为返回 domain.ErrSignUpDisabled，
+//     不把客户端带进注册页面；
 //   - 有账号但没设登录密码：返回 domain.ErrPasswordLoginNotSet；
 //   - 有账号且设了登录密码：生成一个新的 SRP challenge 存进 challenge store（只有
 //     rawAuthKeyID 能用，challengeTTL 后过期），返回 has_password=true、current_algo
@@ -122,6 +130,9 @@ func (s *Service) GetLoginPassword(ctx context.Context, rawAuthKeyID [8]byte, ph
 		return domain.PasswordSettings{}, err
 	}
 	if !found {
+		if err := s.flows.CheckSignUpAllowed(ctx); err != nil {
+			return domain.PasswordSettings{}, err
+		}
 		return account.NoPasswordSettings(), nil
 	}
 	password, found, err := s.passwords.GetLoginPassword(ctx, u.ID)
@@ -275,11 +286,15 @@ func randomSRPID() (int64, error) {
 }
 
 // SignUp 处理 telesrv.signUpWithPassword：不经验证码，用手机号和登录密码直接注册，
-// 成功后当前授权立即处于登录状态。校验顺序：开关 → 号码 → 名字 → new_settings。
+// 成功后当前授权立即处于登录状态。校验顺序：开关 → 注册开关 → 号码 → 名字 → new_settings。
 // 建号和写入登录密码在同一个事务里完成；号码已被占用返回 domain.ErrPhoneNumberOccupied。
+// 注册关闭时一律返回 domain.ErrSignUpDisabled（这条路只会建号，已有号码在关闭时也注册不了）。
 func (s *Service) SignUp(ctx context.Context, a domain.Authorization, phone, firstName, lastName string, settings domain.PasswordInputSettings) (domain.User, error) {
 	if !s.Enabled() {
 		return domain.User{}, domain.ErrPasswordLoginDisabled
+	}
+	if err := s.flows.CheckSignUpAllowed(ctx); err != nil {
+		return domain.User{}, err
 	}
 	phone, err := auth.NormalizeSignUpPhone(phone)
 	if err != nil {

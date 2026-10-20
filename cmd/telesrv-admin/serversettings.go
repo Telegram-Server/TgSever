@@ -2,18 +2,25 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
 	"telesrv/internal/admin"
@@ -29,31 +36,38 @@ func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
 	return s.requireAuthAPI(s.requirePermission(permissionServerManage, handler))
 }
 
-// serverCommandResult builds the same admin.CommandResult shape every other
-// action returns, without going through internal/admin's runCommand +
-// Postgres audit log: everything in this file operates on local files (the
-// identity.json store and .env) or probes local services, so there is no
-// admin_commands row to write. The actor/reason are still in meta for
-// structured logging if that's ever added; today they are simply not
-// persisted anywhere.
-func serverCommandResult(meta admin.CommandMeta, action string, err error, message string, details map[string]any) admin.CommandResult {
-	status := "completed"
-	errText := ""
-	if err != nil {
-		status = "failed"
-		errText = err.Error()
-		if message == "" {
-			message = "command failed"
+// runServerSettingsCommand runs one Server Settings write through the panel's
+// command runner (runOperatorCommand), so every preview and every change lands
+// in admin_commands/admin_audit_logs with the operator, the reason and the
+// time, and command_id is idempotent like every other panel command. The
+// writes themselves are local files (identity.json, the icon, .env), which
+// Postgres cannot roll back: apply runs last inside the transaction, so a
+// failure before it leaves the files untouched, and a commit failure after it
+// is reported as an error (the change happened, its audit row did not).
+// The one exception is the .env editor, which falls back to an unaudited
+// write when the command store is unreachable (see handleUpdateServerEnvAPI).
+//
+// params is what the trail stores as the request and must be safe to keep:
+// pass a keyed digest, not the value, for anything secret (see
+// envValuesFingerprint). fingerprint additionally binds data that is not in
+// params into command_id's identity, so a reused id with different content
+// conflicts instead of replaying.
+func (s *server) runServerSettingsCommand(w http.ResponseWriter, r *http.Request, meta admin.CommandMeta, action string, params any, fingerprint string, dryMessage, doneMessage string, details map[string]any, apply func() error) {
+	result, err := s.runOperatorCommand(r.Context(), meta, action, params, fingerprint, serverSettingsCommandFn(meta, dryMessage, doneMessage, details, apply))
+	writeCommandResultAPI(w, result, err)
+}
+
+// serverSettingsCommandFn is the runOperatorCommand body shared by every
+// Server Settings write: a dry run reports dryMessage, a real run applies.
+func serverSettingsCommandFn(meta admin.CommandMeta, dryMessage, doneMessage string, details map[string]any, apply func() error) func(context.Context, pgx.Tx) (admin.CommandResult, error) {
+	return func(context.Context, pgx.Tx) (admin.CommandResult, error) {
+		if meta.DryRun {
+			return admin.CommandResult{Message: dryMessage, Details: details}, nil
 		}
-	}
-	return admin.CommandResult{
-		CommandID: meta.CommandID,
-		Action:    action,
-		Status:    status,
-		DryRun:    meta.DryRun,
-		Message:   message,
-		Details:   details,
-		Error:     errText,
+		if err := apply(); err != nil {
+			return admin.CommandResult{Details: details}, err
+		}
+		return admin.CommandResult{Message: doneMessage, Details: details}, nil
 	}
 }
 
@@ -79,6 +93,27 @@ type serverIdentityAPIResponse struct {
 	// same "raw override + effective default" contract as the two fields
 	// above, see their doc comment.
 	DefaultLoginCodeMessageTemplate string `json:"default_login_code_message_template"`
+	// The sign-up switch: identity.Info's raw sign_up_enabled override (absent
+	// = unset) plus what it resolves to and where that comes from, so the
+	// panel can show "Closed -- set here" vs "Open -- from the environment"
+	// without re-implementing domain.ResolveSignUpEnabled. The env default is
+	// s.cfg.SignUpEnabledDefault, under the same "both processes share one
+	// .env" assumption as the template defaults.
+	DefaultSignUpEnabled   bool   `json:"default_sign_up_enabled"`
+	SignUpEnabledEffective bool   `json:"sign_up_enabled_effective"`
+	SignUpSource           string `json:"sign_up_source"`
+}
+
+const (
+	signUpSourceEnv      = "env"
+	signUpSourceOverride = "override"
+)
+
+func signUpSource(override *bool) string {
+	if override != nil {
+		return signUpSourceOverride
+	}
+	return signUpSourceEnv
 }
 
 func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +127,80 @@ func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request)
 		DefaultWelcomeMessagePhoneTemplate: s.cfg.WelcomeMessagePhoneDefault,
 		DefaultWelcomeMessageEmailTemplate: s.cfg.WelcomeMessageEmailDefault,
 		DefaultLoginCodeMessageTemplate:    s.cfg.LoginCodeMessageDefault,
+		DefaultSignUpEnabled:               s.cfg.SignUpEnabledDefault,
+		SignUpEnabledEffective:             domain.ResolveSignUpEnabled(info.SignUpEnabled, s.cfg.SignUpEnabledDefault),
+		SignUpSource:                       signUpSource(info.SignUpEnabled),
 	})
+}
+
+// --- sign-up switch -------------------------------------------------------
+
+type setSignUpEnabledAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	// Mode is "on", "off" or "follow_env". A string rather than a nullable
+	// bool so that a body that simply forgets the field is rejected instead
+	// of silently clearing the override.
+	Mode string `json:"mode"`
+}
+
+// signUpOverrideForMode maps the request's mode onto identity's tri-state
+// override (nil = follow TELESRV_SIGN_UP_ENABLED).
+func signUpOverrideForMode(mode string) (*bool, bool) {
+	switch mode {
+	case "on":
+		v := true
+		return &v, true
+	case "off":
+		v := false
+		return &v, true
+	case "follow_env":
+		return nil, true
+	}
+	return nil, false
+}
+
+// handleSetSignUpEnabledAPI sets or clears the panel's sign-up override in
+// identity.json. telesrv re-reads it on every sign-up decision (see
+// auth.IdentitySignUpAllowed), so the change -- including the
+// telesrv_sign_up_disabled app-config key and its hash -- takes effect
+// without a restart.
+//
+// Audited and idempotent through runServerSettingsCommand, like every Server
+// Settings write.
+func (s *server) handleSetSignUpEnabledAPI(w http.ResponseWriter, r *http.Request) {
+	var body setSignUpEnabledAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	mode := strings.TrimSpace(body.Mode)
+	override, ok := signUpOverrideForMode(mode)
+	if !ok {
+		writeAPIError(w, http.StatusUnprocessableEntity, `mode must be "on", "off" or "follow_env"`)
+		return
+	}
+	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-sign-up-enabled")
+	const action = "server.set_sign_up_enabled"
+	params := map[string]any{"mode": mode}
+	effective := domain.ResolveSignUpEnabled(override, s.cfg.SignUpEnabledDefault)
+	details := map[string]any{
+		"mode":                      mode,
+		"sign_up_enabled_effective": effective,
+		"sign_up_source":            signUpSource(override),
+	}
+
+	s.runServerSettingsCommand(w, r, meta, action, params, "",
+		fmt.Sprintf("Would set sign-up to %s (effective: %s).", mode, openWord(effective)),
+		fmt.Sprintf("Sign-up set to %s (effective: %s).", mode, openWord(effective)),
+		details, func() error { return s.identity.SetSignUpOverride(override) })
+}
+
+func openWord(open bool) string {
+	if open {
+		return "open"
+	}
+	return "closed"
 }
 
 // handleServerIconAPI serves the icon's raw bytes for the panel's own
@@ -154,12 +262,9 @@ func (s *server) handleSetServerIdentityAPI(w http.ResponseWriter, r *http.Reque
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-server-identity")
 	details := map[string]any{"name": body.Name, "description": body.Description}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_identity", nil, "server identity validated", details))
-		return
-	}
-	err := s.identity.SetText(body.Name, body.Description)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_identity", err, "server identity updated", details))
+	s.runServerSettingsCommand(w, r, meta, "server.set_identity", details, "",
+		"server identity validated", "server identity updated", details,
+		func() error { return s.identity.SetText(body.Name, body.Description) })
 }
 
 // --- login-notification templates ---------------------------------------
@@ -190,12 +295,10 @@ func (s *server) handleSetWelcomeMessageTemplatesAPI(w http.ResponseWriter, r *h
 		"phone_template_set": strings.TrimSpace(body.PhoneTemplate) != "",
 		"email_template_set": strings.TrimSpace(body.EmailTemplate) != "",
 	}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_welcome_message_templates", nil, "login-notification templates validated", details))
-		return
-	}
-	err := s.identity.SetWelcomeMessageTemplates(body.PhoneTemplate, body.EmailTemplate)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_welcome_message_templates", err, "login-notification templates updated", details))
+	params := map[string]any{"phone_template": body.PhoneTemplate, "email_template": body.EmailTemplate}
+	s.runServerSettingsCommand(w, r, meta, "server.set_welcome_message_templates", params, "",
+		"login-notification templates validated", "login-notification templates updated", details,
+		func() error { return s.identity.SetWelcomeMessageTemplates(body.PhoneTemplate, body.EmailTemplate) })
 }
 
 // --- login-code delivery message template --------------------------------
@@ -232,12 +335,10 @@ func (s *server) handleSetLoginCodeMessageTemplateAPI(w http.ResponseWriter, r *
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-login-code-message-template")
 	details := map[string]any{"template_set": strings.TrimSpace(body.Template) != ""}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_login_code_message_template", nil, "login-code message template validated", details))
-		return
-	}
-	err := s.identity.SetLoginCodeMessageTemplate(body.Template)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_login_code_message_template", err, "login-code message template updated", details))
+	params := map[string]any{"template": body.Template}
+	s.runServerSettingsCommand(w, r, meta, "server.set_login_code_message_template", params, "",
+		"login-code message template validated", "login-code message template updated", details,
+		func() error { return s.identity.SetLoginCodeMessageTemplate(body.Template) })
 }
 
 // --- server icon upload/remove -------------------------------------------
@@ -296,13 +397,11 @@ func (s *server) handleUploadServerIconAPI(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "upload-server-icon")
-	details := map[string]any{"bytes": len(data), "ext": ext}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.upload_icon", nil, "server icon validated", details))
-		return
-	}
-	setErr := s.identity.SetIcon(data, ext)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.upload_icon", setErr, "server icon updated", details))
+	sum := sha256.Sum256(data)
+	details := map[string]any{"bytes": len(data), "ext": ext, "sha256": hex.EncodeToString(sum[:])}
+	s.runServerSettingsCommand(w, r, meta, "server.upload_icon", details, "",
+		"server icon validated", "server icon updated", details,
+		func() error { return s.identity.SetIcon(data, ext) })
 }
 
 type removeServerIconAPIRequest struct {
@@ -317,12 +416,9 @@ func (s *server) handleRemoveServerIconAPI(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "remove-server-icon")
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.remove_icon", nil, "server icon removal validated", nil))
-		return
-	}
-	err := s.identity.RemoveIcon()
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.remove_icon", err, "server icon removed", nil))
+	s.runServerSettingsCommand(w, r, meta, "server.remove_icon", map[string]any{}, "",
+		"server icon removal validated", "server icon removed", nil,
+		s.identity.RemoveIcon)
 }
 
 // --- .env editing --------------------------------------------------------
@@ -357,13 +453,79 @@ func (s *server) handleUpdateServerEnvAPI(w http.ResponseWriter, r *http.Request
 		return
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "update-server-env")
-	details := map[string]any{"keys_changed": len(body.Values)}
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update_env", nil, "would update .env -- takes effect on telesrv restart", details))
-		return
+	// .env holds secrets (DSNs, tokens, passwords), so the trail records which
+	// keys changed and never their values; the values only feed the command_id
+	// fingerprint, through envValuesFingerprint's keyed MAC.
+	keys := make([]string, 0, len(body.Values))
+	for key := range body.Values {
+		keys = append(keys, key)
 	}
-	err := s.envCtl.WriteEnvValues(body.Values)
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update_env", err, ".env updated -- restart telesrv for changes to take effect", details))
+	sort.Strings(keys)
+	details := map[string]any{"keys_changed": len(body.Values), "keys": keys}
+	const (
+		action      = "server.update_env"
+		dryMessage  = "would update .env -- takes effect on telesrv restart"
+		doneMessage = ".env updated -- restart telesrv for changes to take effect"
+	)
+	apply := func() error { return s.envCtl.WriteEnvValues(body.Values) }
+	result, err := s.runOperatorCommand(r.Context(), meta, action, map[string]any{"keys": keys}, envValuesFingerprint(s.cfg.SessionKey, keys, body.Values),
+		serverSettingsCommandFn(meta, dryMessage, doneMessage, details, apply))
+	var unavailable *operatorStoreUnavailableError
+	if errors.As(err, &unavailable) {
+		// The .env editor is the repair path for a broken database setting
+		// (TELESRV_POSTGRES_DSN), and the break-glass login works without the
+		// database for exactly that. Refusing the write because the audit store
+		// is down would leave no way out, so write without the trail, say so in
+		// the log and in the result, and keep every other Server Settings write
+		// strictly audited.
+		result, err = s.updateServerEnvUnaudited(meta, action, keys, details, dryMessage, doneMessage, apply, unavailable)
+	}
+	writeCommandResultAPI(w, result, err)
+}
+
+// updateServerEnvUnaudited is handleUpdateServerEnvAPI's fallback when the
+// command store cannot be reached. It applies the same validation as an
+// audited command, but there is no command row, so command_id is not
+// idempotent here and the result carries audit_recorded=false.
+func (s *server) updateServerEnvUnaudited(meta admin.CommandMeta, action string, keys []string, details map[string]any, dryMessage, doneMessage string, apply func() error, cause error) (admin.CommandResult, error) {
+	meta, err := normalizeOperatorCommandMeta(meta)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	details["audit_recorded"] = false
+	result := admin.CommandResult{CommandID: meta.CommandID, Action: action, DryRun: meta.DryRun, Status: "completed", Details: details}
+	if meta.DryRun {
+		result.Message = dryMessage + " (audit store unavailable: this change will not be audited)"
+		return result, nil
+	}
+	if err := apply(); err != nil {
+		result.Status = "failed"
+		return result, err
+	}
+	log.Printf("WARNING: %s by %q applied WITHOUT an audit record (command_id=%s, keys=%v, reason=%q): audit store unavailable: %v",
+		action, meta.Actor, meta.CommandID, keys, meta.Reason, cause)
+	result.Message = doneMessage + " (audit store unavailable: not audited)"
+	return result, nil
+}
+
+// envValuesFingerprint binds the submitted .env values into command_id's
+// identity without making the stored fingerprint an offline oracle for them.
+// A plain SHA-256 of key=value could be brute-forced by anyone who can read
+// admin_commands (a short password or token falls quickly), so the digest is
+// an HMAC keyed by a key derived from the panel session key
+// (TELESRV_ADMIN_SESSION_KEY): a secret the panel already requires, that never
+// reaches the database, and that is stable across restarts, so replaying a
+// command_id after a restart still returns the first run. Rotating the session
+// key changes the MAC, and a replay after that reports COMMAND_ID_CONFLICT
+// instead of already-executed -- the safe direction.
+func envValuesFingerprint(sessionKey []byte, sortedKeys []string, values map[string]string) string {
+	derive := hmac.New(sha256.New, sessionKey)
+	_, _ = derive.Write([]byte("telesrv-admin/update-server-env/fingerprint"))
+	mac := hmac.New(sha256.New, derive.Sum(nil))
+	for _, key := range sortedKeys {
+		_, _ = mac.Write([]byte(key + "=" + values[key] + "\x00"))
+	}
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // --- status --------------------------------------------------------------

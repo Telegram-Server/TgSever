@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, Copy, Loader2, RefreshCw, Search, Smartphone } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Loader2, RefreshCw, Search, Smartphone, UserPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel, UsernameCell } from "../components/ui";
@@ -10,6 +10,8 @@ import { accountMetrics } from "../lib/metrics";
 import type { Navigate } from "../routing";
 import type { AccountListResponse } from "../types";
 import { SectionTabs } from "../components/SectionTabs";
+import { permissionAccountsManage, useCan } from "../permissions";
+import { CreateAccountModal } from "./CreateAccountModal";
 
 type AccountCursor = { beforeID: number; beforeActiveUS: number };
 
@@ -26,6 +28,10 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copiedID, setCopiedID] = useState<number | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  // Account creation is an action under accounts.manage, not a page of its own:
+  // without the right there is no entry point at all.
+  const canCreate = useCan(permissionAccountsManage);
 
   async function copyUserID(userID: number) {
     try {
@@ -91,6 +97,11 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
       eyebrow={data?.listing === false ? t("account.queryResults") : t("account.recentActive")}
       actions={
         <>
+          {canCreate && (
+            <button className="btn icon-text" type="button" onClick={() => setCreateOpen(true)}>
+              <UserPlus size={15} /> {t("account.create")}
+            </button>
+          )}
           <button className="btn icon-text" type="button" onClick={() => navigate("/accounts/shared-devices")}>
             <Smartphone size={15} /> {t("account.sharedDevices")}
           </button>
@@ -101,6 +112,12 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
       }
     >
       <SectionTabs sectionId="accounts" active="/accounts" navigate={navigate} />
+      {createOpen && (
+        <CreateAccountModal
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => void loadPage(firstAccountPage, { q: "", limit: filters.limit }, true)}
+        />
+      )}
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("account.currentPage")} value={String(data?.rows.length ?? 0)} />

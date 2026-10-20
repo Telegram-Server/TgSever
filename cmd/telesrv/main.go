@@ -1668,6 +1668,10 @@ func run(logger *zap.Logger) error {
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
+		// 注册开关：管理面板覆盖值（identity.json，每次现读）优先，未设置时跟随
+		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，
+		// help.getAppConfig 下发的 telesrv_sign_up_disabled 也读它。
+		auth.WithSignUpAllowed(auth.IdentitySignUpAllowed(identityStore, cfg.SignUpEnabled)),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1899,6 +1903,7 @@ func run(logger *zap.Logger) error {
 			// the wallet is unavailable rather than shown an entry that cannot work.
 			help.WithWalletAvailable(cfg.WalletStateDir != ""),
 			help.WithPasswordLogin(loginPasswordService.Enabled()),
+			help.WithSignUpAllowed(authService.SignUpAllowed),
 			help.WithAccountFreezeProvider(adminService)),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
@@ -1983,6 +1988,7 @@ func run(logger *zap.Logger) error {
 	activeSessions.SetLifecycleObserver(router)
 	adminService.Configure(adminapp.Dependencies{
 		Auth:                    authService,
+		AccountCreator:          authService,
 		Revoker:                 router,
 		Users:                   usersService,
 		UserLookup:              userStore,

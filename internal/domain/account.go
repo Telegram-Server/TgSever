@@ -31,7 +31,19 @@ var (
 	ErrPhoneCodeExpired        = errors.New("phone code expired")
 	ErrPhoneChangeAuthInvalid  = errors.New("phone change auth invalid")
 	ErrPhoneChangeForbidden    = errors.New("phone change forbidden")
+	// ErrSignUpDisabled 表示服务器已关闭注册：没有账号的号码不能创建新账号。
+	// 已有账号的登录不受影响；RPC 层映射为 400 SIGN_UP_DISABLED。
+	ErrSignUpDisabled = errors.New("sign up disabled")
 )
+
+// ResolveSignUpEnabled 按优先级给出实际的注册开关：管理面板覆盖值（非 nil）优先，
+// 否则跟随环境变量 TELESRV_SIGN_UP_ENABLED。服务端判断与管理面板展示共用这一处。
+func ResolveSignUpEnabled(panelOverride *bool, envDefault bool) bool {
+	if panelOverride != nil {
+		return *panelOverride
+	}
+	return envDefault
+}
 
 type AuthCodeDeliveryKind string
 

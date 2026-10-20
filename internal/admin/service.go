@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"telesrv/internal/app/auth"
 	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
 	"telesrv/internal/officialgifts"
@@ -42,6 +43,7 @@ const (
 	ActionSetUsername             = "account.set_username"
 	ActionSetProfile              = "account.set_profile"
 	ActionSetPhone                = "account.set_phone"
+	ActionCreateAccount           = "account.create"
 	ActionSetLoginEmail           = "account.set_login_email"
 	ActionSetAccountAvatar        = "account.set_avatar"
 	ActionSetUserColor            = "account.set_color"
@@ -224,6 +226,17 @@ type AuthService interface {
 	ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error)
 	ResetAuthorization(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error)
 	ResetAuthorizations(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error)
+}
+
+// AccountCreator creates a regular user account on the operator's behalf. It
+// is the auth service: phone/name validation and the default premium grant are
+// the same as for a normal sign-up, but the sign-up switch does not apply and
+// no authorization is bound. ValidateNewAccount is the dry-run counterpart and
+// returns the account that would be created (no ID). An occupied phone number
+// yields domain.ErrPhoneNumberOccupied.
+type AccountCreator interface {
+	ValidateNewAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error)
+	CreateAccount(ctx context.Context, phone, firstName, lastName string) (domain.User, error)
 }
 
 type AuthKeyRevoker interface {
@@ -490,6 +503,7 @@ type Dependencies struct {
 	Commands                CommandRepository
 	Restrictions            RestrictionStore
 	Auth                    AuthService
+	AccountCreator          AccountCreator
 	Revoker                 AuthKeyRevoker
 	Users                   UsersService
 	UserLookup              UserLookup
@@ -534,6 +548,7 @@ type Service struct {
 	commands                CommandRepository
 	restrictions            RestrictionStore
 	auth                    AuthService
+	accountCreator          AccountCreator
 	revoker                 AuthKeyRevoker
 	users                   UsersService
 	userLookup              UserLookup
@@ -586,6 +601,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Auth != nil {
 		s.auth = deps.Auth
+	}
+	if deps.AccountCreator != nil {
+		s.accountCreator = deps.AccountCreator
 	}
 	if deps.Revoker != nil {
 		s.revoker = deps.Revoker
@@ -1124,6 +1142,14 @@ type SetPhoneRequest struct {
 	CommandMeta
 	UserID int64  `json:"user_id"`
 	Phone  string `json:"phone"`
+}
+
+// CreateAccountRequest creates a regular user account. LastName is optional.
+type CreateAccountRequest struct {
+	CommandMeta
+	Phone     string `json:"phone"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name,omitempty"`
 }
 
 // ResolveUserByPhoneRequest is a read-only account lookup used by the
@@ -2369,6 +2395,66 @@ func (s *Service) SetPhone(ctx context.Context, req SetPhoneRequest) (CommandRes
 		}
 		return CommandResult{Message: "phone updated", Details: details}, nil
 	})
+}
+
+// CreateAccount creates a regular user account from the panel. It is how new
+// members join while sign-up is closed, so the sign-up switch does not apply.
+// Only the account is created: no session, no auth key. The member then signs
+// in with a login code and gets the welcome message like any new user.
+// Validation runs inside the command so rejected attempts (bad phone, occupied
+// number) are recorded in the command and audit logs too. A dry run only
+// validates; a real run leaves validation to AccountCreator.CreateAccount,
+// which applies the same rules, so the number is checked once per attempt.
+func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (CommandResult, error) {
+	if s == nil || s.accountCreator == nil {
+		return CommandResult{}, fmt.Errorf("admin account creator dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionCreateAccount, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		if req.DryRun {
+			pending, err := s.accountCreator.ValidateNewAccount(ctx, req.Phone, req.FirstName, req.LastName)
+			if err != nil {
+				return CommandResult{}, createAccountError(err)
+			}
+			return CommandResult{Message: "account creation validated", Details: createAccountDetails(pending)}, nil
+		}
+		created, err := s.accountCreator.CreateAccount(ctx, req.Phone, req.FirstName, req.LastName)
+		if err != nil {
+			return CommandResult{}, createAccountError(err)
+		}
+		details := createAccountDetails(created)
+		details["user_id"] = created.ID
+		return CommandResult{Message: "account created", Details: details}, nil
+	})
+}
+
+func createAccountDetails(u domain.User) map[string]any {
+	return map[string]any{
+		"phone":         u.Phone,
+		"first_name":    u.FirstName,
+		"last_name":     u.LastName,
+		"premium_until": u.PremiumUntil,
+	}
+}
+
+// createAccountError attaches a stable code to the rejections an operator can
+// act on; anything else is passed through with its own message. A reserved
+// system number (auth.ErrSystemUserLoginForbidden) gets PHONE_NUMBER_RESERVED
+// rather than the PHONE_NUMBER_INVALID the client-facing RPC folds it into:
+// clients must not learn which numbers are system accounts, but the operator
+// needs to know why a well-formed number was refused.
+func createAccountError(err error) error {
+	switch {
+	case errors.Is(err, auth.ErrPhoneNumberInvalid), errors.Is(err, domain.ErrPhoneNumberInvalid):
+		return codedError("PHONE_NUMBER_INVALID", err)
+	case errors.Is(err, auth.ErrSystemUserLoginForbidden):
+		return codedError("PHONE_NUMBER_RESERVED", err)
+	case errors.Is(err, domain.ErrPhoneNumberOccupied):
+		return codedError("PHONE_NUMBER_OCCUPIED", err)
+	case errors.Is(err, domain.ErrFirstNameInvalid):
+		return codedError("FIRSTNAME_INVALID", err)
+	default:
+		return err
+	}
 }
 
 func (s *Service) ResolveUserByPhone(ctx context.Context, phone string) (domain.User, bool, error) {

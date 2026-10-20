@@ -38,6 +38,8 @@ func (unusedAuthFlows) SignUpWithAccountCreator(context.Context, domain.Authoriz
 	return domain.User{}, errors.New("unexpected sign-up")
 }
 
+func (unusedAuthFlows) CheckSignUpAllowed(context.Context) error { return nil }
+
 func (unusedAuthFlows) FinishVerifiedSignIn(context.Context, domain.Authorization, domain.User) (domain.User, error) {
 	return domain.User{}, errors.New("unexpected sign-in")
 }

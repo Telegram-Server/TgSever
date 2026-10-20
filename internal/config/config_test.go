@@ -1020,6 +1020,26 @@ func TestLoadLoginEmailDefaultsDisabled(t *testing.T) {
 	}
 }
 
+func TestLoadSignUpEnabledDefaultsOpen(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.SignUpEnabled {
+		t.Fatal("SignUpEnabled = false by default, want true (existing deployments keep open sign-up)")
+	}
+
+	t.Setenv("TELESRV_SIGN_UP_ENABLED", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SignUpEnabled {
+		t.Fatal("SignUpEnabled = true with TELESRV_SIGN_UP_ENABLED=false")
+	}
+}
+
 func TestLoadPasswordLoginSwitch(t *testing.T) {
 	disableDefaultConfigFile(t)
 	cfg, err := Load()
