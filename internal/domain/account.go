@@ -34,6 +34,10 @@ var (
 	// ErrSignUpDisabled 表示服务器已关闭注册：没有账号的号码不能创建新账号。
 	// 已有账号的登录不受影响；RPC 层映射为 400 SIGN_UP_DISABLED。
 	ErrSignUpDisabled = errors.New("sign up disabled")
+	// ErrCodeLoginDisabled 表示服务器已关闭验证码登录：不签发、不投递、也不接受任何
+	// 登录/注册用验证码。密码登录、扫码、passkey、bot 与会话内验证码流程不受影响；
+	// RPC 层映射为 400 CODE_LOGIN_DISABLED。
+	ErrCodeLoginDisabled = errors.New("code login disabled")
 )
 
 // ResolveSignUpEnabled 按优先级给出实际的注册开关：管理面板覆盖值（非 nil）优先，

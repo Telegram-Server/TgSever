@@ -120,6 +120,9 @@ type Service struct {
 	// signUpAllowed 是"是否允许注册"的唯一来源，每次判断都实时调用（不缓存）。
 	// nil 表示开放注册（默认行为不变）。见 WithSignUpAllowed 与 CheckSignUpAllowed。
 	signUpAllowed SignUpAllowedFunc
+	// codeLoginAllowed 是"是否允许验证码登录"的唯一来源，每次判断都实时调用（不缓存）。
+	// nil 表示允许（默认行为不变）。见 WithCodeLoginAllowed 与 CheckCodeLoginAllowed。
+	codeLoginAllowed CodeLoginAllowedFunc
 }
 
 type loginEmailStore interface {
@@ -243,6 +246,27 @@ func IdentitySignUpAllowed(store *identity.Store, envDefault bool) SignUpAllowed
 func WithSignUpAllowed(fn SignUpAllowedFunc) Option {
 	return func(s *Service) {
 		s.signUpAllowed = fn
+	}
+}
+
+// CodeLoginAllowedFunc 报告当前是否允许验证码登录（含验证码注册）。与
+// SignUpAllowedFunc 同构：每次判断都实时调用，实现应现读来源、不要自行缓存；
+// 返回 error 时按关闭处理（fail closed）。
+type CodeLoginAllowedFunc func(ctx context.Context) (bool, error)
+
+// StaticCodeLoginAllowed 返回固定结果的 CodeLoginAllowedFunc，用于只有环境变量
+// （TELESRV_CODE_LOGIN_ENABLED）一个来源的部署。
+func StaticCodeLoginAllowed(enabled bool) CodeLoginAllowedFunc {
+	return func(context.Context) (bool, error) { return enabled, nil }
+}
+
+// WithCodeLoginAllowed 注入"是否允许验证码登录"的来源。所有签发或接受登录/注册用
+// 验证码的入口（发码、重发、登录、注册、登录邮箱 setup、登录邮箱重置）都经
+// CheckCodeLoginAllowed 调用它；会话内验证码流程（更换手机号、注销确认）不经过它。
+// nil 等价于始终允许。
+func WithCodeLoginAllowed(fn CodeLoginAllowedFunc) Option {
+	return func(s *Service) {
+		s.codeLoginAllowed = fn
 	}
 }
 
@@ -484,6 +508,30 @@ func (s *Service) CheckSignUpAllowed(ctx context.Context) error {
 	return nil
 }
 
+// CodeLoginAllowed 报告当前是否允许验证码登录（唯一的判断点）。未配置来源时允许。
+// help.getAppConfig 用它下发 telesrv_code_login_disabled，保证客户端看到的状态与
+// 服务端拦截使用同一个来源。
+func (s *Service) CodeLoginAllowed(ctx context.Context) (bool, error) {
+	if s == nil || s.codeLoginAllowed == nil {
+		return true, nil
+	}
+	return s.codeLoginAllowed(ctx)
+}
+
+// CheckCodeLoginAllowed 在签发、重发或接受任何登录/注册用验证码之前调用：验证码登录
+// 关闭时返回 domain.ErrCodeLoginDisabled；来源出错时返回该错误（fail closed）。
+// 它先于注册开关检查，因此关闭时不论号码是否已注册都只返回 ErrCodeLoginDisabled。
+func (s *Service) CheckCodeLoginAllowed(ctx context.Context) error {
+	allowed, err := s.CodeLoginAllowed(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve code login switch: %w", err)
+	}
+	if !allowed {
+		return domain.ErrCodeLoginDisabled
+	}
+	return nil
+}
+
 // SendCode 为 phone 生成 phone_code_hash，按配置选择开发 app code、登录邮箱 code
 // 或登录邮箱 setup-required 状态，返回 hash。
 func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
@@ -493,6 +541,10 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	}
 	if systemLoginPhoneForbidden(phone) {
 		return "", ErrSystemUserLoginForbidden
+	}
+	// 验证码登录关闭时，在查号码归属之前就拒绝：不签发、不投递，也不泄露号码是否已注册。
+	if err := s.CheckCodeLoginAllowed(ctx); err != nil {
+		return "", err
 	}
 	existing, found, err := s.currentPhoneOwner(ctx, phone)
 	if err != nil {
@@ -861,6 +913,11 @@ func (s *Service) resendCode(ctx context.Context, authKeyID [8]byte, phone, phon
 		_, _, _ = s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
 		return "", ErrCodeExpired
 	}
+	// 登录/注册码：验证码登录在发码之后才关闭时，重发不签发、不投递（先于注册开关）。
+	// 上面的更换手机号码属于会话内流程，不受此开关影响。
+	if err := s.CheckCodeLoginAllowed(ctx); err != nil {
+		return "", err
+	}
 	if matches, err := s.issuedOwnerMatches(ctx, phone, rec.IssuedUserID); err != nil {
 		return "", err
 	} else if !matches {
@@ -973,6 +1030,10 @@ func (s *Service) ConsumeLoginEmailReset(ctx context.Context, phone, phoneCodeHa
 	if !s.LoginEmailResetAvailable() || s.codes == nil {
 		return 0, ErrCodeInvalid
 	}
+	// 重置会改发一份手机登录码：验证码登录关闭时，在消费邮箱 hash 之前拒绝。
+	if err := s.CheckCodeLoginAllowed(ctx); err != nil {
+		return 0, err
+	}
 	phone = normalizePhone(phone)
 	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
 	if err != nil {
@@ -1027,6 +1088,9 @@ func (s *Service) SendPhoneCodeAfterLoginEmailReset(ctx context.Context, phone s
 	}
 	if expectedUserID == 0 || systemLoginPhoneForbidden(phone) {
 		return "", ErrCodeInvalid
+	}
+	if err := s.CheckCodeLoginAllowed(ctx); err != nil {
+		return "", err
 	}
 	owner, found, err := s.currentPhoneOwner(ctx, phone)
 	if err != nil {
@@ -1090,6 +1154,10 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 	if systemLoginPhoneForbidden(phone) {
 		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
 	}
+	// 兜底：验证码在签发之后验证码登录才关闭时，提交这一步同样拒绝，且不消费验证码。
+	if err := s.CheckCodeLoginAllowed(ctx); err != nil {
+		return domain.User{}, domain.Message{}, false, err
+	}
 	_, existing, found, err := s.verifyLoginCode(ctx, phone, phoneCodeHash, code)
 	if err != nil {
 		return domain.User{}, domain.Message{}, false, err
@@ -1109,6 +1177,9 @@ func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization
 	phone = normalizePhone(phone)
 	if systemLoginPhoneForbidden(phone) {
 		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
+	}
+	if err := s.CheckCodeLoginAllowed(ctx); err != nil {
+		return domain.User{}, domain.Message{}, false, err
 	}
 	_, existing, found, err := s.verifyLoginCode(ctx, phone, phoneCodeHash, strings.TrimSpace(code))
 	if err != nil {
@@ -1279,6 +1350,11 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	}
 	firstName, lastName, err = NormalizeSignUpName(firstName, lastName)
 	if err != nil {
+		return domain.User{}, domain.Message{}, err
+	}
+	// 兜底：验证码登录在 signIn 之后才关闭时也不能用这份已验证的码建号（先于注册开关，
+	// 且不消费已验证标记）。
+	if err := s.CheckCodeLoginAllowed(ctx); err != nil {
 		return domain.User{}, domain.Message{}, err
 	}
 	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
