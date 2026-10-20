@@ -39,6 +39,7 @@ import {
   permissionServerManage,
   permissionStarsRead,
   permissionStorageRead,
+  permissionUpdatesRead,
   permissionUsernamesRead,
   permissionVerificationReview
 } from "./permissions";
@@ -203,7 +204,10 @@ export const navSections: NavSection[] = [
     id: "server",
     labelKey: "layout.serverSettings",
     icon: Settings,
-    tabs: [{ path: "/server-settings", labelKey: "layout.serverSettings", permission: permissionServerManage }]
+    tabs: [
+      { path: "/server-settings", labelKey: "layout.serverSettings", permission: permissionServerManage },
+      { path: "/client-updates", labelKey: "layout.clientUpdates", permission: permissionUpdatesRead }
+    ]
   }
 ];
 
@@ -250,6 +254,7 @@ const routePermissions: { prefix: string; permission: string }[] = [
   { prefix: "/donations", permission: permissionDonationsManage },
   { prefix: "/prices", permission: permissionPricesManage },
   { prefix: "/server-settings", permission: permissionServerManage },
+  { prefix: "/client-updates", permission: permissionUpdatesRead },
   { prefix: "/stars", permission: permissionStarsRead },
   { prefix: "/storage", permission: permissionStorageRead },
   { prefix: "/account-ratings", permission: permissionRatingsRead },

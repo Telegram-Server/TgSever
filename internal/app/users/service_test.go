@@ -112,6 +112,20 @@ func TestServiceUsernameLifecycle(t *testing.T) {
 	}
 }
 
+// 接线测试：设置用户名路径接入了保留用户名规则（规则细节见 domain.ReservedUsername 的测试）。
+func TestUpdateUsernameRejectsReservedUsername(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewUserStore()
+	owner, err := store.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000001", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	svc := NewService(store)
+	if _, err := svc.UpdateUsername(ctx, owner.ID, "tdhbcfeed4"); !errors.Is(err, domain.ErrUsernameInvalid) {
+		t.Fatalf("UpdateUsername reserved err = %v, want username invalid", err)
+	}
+}
+
 func TestByIDsForViewersRejectsOwnerSetAboveBound(t *testing.T) {
 	svc := NewService(memory.NewUserStore())
 	ids := make([]int64, maxBatchUsers+1)

@@ -986,6 +986,10 @@ func validUsername(username string) bool {
 	if len(username) < minUsernameLen || len(username) > maxUsernameLen {
 		return false
 	}
+	// 保留前缀（桌面客户端更新源频道）不可占用；解析路径不走这里。
+	if domain.ReservedUsername(username) {
+		return false
+	}
 	for i := 0; i < len(username); i++ {
 		c := username[i]
 		switch {

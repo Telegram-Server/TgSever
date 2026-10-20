@@ -25,10 +25,13 @@ ARG VCS_REF=unknown
 ARG VCS_BRANCH=unknown
 ARG VCS_TREE_STATE=unknown
 ARG BUILD_DATE=unknown
+# One build for both binaries: with -o ending in "/" go writes /out/telesrv and
+# /out/telesrv-update. telesrv-update has none of the main.* build variables,
+# and the linker ignores -X for symbols a binary does not have.
 RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath \
       -ldflags="-s -w -X main.gitCommit=${VCS_REF} -X main.gitBranch=${VCS_BRANCH} -X main.gitTreeState=${VCS_TREE_STATE} -X main.buildTime=${BUILD_DATE}" \
-      -o /out/telesrv ./cmd/telesrv
+      -o /out/ ./cmd/telesrv ./cmd/telesrv-update
 
 FROM build-base AS build-admin
 RUN apk add --no-cache nodejs npm
@@ -74,7 +77,16 @@ RUN apk add --no-cache ffmpeg openssl \
 # Installing it 0750 alongside the others stopped the server at boot with
 # "wallet state directory must have mode 0700".
 RUN install -d -o telesrv -g telesrv -m 0700 /var/lib/telesrv/wallet
+# Desktop update manifest and packages live on their own server_updates volume.
+# Docker seeds an empty named volume from this directory, owner included, so
+# `telesrv-update publish` (run via `docker compose exec server`) can write the
+# manifest, its lock file and the package directory as 10001.
+RUN install -d -o telesrv -g telesrv -m 0750 /var/lib/telesrv-updates
+# Mount point for the read-only update root public key (deploy/docker/update-keys).
+# Root-owned: the trust anchor must not be writable by the server user.
+RUN install -d -o root -g root -m 0755 /etc/telesrv-updates
 COPY --from=build-server /out/telesrv /usr/local/bin/telesrv
+COPY --from=build-server /out/telesrv-update /usr/local/bin/telesrv-update
 COPY --chown=telesrv:telesrv data/langpack/ /usr/share/telesrv/langpack/
 USER 10001:10001
 EXPOSE 2398 2400 2401 2599 12399/udp 12400/udp

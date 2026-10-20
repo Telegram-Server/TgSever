@@ -74,6 +74,16 @@ const (
 	// separate from premium.manage because a shop price decides what a
 	// customer is charged, not what a grant costs the operator.
 	PermissionPricesManage = "prices.manage"
+	// PermissionUpdatesRead guards the desktop client update catalog read side:
+	// the update service mode, the advertised update URL, the manifest reload
+	// error, and every published entry.
+	PermissionUpdatesRead = "updates.read"
+	// PermissionUpdatesPublish guards changing what desktop clients receive:
+	// uploading and publishing a package, rolling back, and disabling or
+	// re-enabling an entry. It does not imply PermissionUpdatesRead, so a
+	// publisher is granted both. Packages must still be signed by the update
+	// root key, which never lives on the server.
+	PermissionUpdatesPublish = "updates.publish"
 	// PermissionBotTokenRead is intentionally narrower than unrestricted admin
 	// access because it reveals a live credential.
 	PermissionBotTokenRead = "bots.token.read"

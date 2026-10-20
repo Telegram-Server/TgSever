@@ -148,6 +148,40 @@ export type ItemPricesResponse = {
   star_packages?: number[];
 };
 
+// GET /api/client-updates: the desktop update service as admin.ClientUpdateStatus
+// reports it. "disabled" means TELESRV_UPDATE_MANIFEST is unset and no external
+// service is configured; "external" means a separate telesrv-update serves the
+// updates and only the URLs are known here.
+export type ClientUpdateMode = "disabled" | "in_process" | "external";
+
+export type ClientUpdateEntry = {
+  platform: string;
+  channel: string;
+  build: number;
+  version?: string;
+  file: string;
+  sha256: string;
+  // May be absent for a disabled entry of a hand-written manifest.
+  size?: number;
+  disabled: boolean;
+  // When Packer built the package; absent for disabled entries, whose package
+  // is not verified.
+  created?: string;
+};
+
+export type ClientUpdateStatus = {
+  mode: ClientUpdateMode;
+  public_url?: string;
+  service_url?: string;
+  // Set while the latest manifest failed to load: entries then come from the
+  // previous good manifest, which is still being served.
+  reload_error?: string;
+  // In process: the largest package the server accepts, in bytes. The page
+  // checks a file against it before sending a byte.
+  max_package_size?: number;
+  entries: ClientUpdateEntry[];
+};
+
 export type DonationDepositStatus = "pending" | "confirmed" | "credited" | "orphaned";
 
 export type DonationDepositRow = {
@@ -1171,6 +1205,8 @@ export type CommandResult = {
   message: string;
   details?: Record<string, unknown>;
   error?: string;
+  // Stable admin error code (admin.ErrorCode), e.g. UPDATE_STAGING_EXPIRED.
+  code?: string;
 };
 
 export type StorageBackendRow = {

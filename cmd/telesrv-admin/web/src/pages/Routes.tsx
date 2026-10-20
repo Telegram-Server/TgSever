@@ -15,6 +15,7 @@ import { BotVerificationRequestPage } from "./BotVerificationRequestPage";
 import { BroadcastsPage } from "./BroadcastsPage";
 import { ChannelDetailPage } from "./ChannelDetailPage";
 import { ChannelsPage } from "./ChannelsPage";
+import { ClientUpdatesPage } from "./ClientUpdatesPage";
 import { CollectiblePhonesPage } from "./CollectiblePhonesPage";
 import { CollectibleUsernameDetailPage } from "./CollectibleUsernameDetailPage";
 import { CollectibleUsernamesPage } from "./CollectibleUsernamesPage";
@@ -97,7 +98,10 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
     return <PricesPage navigate={navigate} />;
   }
   if (route.path === "/server-settings") {
-    return <ServerSettingsPage search={route.search} />;
+    return <ServerSettingsPage search={route.search} navigate={navigate} />;
+  }
+  if (route.path === "/client-updates") {
+    return <ClientUpdatesPage navigate={navigate} />;
   }
   const starsUserID = route.path.match(/^\/stars\/(\d+)$/)?.[1];
   if (starsUserID) {

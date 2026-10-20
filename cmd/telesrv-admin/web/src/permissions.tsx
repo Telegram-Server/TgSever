@@ -61,6 +61,11 @@ export const permissionDashboardRead = "dashboard.read";
 // the repo/code, and the actions are deliberately small and audited by reason.
 // It is not implied by anything else, like the console-self rights below.
 export const permissionServerManage = "server.manage";
+// Desktop client updates (the Client updates tab under Server). A read/publish
+// pair, unlike server.manage: publishing decides which build every desktop
+// client installs next. Neither right implies the other.
+export const permissionUpdatesRead = "updates.read";
+export const permissionUpdatesPublish = "updates.publish";
 
 // GET /api/session is read once at boot; the panel keeps the answer here so a
 // section the session may not use is hidden instead of rendered into a 403. This
@@ -170,6 +175,8 @@ const permissionLabels: Record<string, { title: string; hint: string }> = {
   "admins.manage": { title: "Manage operators", hint: "Create operators and decide what everyone can do" },
   "audit.read": { title: "View the audit log", hint: "See who did what across the console" },
   "server.manage": { title: "Manage server settings", hint: "Edit the server identity, login-notification templates and .env, and view service status" },
+  "updates.read": { title: "View client updates", hint: "See the desktop update service status and every published build" },
+  "updates.publish": { title: "Publish client updates", hint: "Upload, publish, roll back, disable and re-enable desktop builds" },
   "*": { title: "Full access", hint: "Every right, including future ones" }
 };
 
@@ -227,6 +234,11 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
     title: "Billing",
     hint: "Premium grants, refunds, the Stars ledger, shop pricing and crypto donations",
     permissions: ["premium.manage", "stars.read", "prices.manage", "donations.manage"]
+  },
+  {
+    title: "Client updates",
+    hint: "The desktop update catalog: which builds custom Telegram Desktop clients are offered",
+    permissions: ["updates.read", "updates.publish"]
   },
   {
     title: "The console itself",

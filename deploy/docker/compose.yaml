@@ -153,6 +153,21 @@ services:
       # drift apart (CI asserts they are equal and on the volume).
       TELESRV_IDENTITY_DIR: /var/lib/telesrv/identity
       TELESRV_RSA_IDENTITY_MODE: ${TELESRV_RSA_IDENTITY_MODE:-test}
+      # Desktop client updates are off while TELESRV_UPDATE_MANIFEST is empty.
+      # A non-empty manifest path turns on the in-process update service under
+      # <TELESRV_PUBLIC_BASE_URL>/_updates, and the server refuses to start if
+      # the manifest cannot be loaded. Keep the manifest and the packages on the
+      # server_updates volume (/var/lib/telesrv-updates), the only update path
+      # the read_only rootfs lets `docker compose exec server telesrv-update
+      # publish` write to; that command reads these same variables. The root
+      # public key is the trust anchor, so it does NOT go on that writable
+      # volume: put it in deploy/docker/update-keys, mounted read-only at
+      # /etc/telesrv-updates. FILES_DIR defaults to "files" next to the
+      # manifest, PUBLIC_URL to the derived /_updates prefix.
+      TELESRV_UPDATE_MANIFEST: ${TELESRV_UPDATE_MANIFEST:-}
+      TELESRV_UPDATE_FILES_DIR: ${TELESRV_UPDATE_FILES_DIR:-}
+      TELESRV_UPDATE_ROOT_PUBLIC_KEY: ${TELESRV_UPDATE_ROOT_PUBLIC_KEY:-}
+      TELESRV_UPDATE_PUBLIC_URL: ${TELESRV_UPDATE_PUBLIC_URL:-}
       TELESRV_SFU_ENABLE: ${TELESRV_SFU_ENABLE:-true}
       TELESRV_SFU_UDP_PORT: ${TELESRV_SFU_UDP_PORT:-12399}
       TELESRV_SFU_ADVERTISE_IP: ${TELESRV_SFU_ADVERTISE_IP:?set TELESRV_SFU_ADVERTISE_IP in deploy/docker/.env}
@@ -194,6 +209,11 @@ services:
         condition: service_healthy
     volumes:
       - server_state:/var/lib/telesrv
+      - server_updates:/var/lib/telesrv-updates
+      # Update root public key, read-only: the server user can write the
+      # server_updates volume, so a key kept there could be swapped by a
+      # compromised server. Empty (only .gitkeep) while updates are off.
+      - ./update-keys:/etc/telesrv-updates:ro
     network_mode: host
     healthcheck:
       test:
@@ -257,3 +277,4 @@ volumes:
   postgres_data:
   redis_data:
   server_state:
+  server_updates:

@@ -553,6 +553,103 @@ func TestLoadUpdateServiceDefaultsInternalURLToPublic(t *testing.T) {
 	}
 }
 
+func TestLoadInProcessUpdateConfig(t *testing.T) {
+	disableDefaultConfigFile(t)
+	manifest := filepath.Join("srv", "updates", "manifest.json")
+	t.Setenv("TELESRV_PUBLIC_BASE_URL", "https://links.example.test/root/")
+	t.Setenv("TELESRV_PUBLIC_LINK_WEB_ADDR", "127.0.0.1:2401")
+	t.Setenv("TELESRV_UPDATE_MANIFEST", manifest)
+	t.Setenv("TELESRV_UPDATE_ROOT_PUBLIC_KEY", filepath.Join("keys", "update-root.pem"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UpdateManifest != manifest || cfg.UpdateRootPublicKey != filepath.Join("keys", "update-root.pem") {
+		t.Fatalf("UpdateManifest/UpdateRootPublicKey = %q / %q", cfg.UpdateManifest, cfg.UpdateRootPublicKey)
+	}
+	if want := filepath.Join("srv", "updates", "files"); cfg.UpdateFilesDir != want {
+		t.Fatalf("UpdateFilesDir = %q, want %q", cfg.UpdateFilesDir, want)
+	}
+	if want := "https://links.example.test/root/_updates"; cfg.UpdatePublicURL != want {
+		t.Fatalf("UpdatePublicURL = %q, want derived %q", cfg.UpdatePublicURL, want)
+	}
+	if cfg.UpdateServiceURL != "" {
+		t.Fatalf("UpdateServiceURL = %q, want empty while updates are served in process", cfg.UpdateServiceURL)
+	}
+}
+
+func TestLoadInProcessUpdateConfigPrefersExplicitValues(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_UPDATE_MANIFEST", filepath.Join("srv", "updates", "manifest.json"))
+	t.Setenv("TELESRV_UPDATE_FILES_DIR", filepath.Join("mnt", "packages"))
+	t.Setenv("TELESRV_UPDATE_PUBLIC_URL", "https://cdn.example.test/desktop/")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UpdateFilesDir != filepath.Join("mnt", "packages") {
+		t.Fatalf("UpdateFilesDir = %q", cfg.UpdateFilesDir)
+	}
+	if cfg.UpdatePublicURL != "https://cdn.example.test/desktop" {
+		t.Fatalf("UpdatePublicURL = %q, want the explicit value", cfg.UpdatePublicURL)
+	}
+	if cfg.UpdateServiceURL != "" {
+		t.Fatalf("UpdateServiceURL = %q, want empty while updates are served in process", cfg.UpdateServiceURL)
+	}
+}
+
+// 自动推导的前缀只由公开 Web 提供：公开 Web 关闭时不能下发一个没人服务的地址。
+func TestLoadRejectsDerivedUpdatePrefixWithoutPublicWeb(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PUBLIC_LINK_WEB_ADDR", "")
+	t.Setenv("TELESRV_UPDATE_MANIFEST", filepath.Join("srv", "updates", "manifest.json"))
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "TELESRV_PUBLIC_LINK_WEB_ADDR") {
+		t.Fatalf("Load() with in-process updates and no public Web error = %v", err)
+	}
+	assertInProcessUpdateHint(t, err)
+}
+
+func TestLoadRejectsInProcessUpdatesWithUpdateServiceURL(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_UPDATE_MANIFEST", filepath.Join("srv", "updates", "manifest.json"))
+	t.Setenv("TELESRV_UPDATE_SERVICE_URL", "http://127.0.0.1:2402")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "TELESRV_UPDATE_SERVICE_URL") {
+		t.Fatalf("Load() with both in-process and external updates error = %v", err)
+	}
+	assertInProcessUpdateHint(t, err)
+}
+
+// 旧版 .env.example 里写着 TELESRV_UPDATE_MANIFEST=data/updates/manifest.json；升级后它会
+// 打开进程内更新。由它引起的启动错误必须告诉运营者这一点，以及不需要时清空它。
+func assertInProcessUpdateHint(t *testing.T, err error) {
+	t.Helper()
+	msg := err.Error()
+	for _, want := range []string{"non-empty TELESRV_UPDATE_MANIFEST", "in-process", "clear"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not mention %q: operators upgrading an old .env must learn the manifest now enables in-process updates", msg, want)
+		}
+	}
+}
+
+func TestLoadWithoutUpdateManifestKeepsUpdatesDisabled(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_UPDATE_FILES_DIR", filepath.Join("mnt", "packages"))
+	t.Setenv("TELESRV_UPDATE_ROOT_PUBLIC_KEY", filepath.Join("keys", "update-root.pem"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UpdateManifest != "" || cfg.UpdatePublicURL != "" || cfg.UpdateServiceURL != "" {
+		t.Fatalf("updates enabled without a manifest: manifest=%q public=%q service=%q",
+			cfg.UpdateManifest, cfg.UpdatePublicURL, cfg.UpdateServiceURL)
+	}
+}
+
 func TestLoadRejectsInvalidUpdateServiceConfig(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_UPDATE_PUBLIC_URL", "file:///updates")

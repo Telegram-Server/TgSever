@@ -91,6 +91,9 @@ to a named operator account.
 | `stars.read` | View the Stars ledger — Browse Stars balances and signed per-account history |
 | `prices.manage` | Manage shop prices — Edit product prices, hide products and set the Stars rate |
 | `donations.manage` | Manage crypto donations — Watch the deposit wallet, configure chains and read the deposit ledger |
+| **Client updates** | |
+| `updates.read` | View client updates — See the desktop update service status and every published build |
+| `updates.publish` | Publish client updates — Upload, publish, roll back, disable and re-enable desktop builds |
 | **The console itself** | |
 | `admins.manage` | Manage operators — Create operators and decide what everyone can do |
 | `audit.read` | View the audit log — See who did what across the console |
@@ -222,6 +225,7 @@ and the old URL still lands there rather than 404ing on a bookmark.
 | Audit log | Audit log | `/audit-log` | `audit.read` |
 | Operators | Operators | `/admin-users` | `admins.manage` |
 | Server Settings | Server Settings | `/server-settings` | `server.manage` |
+| Server Settings | Client updates | `/client-updates` | `updates.read` |
 <!-- END GENERATED:nav -->
 
 A section with one visible tab shows no tab bar, and its sidebar link points at

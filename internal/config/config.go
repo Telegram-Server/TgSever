@@ -18,6 +18,7 @@ import (
 	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
+	"telesrv/internal/updatecdn"
 )
 
 const (
@@ -108,11 +109,23 @@ type Config struct {
 	Branding branding.Config
 	// UpdatePublicURL is advertised to native clients through
 	// help.getConfig.autoupdate_url_prefix. Empty disables desktop updates.
+	// 进程内更新启用且未显式配置时，自动取 <PublicBaseURL>/_updates。
 	UpdatePublicURL string
-	// UpdateServiceURL is the internal HTTP endpoint used to resolve
-	// help.getAppUpdate responses. It defaults to UpdatePublicURL when enabled.
+	// UpdateServiceURL is the internal HTTP endpoint of a separate
+	// telesrv-update used to resolve help.getAppUpdate responses. It defaults to
+	// an explicit UpdatePublicURL, and stays empty while updates are served in
+	// process (UpdateManifest); configuring both explicitly is rejected.
 	UpdateServiceURL     string
 	UpdateRequestTimeout time.Duration
+	// UpdateManifest（TELESRV_UPDATE_MANIFEST）非空即启用进程内更新服务：公开 Web 的
+	// /_updates/ 提供 /current4 与 /files/*，help.getAppUpdate 在进程内解析。清单
+	// 无法加载时启动失败。与独立 telesrv-update 的同名变量语义一致。
+	UpdateManifest string
+	// UpdateFilesDir（TELESRV_UPDATE_FILES_DIR）是桌面更新包目录，默认清单所在目录下的 files。
+	UpdateFilesDir string
+	// UpdateRootPublicKey（TELESRV_UPDATE_ROOT_PUBLIC_KEY）是更新根公钥 PEM 文件路径；
+	// 清单有启用的桌面条目时必须配置。只在启动时读取一次。
+	UpdateRootPublicKey string
 	// PublicAppScheme 是公开落地页自动唤起自建客户端时使用的 URL scheme。
 	// 必须与 TDesktop/Android 客户端构建时注册的 scheme 一致，且不能占用 tg/http/https。
 	PublicAppScheme string
@@ -862,6 +875,12 @@ type AIProviderConfig struct {
 	Thinking        string
 }
 
+// InProcessUpdateHint 附在由 TELESRV_UPDATE_MANIFEST 启用进程内更新而引起的启动错误后面。
+// 旧版 .env.example 写着 TELESRV_UPDATE_MANIFEST=data/updates/manifest.json（当时只给独立
+// telesrv-update 用）；照它复制的 .env 升级后会意外打开进程内更新，错误里要说清原因与解法。
+const InProcessUpdateHint = "a non-empty TELESRV_UPDATE_MANIFEST enables in-process desktop updates; " +
+	"clear it in .env if this server should not serve updates (older .env.example files set it for the standalone telesrv-update)"
+
 // Load 从环境变量与可选配置文件读取配置并填充默认值。环境变量优先于配置文件。
 func Load() (Config, error) {
 	fileEnv, err := loadConfigEnv()
@@ -914,7 +933,29 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("TELESRV_UPDATE_PUBLIC_URL: %w", err)
 		}
 	}
-	updateServiceURL := strings.TrimSpace(envOr("TELESRV_UPDATE_SERVICE_URL", updatePublicURL))
+	updateManifest := strings.TrimSpace(envAllowEmptyOr("TELESRV_UPDATE_MANIFEST", ""))
+	updateFilesDir, updateRootPublicKey := "", ""
+	explicitUpdateServiceURL := strings.TrimSpace(envOr("TELESRV_UPDATE_SERVICE_URL", ""))
+	updateServiceURL := explicitUpdateServiceURL
+	if updateManifest != "" {
+		// 进程内更新优先：help.getAppUpdate 直接读本进程的清单，外部 telesrv-update
+		// 的解析地址没有意义，显式同时配置两者视为配置错误。
+		if explicitUpdateServiceURL != "" {
+			return Config{}, fmt.Errorf("TELESRV_UPDATE_SERVICE_URL must be empty when TELESRV_UPDATE_MANIFEST serves updates in process (%s)", InProcessUpdateHint)
+		}
+		updateFilesDir = updatecdn.DefaultFilesDir(updateManifest, envOr("TELESRV_UPDATE_FILES_DIR", ""))
+		updateRootPublicKey = strings.TrimSpace(envOr("TELESRV_UPDATE_ROOT_PUBLIC_KEY", ""))
+		if updatePublicURL == "" {
+			// 自动推导的 <PublicBaseURL>/_updates 只由公开 Web 监听提供；监听关闭时下发它
+			// 只会让客户端轮询一个没人服务的地址。
+			if strings.TrimSpace(envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", "")) == "" {
+				return Config{}, fmt.Errorf("TELESRV_PUBLIC_LINK_WEB_ADDR is required when TELESRV_UPDATE_MANIFEST serves updates in process and TELESRV_UPDATE_PUBLIC_URL is empty (%s)", InProcessUpdateHint)
+			}
+			updatePublicURL = links.Build(publicBaseURL, updatecdn.PublicWebPrefix, nil)
+		}
+	} else if updateServiceURL == "" {
+		updateServiceURL = updatePublicURL
+	}
 	if updateServiceURL != "" {
 		updateServiceURL, err = links.ValidateBaseURL(updateServiceURL)
 		if err != nil {
@@ -1019,6 +1060,9 @@ func Load() (Config, error) {
 		Branding:                              brandConfig,
 		UpdatePublicURL:                       updatePublicURL,
 		UpdateServiceURL:                      updateServiceURL,
+		UpdateManifest:                        updateManifest,
+		UpdateFilesDir:                        updateFilesDir,
+		UpdateRootPublicKey:                   updateRootPublicKey,
 		UpdateRequestTimeout:                  envDurationOr("TELESRV_UPDATE_REQUEST_TIMEOUT", 2*time.Second),
 		PublicAppScheme:                       publicAppScheme,
 		PublicAppLinkBase:                     publicAppLinkBase,

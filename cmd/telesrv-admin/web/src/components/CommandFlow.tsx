@@ -36,7 +36,8 @@ export function CommandFlow({
   // payload, so a form with inputs wants the operator to see exactly what will
   // be sent before they run it.
   extra,
-  form
+  form,
+  initialReason = ""
 }: {
   path: string;
   label: string;
@@ -60,9 +61,13 @@ export function CommandFlow({
   // itself from the reason/confirm/command-id it holds and this callback, and
   // the preview shows the non-file parts.
   form?: (fields: { reason: string; confirm: boolean; command_id: string }) => FormData;
+  // Prefills the reason field, still editable: a flow that continues an earlier
+  // audited step (publishing an uploaded update after its preflight) starts
+  // from the reason the operator already gave.
+  initialReason?: string;
 }) {
   const { t } = useI18n();
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(initialReason);
   const [result, setResult] = useState<CommandResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);

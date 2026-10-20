@@ -47,6 +47,11 @@ Two things are deliberately *not* in a bundle:
 - **Compiled binaries.** Rebuild from the commit in the manifest.
 - **Reverse proxy configuration.** TLS and routing live outside gramsrv.
 
+The Docker desktop update catalog (the `server_updates` volume and
+`deploy/docker/update-keys/`) is not in a bundle either; back it up and restore
+it before enabling `TELESRV_UPDATE_MANIFEST`, as described in
+[update-service.md](update-service.md#backing-up-the-update-catalog).
+
 ## Capturing a bundle
 
 The scripts pick sensible defaults and build the tool if needed:

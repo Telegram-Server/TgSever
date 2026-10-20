@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, LoadingSurface, PageFrame, SectionHead } from "../components/ui";
 import { useI18n } from "../i18n";
+import type { Navigate } from "../routing";
 import type { DockerService, EnvGroup, ServerIdentity, ServerStatus } from "../types";
 
 // Server Settings: the panel's equivalent of owpengram's server-panel menu —
@@ -19,7 +21,7 @@ import type { DockerService, EnvGroup, ServerIdentity, ServerStatus } from "../t
 // Split into two tabs (deep-linkable with ?tab=settings|services) so the rarely
 // touched identity/.env sits apart from the operational status screen; the
 // settings tab accepts &focus=identity|login|signup|env to jump a specific card.
-export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
+export function ServerSettingsPage({ search, navigate }: { search?: URLSearchParams; navigate: Navigate }) {
   const { t } = useI18n();
   const initialTab = search?.get("tab") === "services" ? "services" : "settings";
   const [tab, setTab] = useState<"settings" | "services">(initialTab);
@@ -50,6 +52,7 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
 
   return (
     <PageFrame title={t("route.serverSettings")} eyebrow={t("serverSettings.eyebrow")}>
+      <SectionTabs sectionId="server" active="/server-settings" navigate={navigate} />
       <div className="tab-bar" role="tablist" aria-label={t("serverSettings.tabsLabel")}>
         <button className={`tab-btn ${tab === "settings" ? "active" : ""}`} type="button" role="tab" aria-selected={tab === "settings"} onClick={() => switchTab("settings")}>
           {t("serverSettings.tabSettings")}

@@ -52,3 +52,8 @@ tmp/
 
 # Internal server deployment script (not part of the public repository)
 /scripts/install.sh
+
+# Docker update root public key directory, bind-mounted read-only into the
+# server (deploy/docker/compose.yaml). Operator-local; only the placeholder is tracked.
+/deploy/docker/update-keys/*
+!/deploy/docker/update-keys/.gitkeep

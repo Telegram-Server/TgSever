@@ -40,3 +40,4 @@ data/*
 deploy/docker/.env
 deploy/docker/backups
 deploy/docker/overrides
+deploy/docker/update-keys
