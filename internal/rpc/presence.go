@@ -47,7 +47,9 @@ type presenceSessionState struct {
 	// 这里记下它对应的授权，供推送按授权判断前台。
 	authKeyID [8]byte
 	// foreground 是该会话最近一次 account.updateStatus 的上报（offline=false 为真）。
-	// 只认显式上报：新连接绑定用户时的隐式上线不算，在线过期后同样不算前台。
+	// 只认显式上报：新连接绑定用户时的隐式上线不改变它。它跨在线过期保留——过期期间
+	// status 不是 online，authorizationForeground 照样判为不在前台；之后隐式续期把会话
+	// 重新变成 online，最近一次显式上报仍是 offline=false，就重新算前台（App 一直开着）。
 	foreground bool
 }
 
@@ -160,9 +162,6 @@ func (p *presenceTracker) setSessionReport(key presenceSessionKey, userID int64,
 	case presenceReportBackground:
 		next.foreground = false
 	}
-	if status.Kind != domain.UserStatusOnline {
-		next.foreground = false
-	}
 	if hadOld {
 		p.removeSessionLocked(key, old)
 	}
@@ -273,7 +272,8 @@ func (p *presenceTracker) expireOnline(now int) []int64 {
 			continue
 		}
 		offline := normalizePresenceStatus(st.status, now)
-		p.bySession[key] = presenceSessionState{userID: st.userID, status: offline, authKeyID: st.authKeyID}
+		// 保留前台上报：过期本身不是 offline=true 上报（见 presenceSessionState.foreground）。
+		p.bySession[key] = presenceSessionState{userID: st.userID, status: offline, authKeyID: st.authKeyID, foreground: st.foreground}
 		if sessions := p.byUser[st.userID]; sessions != nil {
 			sessions[key] = offline
 		}
