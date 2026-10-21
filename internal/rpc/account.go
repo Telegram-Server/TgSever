@@ -35,10 +35,10 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 		return r.onAccountConfirmPhone(ctx, req)
 	})
 	registerRPC[*tg.AccountRegisterDeviceRequest](d, tlprofile.SemanticMethodAccountRegisterDevice, func(ctx context.Context, req *tg.AccountRegisterDeviceRequest) (any, error) {
-		return true, nil
+		return r.onAccountRegisterDevice(ctx, req)
 	})
 	registerRPC[*tg.AccountUnregisterDeviceRequest](d, tlprofile.SemanticMethodAccountUnregisterDevice, func(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (any, error) {
-		return true, nil
+		return r.onAccountUnregisterDevice(ctx, req)
 	})
 	registerRPC[*tg.AccountUpdateDeviceLockedRequest](d, tlprofile.SemanticMethodAccountUpdateDeviceLocked, func(ctx context.Context, layerRequest *tg.AccountUpdateDeviceLockedRequest) (any, error) {
 		period := layerRequest.

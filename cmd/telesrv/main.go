@@ -1986,6 +1986,7 @@ func run(logger *zap.Logger) error {
 		BootstrapUpdates:             bootstrapUpdateStore,
 		BotAPIUpdates:                botAPIUpdateStore,
 		BotCallbacks:                 botCallbackStore,
+		PushDevices:                  postgres.NewPushDeviceStore(pool),
 		Contacts:                     contactsService,
 		Dialogs:                      dialogsService,
 		Chatlists:                    chatlistsService,
