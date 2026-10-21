@@ -41,12 +41,14 @@ func (f fakeUsers) ByID(_ context.Context, _ int64, userID int64) (domain.User, 
 	return u, ok, nil
 }
 
-// recordingSender 记录收到的推送；block 非 nil 时每次发送都阻塞到 block 关闭或 ctx 结束。
+// recordingSender 记录收到的推送；block 非 nil 时每次发送都阻塞到 block 关闭或 ctx 结束；
+// respond 非 nil 时由它给出网关响应，否则一律成功。
 type recordingSender struct {
-	mu    sync.Mutex
-	sent  []Notification
-	block chan struct{}
-	got   chan Notification
+	mu      sync.Mutex
+	sent    []Notification
+	block   chan struct{}
+	got     chan Notification
+	respond func(n Notification) (Result, error)
 }
 
 func newRecordingSender() *recordingSender {
@@ -67,6 +69,9 @@ func (s *recordingSender) Send(ctx context.Context, n Notification) (Result, err
 	select {
 	case s.got <- n:
 	default:
+	}
+	if s.respond != nil {
+		return s.respond(n)
 	}
 	return Result{StatusCode: 200}, nil
 }
@@ -109,11 +114,12 @@ func newServiceFixture(t *testing.T, cfg Config) *serviceFixture {
 		sender:   newRecordingSender(),
 	}
 	f.svc = NewService(cfg, Deps{
-		Devices:  f.devices,
-		Presence: f.presence,
-		Users:    fakeUsers{aliceID: {ID: aliceID, FirstName: "Alice", LastName: "A"}, bobID: {ID: bobID, FirstName: "Bob"}},
-		Sender:   f.sender,
-		Strings:  testLangPack(),
+		Devices:        f.devices,
+		Authorizations: f.auths,
+		Presence:       f.presence,
+		Users:          fakeUsers{aliceID: {ID: aliceID, FirstName: "Alice", LastName: "A"}, bobID: {ID: bobID, FirstName: "Bob"}},
+		Sender:         f.sender,
+		Strings:        testLangPack(),
 	}, zaptest.NewLogger(t))
 	return f
 }

@@ -135,6 +135,34 @@ func PushDeviceContract(t *testing.T, newFixture func(t *testing.T) PushDeviceFi
 		}
 	})
 
+	t.Run("stale delete removes only the registration it read", func(t *testing.T) {
+		f := newFixture(t)
+		read := testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01")
+		registerPushDevice(t, f, read)
+		registerPushDevice(t, f, testPushDevice(f.AuthA2, f.UserA, domain.PushTokenAPNs, "aa01"))
+		// 读到之后被重新登记（换了 token / 换了 user）：不删新的登记。
+		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01-new"))
+		if deleted, err := f.Devices.DeleteStalePushDevice(ctx, read); err != nil || deleted {
+			t.Fatalf("delete after token changed deleted=%v err=%v, want nothing deleted", deleted, err)
+		}
+		registerPushDevice(t, f, read)
+		moved := read
+		moved.UserID = f.UserB
+		if deleted, err := f.Devices.DeleteStalePushDevice(ctx, moved); err != nil || deleted {
+			t.Fatalf("delete with another user deleted=%v err=%v, want nothing deleted", deleted, err)
+		}
+		if deleted, err := f.Devices.DeleteStalePushDevice(ctx, read); err != nil || !deleted {
+			t.Fatalf("delete unchanged deleted=%v err=%v, want deleted", deleted, err)
+		}
+		got := listPushDevices(t, f, f.UserA)
+		if len(got) != 1 || got[0].AuthKeyID != f.AuthA2 {
+			t.Fatalf("devices after stale delete = %+v, want only A2's registration of the same token", got)
+		}
+		if deleted, err := f.Devices.DeleteStalePushDevice(ctx, read); err != nil || deleted {
+			t.Fatalf("second stale delete deleted=%v err=%v, want nothing deleted", deleted, err)
+		}
+	})
+
 	t.Run("register for a missing authorization fails", func(t *testing.T) {
 		f := newFixture(t)
 		missing := [8]byte{0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04}

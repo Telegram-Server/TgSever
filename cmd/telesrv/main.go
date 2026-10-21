@@ -2195,11 +2195,12 @@ func run(logger *zap.Logger) error {
 	var pushObserver rpc.OutboxDeliveryObserver
 	if apnsSender != nil {
 		pushService := pushapp.NewService(pushapp.Config{}, pushapp.Deps{
-			Devices:  pushDeviceStore,
-			Presence: router,
-			Users:    usersService,
-			Sender:   apnsSender,
-			Strings:  langPackService,
+			Devices:        pushDeviceStore,
+			Authorizations: authzStore,
+			Presence:       router,
+			Users:          usersService,
+			Sender:         apnsSender,
+			Strings:        langPackService,
 			// 静音、预览、静默按收件人的通知设置（会话设置，退回私聊/群组/频道默认范围）。
 			Policy: pushapp.NewSettingsPolicy(passwordStore, time.Now),
 		}, logger.Named("push"))
