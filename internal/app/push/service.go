@@ -70,16 +70,19 @@ type NotifyPolicy interface {
 	Decide(ctx context.Context, recipientUserID int64, chat Chat) (NotifyDecision, error)
 }
 
-// Metrics 记录推送计数（#102 接到 Prometheus 注册表）。
+// Metrics 记录推送计数；SinkMetrics 把它接到 Prometheus 注册表。
 type Metrics interface {
 	PushQueueDropped(kind string)
 	PushSent(kind string, result Result, err error)
+	// PushDeviceRemoved 记录一次自动清理的设备登记（reason：invalid_token、user_mismatch）。
+	PushDeviceRemoved(reason string)
 }
 
 type nopMetrics struct{}
 
 func (nopMetrics) PushQueueDropped(string)        {}
 func (nopMetrics) PushSent(string, Result, error) {}
+func (nopMetrics) PushDeviceRemoved(string)       {}
 
 // Config 是推送服务的运行参数；零值字段取默认值。
 type Config struct {
@@ -398,7 +401,7 @@ func (s *Service) send(ctx context.Context, kind string, device domain.PushDevic
 		s.log.Debug("push sent", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
 			zap.String("token", RedactToken(n.Token)), zap.String("apns_id", result.ID))
 	case OutcomeInvalidToken:
-		s.deleteStale(ctx, device, "invalid token: "+result.Reason)
+		s.deleteStale(ctx, device, RemovedInvalidToken, "invalid token: "+result.Reason)
 	default:
 		s.log.Warn("push failed", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
 			zap.String("token", RedactToken(n.Token)), zap.Int("status", result.StatusCode),
@@ -421,7 +424,7 @@ func (s *Service) registrationOwnerMatches(ctx context.Context, device domain.Pu
 	if found && auth.UserID == device.UserID {
 		return true
 	}
-	s.deleteStale(ctx, device, "authorization user changed")
+	s.deleteStale(ctx, device, RemovedUserMismatch, "authorization user changed")
 	return false
 }
 
@@ -434,13 +437,17 @@ func (s *Service) sendOnce(ctx context.Context, kind string, n Notification) (Re
 	return result, err
 }
 
-// deleteStale 删除判定失效的登记（只删读到的那一版，见 DeviceStore）。
-func (s *Service) deleteStale(ctx context.Context, device domain.PushDevice, why string) {
+// deleteStale 删除判定失效的登记（只删读到的那一版，见 DeviceStore）。reason 是指标标签
+// （RemovedInvalidToken、RemovedUserMismatch），确实删掉时才计数。
+func (s *Service) deleteStale(ctx context.Context, device domain.PushDevice, reason, why string) {
 	deleted, err := s.devices.DeleteStalePushDevice(ctx, device)
 	if err != nil {
 		s.log.Warn("delete stale push device failed", zap.Int64("user_id", device.UserID),
 			zap.String("token", RedactToken(device.Token)), zap.String("why", why), zap.Error(err))
 		return
+	}
+	if deleted {
+		s.metrics.PushDeviceRemoved(reason)
 	}
 	s.log.Info("stale push device removed", zap.Int64("user_id", device.UserID),
 		zap.String("token", RedactToken(device.Token)), zap.String("why", why), zap.Bool("deleted", deleted))

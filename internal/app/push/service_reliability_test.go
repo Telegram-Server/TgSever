@@ -88,6 +88,7 @@ func (m *countingMetrics) PushQueueDropped(kind string) {
 }
 
 func (m *countingMetrics) PushSent(string, Result, error) {}
+func (m *countingMetrics) PushDeviceRemoved(string)       {}
 
 func TestFullQueueDropsAndCountsWithoutBlocking(t *testing.T) {
 	auths := memory.NewAuthorizationStore()

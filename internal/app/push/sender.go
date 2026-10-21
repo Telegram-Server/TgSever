@@ -38,9 +38,12 @@ type Notification struct {
 	Priority int
 	// CollapseID 非空时设置 apns-collapse-id（已读/删除同步用，#100）。
 	CollapseID string
-	// Expiration 是 apns-expiration；零值表示交给网关默认（VoIP 来电不补发，#99 设置）。
+	// Expiration 是 apns-expiration；零值表示交给网关默认。
 	Expiration time.Time
-	Payload    []byte
+	// ExpireImmediately 为真时发送 apns-expiration: 0（优先于 Expiration）：网关只尝试投递一次、
+	// 不存储补发。VoIP 来电用它（#99）。
+	ExpireImmediately bool
+	Payload           []byte
 }
 
 // Result 是网关对一次推送的原始响应。结果分类（成功 / token 失效 / 可重试 / 永久失败）
