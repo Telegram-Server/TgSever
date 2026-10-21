@@ -18,6 +18,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -164,6 +165,10 @@ type Service struct {
 	members  MemberPager
 	log      *zap.Logger
 	queue    chan job
+
+	misconfigMu         sync.Mutex
+	misconfigLast       time.Time
+	misconfigSuppressed int
 }
 
 // NewService 创建推送服务；调用 Run 启动 worker。
@@ -403,10 +408,35 @@ func (s *Service) send(ctx context.Context, kind string, device domain.PushDevic
 	case OutcomeInvalidToken:
 		s.deleteStale(ctx, device, RemovedInvalidToken, "invalid token: "+result.Reason)
 	default:
+		if err == nil && IsMisconfiguration(result) {
+			s.logMisconfiguration(kind, result)
+			return
+		}
 		s.log.Warn("push failed", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
 			zap.String("token", RedactToken(n.Token)), zap.Int("status", result.StatusCode),
 			zap.String("reason", result.Reason), zap.Error(err))
 	}
+}
+
+// misconfigLogInterval 是配置错误告警的最小间隔：配错时每条推送都会失败，逐条记 Error 会刷屏。
+const misconfigLogInterval = time.Minute
+
+// logMisconfiguration 以 Error 级别记录服务端推送配置错误，每 misconfigLogInterval 最多一条，
+// 期间被抑制的条数一并记下。登记保留，修好配置后即恢复推送。
+func (s *Service) logMisconfiguration(kind string, result Result) {
+	s.misconfigMu.Lock()
+	now := time.Now()
+	if !s.misconfigLast.IsZero() && now.Sub(s.misconfigLast) < misconfigLogInterval {
+		s.misconfigSuppressed++
+		s.misconfigMu.Unlock()
+		return
+	}
+	suppressed := s.misconfigSuppressed
+	s.misconfigLast, s.misconfigSuppressed = now, 0
+	s.misconfigMu.Unlock()
+	s.log.Error("apns rejected push: server topic/certificate misconfigured (check TELESRV_APNS_TOPIC and credentials); registrations kept",
+		zap.String("kind", kind), zap.Int("status", result.StatusCode), zap.String("reason", result.Reason),
+		zap.Int("suppressed_since_last", suppressed))
 }
 
 // registrationOwnerMatches 核对登记的 user_id 与授权当前的 user：不一致（或授权已不存在）时

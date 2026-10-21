@@ -19,7 +19,9 @@ func TestClassifyMapsGatewayResponses(t *testing.T) {
 		{"410 without reason", Result{StatusCode: 410}, nil, OutcomeInvalidToken},
 		{"410 expired token", Result{StatusCode: 410, Reason: "ExpiredToken"}, nil, OutcomeInvalidToken},
 		{"bad device token", Result{StatusCode: 400, Reason: "BadDeviceToken"}, nil, OutcomeInvalidToken},
-		{"token not for topic", Result{StatusCode: 400, Reason: "DeviceTokenNotForTopic"}, nil, OutcomeInvalidToken},
+		// token 与 topic 不匹配、topic 不允许是服务端配置错误（topic / 证书配错），不是 token 失效。
+		{"token not for topic", Result{StatusCode: 400, Reason: "DeviceTokenNotForTopic"}, nil, OutcomePermanent},
+		{"topic disallowed", Result{StatusCode: 400, Reason: "TopicDisallowed"}, nil, OutcomePermanent},
 		{"unregistered reason on other status", Result{StatusCode: 400, Reason: "Unregistered"}, nil, OutcomeInvalidToken},
 		{"too many requests", Result{StatusCode: 429, Reason: "TooManyRequests"}, nil, OutcomeRetryable},
 		{"internal server error", Result{StatusCode: 500, Reason: "InternalServerError"}, nil, OutcomeRetryable},

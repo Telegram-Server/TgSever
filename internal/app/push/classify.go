@@ -31,10 +31,22 @@ func (o Outcome) String() string {
 
 // APNs 表示 token 失效的 reason（https://developer.apple.com/documentation/usernotifications/handling-notification-responses-from-apns）。
 const (
-	reasonBadDeviceToken         = "BadDeviceToken"
-	reasonUnregistered           = "Unregistered"
-	reasonDeviceTokenNotForTopic = "DeviceTokenNotForTopic"
+	reasonBadDeviceToken = "BadDeviceToken"
+	reasonUnregistered   = "Unregistered"
 )
+
+// APNs 表示服务端配置错误的 reason：token 与 topic 不匹配、topic 不允许推送。
+// 这是 TELESRV_APNS_TOPIC / 证书配错（或开发/生产网关混用），token 本身没失效，
+// 不能删登记——否则一次配错就清空所有设备的登记。按永久失败处理并大声告警。
+const (
+	reasonDeviceTokenNotForTopic = "DeviceTokenNotForTopic"
+	reasonTopicDisallowed        = "TopicDisallowed"
+)
+
+// IsMisconfiguration 报告网关响应是否表示服务端推送配置错误（见 reasonDeviceTokenNotForTopic）。
+func IsMisconfiguration(result Result) bool {
+	return result.Reason == reasonDeviceTokenNotForTopic || result.Reason == reasonTopicDisallowed
+}
 
 // Classify 把 Sender.Send 的返回值映射成结果分类。err 非 nil 表示没有得到网关响应
 // （超时、网络错误），按可重试处理。
@@ -42,8 +54,11 @@ func Classify(result Result, err error) Outcome {
 	if err != nil {
 		return OutcomeRetryable
 	}
+	if IsMisconfiguration(result) {
+		return OutcomePermanent
+	}
 	switch result.Reason {
-	case reasonBadDeviceToken, reasonUnregistered, reasonDeviceTokenNotForTopic:
+	case reasonBadDeviceToken, reasonUnregistered:
 		return OutcomeInvalidToken
 	}
 	switch {

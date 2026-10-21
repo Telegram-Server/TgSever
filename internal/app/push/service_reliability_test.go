@@ -212,3 +212,25 @@ func TestPermanentFailureIsNotRetried(t *testing.T) {
 		t.Fatalf("registrations = %+v, want kept after a permanent failure", devices)
 	}
 }
+
+func TestTopicMismatchKeepsRegistration(t *testing.T) {
+	for _, reason := range []string{"DeviceTokenNotForTopic", "TopicDisallowed"} {
+		t.Run(reason, func(t *testing.T) {
+			f := newServiceFixture(t, Config{MaxRetries: 3, RetryBackoff: time.Millisecond})
+			f.sender.respond = func(Notification) (Result, error) {
+				return Result{StatusCode: 400, Reason: reason}, nil
+			}
+			f.register([8]byte{2}, bobID, domain.PushTokenAPNs, "tok-bob", nil, presenceNone)
+			f.start()
+			f.svc.NewMessage(textFromAlice("hello"))
+			f.svc.NewMessage(textFromAlice("again"))
+			f.stop()
+			if got := f.sentCount(); got != 2 {
+				t.Fatalf("send attempts = %d, want 2 (one per message, no retry)", got)
+			}
+			if devices := f.devicesOf(bobID); len(devices) != 1 {
+				t.Fatalf("registrations = %+v, want kept: %s is a server misconfiguration", devices, reason)
+			}
+		})
+	}
+}
