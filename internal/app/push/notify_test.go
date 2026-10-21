@@ -100,7 +100,7 @@ func TestResolveNotifyPreviewAndSilentInheritPerField(t *testing.T) {
 
 func TestHiddenPreviewPayloadCarriesNoMessageContent(t *testing.T) {
 	msg := NewMessage{Chat: Chat{Kind: ChatPrivate, ID: 1000042}, SenderID: 1000042, MessageID: 77, Text: "top secret words"}
-	key, args := messageAlert(msg, "Alice", false)
+	key, args := messageAlert(msg, "Alice", "", false)
 	if key != KeyMessageNoText {
 		t.Fatalf("key = %s, want %s when previews are hidden", key, KeyMessageNoText)
 	}
