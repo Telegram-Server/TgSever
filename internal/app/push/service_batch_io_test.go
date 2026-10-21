@@ -19,7 +19,9 @@ type ioCounter struct {
 	settingsSingle         int
 	settingsBatch          int
 	langPackLookups        int
+	userLookups            int
 	authorizationsDelegate AuthorizationLookup
+	usersDelegate          UserLookup
 	settingsDelegate       *memory.PasswordStore
 	langPackDelegate       LangPackSource
 }
@@ -47,6 +49,13 @@ func (s countingSettings) GetNotifySettings(ctx context.Context, owner int64, sc
 func (s countingSettings) GetNotifySettingsForOwners(ctx context.Context, owners []int64, scope domain.NotifyScope) (map[int64]domain.PeerNotifySettings, error) {
 	s.c.inc(&s.c.settingsBatch)
 	return s.c.settingsDelegate.GetNotifySettingsForOwners(ctx, owners, scope)
+}
+
+type countingUsers struct{ c *ioCounter }
+
+func (u countingUsers) ByID(ctx context.Context, viewerID, userID int64) (domain.User, bool, error) {
+	u.c.inc(&u.c.userLookups)
+	return u.c.usersDelegate.ByID(ctx, viewerID, userID)
 }
 
 type countingLangPack struct{ c *ioCounter }
@@ -100,5 +109,50 @@ func TestChannelFanOutBatchesPerPageIO(t *testing.T) {
 	// 两个键（CHAT_MESSAGE_TEXT、ENCRYPTED_MESSAGE），语言包缺键时各回落一次：上限 4。
 	if c.langPackLookups > 4 {
 		t.Errorf("langpack lookups = %d, want at most 4 for one language", c.langPackLookups)
+	}
+}
+
+// 广播频道的文案只用频道名：扇出时不查发送者的显示名；群组文案带发送者，照常查询。
+func TestChannelFanOutLooksUpSenderOnlyWhenTheAlertShowsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		chat        Chat
+		wantLookups bool
+	}{
+		{name: "broadcast", chat: Chat{Kind: ChatChannel, ID: channelID}, wantLookups: false},
+		{name: "group", chat: Chat{Kind: ChatGroup, ID: groupID}, wantLookups: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newServiceFixture(t, Config{})
+			c := &ioCounter{usersDelegate: fakeUsers{aliceID: {ID: aliceID, FirstName: "Alice"}}}
+			members := &fakeMembers{members: map[int64][]int64{}}
+			base.svc = NewService(Config{}, Deps{
+				Devices:  base.devices,
+				Presence: base.presence,
+				Users:    countingUsers{c},
+				Sender:   base.sender,
+				Strings:  testLangPack(),
+				Policy:   NewSettingsPolicy(memory.NewPasswordStore(), func() time.Time { return time.Unix(1_800_000_000, 0) }),
+				Members:  members,
+			}, zaptest.NewLogger(t))
+			const n = 5
+			ids := []int64{aliceID}
+			for i := range n {
+				id := int64(4300000 + i)
+				ids = append(ids, id)
+				base.register([8]byte{byte(i), 3}, id, domain.PushTokenAPNs, "tok", testSecret(), presenceNone)
+			}
+			members.members[tc.chat.ID] = ids
+			base.start()
+			base.svc.ChannelMessage(NewMessage{Chat: tc.chat, ChatTitle: "News", SenderID: aliceID, MessageID: 7, Text: "post"})
+			waitUntil(t, func() bool { return base.sentCount() == n })
+			base.stop()
+
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if got := c.userLookups > 0; got != tc.wantLookups {
+				t.Fatalf("sender lookups = %d, want lookups=%v", c.userLookups, tc.wantLookups)
+			}
+		})
 	}
 }

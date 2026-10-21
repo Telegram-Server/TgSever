@@ -490,7 +490,8 @@ func (s *Service) sendMessage(ctx context.Context, kind string, render *jobRende
 		return
 	}
 	senderName := msg.AuthorName
-	if senderName == "" {
+	// 广播频道的文案只用频道名（chatArgs）：不查发送者，否则大频道每个订阅者都做一次用户投影。
+	if senderName == "" && msg.Chat.Kind != ChatChannel {
 		senderName = s.displayName(ctx, recipient, msg.SenderID)
 	}
 	key, args := messageAlert(msg, senderName, msg.ChatTitle, !decision.HidePreview)
