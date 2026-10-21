@@ -1056,6 +1056,7 @@ func channelMessagesFanoutPeerRefs(results []domain.SendChannelMessageResult, ex
 // 仅多了把每 viewer 投影一次性算好预热进共享 cache（O(owner)），不改变投递/排除/nudge 行为。
 func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID int64, res domain.SendChannelMessageResult, extraUserIDs []int64) {
 	r.enqueueBotAPIChannelMessageUpdate(ctx, originUserID, res)
+	r.notifyChannelMessagePush(originUserID, res)
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelMessageFanoutOwnerIDs(res, extraUserIDs)
 	usernamePeers := channelMessagesFanoutUsernamePeers([]domain.SendChannelMessageResult{res}, extraUserIDs)
@@ -1190,6 +1191,10 @@ func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUser
 // recipients 由调用方按批量语义给定（pts 取最后一条；recipients 受大群截断口径影响）。
 func (r *Router) enqueueChannelMessagesFanout(ctx context.Context, originUserID, channelID int64, pts int, recipients []int64, results []domain.SendChannelMessageResult, extraUserIDs []int64) {
 	r.enqueueBotAPIChannelMessagesUpdate(ctx, originUserID, results)
+	// 批量转发只推最后一条，避免一次转发 N 条刷出 N 条通知。
+	if len(results) > 0 {
+		r.notifyChannelMessagePush(originUserID, results[len(results)-1])
+	}
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelMessagesFanoutOwnerIDs(results, extraUserIDs)
 	usernamePeers := channelMessagesFanoutUsernamePeers(results, extraUserIDs)

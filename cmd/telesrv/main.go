@@ -56,6 +56,8 @@ import (
 	pollsapp "telesrv/internal/app/polls"
 	premiumapp "telesrv/internal/app/premium"
 	privacyapp "telesrv/internal/app/privacy"
+	pushapp "telesrv/internal/app/push"
+	apnspush "telesrv/internal/app/push/apns"
 	ratingapp "telesrv/internal/app/rating"
 	secretchatapp "telesrv/internal/app/secretchat"
 	"telesrv/internal/app/stargifts"
@@ -1800,6 +1802,21 @@ func run(logger *zap.Logger) error {
 	botsService.SetCustomVerification(botVerificationService)
 	botVerificationService.SetApplicantNotifier(botsService)
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
+	// iOS 离线推送：启用时在启动阶段校验认证材料（证书或 .p8 二选一），配置错误直接启动失败；
+	// 证书已过期时记错误日志并停用推送，剩余不足 30 天记警告。未启用或已停用时 apnsSender
+	// 为 nil，不发推送，设备登记照常保存。
+	apnsSender, apnsStatus, err := apnspush.Open(apnspush.Config{
+		Enabled:  cfg.APNsEnabled,
+		Topic:    cfg.APNsTopic,
+		CertFile: cfg.APNsCertFile,
+		KeyFile:  cfg.APNsKeyFile,
+		KeyID:    cfg.APNsKeyID,
+		TeamID:   cfg.APNsTeamID,
+	}, logger.Named("push"))
+	if err != nil {
+		return fmt.Errorf("apns push: %w", err)
+	}
+	pushDeviceStore := postgres.NewPushDeviceStore(pool)
 	var appUpdateResolver updatecdn.Resolver
 	// 进程内更新服务：清单与包由公开 Web 的 /_updates/ 提供，help.getAppUpdate 直接
 	// 读同一个 Store。保持 nil 接口（而不是 nil *Handler），未启用时公开 Web 不注册路由。
@@ -1986,6 +2003,7 @@ func run(logger *zap.Logger) error {
 		BootstrapUpdates:             bootstrapUpdateStore,
 		BotAPIUpdates:                botAPIUpdateStore,
 		BotCallbacks:                 botCallbackStore,
+		PushDevices:                  pushDeviceStore,
 		Contacts:                     contactsService,
 		Dialogs:                      dialogsService,
 		Chatlists:                    chatlistsService,
@@ -2181,6 +2199,45 @@ func run(logger *zap.Logger) error {
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
 	transcriptionService.SetCompletionHandler(router.PushTranscribedAudioUpdate)
+	// 推送服务按授权查询前台状态（router 的 presence），在 outbox 投递之后异步推送。
+	var pushObserver rpc.OutboxDeliveryObserver
+	pushGauges := obsmetrics.PushGaugeSource{CertNotAfter: apnsStatus.CertNotAfter}
+	if apnsSender != nil {
+		// TELESRV_PUSH_MAX_RETRIES=0 表示不重试；push.Config 里 0 取默认值、负数才是不重试。
+		pushMaxRetries := cfg.PushMaxRetries
+		if pushMaxRetries == 0 {
+			pushMaxRetries = -1
+		}
+		pushService := pushapp.NewService(pushapp.Config{
+			QueueSize:   cfg.PushQueueSize,
+			Workers:     cfg.PushWorkers,
+			SendTimeout: cfg.PushSendTimeout,
+			MaxRetries:  pushMaxRetries,
+		}, pushapp.Deps{
+			Devices:        pushDeviceStore,
+			Authorizations: authzStore,
+			Presence:       router,
+			Users:          usersService,
+			Sender:         apnsSender,
+			Strings:        langPackService,
+			// 静音、预览、静默按收件人的通知设置（会话设置，退回私聊/群组/频道默认范围）。
+			Policy:  pushapp.NewSettingsPolicy(passwordStore, time.Now),
+			Metrics: pushapp.SinkMetrics(metricRegistry),
+			// 群组/频道推送按 user_id 分批读取完整成员列表（#98）。
+			Members: channelStore,
+		}, logger.Named("push"))
+		go pushService.Run(ctx)
+		pushObserver = rpc.PushOutboxObserver(pushService)
+		// 私聊删除同步在删除返回时触发（delete_messages 事件不带会话）。
+		router.SetPushDeleteNotifier(pushService)
+		pushGauges.Enabled = true
+		pushGauges.QueueLength = pushService.QueueLength
+		pushGauges.QueueCapacity = pushService.QueueCapacity()
+		router.SetCallPushNotifier(pushService)
+		router.SetChannelPushNotifier(pushService)
+		logger.Info("apns push enabled", zap.String("topic", cfg.APNsTopic))
+	}
+	metricRegistry.AddGaugeProvider(obsmetrics.PushGauges(pushGauges))
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
 		rpc.WithOutboxWorkers(cfg.OutboxWorkers),
 		rpc.WithOutboxBatch(cfg.OutboxBatch),
@@ -2188,6 +2245,7 @@ func run(logger *zap.Logger) error {
 		rpc.WithOutboxPushTimeout(cfg.OutboundPushTimeout),
 		rpc.WithOutboxMetrics(metricRegistry),
 		rpc.WithOutboxUpdateBuilder(router.BuildOutboxUpdates),
+		rpc.WithOutboxDeliveryObserver(pushObserver),
 	).Run(ctx)
 	go rpc.NewBootstrapUpdateDispatcher(router, logger.Named("rpc").Named("bootstrap")).Run(ctx)
 	go rpc.NewWelcomeDeliveryDispatcher(router, welcomeMessageStore, logger.Named("rpc").Named("welcome-delivery")).Run(ctx)

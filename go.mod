@@ -31,6 +31,7 @@ require (
 	github.com/pion/transport/v4 v4.1.0
 	github.com/pion/turn/v5 v5.0.12
 	github.com/redis/go-redis/v9 v9.20.0
+	github.com/sideshow/apns2 v0.25.0
 	github.com/tyler-smith/go-bip39 v1.1.0
 	github.com/xssnick/tonutils-go v1.19.0
 	github.com/yutopp/go-rtmp v0.0.7
@@ -74,6 +75,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
+	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/gotd/log v0.1.0 // indirect
@@ -133,7 +135,6 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	rsc.io/qr v0.2.0
 )
 
 // telesrv.* 扩展协议只在 Telegram-Server/td 发布；td 改用新模块路径后由 #58 去掉这一行。

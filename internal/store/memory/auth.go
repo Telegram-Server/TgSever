@@ -161,7 +161,7 @@ func (s *authKeyState) deleteAuthorizationMirrorsWithHeldLocked(ids [][8]byte, h
 			mirror.mu.Lock()
 		}
 		for _, id := range ids {
-			delete(mirror.m, id)
+			mirror.removeLocked(id)
 		}
 		if mirror != held {
 			mirror.mu.Unlock()
@@ -293,11 +293,23 @@ type AuthorizationStore struct {
 	authKeys *authKeyState
 	mu       sync.RWMutex
 	m        map[[8]byte]domain.Authorization
+	// pushDevices 是挂在授权上的设备推送登记（见 PushDeviceStore），与 m 同受 mu 保护，
+	// 删除授权的每条路径都经 removeLocked 一并清掉。
+	pushDevices map[[8]byte]map[int]domain.PushDevice
+}
+
+// removeLocked 删除授权及其设备推送登记。调用方持有 s.mu。
+func (s *AuthorizationStore) removeLocked(id [8]byte) {
+	delete(s.m, id)
+	delete(s.pushDevices, id)
 }
 
 // NewAuthorizationStore 创建内存 AuthorizationStore。
 func NewAuthorizationStore() *AuthorizationStore {
-	return &AuthorizationStore{m: make(map[[8]byte]domain.Authorization)}
+	return &AuthorizationStore{
+		m:           make(map[[8]byte]domain.Authorization),
+		pushDevices: make(map[[8]byte]map[int]domain.PushDevice),
+	}
 }
 
 // LinkAuthKeyAuthority connects the test/dev in-memory projection to the same
@@ -470,7 +482,7 @@ func (s *AuthorizationStore) ListByUser(_ context.Context, userID int64) ([]doma
 
 func (s *AuthorizationStore) Delete(_ context.Context, id [8]byte) error {
 	s.mu.Lock()
-	delete(s.m, id)
+	s.removeLocked(id)
 	s.mu.Unlock()
 	return nil
 }
@@ -480,7 +492,7 @@ func (s *AuthorizationStore) DeleteByHash(_ context.Context, userID, hash int64)
 	defer s.mu.Unlock()
 	for id, a := range s.m {
 		if a.UserID == userID && a.Hash == hash {
-			delete(s.m, id)
+			s.removeLocked(id)
 			return a, true, nil
 		}
 	}
@@ -500,7 +512,7 @@ func (s *AuthorizationStore) RevokeByHash(ctx context.Context, userID, hash int6
 	s.mu.Lock()
 	for id, a := range s.m {
 		if a.UserID == userID && a.Hash == hash {
-			delete(s.m, id)
+			s.removeLocked(id)
 			s.mu.Unlock()
 			s.authKeys.mu.Unlock()
 			return a, true, nil
@@ -519,7 +531,7 @@ func (s *AuthorizationStore) DeleteByUserExcept(_ context.Context, userID int64,
 		if a.UserID != userID || id == keepAuthKeyID {
 			continue
 		}
-		delete(s.m, id)
+		s.removeLocked(id)
 		out = append(out, a)
 	}
 	return out, nil
@@ -537,7 +549,7 @@ func (s *AuthorizationStore) RevokeByUserExcept(ctx context.Context, userID int6
 	for id, a := range s.m {
 		if a.UserID == userID && id != keepAuthKeyID {
 			out = append(out, a)
-			delete(s.m, id)
+			s.removeLocked(id)
 		}
 	}
 	s.mu.Unlock()

@@ -389,6 +389,40 @@ WHERE owner_user_id = $1 AND scope_kind = $2 AND peer_type = $3 AND peer_id = $4
 	return settings, true, nil
 }
 
+// GetNotifySettingsForOwners 一次读出一组 owner 在同一作用域下的通知设置（推送扇出按页使用），
+// 只返回设置过该作用域的 owner。
+func (s *PasswordStore) GetNotifySettingsForOwners(ctx context.Context, ownerUserIDs []int64, scope domain.NotifyScope) (map[int64]domain.PeerNotifySettings, error) {
+	out := make(map[int64]domain.PeerNotifySettings, len(ownerUserIDs))
+	if len(ownerUserIDs) == 0 {
+		return out, nil
+	}
+	kind, peerType, peerID, topicID := notifyScopeColumns(scope)
+	rows, err := s.q.ListNotifySettingsForOwners(ctx, sqlcgen.ListNotifySettingsForOwnersParams{
+		OwnerUserIds: ownerUserIDs,
+		ScopeKind:    kind,
+		PeerType:     peerType,
+		PeerID:       peerID,
+		TopicID:      int32(topicID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("batch get notify settings for owners: %w", err)
+	}
+	for _, row := range rows {
+		settings := domain.PeerNotifySettings{
+			ShowPreviews:      row.ShowPreviews,
+			Silent:            row.Silent,
+			StoriesMuted:      row.StoriesMuted,
+			StoriesHideSender: row.StoriesHideSender,
+		}
+		if row.MuteUntil != nil {
+			v := int(*row.MuteUntil)
+			settings.MuteUntil = &v
+		}
+		out[row.OwnerUserID] = settings
+	}
+	return out, nil
+}
+
 func (s *PasswordStore) SaveNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error {
 	kind, peerType, peerID, topicID := notifyScopeColumns(scope)
 	if _, err := s.db.Exec(ctx, `

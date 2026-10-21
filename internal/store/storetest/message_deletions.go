@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -156,6 +157,41 @@ func MessageDeletions(t *testing.T, newFixture func(t *testing.T) MessageDeletio
 				t.Fatalf("owner %d deletion = %+v, want %+v", owner, row, want)
 			}
 		}
+	})
+
+	// 删除结果按 owner 带上每个会话删了哪些 id（见下方 assertDeletedByPeer）：删除同步推送（MESSAGE_DELETED）需要会话。
+	t.Run("delete result groups each owner's deleted ids by peer", func(t *testing.T) {
+		e := setup(t)
+		sender, recipient := e.Sender, e.Recipient
+		first := e.send(t, sender, recipient, "one")
+		second := e.send(t, sender, recipient, "two")
+		res, err := e.Messages.DeleteMessages(ctx, domain.DeleteMessagesRequest{
+			OwnerUserID: sender,
+			IDs:         []int{second.SenderMessage.ID, first.SenderMessage.ID},
+			Revoke:      true,
+			Date:        now + 2,
+		})
+		if err != nil {
+			t.Fatalf("DeleteMessages revoke: %v", err)
+		}
+		want := map[int64][]domain.PeerMessageIDs{
+			sender:    {{Peer: userPeer(recipient), MessageIDs: []int{first.SenderMessage.ID, second.SenderMessage.ID}}},
+			recipient: {{Peer: userPeer(sender), MessageIDs: []int{first.RecipientMessage.ID, second.RecipientMessage.ID}}},
+		}
+		assertDeletedByPeer(t, res, want)
+
+		third := e.send(t, sender, recipient, "three")
+		res, err = e.Messages.DeleteHistory(ctx, domain.DeleteHistoryRequest{
+			OwnerUserID: recipient,
+			Peer:        userPeer(sender),
+			Date:        now + 3,
+		})
+		if err != nil {
+			t.Fatalf("DeleteHistory: %v", err)
+		}
+		assertDeletedByPeer(t, res, map[int64][]domain.PeerMessageIDs{
+			recipient: {{Peer: userPeer(sender), MessageIDs: []int{third.RecipientMessage.ID}}},
+		})
 	})
 
 	t.Run("clearing history records every cleared copy as history_clear", func(t *testing.T) {
@@ -325,4 +361,26 @@ func latestBatch(rows []domain.MessageDeletion) []domain.MessageDeletion {
 		}
 	}
 	return out
+}
+
+// assertDeletedByPeer 校验每个 owner 的 ByPeer（会话顺序与 id 升序都是契约的一部分）。
+func assertDeletedByPeer(t *testing.T, res domain.DeleteMessagesResult, want map[int64][]domain.PeerMessageIDs) {
+	t.Helper()
+	if len(res.Deleted) != len(want) {
+		t.Fatalf("deleted = %+v, want owners %v", res.Deleted, want)
+	}
+	for _, item := range res.Deleted {
+		wantPeers, ok := want[item.UserID]
+		if !ok {
+			t.Fatalf("deleted = %+v, unexpected owner %d", res.Deleted, item.UserID)
+		}
+		if len(item.ByPeer) != len(wantPeers) {
+			t.Fatalf("owner %d by peer = %+v, want %+v", item.UserID, item.ByPeer, wantPeers)
+		}
+		for i, got := range item.ByPeer {
+			if got.Peer != wantPeers[i].Peer || !slices.Equal(got.MessageIDs, wantPeers[i].MessageIDs) {
+				t.Fatalf("owner %d by peer = %+v, want %+v", item.UserID, item.ByPeer, wantPeers)
+			}
+		}
+	}
 }

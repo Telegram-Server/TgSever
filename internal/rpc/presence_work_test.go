@@ -52,11 +52,18 @@ func TestPresenceWorkRunningCallbackSurvivesReplacementAndCancel(t *testing.T) {
 func TestPresenceWorkWaitingCancellationAndOtherDevice(t *testing.T) {
 	r := &Router{presence: newPresenceTracker()}
 	key := presenceSessionKey{sessionID: 2}
-	r.presence.setSessionStatus(key, 7, domain.UserStatus{Kind: domain.UserStatusOnline, Expires: 100})
+	authKeyID := [8]byte{7, 2}
+	r.presence.setSessionReport(key, 7, authKeyID, domain.UserStatus{Kind: domain.UserStatusOnline, Expires: 100}, presenceReportForeground)
+	if !r.presence.authorizationForeground(authKeyID, 60) {
+		t.Fatal("session report did not record the authorization in foreground")
+	}
 	r.SessionOfflineAt([8]byte{}, 1, 7, false, 50)
 	waitPresenceWork(t, r, PresenceWorkSnapshot{})
 	if _, ok := r.presence.statusFor(7, 60); !ok {
 		t.Fatal("departure erased the other device")
+	}
+	if !r.presence.authorizationForeground(authKeyID, 60) {
+		t.Fatal("departure of another session cleared this authorization's foreground report")
 	}
 	r.presence.armOfflineTimer(7, time.Hour, func() { t.Error("canceled timer fired") })
 	waitPresenceWork(t, r, PresenceWorkSnapshot{WaitingTimers: 1})

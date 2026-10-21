@@ -2248,6 +2248,19 @@ type ProfilePhoto struct {
 	Kind          string
 }
 
+type PushDevice struct {
+	AuthKeyID  int64
+	TokenType  int32
+	Token      string
+	UserID     int64
+	AppSandbox bool
+	Secret     []byte
+	NoMuted    bool
+	OtherUids  []int64
+	LangCode   string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type QuickReply struct {
 	OwnerUserID int64
 	ShortcutID  int32

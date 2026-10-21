@@ -43,12 +43,32 @@ type presenceSessionKey struct {
 type presenceSessionState struct {
 	userID int64
 	status domain.UserStatus
+	// authKeyID 是该会话绑定的授权（perm key）。iOS 用临时 key 连接时 rawAuthKeyID 是临时 key，
+	// 这里记下它对应的授权，供推送按授权判断前台。
+	authKeyID [8]byte
+	// foreground 是该会话最近一次 account.updateStatus 的上报（offline=false 为真）。
+	// 只认显式上报：新连接绑定用户时的隐式上线不改变它。它跨在线过期保留——过期期间
+	// status 不是 online，authorizationForeground 照样判为不在前台；之后隐式续期把会话
+	// 重新变成 online，最近一次显式上报仍是 offline=false，就重新算前台（App 一直开着）。
+	foreground bool
 }
+
+// presenceReport 区分在线态的来源：显式 account.updateStatus 上报会更新会话的前台标志，
+// 隐式上线（连接首次绑定用户）与登出只更新在线态、保留原有的前台上报。
+type presenceReport uint8
+
+const (
+	presenceReportNone presenceReport = iota
+	presenceReportForeground
+	presenceReportBackground
+)
 
 type presenceTracker struct {
 	mu        sync.RWMutex
 	bySession map[presenceSessionKey]presenceSessionState
 	byUser    map[int64]map[presenceSessionKey]domain.UserStatus
+	// byAuth 按授权（perm key）索引会话，供 authorizationForeground 查询。
+	byAuth map[[8]byte]map[presenceSessionKey]struct{}
 	// offlineTimers 跟踪每个 user 挂起的 offline 广播去抖定时器，使重新上线能取消它，
 	// 避免断连风暴下 O(N) 个裸 time.AfterFunc 在 runtime timer heap 长期堆积。
 	offlineTimers         map[int64]*time.Timer
@@ -60,6 +80,7 @@ func newPresenceTracker() *presenceTracker {
 	return &presenceTracker{
 		bySession:     make(map[presenceSessionKey]presenceSessionState),
 		byUser:        make(map[int64]map[presenceSessionKey]domain.UserStatus),
+		byAuth:        make(map[[8]byte]map[presenceSessionKey]struct{}),
 		offlineTimers: make(map[int64]*time.Timer),
 	}
 }
@@ -111,21 +132,44 @@ func (p *presenceTracker) cancelOfflineTimer(userID int64) {
 	p.mu.Unlock()
 }
 
-// setSessionStatus 记录 session 的在线态，并返回是否需要向对端「广播在线」（notify）。
+// setSessionReport 记录 session 的在线态、会话绑定的授权与前台上报，并返回是否需要向对端
+// 「广播在线」（notify）。authKeyID 为零值时沿用该会话已记录的授权；report 为 presenceReportNone
+// 时保留该会话原有的前台上报。
 // notify 仅在「本 session 此前已在线、本次仍是在线续期、且距上次广播未超 onlineNotifyRefreshInterval」
 // 时为 false——即每 RPC 的重复在线续期被去重。首次上线/离线/转在线/超刷新间隔一律 true。
 // 整个判定在 p.mu 内原子完成：开群洪峰下并发首帧只有第一个返回 true，其余看到刚写入的新鲜态返回 false。
-func (p *presenceTracker) setSessionStatus(key presenceSessionKey, userID int64, status domain.UserStatus) bool {
+func (p *presenceTracker) setSessionReport(key presenceSessionKey, userID int64, authKeyID [8]byte, status domain.UserStatus, report presenceReport) bool {
 	if p == nil || userID == 0 {
 		return true
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	old, hadOld := p.bySession[key]
-	if hadOld {
-		p.removeSessionLocked(key, old.userID)
+	next := presenceSessionState{userID: userID, status: status, authKeyID: authKeyID}
+	if hadOld && old.userID == userID {
+		if next.authKeyID == ([8]byte{}) {
+			next.authKeyID = old.authKeyID
+		}
+		next.foreground = old.foreground
 	}
-	p.bySession[key] = presenceSessionState{userID: userID, status: status}
+	switch report {
+	case presenceReportForeground:
+		next.foreground = true
+	case presenceReportBackground:
+		next.foreground = false
+	}
+	if hadOld {
+		p.removeSessionLocked(key, old)
+	}
+	p.bySession[key] = next
+	if next.authKeyID != ([8]byte{}) {
+		sessionsByAuth := p.byAuth[next.authKeyID]
+		if sessionsByAuth == nil {
+			sessionsByAuth = make(map[presenceSessionKey]struct{})
+			p.byAuth[next.authKeyID] = sessionsByAuth
+		}
+		sessionsByAuth[key] = struct{}{}
+	}
 	sessions := p.byUser[userID]
 	if sessions == nil {
 		sessions = make(map[presenceSessionKey]domain.UserStatus)
@@ -147,7 +191,7 @@ func (p *presenceTracker) clearSession(key presenceSessionKey) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if old, ok := p.bySession[key]; ok {
-		p.removeSessionLocked(key, old.userID)
+		p.removeSessionLocked(key, old)
 	}
 }
 
@@ -162,7 +206,9 @@ func (p *presenceTracker) dropUser(userID int64) {
 	defer p.mu.Unlock()
 	if sessions := p.byUser[userID]; len(sessions) > 0 {
 		for key := range sessions {
-			delete(p.bySession, key)
+			if st, ok := p.bySession[key]; ok {
+				p.removeSessionLocked(key, st)
+			}
 		}
 		delete(p.byUser, userID)
 	}
@@ -172,13 +218,40 @@ func (p *presenceTracker) dropUser(userID int64) {
 	}
 }
 
-func (p *presenceTracker) removeSessionLocked(key presenceSessionKey, userID int64) {
+func (p *presenceTracker) removeSessionLocked(key presenceSessionKey, old presenceSessionState) {
 	delete(p.bySession, key)
-	sessions := p.byUser[userID]
+	sessions := p.byUser[old.userID]
 	delete(sessions, key)
 	if len(sessions) == 0 {
-		delete(p.byUser, userID)
+		delete(p.byUser, old.userID)
 	}
+	if old.authKeyID != ([8]byte{}) {
+		byAuth := p.byAuth[old.authKeyID]
+		delete(byAuth, key)
+		if len(byAuth) == 0 {
+			delete(p.byAuth, old.authKeyID)
+		}
+	}
+}
+
+// authorizationForeground 报告授权（perm key）下是否有会话最近一次 updateStatus 报的是在线且未过期。
+// 会话断开时条目即被清除，所以“有记录”同时意味着连接还在；没有任何记录时按不在前台处理。
+func (p *presenceTracker) authorizationForeground(authKeyID [8]byte, now int) bool {
+	if p == nil || authKeyID == ([8]byte{}) {
+		return false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for key := range p.byAuth[authKeyID] {
+		st, ok := p.bySession[key]
+		if !ok || !st.foreground {
+			continue
+		}
+		if status := normalizePresenceStatus(st.status, now); status.Kind == domain.UserStatusOnline {
+			return true
+		}
+	}
+	return false
 }
 
 // expireOnline 把已过期的 online 条目原地降级为 offline，返回受影响用户的去重列表。
@@ -195,7 +268,8 @@ func (p *presenceTracker) expireOnline(now int) []int64 {
 			continue
 		}
 		offline := normalizePresenceStatus(st.status, now)
-		p.bySession[key] = presenceSessionState{userID: st.userID, status: offline}
+		// 保留前台上报：过期本身不是 offline=true 上报（见 presenceSessionState.foreground）。
+		p.bySession[key] = presenceSessionState{userID: st.userID, status: offline, authKeyID: st.authKeyID, foreground: st.foreground}
 		if sessions := p.byUser[st.userID]; sessions != nil {
 			sessions[key] = offline
 		}
@@ -337,7 +411,17 @@ func (r *Router) announceFrozenEmptyStatus(userID int64) {
 		domain.UserStatus{Kind: domain.UserStatusEmpty})
 }
 
-func (r *Router) setPresenceFromContext(ctx context.Context, userID int64, offline bool, persistMode presencePersistMode) (domain.UserStatus, bool) {
+// AuthorizationInForeground 报告授权（perm auth key）此刻是否在前台：它有活跃连接，且该连接上
+// 最近一次 account.updateStatus 报的是 offline=false、在线未过期。推送服务据此按设备跳过前台设备；
+// iOS 切到后台会立刻报 offline=true，连接可能还会保持一段时间，这段时间要照常推送。
+func (r *Router) AuthorizationInForeground(authKeyID [8]byte) bool {
+	if r == nil {
+		return false
+	}
+	return r.presence.authorizationForeground(authKeyID, int(r.clock.Now().Unix()))
+}
+
+func (r *Router) setPresenceFromContext(ctx context.Context, userID int64, offline bool, persistMode presencePersistMode, report presenceReport) (domain.UserStatus, bool) {
 	// 冻结账号永不上线：即使客户端显式 updateStatus(online) 或重连续期，也强制按
 	// offline 处理，内存 tracker 不会重新登记 online，也不得向对端广播在线态。
 	if !offline && r.isFrozenPresenceUser(userID) {
@@ -356,7 +440,8 @@ func (r *Router) setPresenceFromContext(ctx context.Context, userID int64, offli
 	}
 	notify := true
 	if key, ok := presenceSessionKeyFromContext(ctx); ok {
-		notify = r.presence.setSessionStatus(key, userID, status)
+		authKeyID, _ := AuthKeyIDFrom(ctx)
+		notify = r.presence.setSessionReport(key, userID, authKeyID, status, report)
 	}
 	// 在线续期（!offline）去抖；显式 offline 是权威写，强制落库。
 	// 冻结账号例外：冻结期的会话续期不得刷新 last_seen，否则 users.last_seen_at
@@ -383,7 +468,7 @@ func (r *Router) announceSessionOnline(ctx context.Context, userID int64) {
 		return
 	}
 	r.seedFrozenPresence(ctx, userID)
-	status, notify := r.setPresenceFromContext(ctx, userID, false, presencePersistAsync)
+	status, notify := r.setPresenceFromContext(ctx, userID, false, presencePersistAsync, presenceReportNone)
 	if !notify {
 		// 本 session 已在线且在刷新间隔内：跳过「向对端广播在线 + 拉对端在线态给本 session」。
 		// setPresenceFromContext 已每 RPC 续期在线水位；这里省掉开群洪峰下每 RPC 的扇出 + 推送

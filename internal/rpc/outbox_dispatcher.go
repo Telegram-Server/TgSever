@@ -52,6 +52,7 @@ type OutboxDispatcher struct {
 	maxIdleInterval time.Duration
 	workers         int
 	pushTimeout     time.Duration
+	observer        OutboxDeliveryObserver
 }
 
 // OutboxOption 调整 OutboxDispatcher 的运行参数。
@@ -65,6 +66,35 @@ type OutboxUpdateRequest struct {
 
 // OutboxUpdateBuilder 按接收者视角批量把 domain.UpdateEvent 转为 TL updates。
 type OutboxUpdateBuilder func(ctx context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error)
+
+// OutboxDelivery 描述一条已投递（并已标记 delivered）的 outbox 事件。
+type OutboxDelivery struct {
+	Item  store.DispatchOutboxItem
+	Event domain.UpdateEvent
+}
+
+// OutboxDeliveryObserver 在每条事件投递之后被调用（离线推送在这里触发）。它运行在分发
+// worker 的 lane 上，必须立即返回：耗时工作要自己放进队列。
+type OutboxDeliveryObserver func(ctx context.Context, delivery OutboxDelivery)
+
+// WithOutboxDeliveryObserver 注入投递观察者；nil 表示不观察。
+func WithOutboxDeliveryObserver(observer OutboxDeliveryObserver) OutboxOption {
+	return func(d *OutboxDispatcher) {
+		d.observer = observer
+	}
+}
+
+func (d *OutboxDispatcher) observeDelivery(ctx context.Context, item store.DispatchOutboxItem, event domain.UpdateEvent) {
+	if d.observer == nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			d.log.Error("outbox delivery observer panicked", zap.Int64("target_user_id", item.TargetUserID), zap.Any("panic", rec))
+		}
+	}()
+	d.observer(ctx, OutboxDelivery{Item: item, Event: event})
+}
 
 // WithOutboxUpdateBuilder 注入按接收者视角的批量 updates 构建器。
 func WithOutboxUpdateBuilder(builder OutboxUpdateBuilder) OutboxOption {
@@ -356,6 +386,9 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 		return
 	}
 	delivered := make([]store.DispatchOutboxItem, 0, len(items))
+	// pushed[i] 是 delivered[i] 已推送的事件（update 为 nil 的空投递为 nil），
+	// 标记 delivered 成功之后才交给观察者。
+	pushed := make([]*domain.UpdateEvent, 0, len(items))
 	clear(blockedUsers)
 	for i, entry := range ready {
 		item := entry.item
@@ -365,9 +398,11 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 		update := builtUpdates[i]
 		if update == nil {
 			delivered = append(delivered, item)
+			pushed = append(pushed, nil)
 			continue
 		}
-		if _, retriable, err := d.pushOutboxUpdate(ctx, item, update); err != nil {
+		_, retriable, err := d.pushOutboxUpdate(ctx, item, update)
+		if err != nil {
 			blockedUsers[item.TargetUserID] = struct{}{}
 			if retriable {
 				// 出站队列拥塞：留 dispatching 行靠租约过期重投，不计入 attempts 升级。
@@ -378,18 +413,30 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 			continue
 		}
 		delivered = append(delivered, item)
+		pushed = append(pushed, &requests[i].Event)
 	}
 	if len(delivered) == 0 {
 		return
 	}
+	var unmarked map[int]struct{}
 	if err := marker.MarkDeliveredBatch(ctx, delivered); err != nil {
 		// 批量标记失败则逐条标记，避免整批已投递却卡在 dispatching 等租约过期重投。
 		d.log.Warn("mark dispatch delivered batch", zap.Error(err))
-		for _, item := range delivered {
+		unmarked = make(map[int]struct{})
+		for i, item := range delivered {
 			if markErr := d.outbox.MarkDelivered(ctx, item); markErr != nil {
 				d.log.Warn("mark dispatch delivered", zap.Int64("target_user_id", item.TargetUserID), zap.Int64("outbox_id", item.ID), zap.Error(markErr))
+				unmarked[i] = struct{}{}
 			}
 		}
+	}
+	// 只通知确实标记了 delivered 的行（与 dispatchPreparedItem 一致）：没标记上的行租约过期后会重投，
+	// 到时再通知，否则同一事件会触发两次离线推送。
+	for i, item := range delivered {
+		if _, failed := unmarked[i]; failed || pushed[i] == nil {
+			continue
+		}
+		d.observeDelivery(ctx, item, *pushed[i])
 	}
 	per := time.Since(start) / time.Duration(len(delivered))
 	for range delivered {
@@ -455,6 +502,7 @@ func (d *OutboxDispatcher) dispatchPreparedItem(ctx context.Context, item store.
 		return false
 	}
 	d.metrics.OutboxDelivered(time.Since(start))
+	d.observeDelivery(ctx, item, event)
 	d.log.Debug("dispatch outbox delivered",
 		zap.Int64("target_user_id", item.TargetUserID),
 		zap.Int64("outbox_id", item.ID),

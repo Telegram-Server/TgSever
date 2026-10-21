@@ -35,10 +35,10 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 		return r.onAccountConfirmPhone(ctx, req)
 	})
 	registerRPC[*tg.AccountRegisterDeviceRequest](d, tlprofile.SemanticMethodAccountRegisterDevice, func(ctx context.Context, req *tg.AccountRegisterDeviceRequest) (any, error) {
-		return true, nil
+		return r.onAccountRegisterDevice(ctx, req)
 	})
 	registerRPC[*tg.AccountUnregisterDeviceRequest](d, tlprofile.SemanticMethodAccountUnregisterDevice, func(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (any, error) {
-		return true, nil
+		return r.onAccountUnregisterDevice(ctx, req)
 	})
 	registerRPC[*tg.AccountUpdateDeviceLockedRequest](d, tlprofile.SemanticMethodAccountUpdateDeviceLocked, func(ctx context.Context, layerRequest *tg.AccountUpdateDeviceLockedRequest) (any, error) {
 		period := layerRequest.
@@ -1090,7 +1090,11 @@ func (r *Router) onAccountUpdateStatus(ctx context.Context, offline bool) (bool,
 	if !authorized || userID == 0 {
 		return true, nil
 	}
-	status, _ := r.setPresenceFromContext(ctx, userID, offline, presencePersistSync)
+	report := presenceReportForeground
+	if offline {
+		report = presenceReportBackground
+	}
+	status, _ := r.setPresenceFromContext(ctx, userID, offline, presencePersistSync, report)
 	r.pushUserStatus(ctx, userID, status)
 	return true, nil
 }
