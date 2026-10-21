@@ -107,9 +107,11 @@ func (r *Router) onPhoneRequestCall(ctx context.Context, req *tg.PhoneRequestCal
 	}
 	// 推被叫全部在线设备。sent==0（被叫全离线）不报错：主叫客户端按
 	// callReceiveTimeoutMs(20s) 自行超时 discard(missed)，服务端兜底超时收尾。
-	r.pushPhoneCall(ctx, call.ParticipantID, call, "phone call requested")
+	// 被叫视角的 Updates 只构造一次：在线推送只读（冻结成快照再编码），VoIP 推送复用同一个对象。
+	calleeUpdates := r.phoneCallUpdates(ctx, call, call.ParticipantID)
+	r.pushUserMessage(ctx, call.ParticipantID, "phone call requested", calleeUpdates)
 	// 被叫不在前台的 iPhone 经 PushKit 弹出 CallKit 来电界面（#99）。
-	r.notifyIncomingCallPush(ctx, call)
+	r.notifyIncomingCallPush(call, calleeUpdates)
 	return &tg.PhonePhoneCall{
 		PhoneCall: tgPhoneCallForViewer(call, callerID),
 		Users:     r.tgUsersForIDs(ctx, callerID, []int64{call.AdminID, call.ParticipantID}),

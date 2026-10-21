@@ -27,13 +27,12 @@ func (r *Router) SetCallPushNotifier(notifier CallPushNotifier) {
 // VoIP 登记发 PushKit 推送。只在真实来电（requestCall 成功）时调用：iOS 要求每条 VoIP
 // 推送都上报一次 CallKit 来电。
 //
-// payload 里的 updates 与在线推送同形（constructor updates：updatePhoneCall(phoneCallRequested)
-// + 双方 user，主叫即 admin_id 必须在 users 里），按每台设备授权记下的 layer 分别序列化。
-func (r *Router) notifyIncomingCallPush(ctx context.Context, call domain.PhoneCall) {
+// updates 就是推给被叫在线设备的那个对象（constructor updates：updatePhoneCall(phoneCallRequested)
+// + 双方 user，主叫即 admin_id 必须在 users 里），按每台设备授权记下的 layer 分别序列化；只读不改。
+func (r *Router) notifyIncomingCallPush(call domain.PhoneCall, updates *tg.Updates) {
 	if r.callPush == nil {
 		return
 	}
-	updates := r.phoneCallUpdates(ctx, call, call.ParticipantID)
 	r.callPush.IncomingCall(push.IncomingCall{
 		CallID:   call.ID,
 		CallerID: call.AdminID,
