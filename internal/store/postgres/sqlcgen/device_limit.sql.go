@@ -42,6 +42,25 @@ func (q *Queries) CountOtherCompletedAuthorizations(ctx context.Context, arg Cou
 	return count, err
 }
 
+const deletePendingAuthorization = `-- name: DeletePendingAuthorization :execrows
+DELETE FROM authorizations
+WHERE auth_key_id = $1 AND user_id = $2 AND password_pending
+`
+
+type DeletePendingAuthorizationParams struct {
+	AuthKeyID int64
+	UserID    int64
+}
+
+// 转正超限时删除这条待完成的授权；只删仍属于该用户且仍待完成的那一行。
+func (q *Queries) DeletePendingAuthorization(ctx context.Context, arg DeletePendingAuthorizationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePendingAuthorization, arg.AuthKeyID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getDeviceLimit = `-- name: GetDeviceLimit :one
 
 SELECT device_limit
@@ -70,6 +89,36 @@ func (q *Queries) GetEnforcedDeviceLimit(ctx context.Context, userID int64) (*in
 	var device_limit *int32
 	err := row.Scan(&device_limit)
 	return device_limit, err
+}
+
+const lockUserRowForPasswordPromotion = `-- name: LockUserRowForPasswordPromotion :exec
+SELECT id FROM users WHERE id = $1 FOR UPDATE
+`
+
+// 2FA 转正（#106）与绑定使用同一锁顺序：先 advisory 用户锁，再锁用户行。
+func (q *Queries) LockUserRowForPasswordPromotion(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, lockUserRowForPasswordPromotion, id)
+	return err
+}
+
+const promotePendingAuthorization = `-- name: PromotePendingAuthorization :execrows
+UPDATE authorizations
+SET password_pending = false, created_at = now(), active_at = now()
+WHERE auth_key_id = $1 AND user_id = $2 AND password_pending
+`
+
+type PromotePendingAuthorizationParams struct {
+	AuthKeyID int64
+	UserID    int64
+}
+
+// 只转正仍属于 expected user 且仍处于 password_pending 的授权。
+func (q *Queries) PromotePendingAuthorization(ctx context.Context, arg PromotePendingAuthorizationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, promotePendingAuthorization, arg.AuthKeyID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setDeviceLimit = `-- name: SetDeviceLimit :exec

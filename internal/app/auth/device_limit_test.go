@@ -15,19 +15,20 @@ import (
 
 type deviceLimitFixture struct {
 	signUpSwitchFixture
-	auths *memory.AuthorizationStore
-	bots  *memory.BotStore
+	auths     *memory.AuthorizationStore
+	bots      *memory.BotStore
+	passwords *memory.PasswordStore
 }
 
 func newDeviceLimitFixture(t *testing.T) deviceLimitFixture {
 	t.Helper()
-	f := deviceLimitFixture{signUpSwitchFixture: newSignUpSwitchFixture(t), auths: memory.NewAuthorizationStore()}
+	f := deviceLimitFixture{signUpSwitchFixture: newSignUpSwitchFixture(t), auths: memory.NewAuthorizationStore(), passwords: memory.NewPasswordStore()}
 	f.bots = memory.NewBotStore(f.users)
 	dialogs := memory.NewDialogStore()
 	messages := memory.NewMessageStore(dialogs)
 	f.svc = NewService(f.users, f.auths, f.codes, nil, nil, "12345",
 		WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messages, memory.NewUpdateEventStore())),
-		WithPasswords(memory.NewPasswordStore()),
+		WithPasswords(f.passwords),
 		WithPhoneCodeDelivery(f.sender, 5),
 		WithSignUpAllowed(f.sw.allowed),
 		WithBotLogin(f.bots))

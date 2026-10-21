@@ -233,15 +233,57 @@ WHERE auth_key_id = $1`,
 // MarkPasswordPassed atomically promotes only the pending identity whose
 // password was just verified. A concurrent cross-user Bind must not let A's
 // proof clear B's password_pending flag.
+//
+// 设备上限（#106）：转正与 Bind 拿同一把用户锁（advisory + 用户行），在锁下再检查一次
+// 上限。超限时删除这条待完成的授权并提交，然后返回 domain.ErrDeviceLimitReached；
+// 两台设备同时停在 2FA、只剩一个名额时，只有先拿到锁的那台转正。
 func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte, expectedUserID int64) error {
-	tag, err := s.db.Exec(ctx, `
-	UPDATE authorizations SET password_pending = false, created_at = now(), active_at = now()
-	WHERE auth_key_id = $1 AND user_id = $2 AND password_pending`, authKeyIDToInt64(id), expectedUserID)
+	if expectedUserID == 0 {
+		return store.ErrAuthorizationStateChanged
+	}
+	keyID := authKeyIDToInt64(id)
+	var rejected bool
+	err := withTx(ctx, s.db, "mark authorization password passed", func(tx pgx.Tx) error {
+		rejected = false
+		if err := lockUsersForUpdate(ctx, tx, expectedUserID); err != nil {
+			return fmt.Errorf("lock authorization user: %w", err)
+		}
+		q := sqlcgen.New(tx)
+		if err := q.LockUserRowForPasswordPromotion(ctx, expectedUserID); err != nil {
+			return fmt.Errorf("lock authorization user row: %w", err)
+		}
+		params := sqlcgen.PromotePendingAuthorizationParams{AuthKeyID: keyID, UserID: expectedUserID}
+		switch err := checkDeviceLimit(ctx, q, expectedUserID, keyID); {
+		case errors.Is(err, domain.ErrDeviceLimitReached):
+			n, err := q.DeletePendingAuthorization(ctx, sqlcgen.DeletePendingAuthorizationParams(params))
+			if err != nil {
+				return fmt.Errorf("delete pending authorization over the device limit: %w", err)
+			}
+			if n != 1 {
+				return store.ErrAuthorizationStateChanged
+			}
+			rejected = true
+			return nil
+		case err != nil:
+			return err
+		}
+		n, err := q.PromotePendingAuthorization(ctx, params)
+		if err != nil {
+			return fmt.Errorf("promote pending authorization: %w", err)
+		}
+		if n != 1 {
+			return store.ErrAuthorizationStateChanged
+		}
+		return nil
+	})
 	if err != nil {
+		if errors.Is(err, store.ErrAuthorizationStateChanged) || errors.Is(err, domain.ErrDeviceLimitReached) {
+			return err
+		}
 		return fmt.Errorf("mark authorization password passed: %w", err)
 	}
-	if tag.RowsAffected() != 1 {
-		return store.ErrAuthorizationStateChanged
+	if rejected {
+		return domain.ErrDeviceLimitReached
 	}
 	return nil
 }

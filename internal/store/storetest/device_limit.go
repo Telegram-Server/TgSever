@@ -26,7 +26,8 @@ type DeviceLimitFixture struct {
 // DeviceLimitContract 是设备上限的存储契约（#105）：读、设、清；非法值与不存在的账号被拒绝；
 // Bind 在上限内放行、超限返回 domain.ErrDeviceLimitReached 且不写入；同一个 auth key 重新
 // 绑定、password_pending 授权都不占名额；bot 不受限；并发绑定时"计数 + 插入"原子，任何
-// 时刻都不突破上限。
+// 时刻都不突破上限。2FA 转正（MarkPasswordPassed，#106）同样检查上限：超限返回
+// domain.ErrDeviceLimitReached 并删除这条待完成的授权；并发转正同样原子。
 func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimitFixture) {
 	t.Helper()
 	ctx := context.Background()
@@ -108,6 +109,98 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: extra, UserID: u.ID, PasswordPending: true}); !errors.Is(err, domain.ErrDeviceLimitReached) {
 			t.Fatalf("pending bind at the limit err=%v, want ErrDeviceLimitReached", err)
 		}
+	})
+
+	t.Run("promoting a pending authorization over the limit rejects and deletes it", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, 1); err != nil {
+			t.Fatalf("set device limit: %v", err)
+		}
+		first, second := newDeviceLimitKey(t, f), newDeviceLimitKey(t, f)
+		bindDevice(t, f, u.ID, first, true)
+		bindDevice(t, f, u.ID, second, true)
+		if err := f.Auths.MarkPasswordPassed(ctx, first, u.ID); err != nil {
+			t.Fatalf("promote first pending authorization: %v", err)
+		}
+		if err := f.Auths.MarkPasswordPassed(ctx, second, u.ID); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("promote over the limit err=%v, want ErrDeviceLimitReached", err)
+		}
+		if _, found, err := f.Auths.ByAuthKey(ctx, second); err != nil || found {
+			t.Fatalf("rejected pending authorization found=%v err=%v, want deleted", found, err)
+		}
+		got, found, err := f.Auths.ByAuthKey(ctx, first)
+		if err != nil || !found || got.PasswordPending {
+			t.Fatalf("promoted authorization=%+v found=%v err=%v, want completed", got, found, err)
+		}
+		// 同一 auth key 的状态不符仍是 ErrAuthorizationStateChanged，不被上限检查吞掉。
+		if err := f.Auths.MarkPasswordPassed(ctx, first, u.ID); !errors.Is(err, store.ErrAuthorizationStateChanged) {
+			t.Fatalf("promote an already completed authorization err=%v, want ErrAuthorizationStateChanged", err)
+		}
+	})
+
+	t.Run("promoting without a limit or for a bot is not limited", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		bindDevice(t, f, u.ID, newDeviceLimitKey(t, f), false)
+		pending := newDeviceLimitKey(t, f)
+		bindDevice(t, f, u.ID, pending, true)
+		if err := f.Auths.MarkPasswordPassed(ctx, pending, u.ID); err != nil {
+			t.Fatalf("promote without a limit: %v", err)
+		}
+
+		bot := f.NewBot(t)
+		bindDevice(t, f, bot.ID, newDeviceLimitKey(t, f), false)
+		botPending := newDeviceLimitKey(t, f)
+		bindDevice(t, f, bot.ID, botPending, true)
+		if err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
+			t.Fatalf("set device limit on bot: %v", err)
+		}
+		if err := f.Auths.MarkPasswordPassed(ctx, botPending, bot.ID); err != nil {
+			t.Fatalf("promote for a bot over its limit: %v", err)
+		}
+	})
+
+	t.Run("concurrent promotes never exceed the limit", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		const limit, attempts = 2, 10
+		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, limit); err != nil {
+			t.Fatalf("set device limit: %v", err)
+		}
+		keys := make([][8]byte, attempts)
+		for i := range keys {
+			keys[i] = newDeviceLimitKey(t, f)
+			bindDevice(t, f, u.ID, keys[i], true)
+		}
+		start := make(chan struct{})
+		errs := make([]error, attempts)
+		var wg sync.WaitGroup
+		for i := range keys {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				errs[i] = f.Auths.MarkPasswordPassed(ctx, keys[i], u.ID)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		promoted := 0
+		for i, err := range errs {
+			switch {
+			case err == nil:
+				promoted++
+			case errors.Is(err, domain.ErrDeviceLimitReached):
+			default:
+				t.Fatalf("concurrent promote %d: %v", i, err)
+			}
+		}
+		if promoted != limit {
+			t.Fatalf("concurrent promotes succeeded=%d, want exactly %d", promoted, limit)
+		}
+		// 被拒绝的待完成授权都已删除，只剩转正的那几条。
+		assertDeviceCount(t, f, u.ID, limit)
 	})
 
 	t.Run("bots are not limited", func(t *testing.T) {

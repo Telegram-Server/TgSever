@@ -547,12 +547,24 @@ func mergeAuthorizationClientInfo(a *domain.Authorization, info domain.AuthKeyCl
 	a.ActiveAt = time.Now()
 }
 
-func (s *AuthorizationStore) MarkPasswordPassed(_ context.Context, id [8]byte, expectedUserID int64) error {
+// MarkPasswordPassed 转正时在同一把锁下再检查一次设备上限（#106）：其它已完成登录的
+// 授权已达上限时返回 domain.ErrDeviceLimitReached，并删除这条待完成的授权。
+func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte, expectedUserID int64) error {
+	limited, err := s.deviceLimitApplies(ctx, expectedUserID)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.m[id]
 	if !ok || expectedUserID == 0 || a.UserID != expectedUserID || !a.PasswordPending {
 		return store.ErrAuthorizationStateChanged
+	}
+	if limited {
+		if limit, ok := s.deviceLimits[a.UserID]; ok && s.completedOthersLocked(a.UserID, id) >= limit {
+			s.removeLocked(id)
+			return domain.ErrDeviceLimitReached
+		}
 	}
 	now := time.Now()
 	a.PasswordPending = false

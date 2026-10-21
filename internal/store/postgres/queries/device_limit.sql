@@ -29,3 +29,18 @@ WHERE r.user_id = $1 AND r.device_limit IS NOT NULL AND NOT u.is_bot;
 SELECT count(*)
 FROM authorizations
 WHERE user_id = $1 AND auth_key_id <> $2 AND NOT password_pending;
+
+-- name: LockUserRowForPasswordPromotion :exec
+-- 2FA 转正（#106）与绑定使用同一锁顺序：先 advisory 用户锁，再锁用户行。
+SELECT id FROM users WHERE id = $1 FOR UPDATE;
+
+-- name: PromotePendingAuthorization :execrows
+-- 只转正仍属于 expected user 且仍处于 password_pending 的授权。
+UPDATE authorizations
+SET password_pending = false, created_at = now(), active_at = now()
+WHERE auth_key_id = $1 AND user_id = $2 AND password_pending;
+
+-- name: DeletePendingAuthorization :execrows
+-- 转正超限时删除这条待完成的授权；只删仍属于该用户且仍待完成的那一行。
+DELETE FROM authorizations
+WHERE auth_key_id = $1 AND user_id = $2 AND password_pending;
