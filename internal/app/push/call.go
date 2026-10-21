@@ -3,7 +3,6 @@ package push
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"slices"
 
@@ -44,7 +43,7 @@ func buildVoIPPayload(updates []byte, secret []byte) ([]byte, error) {
 	if len(secret) == 0 {
 		return nil, errors.New("voip push requires a device secret")
 	}
-	inner, err := json.Marshal(voipFields{Updates: base64.RawURLEncoding.EncodeToString(updates)})
+	inner, err := marshalJSON(voipFields{Updates: base64.RawURLEncoding.EncodeToString(updates)})
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +51,14 @@ func buildVoIPPayload(updates []byte, secret []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(voipEnvelope{P: p})
+	payload, err := marshalJSON(voipEnvelope{P: p})
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > apnsMaxVoIPPayloadBytes {
+		return nil, errPayloadTooLarge(len(payload), apnsMaxVoIPPayloadBytes)
+	}
+	return payload, nil
 }
 
 // IncomingCall 把来电推送放进队列，立即返回；返回 false 表示事件不完整、服务停用或队列已满被丢弃。

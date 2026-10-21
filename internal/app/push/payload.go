@@ -1,8 +1,11 @@
 package push
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"strconv"
+	"unicode/utf8"
 )
 
 // ChatKind 区分推送所属会话的类型，决定 payload 里的会话字段与文案键前缀。
@@ -70,8 +73,43 @@ type encryptedEnvelope struct {
 	P   string     `json:"p"`
 }
 
-// apnsMaxPayloadBytes 是 APNs 普通推送 payload 的上限。
-const apnsMaxPayloadBytes = 4096
+// APNs payload 上限（按最终外层 JSON 的字节数计）：普通推送 4KB，VoIP 5KB。
+const (
+	apnsMaxPayloadBytes     = 4096
+	apnsMaxVoIPPayloadBytes = 5120
+)
+
+// marshalJSON 序列化 payload，不把 < > & 转义成 \u003c 之类（每个 6 字节），以免白占 4KB 上限。
+func marshalJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
+// errPayloadTooLarge 表示 payload 缩到最短仍超过 APNs 上限。
+func errPayloadTooLarge(size, limit int) error {
+	return fmt.Errorf("push payload is %d bytes, over the APNs limit of %d", size, limit)
+}
+
+// truncateBytes 把 s 截到不超过 limit 字节（按字符边界），截掉了内容时末尾加省略号（计入 limit）。
+func truncateBytes(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	const ellipsis = "…"
+	limit -= len(ellipsis)
+	if limit <= 0 {
+		return ellipsis
+	}
+	for limit > 0 && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit] + ellipsis
+}
 
 func (m MessagePush) fields() messageFields {
 	f := messageFields{}
@@ -116,13 +154,42 @@ func soundFor(silent bool) string {
 // 无 secret：同样的字段直接放在外层，alert 是已渲染的 title/body（不用 Apple 侧 loc-key）。
 // genericBody 是外层通用文案（NSE 失败或超时时用户看到的内容），绝不能含消息正文。
 func buildMessagePayload(m MessagePush, secret []byte, genericBody string) ([]byte, error) {
+	// 超过 4KB 时缩短文案（先 body、再 title，按字符截断加省略号）并重新加密，直到放得下。
+	// 每轮按超出的字节数截短（加密后 base64 放大约 4/3，所以按 3/4 折算，至少截 16 字节）。
+	for range 64 {
+		payload, err := encodeMessagePayload(m, secret, genericBody)
+		if err != nil {
+			return nil, err
+		}
+		over := len(payload) - apnsMaxPayloadBytes
+		if over <= 0 {
+			return payload, nil
+		}
+		cut := over
+		if len(secret) != 0 {
+			cut = over * 3 / 4
+		}
+		cut = max(cut, 16)
+		switch {
+		case len(m.Alert.Body) > len("…"):
+			m.Alert.Body = truncateBytes(m.Alert.Body, len(m.Alert.Body)-cut)
+		case len(m.Alert.Title) > len("…"):
+			m.Alert.Title = truncateBytes(m.Alert.Title, len(m.Alert.Title)-cut)
+		default:
+			return nil, errPayloadTooLarge(len(payload), apnsMaxPayloadBytes)
+		}
+	}
+	return nil, fmt.Errorf("push payload did not fit the APNs limit of %d bytes", apnsMaxPayloadBytes)
+}
+
+func encodeMessagePayload(m MessagePush, secret []byte, genericBody string) ([]byte, error) {
 	fields := m.fields()
 	if len(secret) == 0 {
-		return json.Marshal(fields)
+		return marshalJSON(fields)
 	}
 	// 解密后 JSON 的 aps 里不需要 mutable-content（那是外层给系统看的）。
 	fields.APS.MutableContent = 0
-	inner, err := json.Marshal(fields)
+	inner, err := marshalJSON(fields)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +197,7 @@ func buildMessagePayload(m MessagePush, secret []byte, genericBody string) ([]by
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(encryptedEnvelope{
+	return marshalJSON(encryptedEnvelope{
 		APS: apsPayload{
 			Alert:          Alert{Body: genericBody},
 			Sound:          soundFor(m.Silent),

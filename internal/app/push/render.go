@@ -17,8 +17,8 @@ type LangPackSource interface {
 const (
 	iosLangPack     = "ios"
 	defaultLangCode = "en"
-	// maxAlertArgRunes 限制单个文案参数（消息正文、名字）的长度，保证加密、base64 之后
-	// 仍在 APNs 4KB 上限内。
+	// maxAlertArgRunes 限制单个文案参数（消息正文、名字）的长度；多字节字符仍可能超出
+	// APNs 4KB 上限，最终由 buildMessagePayload 按字节截短 body/title。
 	maxAlertArgRunes = 512
 )
 

@@ -2,7 +2,6 @@ package push
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -91,7 +90,7 @@ func buildSyncNotification(s SyncPush, secret []byte, genericBody string) (Notif
 	default:
 		return Notification{}, fmt.Errorf("unsupported sync push key %q", s.Key)
 	}
-	inner, err := json.Marshal(fields)
+	inner, err := marshalJSON(fields)
 	if err != nil {
 		return Notification{}, err
 	}
@@ -99,12 +98,15 @@ func buildSyncNotification(s SyncPush, secret []byte, genericBody string) (Notif
 	if err != nil {
 		return Notification{}, err
 	}
-	payload, err := json.Marshal(encryptedEnvelope{
+	payload, err := marshalJSON(encryptedEnvelope{
 		APS: apsPayload{Alert: Alert{Body: genericBody}, MutableContent: 1},
 		P:   p,
 	})
 	if err != nil {
 		return Notification{}, err
+	}
+	if len(payload) > apnsMaxPayloadBytes {
+		return Notification{}, errPayloadTooLarge(len(payload), apnsMaxPayloadBytes)
 	}
 	return Notification{
 		Type:       PushTypeAlert,
