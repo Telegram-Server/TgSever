@@ -9,12 +9,14 @@
 //   - 媒体文案（#97）：keys.go 的 messageAlert；
 //   - 群组/频道扇出（#98）：NewMessage.Recipients 已是集合，Chat.Kind 选择 payload 字段；
 //   - VoIP（#99）、已读/删除同步（#100）：新增事件方法，复用 enqueue 与 send；
-//   - 结果分类、重试、失效清理（#101）：send 里基于 Result 处理；
+//   - 结果分类、重试、失效清理（#101）：classify.go 的 Classify 与 send（所有事件都经 send 发出，
+//     发送前核对登记 user_id，token 失效删除登记，可重试失败按 Config.MaxRetries 退避重试）；
 //   - 指标（#102）：Metrics。
 package push
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,10 +30,24 @@ type DeviceLister interface {
 	ListPushDevicesByUser(ctx context.Context, userID int64) ([]domain.PushDevice, error)
 }
 
+// DeviceStore 是推送服务用到的设备登记存储（store.PushDeviceStore 满足它）：读取登记，
+// 并删除判定失效的登记（token 失效、user 与授权不一致）。删除只针对读到的那一版登记，
+// 期间客户端重新登记的新登记不受影响。
+type DeviceStore interface {
+	DeviceLister
+	DeleteStalePushDevice(ctx context.Context, device domain.PushDevice) (bool, error)
+}
+
 // Presence 回答“某个授权此刻是否在前台”：该授权有活跃连接，且最近一次 updateStatus
 // 报的是 offline=false。没有会话记录时按不在前台处理。按授权判断，同一用户的其他设备不影响。
 type Presence interface {
 	AuthorizationInForeground(authKeyID [8]byte) bool
+}
+
+// AuthorizationLookup 读取授权当前绑定的 user（store.AuthorizationStore 满足它）。
+// 授权的 user_id 可能被原地改写（扫码登录接受时），发送前用它核对登记里的 user_id。
+type AuthorizationLookup interface {
+	ByAuthKey(ctx context.Context, authKeyID [8]byte) (domain.Authorization, bool, error)
 }
 
 // UserLookup 读取用户资料（rpc.UsersService 满足它），用于渲染发送者名字。
@@ -54,16 +70,19 @@ type NotifyPolicy interface {
 	Decide(ctx context.Context, recipientUserID int64, chat Chat) (NotifyDecision, error)
 }
 
-// Metrics 记录推送计数（#102 接到 Prometheus 注册表）。
+// Metrics 记录推送计数；SinkMetrics 把它接到 Prometheus 注册表。
 type Metrics interface {
 	PushQueueDropped(kind string)
 	PushSent(kind string, result Result, err error)
+	// PushDeviceRemoved 记录一次自动清理的设备登记（reason：invalid_token、user_mismatch）。
+	PushDeviceRemoved(reason string)
 }
 
 type nopMetrics struct{}
 
 func (nopMetrics) PushQueueDropped(string)        {}
 func (nopMetrics) PushSent(string, Result, error) {}
+func (nopMetrics) PushDeviceRemoved(string)       {}
 
 // Config 是推送服务的运行参数；零值字段取默认值。
 type Config struct {
@@ -73,20 +92,29 @@ type Config struct {
 	Workers int
 	// SendTimeout 是单次发送（一台设备）的超时。
 	SendTimeout time.Duration
+	// MaxRetries 是可重试失败（限流、网关 5xx、超时）之后最多再发几次；0 取默认值，负数不重试。
+	MaxRetries int
+	// RetryBackoff 是第一次重试前的等待，之后每次翻倍，最长 maxRetryBackoff。
+	RetryBackoff time.Duration
 }
 
 const (
-	defaultQueueSize   = 4096
-	defaultWorkers     = 4
-	defaultSendTimeout = 10 * time.Second
+	defaultQueueSize    = 4096
+	defaultWorkers      = 4
+	defaultSendTimeout  = 10 * time.Second
+	defaultMaxRetries   = 3
+	defaultRetryBackoff = 500 * time.Millisecond
+	maxRetryBackoff     = 5 * time.Second
 )
 
 // Deps 是推送服务的依赖。Sender 为 nil 时服务处于停用状态：所有事件方法直接返回 false。
 type Deps struct {
-	Devices  DeviceLister
-	Presence Presence
-	Users    UserLookup
-	Sender   Sender
+	Devices DeviceStore
+	// Authorizations 用于发送前核对登记的 user_id；nil 时不核对。
+	Authorizations AuthorizationLookup
+	Presence       Presence
+	Users          UserLookup
+	Sender         Sender
 	// Strings 是 iOS 语言包来源；nil 时只用内置英文模板。
 	Strings LangPackSource
 	Policy  NotifyPolicy
@@ -114,7 +142,8 @@ type job struct {
 // Service 是推送业务服务。
 type Service struct {
 	cfg      Config
-	devices  DeviceLister
+	devices  DeviceStore
+	auths    AuthorizationLookup
 	presence Presence
 	users    UserLookup
 	sender   Sender
@@ -136,6 +165,15 @@ func NewService(cfg Config, deps Deps, log *zap.Logger) *Service {
 	if cfg.SendTimeout <= 0 {
 		cfg.SendTimeout = defaultSendTimeout
 	}
+	switch {
+	case cfg.MaxRetries == 0:
+		cfg.MaxRetries = defaultMaxRetries
+	case cfg.MaxRetries < 0:
+		cfg.MaxRetries = 0
+	}
+	if cfg.RetryBackoff <= 0 {
+		cfg.RetryBackoff = defaultRetryBackoff
+	}
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -146,6 +184,7 @@ func NewService(cfg Config, deps Deps, log *zap.Logger) *Service {
 	return &Service{
 		cfg:      cfg,
 		devices:  deps.Devices,
+		auths:    deps.Authorizations,
 		presence: deps.Presence,
 		users:    deps.Users,
 		sender:   deps.Sender,
@@ -249,6 +288,10 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 		if device.TokenType != domain.PushTokenAPNs || device.UserID != recipient {
 			continue
 		}
+		// 多账号去重：发送者也登录在这台设备上（other_uids），两个账号都在用户手里，不推。
+		if slices.Contains(device.OtherUIDs, msg.SenderID) {
+			continue
+		}
 		if s.presence != nil && s.presence.AuthorizationInForeground(device.AuthKeyID) {
 			continue
 		}
@@ -269,7 +312,7 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 		return
 	}
 	senderName := s.displayName(ctx, recipient, msg.SenderID)
-	key, args := messageAlert(msg, senderName, !decision.HidePreview)
+	key, args := messageAlert(msg, senderName, "", !decision.HidePreview)
 	silent := msg.Silent || decision.Silent
 	for _, device := range targets {
 		if len(device.Secret) != 0 && len(device.Secret) != SecretSize {
@@ -301,25 +344,86 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 	}
 }
 
-// send 发出一条推送并记录结果。日志里 token 只记前几位，不记 payload 与 secret。
-// #101 在这里按结果分类：token 失效删除登记、可重试错误有限次退避重试。
+// send 发出一条推送并按结果分类（Classify）处理：token 失效删除登记；可重试失败按
+// cfg.MaxRetries 有限次退避重试，用完后放弃；永久失败只记日志。
+// 日志里 token 只记前几位，不记 payload 与 secret。
 func (s *Service) send(ctx context.Context, kind string, device domain.PushDevice, n Notification) {
+	if !s.registrationOwnerMatches(ctx, device) {
+		return
+	}
+	result, err := s.sendOnce(ctx, kind, n)
+	outcome := Classify(result, err)
+	backoff := s.cfg.RetryBackoff
+	for attempt := 1; outcome == OutcomeRetryable && attempt <= s.cfg.MaxRetries; attempt++ {
+		s.log.Debug("push retry", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
+			zap.String("token", RedactToken(n.Token)), zap.Int("attempt", attempt), zap.Int("status", result.StatusCode),
+			zap.String("reason", result.Reason), zap.Error(err), zap.Duration("backoff", backoff))
+		timer := time.NewTimer(backoff)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		}
+		backoff = min(backoff*2, maxRetryBackoff)
+		result, err = s.sendOnce(ctx, kind, n)
+		outcome = Classify(result, err)
+	}
+	switch outcome {
+	case OutcomeSent:
+		s.log.Debug("push sent", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
+			zap.String("token", RedactToken(n.Token)), zap.String("apns_id", result.ID))
+	case OutcomeInvalidToken:
+		s.deleteStale(ctx, device, RemovedInvalidToken, "invalid token: "+result.Reason)
+	default:
+		s.log.Warn("push failed", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
+			zap.String("token", RedactToken(n.Token)), zap.Int("status", result.StatusCode),
+			zap.String("reason", result.Reason), zap.Error(err))
+	}
+}
+
+// registrationOwnerMatches 核对登记的 user_id 与授权当前的 user：不一致（或授权已不存在）时
+// 删除这条登记并返回 false。读授权失败时这次不发，但保留登记。
+func (s *Service) registrationOwnerMatches(ctx context.Context, device domain.PushDevice) bool {
+	if s.auths == nil {
+		return true
+	}
+	auth, found, err := s.auths.ByAuthKey(ctx, device.AuthKeyID)
+	if err != nil {
+		s.log.Warn("push authorization lookup failed", zap.Int64("user_id", device.UserID),
+			zap.String("token", RedactToken(device.Token)), zap.Error(err))
+		return false
+	}
+	if found && auth.UserID == device.UserID {
+		return true
+	}
+	s.deleteStale(ctx, device, RemovedUserMismatch, "authorization user changed")
+	return false
+}
+
+// sendOnce 带单次发送超时发一次，并记入指标。
+func (s *Service) sendOnce(ctx context.Context, kind string, n Notification) (Result, error) {
 	sendCtx, cancel := context.WithTimeout(ctx, s.cfg.SendTimeout)
 	defer cancel()
 	result, err := s.sender.Send(sendCtx, n)
 	s.metrics.PushSent(kind, result, err)
+	return result, err
+}
+
+// deleteStale 删除判定失效的登记（只删读到的那一版，见 DeviceStore）。reason 是指标标签
+// （RemovedInvalidToken、RemovedUserMismatch），确实删掉时才计数。
+func (s *Service) deleteStale(ctx context.Context, device domain.PushDevice, reason, why string) {
+	deleted, err := s.devices.DeleteStalePushDevice(ctx, device)
 	if err != nil {
-		s.log.Warn("push send failed", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
-			zap.String("token", RedactToken(n.Token)), zap.Error(err))
+		s.log.Warn("delete stale push device failed", zap.Int64("user_id", device.UserID),
+			zap.String("token", RedactToken(device.Token)), zap.String("why", why), zap.Error(err))
 		return
 	}
-	if !result.Sent() {
-		s.log.Warn("push rejected", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
-			zap.String("token", RedactToken(n.Token)), zap.Int("status", result.StatusCode), zap.String("reason", result.Reason))
-		return
+	if deleted {
+		s.metrics.PushDeviceRemoved(reason)
 	}
-	s.log.Debug("push sent", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
-		zap.String("token", RedactToken(n.Token)), zap.String("apns_id", result.ID))
+	s.log.Info("stale push device removed", zap.Int64("user_id", device.UserID),
+		zap.String("token", RedactToken(device.Token)), zap.String("why", why), zap.Bool("deleted", deleted))
 }
 
 // displayName 返回收件人视角下发送者的显示名；读不到时返回空串（文案照常渲染）。

@@ -1802,9 +1802,17 @@ func run(logger *zap.Logger) error {
 	botsService.SetCustomVerification(botVerificationService)
 	botVerificationService.SetApplicantNotifier(botsService)
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
-	// iOS 离线推送：启用时在启动阶段校验证书（可解析、topic 匹配），配置错误直接启动失败；
-	// 未启用时 apnsSender 为 nil，不发推送，设备登记照常保存。
-	apnsSender, err := apnspush.New(apnspush.Config{Enabled: cfg.APNsEnabled, Topic: cfg.APNsTopic, CertFile: cfg.APNsCertFile})
+	// iOS 离线推送：启用时在启动阶段校验认证材料（证书或 .p8 二选一），配置错误直接启动失败；
+	// 证书已过期时记错误日志并停用推送，剩余不足 30 天记警告。未启用或已停用时 apnsSender
+	// 为 nil，不发推送，设备登记照常保存。
+	apnsSender, apnsStatus, err := apnspush.Open(apnspush.Config{
+		Enabled:  cfg.APNsEnabled,
+		Topic:    cfg.APNsTopic,
+		CertFile: cfg.APNsCertFile,
+		KeyFile:  cfg.APNsKeyFile,
+		KeyID:    cfg.APNsKeyID,
+		TeamID:   cfg.APNsTeamID,
+	}, logger.Named("push"))
 	if err != nil {
 		return fmt.Errorf("apns push: %w", err)
 	}
@@ -2193,20 +2201,40 @@ func run(logger *zap.Logger) error {
 	transcriptionService.SetCompletionHandler(router.PushTranscribedAudioUpdate)
 	// 推送服务按授权查询前台状态（router 的 presence），在 outbox 投递之后异步推送。
 	var pushObserver rpc.OutboxDeliveryObserver
+	pushGauges := obsmetrics.PushGaugeSource{CertNotAfter: apnsStatus.CertNotAfter}
 	if apnsSender != nil {
-		pushService := pushapp.NewService(pushapp.Config{}, pushapp.Deps{
-			Devices:  pushDeviceStore,
-			Presence: router,
-			Users:    usersService,
-			Sender:   apnsSender,
-			Strings:  langPackService,
+		// TELESRV_PUSH_MAX_RETRIES=0 表示不重试；push.Config 里 0 取默认值、负数才是不重试。
+		pushMaxRetries := cfg.PushMaxRetries
+		if pushMaxRetries == 0 {
+			pushMaxRetries = -1
+		}
+		pushService := pushapp.NewService(pushapp.Config{
+			QueueSize:   cfg.PushQueueSize,
+			Workers:     cfg.PushWorkers,
+			SendTimeout: cfg.PushSendTimeout,
+			MaxRetries:  pushMaxRetries,
+		}, pushapp.Deps{
+			Devices:        pushDeviceStore,
+			Authorizations: authzStore,
+			Presence:       router,
+			Users:          usersService,
+			Sender:         apnsSender,
+			Strings:        langPackService,
+			// 静音、预览、静默按收件人的通知设置（会话设置，退回私聊/群组/频道默认范围）。
+			Policy:  pushapp.NewSettingsPolicy(passwordStore, time.Now),
+			Metrics: pushapp.SinkMetrics(metricRegistry),
 		}, logger.Named("push"))
 		go pushService.Run(ctx)
 		pushObserver = rpc.PushOutboxObserver(pushService)
 		// 私聊删除同步在删除返回时触发（delete_messages 事件不带会话）。
 		router.SetPushDeleteNotifier(pushService)
+		pushGauges.Enabled = true
+		pushGauges.QueueLength = pushService.QueueLength
+		pushGauges.QueueCapacity = pushService.QueueCapacity()
+		router.SetCallPushNotifier(pushService)
 		logger.Info("apns push enabled", zap.String("topic", cfg.APNsTopic))
 	}
+	metricRegistry.AddGaugeProvider(obsmetrics.PushGauges(pushGauges))
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
 		rpc.WithOutboxWorkers(cfg.OutboxWorkers),
 		rpc.WithOutboxBatch(cfg.OutboxBatch),

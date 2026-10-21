@@ -235,6 +235,8 @@ type Router struct {
 	selfPhotoEchoPushDelay time.Duration
 	// pushDeletes 是私聊删除同步推送的入口（SetPushDeleteNotifier 注入，#100）；nil 表示不推送。
 	pushDeletes atomic.Pointer[pushDeleteNotifierHolder]
+	// callPush 是来电 VoIP 推送（#99，见 phone_voip_push.go）；nil=未启用。
+	callPush CallPushNotifier
 }
 
 type clientInfoSessionKey struct {

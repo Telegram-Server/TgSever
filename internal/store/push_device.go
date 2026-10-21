@@ -21,4 +21,8 @@ type PushDeviceStore interface {
 	ListPushDevicesByUser(ctx context.Context, userID int64) ([]domain.PushDevice, error)
 	// DeletePushDevice 删除授权下指定 token 类型的登记，deleted 表示删除前确实存在。
 	DeletePushDevice(ctx context.Context, authKeyID [8]byte, tokenType int) (deleted bool, err error)
+	// DeleteStalePushDevice 删除推送服务判定失效的登记（token 失效、user 与授权不一致）：
+	// 只有 (AuthKeyID, TokenType) 下的登记仍是 device 读到时的 Token 与 UserID 才删除，
+	// 读到之后客户端重新登记的新登记保留。deleted 表示确实删除了。
+	DeleteStalePushDevice(ctx context.Context, device domain.PushDevice) (deleted bool, err error)
 }

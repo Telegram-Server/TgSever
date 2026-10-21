@@ -108,6 +108,8 @@ func (r *Router) onPhoneRequestCall(ctx context.Context, req *tg.PhoneRequestCal
 	// 推被叫全部在线设备。sent==0（被叫全离线）不报错：主叫客户端按
 	// callReceiveTimeoutMs(20s) 自行超时 discard(missed)，服务端兜底超时收尾。
 	r.pushPhoneCall(ctx, call.ParticipantID, call, "phone call requested")
+	// 被叫不在前台的 iPhone 经 PushKit 弹出 CallKit 来电界面（#99）。
+	r.notifyIncomingCallPush(ctx, call)
 	return &tg.PhonePhoneCall{
 		PhoneCall: tgPhoneCallForViewer(call, callerID),
 		Users:     r.tgUsersForIDs(ctx, callerID, []int64{call.AdminID, call.ParticipantID}),

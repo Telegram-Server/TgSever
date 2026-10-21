@@ -26,6 +26,31 @@ func (q *Queries) DeletePushDevice(ctx context.Context, arg DeletePushDevicePara
 	return result.RowsAffected(), nil
 }
 
+const deleteStalePushDevice = `-- name: DeleteStalePushDevice :execrows
+DELETE FROM push_devices
+WHERE auth_key_id = $1 AND token_type = $2 AND token = $3 AND user_id = $4
+`
+
+type DeleteStalePushDeviceParams struct {
+	AuthKeyID int64
+	TokenType int32
+	Token     string
+	UserID    int64
+}
+
+func (q *Queries) DeleteStalePushDevice(ctx context.Context, arg DeleteStalePushDeviceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteStalePushDevice,
+		arg.AuthKeyID,
+		arg.TokenType,
+		arg.Token,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listPushDevicesByUser = `-- name: ListPushDevicesByUser :many
 SELECT auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code, created_at
 FROM push_devices
