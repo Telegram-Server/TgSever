@@ -27,6 +27,12 @@ var oidUserID = asn1.ObjectIdentifier{0, 9, 2342, 19200300, 100, 1, 1}
 // 证书与未加密私钥合在一个 PEM 文件里，返回文件路径。
 func writeTestCert(t *testing.T, uid string, topics ...string) string {
 	t.Helper()
+	return writeTestCertUntil(t, time.Now().Add(365*24*time.Hour), uid, topics...)
+}
+
+// writeTestCertUntil 同 writeTestCert，证书有效期截止到 notAfter。
+func writeTestCertUntil(t *testing.T, notAfter time.Time, uid string, topics ...string) string {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -37,8 +43,8 @@ func writeTestCert(t *testing.T, uid string, topics ...string) string {
 			CommonName: "Apple Push Services: " + uid,
 			ExtraNames: []pkix.AttributeTypeAndValue{{Type: oidUserID, Value: uid}},
 		},
-		NotBefore: time.Now().Add(-time.Hour),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
+		NotBefore: notAfter.Add(-2 * 365 * 24 * time.Hour),
+		NotAfter:  notAfter,
 	}
 	if len(topics) > 0 {
 		// Apple 的 topic 扩展：SEQUENCE { UTF8String topic, SEQUENCE { UTF8String type }, ... }
