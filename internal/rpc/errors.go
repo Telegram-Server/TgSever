@@ -483,6 +483,8 @@ func passkeyErr(err error) error {
 	switch {
 	case errors.Is(err, auth.ErrSystemUserLoginForbidden):
 		return tgerr.New(400, "PASSKEY_INVALID")
+	case errors.Is(err, domain.ErrDeviceLimitReached):
+		return authorizationsTooMuchErr()
 	case errors.Is(err, domain.ErrPasskeyChallengeInvalid):
 		return tgerr.New(400, "PASSKEY_CHALLENGE_INVALID")
 	case errors.Is(err, domain.ErrPasskeyInvalid),
