@@ -1,5 +1,11 @@
 package domain
 
+import (
+	"cmp"
+	"slices"
+	"strings"
+)
+
 // MessageEntityType 标识消息实体类型。
 type MessageEntityType string
 
@@ -670,6 +676,45 @@ type DeletedMessagesForUser struct {
 	// delete/read/edit 三段 pts_count 之和。
 	Pts      int
 	PtsCount int
+	// ByPeer 把 MessageIDs 按会话分组（会话按类型、id 升序，id 升序）。delete_messages
+	// 事件本身不带会话，删除同步推送（MESSAGE_DELETED）需要会话，在删除时从被删的行取得。
+	ByPeer []PeerMessageIDs
+}
+
+// PeerMessageIDs 是某个会话下的一组消息 id（owner 视角的 box id）。
+type PeerMessageIDs struct {
+	Peer       Peer
+	MessageIDs []int
+}
+
+// GroupMessageIDsByPeer 把 peer → ids 整理成确定顺序的 []PeerMessageIDs：
+// 去掉空会话与非正 id，id 去重升序，会话按类型、id 升序。
+func GroupMessageIDsByPeer(byPeer map[Peer][]int) []PeerMessageIDs {
+	var out []PeerMessageIDs
+	for peer, ids := range byPeer {
+		if peer.ID == 0 {
+			continue
+		}
+		clean := make([]int, 0, len(ids))
+		for _, id := range ids {
+			if id > 0 {
+				clean = append(clean, id)
+			}
+		}
+		slices.Sort(clean)
+		clean = slices.Compact(clean)
+		if len(clean) == 0 {
+			continue
+		}
+		out = append(out, PeerMessageIDs{Peer: peer, MessageIDs: clean})
+	}
+	slices.SortFunc(out, func(a, b PeerMessageIDs) int {
+		if c := strings.Compare(string(a.Peer.Type), string(b.Peer.Type)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Peer.ID, b.Peer.ID)
+	})
+	return out
 }
 
 // AffectedPts 返回 messages.Affected* 应使用的最终 PTS 与本次总增量。

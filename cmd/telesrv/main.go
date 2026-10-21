@@ -2228,6 +2228,8 @@ func run(logger *zap.Logger) error {
 		}, logger.Named("push"))
 		go pushService.Run(ctx)
 		pushObserver = rpc.PushOutboxObserver(pushService)
+		// 私聊删除同步在删除返回时触发（delete_messages 事件不带会话）。
+		router.SetPushDeleteNotifier(pushService)
 		pushGauges.Enabled = true
 		pushGauges.QueueLength = pushService.QueueLength
 		pushGauges.QueueCapacity = pushService.QueueCapacity()

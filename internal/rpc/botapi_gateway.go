@@ -1110,7 +1110,7 @@ func (r *Router) BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, m
 	if messageID <= 0 || messageID > domain.MaxMessageBoxID {
 		return false, errors.New("MESSAGE_ID_INVALID")
 	}
-	_, err := r.deps.Messages.DeleteMessages(ctx, botID, domain.DeleteMessagesRequest{
+	res, err := r.deps.Messages.DeleteMessages(ctx, botID, domain.DeleteMessagesRequest{
 		OwnerUserID: botID,
 		IDs:         []int{messageID},
 		Revoke:      true,
@@ -1120,6 +1120,7 @@ func (r *Router) BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, m
 	if err != nil {
 		return false, err
 	}
+	r.notifyPushDeletes(res)
 	return true, nil
 }
 
