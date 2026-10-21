@@ -18,9 +18,9 @@ type CallPushNotifier interface {
 }
 
 // SetCallPushNotifier 注入来电 VoIP 推送（#99）。推送服务依赖 router 的 presence，只能在 router
-// 创建之后注入；必须在开始处理 RPC 之前调用。nil 表示不发 VoIP 推送。
+// 创建之后注入。nil 表示不发 VoIP 推送。
 func (r *Router) SetCallPushNotifier(notifier CallPushNotifier) {
-	r.callPush = notifier
+	r.callPush.set(notifier)
 }
 
 // notifyIncomingCallPush 在来电已推给被叫在线设备之后，交给推送服务给被叫不在前台的
@@ -30,10 +30,11 @@ func (r *Router) SetCallPushNotifier(notifier CallPushNotifier) {
 // updates 就是推给被叫在线设备的那个对象（constructor updates：updatePhoneCall(phoneCallRequested)
 // + 双方 user，主叫即 admin_id 必须在 users 里），按每台设备授权记下的 layer 分别序列化；只读不改。
 func (r *Router) notifyIncomingCallPush(call domain.PhoneCall, updates *tg.Updates) {
-	if r.callPush == nil {
+	notifier, ok := r.callPush.load()
+	if !ok {
 		return
 	}
-	r.callPush.IncomingCall(push.IncomingCall{
+	notifier.IncomingCall(push.IncomingCall{
 		CallID:   call.ID,
 		CallerID: call.AdminID,
 		CalleeID: call.ParticipantID,

@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"runtime/debug"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -151,7 +150,7 @@ type Router struct {
 	clock    clock.Clock
 	deps     Deps
 	// channelPush 是群组/频道离线推送的入口（router 创建后由 SetChannelPushNotifier 注入，#98）。
-	channelPush       channelPushSlot
+	channelPush       notifierSlot[ChannelPushNotifier]
 	dispatcher        *tlprofile.Dispatcher
 	clientInfoMu      sync.RWMutex
 	clientInfo        map[clientInfoSessionKey]clientSessionInfo
@@ -235,10 +234,10 @@ type Router struct {
 	// selfPhotoEchoPushDelay 是头像变更后向当前 session 回显 updateUser 的延迟
 	// （见 photos.go pushSelfPhotoUpdateToCurrentSession）；<=0 时同步推送（测试用）。
 	selfPhotoEchoPushDelay time.Duration
-	// pushDeletes 是私聊删除同步推送的入口（SetPushDeleteNotifier 注入，#100）；nil 表示不推送。
-	pushDeletes atomic.Pointer[pushDeleteNotifierHolder]
-	// callPush 是来电 VoIP 推送（#99，见 phone_voip_push.go）；nil=未启用。
-	callPush CallPushNotifier
+	// pushDeletes 是私聊删除同步推送的入口（SetPushDeleteNotifier 注入，#100）；空表示不推送。
+	pushDeletes notifierSlot[PushDeleteNotifier]
+	// callPush 是来电 VoIP 推送（#99，SetCallPushNotifier 注入，见 phone_voip_push.go）；空表示未启用。
+	callPush notifierSlot[CallPushNotifier]
 }
 
 type clientInfoSessionKey struct {

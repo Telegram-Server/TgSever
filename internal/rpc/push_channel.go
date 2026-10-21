@@ -1,8 +1,6 @@
 package rpc
 
 import (
-	"sync/atomic"
-
 	"telesrv/internal/app/push"
 	"telesrv/internal/domain"
 )
@@ -13,32 +11,17 @@ type ChannelPushNotifier interface {
 	ChannelMessage(msg push.NewMessage) bool
 }
 
-type channelPushSlot struct {
-	p atomic.Pointer[ChannelPushNotifier]
-}
-
-func (s *channelPushSlot) load() ChannelPushNotifier {
-	if p := s.p.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
 // SetChannelPushNotifier 注入群组/频道离线推送入口；nil 关闭。推送服务依赖 router（presence），
 // 所以在 router 创建之后注入。
 func (r *Router) SetChannelPushNotifier(n ChannelPushNotifier) {
-	if n == nil {
-		r.channelPush.p.Store(nil)
-		return
-	}
-	r.channelPush.p.Store(&n)
+	r.channelPush.set(n)
 }
 
 // notifyChannelMessagePush 把一条新的群组/频道消息交给推送服务。实时分发的 Recipients 只含在线成员，
 // 这里不用它：推送服务按完整成员列表分批推送，连接还在、但 App 已报后台的成员也要推。
 func (r *Router) notifyChannelMessagePush(originUserID int64, res domain.SendChannelMessageResult) {
-	notifier := r.channelPush.load()
-	if notifier == nil {
+	notifier, ok := r.channelPush.load()
+	if !ok {
 		return
 	}
 	if msg, ok := channelMessagePush(originUserID, res); ok {
