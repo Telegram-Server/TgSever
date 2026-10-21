@@ -218,6 +218,8 @@ export type AccountDetail = {
   Fake: boolean;
   Support: boolean;
   Bot: boolean;
+  // Deleted is true once the account has been deleted (users.deleted_at set).
+  Deleted: boolean;
   LoginEmail: string;
   StarsBalance: number;
   StarsGranted: boolean;

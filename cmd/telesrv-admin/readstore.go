@@ -337,14 +337,16 @@ const accountCollectibleUsernamesColumn = `COALESCE((
 ), '[]'::jsonb)`
 
 type AccountDetail struct {
-	Account        AccountRow
-	About          string
-	LastSeenAt     int64
-	Verified       bool
-	Scam           bool
-	Fake           bool
-	Support        bool
-	Bot            bool
+	Account    AccountRow
+	About      string
+	LastSeenAt int64
+	Verified   bool
+	Scam       bool
+	Fake       bool
+	Support    bool
+	Bot        bool
+	// Deleted 表示账号已注销（users.deleted_at 非空）。
+	Deleted        bool
 	LoginEmail     string
 	StarsBalance   int64
 	StarsGranted   bool
@@ -1067,7 +1069,7 @@ func (s *readStore) AccountDetail(ctx context.Context, userID int64) (AccountDet
 	var deviceLimit *int32
 	err := s.pool.QueryRow(ctx, `
 SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
-	u.about, u.last_seen_at, u.verified, u.scam, u.fake, u.support, u.is_bot,
+	u.about, u.last_seen_at, u.verified, u.scam, u.fake, u.support, u.is_bot, u.deleted_at IS NOT NULL,
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''),
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(sb.balance, 0)::bigint, COALESCE(sb.granted, false),
@@ -1082,7 +1084,7 @@ LEFT JOIN account_passwords ap ON ap.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.id = $1`, userID).Scan(
 		&out.Account.ID, &out.Account.Phone, &out.Account.Username, &out.Account.FirstName, &out.Account.LastName,
-		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot,
+		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot, &out.Deleted,
 		&out.Account.Frozen, &out.Account.Reason, &out.Account.PremiumUntil, &out.StarsBalance, &out.StarsGranted, &out.LoginEmail, &out.Account.Username,
 		&out.Account.Collectibles, &deviceLimit,
 	)

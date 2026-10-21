@@ -63,6 +63,9 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
   // 2FA password does not count (see #104).
   const signedInDevices = detail.Authorizations.filter((row) => !row.PasswordPending).length;
   const deviceLimit = detail.DeviceLimit ?? null;
+  // Bots are never limited and a deleted account cannot sign in, so the server
+  // refuses a limit on either: no summary row and no action for them.
+  const deviceLimitApplies = !detail.Bot && !detail.Deleted;
   return (
     <PageFrame
       title={t("account.detailTitle", { id: account.ID })}
@@ -109,10 +112,12 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
               <Summary label={t("account.starsBalance")} value={`${detail.StarsBalance} / ${detail.StarsGranted ? t("account.startingGrantApplied") : t("account.startingGrantPending")}`} />
               <Summary label={t("common.updatedAt")} value={formatDate(account.UpdatedAt) || "-"} />
               <Summary label={t("account.activeSessions")} value={String(detail.Authorizations.length)} />
-              <Summary
-                label={t("attr.deviceLimit")}
-                value={deviceLimit === null ? t("attr.deviceLimitUnlimited") : t("attr.deviceLimitUsage", { count: signedInDevices, limit: deviceLimit })}
-              />
+              {deviceLimitApplies && (
+                <Summary
+                  label={t("attr.deviceLimit")}
+                  value={deviceLimit === null ? t("attr.deviceLimitUnlimited") : t("attr.deviceLimitUsage", { count: signedInDevices, limit: deviceLimit })}
+                />
+              )}
               <Summary label={t("account.accountFlags")} value={`support=${detail.Support} bot=${detail.Bot}`} />
               <Summary label={t("attr.loginEmail")} value={detail.LoginEmail || t("common.none")} />
               <Summary label={t("account.restriction")} value={detail.HasRestriction ? detail.Restriction.Reason || t("account.restricted") : t("common.none")} />
@@ -246,7 +251,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
             <PhoneAction id={account.ID} current={account.Phone} onDone={load} />
             <LoginEmailAction id={account.ID} current={detail.LoginEmail} onDone={load} />
             {can(permissionAccountsManage) && <LoginPasswordAction id={account.ID} onDone={load} />}
-            {can(permissionAccountsManage) && <DeviceLimitAction id={account.ID} current={deviceLimit} onDone={load} />}
+            {deviceLimitApplies && can(permissionAccountsManage) && <DeviceLimitAction id={account.ID} current={deviceLimit} onDone={load} />}
             <SupportAction id={account.ID} support={detail.Support} onDone={load} />
             <UsernameAction idKey="user_id" id={account.ID} path="/api/actions/set-account-username" current={account.Username} onDone={load} />
             <ColorAction idKey="user_id" id={account.ID} path="/api/actions/set-account-color" onDone={load} />

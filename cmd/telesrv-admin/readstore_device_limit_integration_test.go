@@ -72,4 +72,19 @@ VALUES ($1, $2, '', 'Staff', '', '', now(), now())`, userID, userID); err != nil
 	if !legacy.HasRestriction || legacy.Restriction.Frozen || legacy.Restriction.Reason != "legacy review" || legacy.Restriction.CommandID != "" {
 		t.Fatalf("legacy unfrozen row HasRestriction=%v Restriction=%+v, want the unfrozen record", legacy.HasRestriction, legacy.Restriction)
 	}
+	if legacy.Deleted {
+		t.Fatal("a live account reads as deleted")
+	}
+
+	// 已注销的账号不能设上限（服务端拒绝），面板据 Deleted 隐藏上限操作。
+	if _, err := pool.Exec(ctx, `UPDATE users SET deleted_at = now(), deletion_source = 'manual', first_name = '' WHERE id = $1`, userID); err != nil {
+		t.Fatalf("mark account deleted: %v", err)
+	}
+	deleted, err := store.AccountDetail(ctx, userID)
+	if err != nil {
+		t.Fatalf("AccountDetail of a deleted account: %v", err)
+	}
+	if !deleted.Deleted {
+		t.Fatal("a deleted account reads as live, want Deleted")
+	}
 }
