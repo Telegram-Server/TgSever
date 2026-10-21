@@ -69,7 +69,7 @@ func channelMessagePush(originUserID int64, res domain.SendChannelMessageResult)
 		sender = originUserID
 	}
 	msg := push.NewMessage{
-		Chat:      push.Chat{Kind: kind, ID: ch.ID},
+		Chat:      push.Chat{Kind: kind, ID: ch.ID, TopicID: forumTopicOf(m)},
 		ChatTitle: ch.Title,
 		SenderID:  sender,
 		MessageID: m.ID,
@@ -83,4 +83,16 @@ func channelMessagePush(originUserID int64, res domain.SendChannelMessageResult)
 		msg.AuthorName = ch.Title
 	}
 	return msg, true
+}
+
+// forumTopicOf 返回消息所在的 forum 话题（话题根消息 id）：直接回复话题根时 TopMessageID 为 0，
+// 话题就是被回复的那条。不在话题里返回 0。
+func forumTopicOf(m domain.ChannelMessage) int {
+	if m.ReplyTo == nil || !m.ReplyTo.ForumTopic {
+		return 0
+	}
+	if m.ReplyTo.TopMessageID > 0 {
+		return m.ReplyTo.TopMessageID
+	}
+	return m.ReplyTo.MessageID
 }

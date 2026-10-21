@@ -24,6 +24,9 @@ const (
 type Chat struct {
 	Kind ChatKind
 	ID   int64
+	// TopicID 是 forum 话题（话题根消息 id），0 表示不在话题里。只用于通知设置：
+	// 话题自己的设置优先于群组（NotifyScopes）。不写进 payload。
+	TopicID int
 }
 
 // Alert 是服务端按 iOS 语言包渲染好的通知文案。iOS NSE 不做本地化，直接展示这里的字符串。

@@ -48,7 +48,24 @@ func pickBool(own, inherited *bool) *bool {
 	return inherited
 }
 
+// TopicNotifyScope 返回 forum 话题自己的通知设置作用域；不在话题里时 ok=false。
+func TopicNotifyScope(chat Chat) (domain.NotifyScope, bool) {
+	if chat.TopicID == 0 || chat.Kind == ChatPrivate {
+		return domain.NotifyScope{}, false
+	}
+	return domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: chat.ID}, TopicID: chat.TopicID}, true
+}
+
+// inheritNotify 逐字段合并：own 里为 nil 的项取 inherited 的值（话题继承群组）。
+func inheritNotify(own, inherited domain.PeerNotifySettings) domain.PeerNotifySettings {
+	own.MuteUntil = pickInt(own.MuteUntil, inherited.MuteUntil)
+	own.ShowPreviews = pickBool(own.ShowPreviews, inherited.ShowPreviews)
+	own.Silent = pickBool(own.Silent, inherited.Silent)
+	return own
+}
+
 // NotifyScopes 返回收件人视角的会话对应的两条通知设置作用域：会话自身（整 peer）与默认范围。
+// forum 话题自己的作用域见 TopicNotifyScope。
 func NotifyScopes(chat Chat) (peer, defaults domain.NotifyScope) {
 	switch chat.Kind {
 	case ChatGroup:
@@ -82,7 +99,7 @@ func NewSettingsPolicy(settings NotifySettingsReader, now func() time.Time) *Set
 	return &SettingsPolicy{settings: settings, now: now}
 }
 
-// Decide 实现 NotifyPolicy。
+// Decide 实现 NotifyPolicy。forum 话题里的消息先看话题自己的设置，没设的项继承群组，再继承默认范围。
 func (p *SettingsPolicy) Decide(ctx context.Context, recipientUserID int64, chat Chat) (NotifyDecision, error) {
 	if p == nil || p.settings == nil {
 		return NotifyDecision{}, nil
@@ -91,6 +108,13 @@ func (p *SettingsPolicy) Decide(ctx context.Context, recipientUserID int64, chat
 	peer, _, err := p.settings.GetNotifySettings(ctx, recipientUserID, peerScope)
 	if err != nil {
 		return NotifyDecision{}, err
+	}
+	if topicScope, ok := TopicNotifyScope(chat); ok {
+		topic, _, err := p.settings.GetNotifySettings(ctx, recipientUserID, topicScope)
+		if err != nil {
+			return NotifyDecision{}, err
+		}
+		peer = inheritNotify(topic, peer)
 	}
 	defaults, _, err := p.settings.GetNotifySettings(ctx, recipientUserID, defaultScope)
 	if err != nil {
