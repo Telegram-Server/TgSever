@@ -162,3 +162,38 @@ func TestSenderMapsNotificationToAPNsRequest(t *testing.T) {
 		t.Fatalf("voip request = %+v", s)
 	}
 }
+
+// apns2 只在 Expiration 晚于 Unix 0 时才发 apns-expiration，无法发 0；来电必须是 0（只投递一次、不存储）。
+func TestSenderSendsZeroExpirationWhenAsked(t *testing.T) {
+	got := make(chan []string, 4)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Values("apns-expiration")
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+
+	sender, err := New(Config{Enabled: true, Topic: "co.kaka.tgpro", CertFile: writeTestCert(t, "co.kaka.tgpro", "co.kaka.tgpro")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender.production.HTTPClient, sender.production.Host = srv.Client(), srv.URL
+
+	send := func(n push.Notification) []string {
+		t.Helper()
+		n.Token, n.Payload = "abc123", []byte(`{}`)
+		if res, err := sender.Send(context.Background(), n); err != nil || !res.Sent() {
+			t.Fatalf("Send = %+v, %v", res, err)
+		}
+		return <-got
+	}
+	if h := send(push.Notification{Type: push.PushTypeVoIP, ExpireImmediately: true, Expiration: time.Unix(1900000000, 0)}); len(h) != 1 || h[0] != "0" {
+		t.Fatalf("apns-expiration = %q, want exactly 0", h)
+	}
+	if h := send(push.Notification{Type: push.PushTypeAlert}); len(h) != 0 {
+		t.Fatalf("apns-expiration = %q, want none by default", h)
+	}
+	if h := send(push.Notification{Type: push.PushTypeAlert, Expiration: time.Unix(1900000000, 0)}); len(h) != 1 || h[0] != "1900000000" {
+		t.Fatalf("apns-expiration = %q, want 1900000000", h)
+	}
+}

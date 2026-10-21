@@ -2203,6 +2203,7 @@ func run(logger *zap.Logger) error {
 		}, logger.Named("push"))
 		go pushService.Run(ctx)
 		pushObserver = rpc.PushOutboxObserver(pushService)
+		router.SetCallPushNotifier(pushService)
 		logger.Info("apns push enabled", zap.String("topic", cfg.APNsTopic))
 	}
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),

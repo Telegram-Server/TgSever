@@ -11,9 +11,11 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/sideshow/apns2"
 	"github.com/sideshow/apns2/certificate"
@@ -140,9 +142,41 @@ func (s *Sender) Send(ctx context.Context, n push.Notification) (push.Result, er
 		note.Topic = s.topic + ".voip"
 		note.PushType = apns2.PushTypeVOIP
 	}
+	if n.ExpireImmediately {
+		note.Expiration = time.Time{}
+		client = withZeroExpiration(client)
+	}
 	resp, err := client.PushWithContext(ctx, note)
 	if err != nil {
 		return push.Result{}, err
 	}
 	return push.Result{StatusCode: resp.StatusCode, Reason: resp.Reason, ID: resp.ApnsID}, nil
+}
+
+// withZeroExpiration 返回一个只用于本次请求的 client 副本，请求头带 apns-expiration: 0。
+// apns2 只在 Expiration 晚于 Unix 0 时才写这个头，表达不了 0（只投递一次、不存储）；
+// 副本共用原 client 的底层 transport 与连接，只在发出前补上请求头。
+func withZeroExpiration(client *apns2.Client) *apns2.Client {
+	c := *client
+	httpClient := http.Client{}
+	if client.HTTPClient != nil {
+		httpClient = *client.HTTPClient
+	}
+	base := httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	httpClient.Transport = zeroExpirationTransport{base: base}
+	c.HTTPClient = &httpClient
+	return &c
+}
+
+type zeroExpirationTransport struct {
+	base http.RoundTripper
+}
+
+func (t zeroExpirationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("apns-expiration", "0")
+	return t.base.RoundTrip(req)
 }
