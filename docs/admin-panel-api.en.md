@@ -444,6 +444,7 @@ body always contains the **common command fields** (`command_id`, `reason`,
 | `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.), `password` (string, opt., 1..256 UTF-8 bytes); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED`; with `password` the account and its login password are created together — see below | — |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | — |
 | `set-login-password` | `user_id` (int64), `password` (string, 1..256 UTF-8 bytes), `revoke_sessions` (bool, opt.); sets or resets the login password without the old one — see below | — |
+| `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100, or `null` to clear); caps how many devices (authorizations) the account may be signed in on. Only new logins over the cap are refused with `AUTHORIZATIONS_TOO_MUCH`; devices already signed in stay. System accounts, bots, deleted and missing accounts fail with `USER_INVALID`, a value outside 1..100 with `DEVICE_LIMIT_INVALID` | — |
 | `set-account-avatar` | **multipart**: `metadata` field (JSON with common fields + `user_id` (int64)) and a file in `file` | — |
 | `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |
 | `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, seconds) | — |

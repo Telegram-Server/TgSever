@@ -468,6 +468,7 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 | `create-account` | `phone` (string), `first_name` (string), `last_name` (string, необязательно), `password` (string, необязательно, 1..256 байт UTF-8); создаёт обычный аккаунт без сессии, работает и при закрытой регистрации; занятый номер даёт `PHONE_NUMBER_OCCUPIED`; с `password` аккаунт и пароль для входа создаются вместе — см. ниже | — |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | — |
 | `set-login-password` | `user_id` (int64), `password` (string, 1..256 байт UTF-8), `revoke_sessions` (bool, опц.); задаёт или сбрасывает пароль для входа без старого пароля — см. ниже | — |
+| `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100 или `null`, чтобы снять); ограничивает число устройств (авторизаций), на которых аккаунт может быть в системе. Отклоняются только новые входы сверх лимита — с `AUTHORIZATIONS_TOO_MUCH`; уже вошедшие устройства остаются. Системные аккаунты, боты, удалённые и несуществующие аккаунты дают `USER_INVALID`, значение вне 1..100 — `DEVICE_LIMIT_INVALID` | — |
 | `set-account-avatar` | **multipart**: поле `metadata` (JSON с общими полями + `user_id` (int64)) и файл в поле `file` | — |
 | `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |
 | `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, секунды) | — |

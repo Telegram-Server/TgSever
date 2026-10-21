@@ -564,7 +564,9 @@ type Dependencies struct {
 	// 从服务端密钥派生；为空时 account.set_login_password 拒绝执行。
 	LoginPasswords              LoginPasswordSetter
 	LoginPasswordFingerprintKey []byte
-	Now                         func() time.Time
+	// DeviceLimits 是账号设备上限的读写面（见 devicelimit.go）。
+	DeviceLimits DeviceLimitStore
+	Now          func() time.Time
 }
 
 type Service struct {
@@ -615,6 +617,7 @@ type Service struct {
 	loginPasswords          LoginPasswordSetter
 	// loginPasswordFingerprintKey 见 Dependencies.LoginPasswordFingerprintKey。
 	loginPasswordFingerprintKey []byte
+	deviceLimits                DeviceLimitStore
 	now                         func() time.Time
 }
 
@@ -761,6 +764,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if len(deps.LoginPasswordFingerprintKey) > 0 {
 		s.loginPasswordFingerprintKey = append([]byte(nil), deps.LoginPasswordFingerprintKey...)
+	}
+	if deps.DeviceLimits != nil {
+		s.deviceLimits = deps.DeviceLimits
 	}
 	if deps.Now != nil {
 		s.now = deps.Now

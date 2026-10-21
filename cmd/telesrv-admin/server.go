@@ -165,6 +165,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-account-phone", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPhoneAPI)))
 	mux.Handle("POST /api/actions/create-account", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleCreateAccountAPI)))
 	mux.Handle("POST /api/actions/set-login-password", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginPasswordAPI)))
+	mux.Handle("POST /api/actions/set-device-limit", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetDeviceLimitAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
 	mux.Handle("POST /api/actions/set-account-color", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserColorAPI)))
@@ -1172,6 +1173,30 @@ func (s *server) handleSetLoginPasswordAPI(w http.ResponseWriter, r *http.Reques
 		RevokeSessions: body.RevokeSessions,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-login-password", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setDeviceLimitAPIRequest struct {
+	CommandID   string `json:"command_id"`
+	Reason      string `json:"reason"`
+	Confirm     bool   `json:"confirm"`
+	UserID      int64  `json:"user_id"`
+	DeviceLimit *int   `json:"device_limit"`
+}
+
+// handleSetDeviceLimitAPI 设置或清除账号的设备上限（device_limit 为 null 表示清除，恢复不限制），
+// 转发给服务端 POST /v1/accounts/set-device-limit。上限只拦以后的新登录，不踢已登录的设备。
+func (s *server) handleSetDeviceLimitAPI(w http.ResponseWriter, r *http.Request) {
+	var body setDeviceLimitAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetDeviceLimitRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-device-limit"),
+		UserID:      body.UserID,
+		DeviceLimit: body.DeviceLimit,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-device-limit", req)
 	writeCommandResultAPI(w, result, err)
 }
 
