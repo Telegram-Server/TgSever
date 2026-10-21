@@ -142,3 +142,31 @@ func TestIncomingCallRejectsIncompleteEvent(t *testing.T) {
 		t.Fatal("IncomingCall accepted with no sender, want disabled")
 	}
 }
+
+func TestIncomingCallSkipsDeviceWhereCallerIsAlsoLoggedIn(t *testing.T) {
+	f := newServiceFixture(t, Config{})
+	ctx := context.Background()
+	enc := &layerEncoder{layers: map[[8]byte]int{{2}: 230, {3}: 230}}
+	// 设备 2：同一台 iPhone 上也登录着主叫 Alice，不响铃；设备 3：别的手机，照常推。
+	for _, d := range []struct {
+		key    [8]byte
+		token  string
+		others []int64
+	}{
+		{[8]byte{2}, "voip-shared-phone", []int64{aliceID}},
+		{[8]byte{3}, "voip-other-phone", []int64{1000099}},
+	} {
+		if err := f.auths.Bind(ctx, domain.Authorization{AuthKeyID: d.key, UserID: bobID, Hash: int64(d.key[0])}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.devices.RegisterPushDevice(ctx, domain.PushDevice{AuthKeyID: d.key, UserID: bobID, TokenType: domain.PushTokenVoIP, Token: d.token, Secret: testSecret(), OtherUIDs: d.others}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.start()
+	f.svc.IncomingCall(incomingCallFromAlice(enc.encode))
+	f.stop()
+	if got := f.sender.tokens(); len(got) != 1 || got[0] != "voip-other-phone" {
+		t.Fatalf("pushed tokens = %v, want only voip-other-phone", got)
+	}
+}

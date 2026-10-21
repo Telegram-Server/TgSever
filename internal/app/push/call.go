@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"go.uber.org/zap"
 
@@ -70,6 +71,10 @@ func (s *Service) deliverIncomingCall(ctx context.Context, call IncomingCall) {
 	}
 	for _, device := range devices {
 		if device.TokenType != domain.PushTokenVoIP || device.UserID != call.CalleeID {
+			continue
+		}
+		// 多账号去重：主叫也登录在这台设备上（other_uids），不让同一台手机给自己响铃。
+		if slices.Contains(device.OtherUIDs, call.CallerID) {
 			continue
 		}
 		// 前台设备已经从连接上收到 updatePhoneCall。
