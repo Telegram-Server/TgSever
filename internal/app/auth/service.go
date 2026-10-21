@@ -413,6 +413,9 @@ func NewService(users store.UserStore, auths store.AuthorizationStore, codes sto
 	if linker, ok := auths.(store.AuthKeyAuthorityLinker); ok && authKeys != nil {
 		linker.LinkAuthKeyAuthority(authKeys)
 	}
+	if linker, ok := auths.(store.AuthorizationUserLinker); ok && users != nil {
+		linker.LinkAuthorizationUsers(users)
+	}
 	for _, opt := range opts {
 		opt(s)
 	}

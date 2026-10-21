@@ -132,6 +132,7 @@ type AccountRestriction struct {
 	FrozenUntil pgtype.Timestamptz
 	AppealUrl   string
 	Version     int64
+	DeviceLimit *int32
 }
 
 type AccountSetting struct {

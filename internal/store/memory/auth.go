@@ -291,8 +291,12 @@ func (s *TempAuthKeyBindingStore) DeleteExpired(_ context.Context, expiredBefore
 type AuthorizationStore struct {
 	linkMu   sync.RWMutex
 	authKeys *authKeyState
-	mu       sync.RWMutex
-	m        map[[8]byte]domain.Authorization
+	// users 由 LinkAuthorizationUsers 接上（受 linkMu 保护），见 deviceLimitFor。
+	users store.UserStore
+	mu    sync.RWMutex
+	m     map[[8]byte]domain.Authorization
+	// deviceLimits 是账号的设备上限（受 mu 保护），与授权在同一把锁下计数和写入。
+	deviceLimits map[int64]int
 }
 
 // NewAuthorizationStore 创建内存 AuthorizationStore。
@@ -336,7 +340,11 @@ func (s *AuthorizationStore) LinkAuthKeyAuthority(keys store.AuthKeyStore) {
 	authKeys.state.mu.Unlock()
 }
 
-func (s *AuthorizationStore) Bind(_ context.Context, a domain.Authorization) error {
+func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) error {
+	limited, err := s.deviceLimitApplies(ctx, a.UserID)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
 	if a.Hash == 0 {
 		a.Hash = int64(binary.LittleEndian.Uint64(a.AuthKeyID[:]))
@@ -361,21 +369,107 @@ func (s *AuthorizationStore) Bind(_ context.Context, a domain.Authorization) err
 		}
 		a.Layer = key.Layer
 		s.mu.Lock()
-		s.bindLocked(a)
+		err := s.bindLocked(a, limited)
 		s.mu.Unlock()
 		s.authKeys.mu.RUnlock()
 		s.linkMu.RUnlock()
-		return nil
+		return err
 	}
 	s.linkMu.RUnlock()
 	s.mu.Lock()
-	s.bindLocked(a)
+	err = s.bindLocked(a, limited)
 	s.mu.Unlock()
+	return err
+}
+
+// bindLocked 在同一把锁下完成"计数 + 写入"：账号有设备上限时，已完成登录的其它授权
+// （不算当前 auth key 自身、不算 password_pending）达到上限就拒绝，不写入。
+func (s *AuthorizationStore) bindLocked(a domain.Authorization, limited bool) error {
+	if limited {
+		if limit, ok := s.deviceLimits[a.UserID]; ok && s.completedOthersLocked(a.UserID, a.AuthKeyID) >= limit {
+			return domain.ErrDeviceLimitReached
+		}
+	}
+	s.m[a.AuthKeyID] = a
 	return nil
 }
 
-func (s *AuthorizationStore) bindLocked(a domain.Authorization) {
-	s.m[a.AuthKeyID] = a
+func (s *AuthorizationStore) completedOthersLocked(userID int64, self [8]byte) int {
+	n := 0
+	for id, existing := range s.m {
+		if existing.UserID == userID && id != self && !existing.PasswordPending {
+			n++
+		}
+	}
+	return n
+}
+
+// LinkAuthorizationUsers 接上同一份用户数据：Bind 据此跳过 bot，SetDeviceLimit 据此拒绝
+// 不存在的账号。只接受第一次接入，与 LinkAuthKeyAuthority 相同。
+func (s *AuthorizationStore) LinkAuthorizationUsers(users store.UserStore) {
+	if users == nil {
+		return
+	}
+	s.linkMu.Lock()
+	if s.users == nil {
+		s.users = users
+	}
+	s.linkMu.Unlock()
+}
+
+func (s *AuthorizationStore) linkedUsers() store.UserStore {
+	s.linkMu.RLock()
+	defer s.linkMu.RUnlock()
+	return s.users
+}
+
+// deviceLimitApplies 报告设备上限是否作用于 userID：bot 不受限。没有接上用户数据时一律
+// 按普通账号处理。用户事实在拿 mu 之前读出（是否 bot 不会变），不嵌套两个 store 的锁。
+func (s *AuthorizationStore) deviceLimitApplies(ctx context.Context, userID int64) (bool, error) {
+	users := s.linkedUsers()
+	if users == nil {
+		return true, nil
+	}
+	u, found, err := users.ByID(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return !found || !u.Bot, nil
+}
+
+func (s *AuthorizationStore) GetDeviceLimit(_ context.Context, userID int64) (int, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	limit, ok := s.deviceLimits[userID]
+	return limit, ok, nil
+}
+
+func (s *AuthorizationStore) SetDeviceLimit(ctx context.Context, userID int64, limit int) error {
+	if !domain.ValidDeviceLimit(limit) {
+		return domain.ErrDeviceLimitInvalid
+	}
+	if users := s.linkedUsers(); users != nil {
+		if _, found, err := users.ByID(ctx, userID); err != nil {
+			return err
+		} else if !found {
+			return domain.ErrUserNotFound
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deviceLimits == nil {
+		s.deviceLimits = make(map[int64]int)
+	}
+	s.deviceLimits[userID] = limit
+	return nil
+}
+
+func (s *AuthorizationStore) ClearDeviceLimit(_ context.Context, userID int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.deviceLimits[userID]
+	delete(s.deviceLimits, userID)
+	return ok, nil
 }
 
 func (s *AuthorizationStore) ByAuthKey(_ context.Context, id [8]byte) (domain.Authorization, bool, error) {

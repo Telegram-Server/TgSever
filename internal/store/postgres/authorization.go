@@ -71,6 +71,10 @@ FOR UPDATE`, a.UserID).Scan(&active); err != nil {
 	if !active {
 		return domain.ErrAccountDeleted
 	}
+	// 设备上限：用户行已锁，计数与下面的插入在同一把锁下，超限时整个事务回滚、不写入任何行。
+	if err := checkDeviceLimit(ctx, sqlcgen.New(tx), a.UserID, keyID); err != nil {
+		return err
+	}
 	if err := lockPermanentAuthIdentities(ctx, tx, []int64{keyID}); err != nil {
 		return err
 	}
