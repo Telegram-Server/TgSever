@@ -2111,6 +2111,9 @@ func run(logger *zap.Logger) error {
 		LoginPasswords:              loginPasswordService,
 		LoginPasswordFingerprintKey: adminapp.DeriveLoginPasswordFingerprintKey(cfg.AdminAPIToken),
 	})
+	// 后台设置/清除设备上限（account.set_device_limit）：读写的是授权 store，与登录绑定事务里
+	// 执行上限的是同一个 store。
+	adminService.Configure(adminapp.Dependencies{DeviceLimits: authzStore})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
 	// visible to online viewers immediately.

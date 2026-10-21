@@ -306,6 +306,14 @@ func (r *Router) onAuthAcceptLoginToken(ctx context.Context, token []byte) (*tg.
 	authz := accept.authz
 	authz.UserID = userID
 	authz.PasswordPending = false
+	// 先预检设备上限，名额已满时不去清新设备的更新状态；绑定时 store 仍在锁下再查一次。
+	if err := r.deps.Auth.CheckDeviceLimit(ctx, authz.AuthKeyID, userID); err != nil {
+		r.loginTokens.failAccept(token)
+		if errors.Is(err, domain.ErrDeviceLimitReached) {
+			return nil, authorizationsTooMuchErr()
+		}
+		return nil, internalErr()
+	}
 	if err := r.clearAuthKeyState(ctx, authz.AuthKeyID); err != nil {
 		r.loginTokens.failAccept(token)
 		return nil, internalErr()
@@ -315,6 +323,10 @@ func (r *Router) onAuthAcceptLoginToken(ctx context.Context, token []byte) (*tg.
 		r.loginTokens.failAccept(token)
 		if errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 			return nil, authKeyUnregisteredErr()
+		}
+		// 账号设备数已达上限：扫码的这台已登录设备收到 AUTHORIZATIONS_TOO_MUCH，新设备不会登录。
+		if errors.Is(err, domain.ErrDeviceLimitReached) {
+			return nil, authorizationsTooMuchErr()
 		}
 		return nil, internalErr()
 	}
@@ -686,7 +698,7 @@ func (r *Router) onAuthCheckPassword(ctx context.Context, password tg.InputCheck
 	// 两步验证通过：清除 password_pending 并把 auth_key/session 提升为完全授权。
 	if pending {
 		if err := r.completePendingPasswordSignIn(ctx, authKeyID, userID); err != nil {
-			return nil, internalErr()
+			return nil, completePasswordSignInErr(err)
 		}
 	}
 	u, err := r.deps.Users.Self(ctx, userID)
@@ -722,12 +734,19 @@ func (r *Router) onAuthRecoverPassword(ctx context.Context, req *tg.AuthRecoverP
 		}
 		input = &converted
 	}
+	// 密码找回会消耗找回码并重置 2FA 密码，所以 2FA 登录在那之前先预检设备上限；
+	// 转正（completePendingPasswordSignIn）时仍在锁下再检查一次，兜住并发登录。
+	if pending && r.deps.Auth != nil {
+		if err := r.deps.Auth.CheckDeviceLimit(ctx, authKeyID, userID); err != nil {
+			return nil, completePasswordSignInErr(err)
+		}
+	}
 	if err := r.deps.Account.RecoverPassword(ctx, userID, req.Code, input); err != nil {
 		return nil, passwordErr(err)
 	}
 	if pending {
 		if err := r.completePendingPasswordSignIn(ctx, authKeyID, userID); err != nil {
-			return nil, internalErr()
+			return nil, completePasswordSignInErr(err)
 		}
 	}
 	u, err := r.deps.Users.Self(ctx, userID)
@@ -735,6 +754,15 @@ func (r *Router) onAuthRecoverPassword(ctx context.Context, req *tg.AuthRecoverP
 		return nil, internalErr()
 	}
 	return &tg.AuthAuthorization{User: r.tgSelfUserWithUsernames(ctx, u)}, nil
+}
+
+// completePasswordSignInErr 映射 2FA 转正失败：设备数已达上限（#106）时返回
+// AUTHORIZATIONS_TOO_MUCH（待完成的授权已被删除），其余仍是内部错误。
+func completePasswordSignInErr(err error) error {
+	if errors.Is(err, domain.ErrDeviceLimitReached) {
+		return authorizationsTooMuchErr()
+	}
+	return internalErr()
 }
 
 func (r *Router) onAuthCheckRecoveryPassword(ctx context.Context, code string) (bool, error) {

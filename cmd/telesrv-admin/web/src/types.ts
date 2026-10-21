@@ -218,11 +218,15 @@ export type AccountDetail = {
   Fake: boolean;
   Support: boolean;
   Bot: boolean;
+  // Deleted is true once the account has been deleted (users.deleted_at set).
+  Deleted: boolean;
   LoginEmail: string;
   StarsBalance: number;
   StarsGranted: boolean;
   Restriction: RestrictionRow;
   HasRestriction: boolean;
+  // DeviceLimit is the account's device limit; null means unlimited.
+  DeviceLimit: number | null;
   Authorizations: AuthorizationRow[];
   AuditLogs: AuditLogRow[];
 };

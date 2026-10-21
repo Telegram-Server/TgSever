@@ -369,6 +369,10 @@ func signUpDisabledErr() error { return tgerr.New(400, "SIGN_UP_DISABLED") }
 // verifyEmail 的 loginSetup。
 func codeLoginDisabledErr() error { return tgerr.New(400, "CODE_LOGIN_DISABLED") }
 
+// authorizationsTooMuchErr 表示账号已登录的设备数达到管理员设置的设备上限
+// （domain.ErrDeviceLimitReached），新设备的登录被拒绝。
+func authorizationsTooMuchErr() error { return tgerr.New(400, "AUTHORIZATIONS_TOO_MUCH") }
+
 func phoneChangeErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrPhoneNumberInvalid):
@@ -466,6 +470,8 @@ func signInErr(err error) error {
 		return signUpDisabledErr()
 	case errors.Is(err, domain.ErrCodeLoginDisabled):
 		return codeLoginDisabledErr()
+	case errors.Is(err, domain.ErrDeviceLimitReached):
+		return authorizationsTooMuchErr()
 	default:
 		return internalErr()
 	}
@@ -477,6 +483,8 @@ func passkeyErr(err error) error {
 	switch {
 	case errors.Is(err, auth.ErrSystemUserLoginForbidden):
 		return tgerr.New(400, "PASSKEY_INVALID")
+	case errors.Is(err, domain.ErrDeviceLimitReached):
+		return authorizationsTooMuchErr()
 	case errors.Is(err, domain.ErrPasskeyChallengeInvalid):
 		return tgerr.New(400, "PASSKEY_CHALLENGE_INVALID")
 	case errors.Is(err, domain.ErrPasskeyInvalid),

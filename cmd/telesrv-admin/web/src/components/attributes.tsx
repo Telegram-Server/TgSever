@@ -1,4 +1,4 @@
-import { AtSign, KeyRound, LifeBuoy, Mail, Palette, Phone, Settings2, Smile, UserRoundPen } from "lucide-react";
+import { AtSign, KeyRound, LifeBuoy, Mail, Palette, Phone, Settings2, Smartphone, Smile, UserRoundPen } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ActionButton } from "./ActionButton";
 import { Alert } from "./ui";
@@ -138,6 +138,61 @@ export function LoginPasswordAction({ id, onDone }: { id: number; onDone: () => 
         }}
       />
       {revokeFailed && <Alert>{t("attr.loginPasswordRevokeFailed")}</Alert>}
+    </div>
+  );
+}
+
+// The bounds mirror domain.MinDeviceLimit / domain.MaxDeviceLimit; the server
+// rejects anything outside them with DEVICE_LIMIT_INVALID.
+const minDeviceLimit = 1;
+const maxDeviceLimit = 100;
+
+// DeviceLimitAction sets (1..100) or clears an account's device limit. A lower
+// limit never signs a device out; it only refuses new sign-ins.
+export function DeviceLimitAction({ id, current, onDone }: { id: number; current: number | null; onDone: () => void }) {
+  const { t } = useI18n();
+  const [value, setValue] = useState(current === null ? "" : String(current));
+  useEffect(() => {
+    setValue(current === null ? "" : String(current));
+  }, [current]);
+  const trimmed = value.trim();
+  const valid = /^\d+$/.test(trimmed) && toInt(trimmed) >= minDeviceLimit && toInt(trimmed) <= maxDeviceLimit;
+  return (
+    <div className="attr-block">
+      <label className="duration-field">
+        <span>{t("attr.deviceLimit")}</span>
+        <input
+          aria-label={t("attr.deviceLimit")}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          type="number"
+          min={minDeviceLimit}
+          max={maxDeviceLimit}
+          step="1"
+          placeholder={t("attr.deviceLimitPlaceholder")}
+        />
+      </label>
+      {trimmed !== "" && !valid && <p className="muted">{t("attr.deviceLimitInvalid")}</p>}
+      <p className="muted">{t("attr.deviceLimitHint")}</p>
+      <ActionButton
+        label={t("attr.setDeviceLimit")}
+        icon={<Smartphone size={15} />}
+        tone="warn"
+        path="/api/actions/set-device-limit"
+        payload={() => ({ user_id: id, device_limit: toInt(trimmed) })}
+        disabled={!valid}
+        onDone={onDone}
+      />
+      {current !== null && (
+        <ActionButton
+          label={t("attr.clearDeviceLimit")}
+          icon={<Smartphone size={15} />}
+          tone="neutral"
+          path="/api/actions/set-device-limit"
+          payload={() => ({ user_id: id, device_limit: null })}
+          onDone={onDone}
+        />
+      )}
     </div>
   );
 }

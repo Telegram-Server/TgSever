@@ -337,19 +337,23 @@ const accountCollectibleUsernamesColumn = `COALESCE((
 ), '[]'::jsonb)`
 
 type AccountDetail struct {
-	Account        AccountRow
-	About          string
-	LastSeenAt     int64
-	Verified       bool
-	Scam           bool
-	Fake           bool
-	Support        bool
-	Bot            bool
+	Account    AccountRow
+	About      string
+	LastSeenAt int64
+	Verified   bool
+	Scam       bool
+	Fake       bool
+	Support    bool
+	Bot        bool
+	// Deleted 表示账号已注销（users.deleted_at 非空）。
+	Deleted        bool
 	LoginEmail     string
 	StarsBalance   int64
 	StarsGranted   bool
 	Restriction    RestrictionRow
 	HasRestriction bool
+	// DeviceLimit 是账号的设备上限（#104）；nil = 不限制。
+	DeviceLimit    *int
 	Authorizations []AuthorizationRow
 	AuditLogs      []AuditLogRow
 }
@@ -1062,15 +1066,17 @@ ORDER BY g.last_active_at DESC, g.device_model, g.system_version, g.platform, g.
 
 func (s *readStore) AccountDetail(ctx context.Context, userID int64) (AccountDetail, error) {
 	var out AccountDetail
+	var deviceLimit *int32
 	err := s.pool.QueryRow(ctx, `
 SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
-	u.about, u.last_seen_at, u.verified, u.scam, u.fake, u.support, u.is_bot,
+	u.about, u.last_seen_at, u.verified, u.scam, u.fake, u.support, u.is_bot, u.deleted_at IS NOT NULL,
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''),
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(sb.balance, 0)::bigint, COALESCE(sb.granted, false),
 	COALESCE(ap.login_email, ''),
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
-	`+accountCollectibleUsernamesColumn+` AS collectibles
+	`+accountCollectibleUsernamesColumn+` AS collectibles,
+	r.device_limit
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN stars_balances sb ON sb.user_id = u.id
@@ -1078,12 +1084,16 @@ LEFT JOIN account_passwords ap ON ap.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.id = $1`, userID).Scan(
 		&out.Account.ID, &out.Account.Phone, &out.Account.Username, &out.Account.FirstName, &out.Account.LastName,
-		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot,
+		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot, &out.Deleted,
 		&out.Account.Frozen, &out.Account.Reason, &out.Account.PremiumUntil, &out.StarsBalance, &out.StarsGranted, &out.LoginEmail, &out.Account.Username,
-		&out.Account.Collectibles,
+		&out.Account.Collectibles, &deviceLimit,
 	)
 	if err != nil {
 		return out, fmt.Errorf("get account: %w", err)
+	}
+	if deviceLimit != nil {
+		n := int(*deviceLimit)
+		out.DeviceLimit = &n
 	}
 	out.Restriction, out.HasRestriction, err = s.restriction(ctx, userID)
 	if err != nil {
@@ -1100,12 +1110,14 @@ WHERE u.id = $1`, userID).Scan(
 	return out, nil
 }
 
+// restriction 读冻结状态。设备上限（#104）也存在 account_restrictions，只为上限建出来的行
+// （freeze_recorded = false）不是冻结记录，不算"受限制"。
 func (s *readStore) restriction(ctx context.Context, userID int64) (RestrictionRow, bool, error) {
 	var r RestrictionRow
 	err := s.pool.QueryRow(ctx, `
 SELECT frozen, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at
 FROM account_restrictions
-WHERE user_id = $1`, userID).Scan(
+WHERE user_id = $1 AND freeze_recorded`, userID).Scan(
 		&r.Frozen, &r.Since, &r.Until, &r.AppealURL,
 		&r.Reason, &r.Actor, &r.CommandID, &r.UpdatedAt,
 	)
