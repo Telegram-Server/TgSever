@@ -2195,11 +2195,12 @@ func run(logger *zap.Logger) error {
 	var pushObserver rpc.OutboxDeliveryObserver
 	if apnsSender != nil {
 		pushService := pushapp.NewService(pushapp.Config{}, pushapp.Deps{
-			Devices:  pushDeviceStore,
-			Presence: router,
-			Users:    usersService,
-			Sender:   apnsSender,
-			Strings:  langPackService,
+			Devices:        pushDeviceStore,
+			Authorizations: authzStore,
+			Presence:       router,
+			Users:          usersService,
+			Sender:         apnsSender,
+			Strings:        langPackService,
 		}, logger.Named("push"))
 		go pushService.Run(ctx)
 		pushObserver = rpc.PushOutboxObserver(pushService)

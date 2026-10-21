@@ -69,6 +69,21 @@ func (s *PushDeviceStore) DeletePushDevice(_ context.Context, authKeyID [8]byte,
 	return true, nil
 }
 
+func (s *PushDeviceStore) DeleteStalePushDevice(_ context.Context, device domain.PushDevice) (bool, error) {
+	s.auths.mu.Lock()
+	defer s.auths.mu.Unlock()
+	byType := s.auths.pushDevices[device.AuthKeyID]
+	current, ok := byType[device.TokenType]
+	if !ok || current.Token != device.Token || current.UserID != device.UserID {
+		return false, nil
+	}
+	delete(byType, device.TokenType)
+	if len(byType) == 0 {
+		delete(s.auths.pushDevices, device.AuthKeyID)
+	}
+	return true, nil
+}
+
 func clonePushDevice(device domain.PushDevice) domain.PushDevice {
 	device.Secret = append([]byte(nil), device.Secret...)
 	device.OtherUIDs = append([]int64(nil), device.OtherUIDs...)
