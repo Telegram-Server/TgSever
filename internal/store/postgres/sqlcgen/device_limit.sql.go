@@ -121,6 +121,34 @@ func (q *Queries) PromotePendingAuthorization(ctx context.Context, arg PromotePe
 	return result.RowsAffected(), nil
 }
 
+const promotePendingAuthorizationWithoutDeviceLimit = `-- name: PromotePendingAuthorizationWithoutDeviceLimit :execrows
+UPDATE authorizations a
+SET password_pending = false, created_at = now(), active_at = now()
+WHERE a.auth_key_id = $1 AND a.user_id = $2 AND a.password_pending
+  AND NOT EXISTS (
+    SELECT 1
+    FROM account_restrictions r
+    JOIN users u ON u.id = r.user_id
+    WHERE r.user_id = $2 AND r.device_limit IS NOT NULL AND NOT u.is_bot
+  )
+`
+
+type PromotePendingAuthorizationWithoutDeviceLimitParams struct {
+	AuthKeyID int64
+	UserID    int64
+}
+
+// 2FA 转正的快路径：账号没有作用于它的设备上限时（没设上限或是 bot），与引入上限之前一样
+// 只用一条 UPDATE、不拿用户锁。返回 0 行时由调用方走加锁的慢路径区分"超限"与"状态已变"。
+// 管理员恰好在这一刻设置上限时这次转正不受新上限约束，这是可接受的。
+func (q *Queries) PromotePendingAuthorizationWithoutDeviceLimit(ctx context.Context, arg PromotePendingAuthorizationWithoutDeviceLimitParams) (int64, error) {
+	result, err := q.db.Exec(ctx, promotePendingAuthorizationWithoutDeviceLimit, arg.AuthKeyID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setDeviceLimit = `-- name: SetDeviceLimit :exec
 INSERT INTO account_restrictions (user_id, device_limit, freeze_recorded)
 VALUES ($1, $2, false)
