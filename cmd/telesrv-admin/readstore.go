@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
-	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 const (
@@ -1065,6 +1064,7 @@ ORDER BY g.last_active_at DESC, g.device_model, g.system_version, g.platform, g.
 
 func (s *readStore) AccountDetail(ctx context.Context, userID int64) (AccountDetail, error) {
 	var out AccountDetail
+	var deviceLimit *int32
 	err := s.pool.QueryRow(ctx, `
 SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
 	u.about, u.last_seen_at, u.verified, u.scam, u.fake, u.support, u.is_bot,
@@ -1073,7 +1073,8 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(sb.balance, 0)::bigint, COALESCE(sb.granted, false),
 	COALESCE(ap.login_email, ''),
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
-	`+accountCollectibleUsernamesColumn+` AS collectibles
+	`+accountCollectibleUsernamesColumn+` AS collectibles,
+	r.device_limit
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN stars_balances sb ON sb.user_id = u.id
@@ -1083,16 +1084,16 @@ WHERE u.id = $1`, userID).Scan(
 		&out.Account.ID, &out.Account.Phone, &out.Account.Username, &out.Account.FirstName, &out.Account.LastName,
 		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot,
 		&out.Account.Frozen, &out.Account.Reason, &out.Account.PremiumUntil, &out.StarsBalance, &out.StarsGranted, &out.LoginEmail, &out.Account.Username,
-		&out.Account.Collectibles,
+		&out.Account.Collectibles, &deviceLimit,
 	)
 	if err != nil {
 		return out, fmt.Errorf("get account: %w", err)
 	}
-	out.Restriction, out.HasRestriction, err = s.restriction(ctx, userID)
-	if err != nil {
-		return out, err
+	if deviceLimit != nil {
+		n := int(*deviceLimit)
+		out.DeviceLimit = &n
 	}
-	out.DeviceLimit, err = s.deviceLimit(ctx, userID)
+	out.Restriction, out.HasRestriction, err = s.restriction(ctx, userID)
 	if err != nil {
 		return out, err
 	}
@@ -1105,22 +1106,6 @@ WHERE u.id = $1`, userID).Scan(
 		return out, err
 	}
 	return out, nil
-}
-
-// deviceLimit 读账号的设备上限，复用写路径的 sqlc 查询 GetDeviceLimit；没有行 = 不限制。
-func (s *readStore) deviceLimit(ctx context.Context, userID int64) (*int, error) {
-	limit, err := sqlcgen.New(s.pool).GetDeviceLimit(ctx, userID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get device limit: %w", err)
-	}
-	if limit == nil {
-		return nil, nil
-	}
-	n := int(*limit)
-	return &n, nil
 }
 
 // restriction 读冻结状态。设备上限（#104）也存在 account_restrictions，只为上限建出来的行
