@@ -132,16 +132,12 @@ func (p *presenceTracker) cancelOfflineTimer(userID int64) {
 	p.mu.Unlock()
 }
 
-// setSessionStatus 记录 session 的在线态，并返回是否需要向对端「广播在线」（notify）。
+// setSessionReport 记录 session 的在线态、会话绑定的授权与前台上报，并返回是否需要向对端
+// 「广播在线」（notify）。authKeyID 为零值时沿用该会话已记录的授权；report 为 presenceReportNone
+// 时保留该会话原有的前台上报。
 // notify 仅在「本 session 此前已在线、本次仍是在线续期、且距上次广播未超 onlineNotifyRefreshInterval」
 // 时为 false——即每 RPC 的重复在线续期被去重。首次上线/离线/转在线/超刷新间隔一律 true。
 // 整个判定在 p.mu 内原子完成：开群洪峰下并发首帧只有第一个返回 true，其余看到刚写入的新鲜态返回 false。
-func (p *presenceTracker) setSessionStatus(key presenceSessionKey, userID int64, status domain.UserStatus) bool {
-	return p.setSessionReport(key, userID, [8]byte{}, status, presenceReportNone)
-}
-
-// setSessionReport 同 setSessionStatus，并记录会话绑定的授权与前台上报。authKeyID 为零值时
-// 沿用该会话已记录的授权；report 为 presenceReportNone 时保留该会话原有的前台上报。
 func (p *presenceTracker) setSessionReport(key presenceSessionKey, userID int64, authKeyID [8]byte, status domain.UserStatus, report presenceReport) bool {
 	if p == nil || userID == 0 {
 		return true
