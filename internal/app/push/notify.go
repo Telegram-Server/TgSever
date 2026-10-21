@@ -80,14 +80,12 @@ func NotifyScopes(chat Chat) (peer, defaults domain.NotifyScope) {
 	}
 }
 
-// NotifySettingsReader 读取某作用域的通知设置（store.NotifySettingsStore 满足它）。
+// NotifySettingsReader 读取通知设置（store 的 PasswordStore 满足它）。
 type NotifySettingsReader interface {
+	// GetNotifySettings 读取一个 owner 在某作用域下的设置（私聊逐人判定）。
 	GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, bool, error)
-}
-
-// NotifySettingsBatchReader 一次读出一组 owner 在同一作用域下的通知设置（store 的 PasswordStore 满足它），
-// 只返回设置过的 owner。设置存储实现它时 SettingsPolicy.DecideBatch 每个作用域只查一次。
-type NotifySettingsBatchReader interface {
+	// GetNotifySettingsForOwners 一次读出一组 owner 在同一作用域下的设置，只返回设置过的 owner：
+	// SettingsPolicy.DecideBatch 每个作用域只查一次。
 	GetNotifySettingsForOwners(ctx context.Context, ownerUserIDs []int64, scope domain.NotifyScope) (map[int64]domain.PeerNotifySettings, error)
 }
 
@@ -129,36 +127,24 @@ func (p *SettingsPolicy) Decide(ctx context.Context, recipientUserID int64, chat
 	return ResolveNotify(peer, defaults, p.now()), nil
 }
 
-// DecideBatch 实现 BatchNotifyPolicy：设置存储支持批量读取时，每个作用域（话题、会话、默认范围）
-// 一次查询整批收件人；否则逐个 Decide。
+// DecideBatch 实现 BatchNotifyPolicy：每个作用域（话题、会话、默认范围）一次查询整批收件人。
 func (p *SettingsPolicy) DecideBatch(ctx context.Context, recipientUserIDs []int64, chat Chat) (map[int64]NotifyDecision, error) {
 	out := make(map[int64]NotifyDecision, len(recipientUserIDs))
 	if p == nil || p.settings == nil || len(recipientUserIDs) == 0 {
 		return out, nil
 	}
-	batch, ok := p.settings.(NotifySettingsBatchReader)
-	if !ok {
-		for _, recipient := range recipientUserIDs {
-			decision, err := p.Decide(ctx, recipient, chat)
-			if err != nil {
-				return nil, err
-			}
-			out[recipient] = decision
-		}
-		return out, nil
-	}
 	peerScope, defaultScope := NotifyScopes(chat)
-	peers, err := batch.GetNotifySettingsForOwners(ctx, recipientUserIDs, peerScope)
+	peers, err := p.settings.GetNotifySettingsForOwners(ctx, recipientUserIDs, peerScope)
 	if err != nil {
 		return nil, err
 	}
-	defaults, err := batch.GetNotifySettingsForOwners(ctx, recipientUserIDs, defaultScope)
+	defaults, err := p.settings.GetNotifySettingsForOwners(ctx, recipientUserIDs, defaultScope)
 	if err != nil {
 		return nil, err
 	}
 	var topics map[int64]domain.PeerNotifySettings
 	if topicScope, ok := TopicNotifyScope(chat); ok {
-		if topics, err = batch.GetNotifySettingsForOwners(ctx, recipientUserIDs, topicScope); err != nil {
+		if topics, err = p.settings.GetNotifySettingsForOwners(ctx, recipientUserIDs, topicScope); err != nil {
 			return nil, err
 		}
 	}

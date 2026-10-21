@@ -36,6 +36,8 @@ import (
 // DeviceLister 读取用户的设备登记（store.PushDeviceStore 满足它）。
 type DeviceLister interface {
 	ListPushDevicesByUser(ctx context.Context, userID int64) ([]domain.PushDevice, error)
+	// ListPushDevicesByUsers 一次读出多个用户的设备登记（群组/频道推送按页读取，顺序不保证）。
+	ListPushDevicesByUsers(ctx context.Context, userIDs []int64) ([]domain.PushDevice, error)
 }
 
 // DeviceStore 是推送服务用到的设备登记存储（store.PushDeviceStore 满足它）：读取登记，
@@ -418,24 +420,17 @@ func (s *Service) deliverMessage(ctx context.Context, msg NewMessage) {
 		if recipient == 0 || recipient == msg.SenderID {
 			continue
 		}
-		s.deliverMessageTo(ctx, messageJobKind, recipient, msg)
+		s.deliverMessageTo(ctx, recipient, msg)
 	}
 }
 
-// deliverMessageTo 读出收件人的设备登记并推送；kind 是任务类型（私聊 message、群组/频道 channel），
-// 决定重试回到哪条 lane 与指标标签。
-func (s *Service) deliverMessageTo(ctx context.Context, kind string, recipient int64, msg NewMessage) {
+// deliverMessageTo 读出私聊收件人的设备登记，过滤（类型、other_uids、前台）、判定通知设置并发送。
+func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg NewMessage) {
 	devices, err := s.devices.ListPushDevicesByUser(ctx, recipient)
 	if err != nil {
 		s.log.Warn("list push devices failed", zap.Int64("user_id", recipient), zap.Error(err))
 		return
 	}
-	s.deliverMessageToDevices(ctx, kind, recipient, devices, msg)
-}
-
-// deliverMessageToDevices 对收件人已读出的设备登记做过滤（类型、other_uids、前台）、
-// 判定通知设置并发送（私聊，或设备存储不支持批量读取时的群组逐人路径）。
-func (s *Service) deliverMessageToDevices(ctx context.Context, kind string, recipient int64, devices []domain.PushDevice, msg NewMessage) {
 	targets := s.messageTargets(recipient, devices, msg)
 	if len(targets) == 0 {
 		return
@@ -445,7 +440,7 @@ func (s *Service) deliverMessageToDevices(ctx context.Context, kind string, reci
 		s.log.Warn("push notify policy failed", zap.Int64("user_id", recipient), zap.Error(err))
 		return
 	}
-	s.sendMessage(ctx, kind, newJobRenderer(s.render), recipient, targets, msg, decisions[recipient])
+	s.sendMessage(ctx, messageJobKind, newJobRenderer(s.render), recipient, targets, msg, decisions[recipient])
 }
 
 // messageTargets 过滤出收件人该收这条消息推送的设备：APNs 普通登记、仍属于收件人、

@@ -15,12 +15,6 @@ type MemberPager interface {
 	ListActiveChannelMemberIDsAfter(ctx context.Context, channelID, afterUserID int64, limit int) ([]int64, error)
 }
 
-// DeviceBatchLister 一次读出多个用户的设备登记（store.PushDeviceStore 满足它）。
-// 设备存储没实现它时逐个用户读取。
-type DeviceBatchLister interface {
-	ListPushDevicesByUsers(ctx context.Context, userIDs []int64) ([]domain.PushDevice, error)
-}
-
 // channelJobKind 是群组/频道推送任务的类型（队列丢弃计数的 kind）。
 const channelJobKind = "channel"
 
@@ -95,14 +89,7 @@ func (s *Service) deliverChatBatch(ctx context.Context, msg NewMessage, members 
 	if len(recipients) == 0 {
 		return
 	}
-	batchLister, ok := s.devices.(DeviceBatchLister)
-	if !ok {
-		for _, recipient := range recipients {
-			s.deliverMessageTo(ctx, channelJobKind, recipient, msg)
-		}
-		return
-	}
-	devices, err := batchLister.ListPushDevicesByUsers(ctx, recipients)
+	devices, err := s.devices.ListPushDevicesByUsers(ctx, recipients)
 	if err != nil {
 		s.log.Warn("list push devices failed", zap.Int64("channel_id", msg.Chat.ID), zap.Int("users", len(recipients)), zap.Error(err))
 		return
