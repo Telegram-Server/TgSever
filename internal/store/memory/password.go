@@ -204,6 +204,19 @@ func (s *PasswordStore) GetNotifySettings(_ context.Context, ownerUserID int64, 
 	return settings.Clone(), ok, nil
 }
 
+// GetNotifySettingsForOwners 一次读出一组 owner 在同一作用域下的通知设置，只返回设置过的 owner。
+func (s *PasswordStore) GetNotifySettingsForOwners(_ context.Context, ownerUserIDs []int64, scope domain.NotifyScope) (map[int64]domain.PeerNotifySettings, error) {
+	out := make(map[int64]domain.PeerNotifySettings, len(ownerUserIDs))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, owner := range ownerUserIDs {
+		if settings, ok := s.notifySettings[notifySettingsKeyOf(owner, scope)]; ok {
+			out[owner] = settings.Clone()
+		}
+	}
+	return out, nil
+}
+
 func (s *PasswordStore) SaveNotifySettings(_ context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error {
 	s.mu.Lock()
 	s.notifySettings[notifySettingsKeyOf(ownerUserID, scope)] = settings.Clone()

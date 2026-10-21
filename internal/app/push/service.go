@@ -77,6 +77,12 @@ type NotifyPolicy interface {
 	Decide(ctx context.Context, recipientUserID int64, chat Chat) (NotifyDecision, error)
 }
 
+// BatchNotifyPolicy 是可一次判定一组收件人的 NotifyPolicy（群组扇出按页使用，SettingsPolicy 实现）。
+// 返回的 map 里没有的收件人按零值判定（推送、带预览）。
+type BatchNotifyPolicy interface {
+	DecideBatch(ctx context.Context, recipientUserIDs []int64, chat Chat) (map[int64]NotifyDecision, error)
+}
+
 // Metrics 记录推送计数；SinkMetrics 把它接到 Prometheus 注册表。
 type Metrics interface {
 	PushQueueDropped(kind string)
@@ -388,10 +394,24 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 }
 
 // deliverMessageToDevices 对收件人已读出的设备登记做过滤（类型、other_uids、前台）、
-// 判定通知设置并发送。
+// 判定通知设置并发送（私聊，或设备存储不支持批量读取时的群组逐人路径）。
 func (s *Service) deliverMessageToDevices(ctx context.Context, recipient int64, devices []domain.PushDevice, msg NewMessage) {
-	var err error
-	targets := devices[:0]
+	targets := s.messageTargets(recipient, devices, msg)
+	if len(targets) == 0 {
+		return
+	}
+	decisions, err := s.decide(ctx, []int64{recipient}, msg.Chat)
+	if err != nil {
+		s.log.Warn("push notify policy failed", zap.Int64("user_id", recipient), zap.Error(err))
+		return
+	}
+	s.sendMessage(ctx, newJobRenderer(s.render), recipient, targets, msg, decisions[recipient])
+}
+
+// messageTargets 过滤出收件人该收这条消息推送的设备：APNs 普通登记、仍属于收件人、
+// 发送者不在 other_uids 里、不在前台。
+func (s *Service) messageTargets(recipient int64, devices []domain.PushDevice, msg NewMessage) []domain.PushDevice {
+	targets := devices[:0:0]
 	for _, device := range devices {
 		if device.TokenType != domain.PushTokenAPNs || device.UserID != recipient {
 			continue
@@ -405,17 +425,31 @@ func (s *Service) deliverMessageToDevices(ctx context.Context, recipient int64, 
 		}
 		targets = append(targets, device)
 	}
-	if len(targets) == 0 {
-		return
+	return targets
+}
+
+// decide 判定一组收件人对会话的通知设置；策略支持批量（BatchNotifyPolicy）时一次判定整批。
+// 未注入策略时一律推送、带预览（返回的 map 里没有的收件人即零值判定）。
+func (s *Service) decide(ctx context.Context, recipients []int64, chat Chat) (map[int64]NotifyDecision, error) {
+	if s.policy == nil || len(recipients) == 0 {
+		return nil, nil
 	}
-	decision := NotifyDecision{}
-	if s.policy != nil {
-		decision, err = s.policy.Decide(ctx, recipient, msg.Chat)
+	if batch, ok := s.policy.(BatchNotifyPolicy); ok {
+		return batch.DecideBatch(ctx, recipients, chat)
+	}
+	out := make(map[int64]NotifyDecision, len(recipients))
+	for _, recipient := range recipients {
+		decision, err := s.policy.Decide(ctx, recipient, chat)
 		if err != nil {
-			s.log.Warn("push notify policy failed", zap.Int64("user_id", recipient), zap.Error(err))
-			return
+			return nil, err
 		}
+		out[recipient] = decision
 	}
+	return out, nil
+}
+
+// sendMessage 按判定结果给收件人的目标设备渲染、加密并发送。render 在一个任务内复用（模板按语言缓存）。
+func (s *Service) sendMessage(ctx context.Context, render *jobRenderer, recipient int64, targets []domain.PushDevice, msg NewMessage, decision NotifyDecision) {
 	if decision.Mute {
 		return
 	}
@@ -437,10 +471,10 @@ func (s *Service) deliverMessageToDevices(ctx context.Context, recipient int64, 
 			FromUserID: msg.chatFromID(),
 			MessageID:  msg.MessageID,
 			Key:        key,
-			Alert:      s.render.Render(ctx, device.LangCode, key, args...),
+			Alert:      render.Render(ctx, device.LangCode, key, args...),
 			Silent:     silent,
 		}
-		generic := s.render.Render(ctx, device.LangCode, KeyEncryptedMessage, "").Body
+		generic := render.Render(ctx, device.LangCode, KeyEncryptedMessage, "").Body
 		payload, err := buildMessagePayload(content, device.Secret, generic)
 		if err != nil {
 			s.log.Warn("build push payload failed", zap.Int64("user_id", recipient), zap.String("token", RedactToken(device.Token)), zap.Error(err))
@@ -526,7 +560,15 @@ func (s *Service) logMisconfiguration(kind string, result Result) {
 
 // registrationOwnerMatches 核对登记的 user_id 与授权当前的 user：不一致（或授权已不存在）时
 // 删除这条登记并返回 false。读授权失败时这次不发，但保留登记。
+// 设备存储随登记读出了授权的 user（AuthorizationUserID）时直接用它，不再逐台查询授权。
 func (s *Service) registrationOwnerMatches(ctx context.Context, device domain.PushDevice) bool {
+	if device.AuthorizationUserID != 0 {
+		if device.AuthorizationUserID == device.UserID {
+			return true
+		}
+		s.deleteStale(ctx, device, RemovedUserMismatch, "authorization user changed")
+		return false
+	}
 	if s.auths == nil {
 		return true
 	}

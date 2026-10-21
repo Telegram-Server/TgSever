@@ -12,9 +12,11 @@ SET token = EXCLUDED.token,
     created_at = now();
 
 -- name: ListPushDevicesByUser :many
-SELECT auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code, created_at
+-- 连同授权当前的 user 一起读出（推送发送前核对，避免逐台查询授权）。
+SELECT sqlc.embed(push_devices), authorizations.user_id AS authorization_user_id
 FROM push_devices
-WHERE user_id = $1;
+JOIN authorizations ON authorizations.auth_key_id = push_devices.auth_key_id
+WHERE push_devices.user_id = $1;
 
 -- name: DeletePushDevice :execrows
 DELETE FROM push_devices WHERE auth_key_id = $1 AND token_type = $2 AND token = $3;
@@ -24,6 +26,7 @@ DELETE FROM push_devices
 WHERE auth_key_id = $1 AND token_type = $2 AND token = $3 AND user_id = $4;
 
 -- name: ListPushDevicesByUsers :many
-SELECT auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code, created_at
+SELECT sqlc.embed(push_devices), authorizations.user_id AS authorization_user_id
 FROM push_devices
-WHERE user_id = ANY(@user_ids::bigint[]);
+JOIN authorizations ON authorizations.auth_key_id = push_devices.auth_key_id
+WHERE push_devices.user_id = ANY(@user_ids::bigint[]);

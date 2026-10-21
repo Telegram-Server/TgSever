@@ -85,6 +85,12 @@ type NotifySettingsReader interface {
 	GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, bool, error)
 }
 
+// NotifySettingsBatchReader 一次读出一组 owner 在同一作用域下的通知设置（store 的 PasswordStore 满足它），
+// 只返回设置过的 owner。设置存储实现它时 SettingsPolicy.DecideBatch 每个作用域只查一次。
+type NotifySettingsBatchReader interface {
+	GetNotifySettingsForOwners(ctx context.Context, ownerUserIDs []int64, scope domain.NotifyScope) (map[int64]domain.PeerNotifySettings, error)
+}
+
 // SettingsPolicy 是基于存储的 NotifyPolicy：读会话设置与默认范围，交给 ResolveNotify 判定。
 type SettingsPolicy struct {
 	settings NotifySettingsReader
@@ -121,4 +127,48 @@ func (p *SettingsPolicy) Decide(ctx context.Context, recipientUserID int64, chat
 		return NotifyDecision{}, err
 	}
 	return ResolveNotify(peer, defaults, p.now()), nil
+}
+
+// DecideBatch 实现 BatchNotifyPolicy：设置存储支持批量读取时，每个作用域（话题、会话、默认范围）
+// 一次查询整批收件人；否则逐个 Decide。
+func (p *SettingsPolicy) DecideBatch(ctx context.Context, recipientUserIDs []int64, chat Chat) (map[int64]NotifyDecision, error) {
+	out := make(map[int64]NotifyDecision, len(recipientUserIDs))
+	if p == nil || p.settings == nil || len(recipientUserIDs) == 0 {
+		return out, nil
+	}
+	batch, ok := p.settings.(NotifySettingsBatchReader)
+	if !ok {
+		for _, recipient := range recipientUserIDs {
+			decision, err := p.Decide(ctx, recipient, chat)
+			if err != nil {
+				return nil, err
+			}
+			out[recipient] = decision
+		}
+		return out, nil
+	}
+	peerScope, defaultScope := NotifyScopes(chat)
+	peers, err := batch.GetNotifySettingsForOwners(ctx, recipientUserIDs, peerScope)
+	if err != nil {
+		return nil, err
+	}
+	defaults, err := batch.GetNotifySettingsForOwners(ctx, recipientUserIDs, defaultScope)
+	if err != nil {
+		return nil, err
+	}
+	var topics map[int64]domain.PeerNotifySettings
+	if topicScope, ok := TopicNotifyScope(chat); ok {
+		if topics, err = batch.GetNotifySettingsForOwners(ctx, recipientUserIDs, topicScope); err != nil {
+			return nil, err
+		}
+	}
+	now := p.now()
+	for _, recipient := range recipientUserIDs {
+		peer := peers[recipient]
+		if topics != nil {
+			peer = inheritNotify(topics[recipient], peer)
+		}
+		out[recipient] = ResolveNotify(peer, defaults[recipient], now)
+	}
+	return out, nil
 }

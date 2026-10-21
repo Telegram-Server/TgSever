@@ -59,7 +59,11 @@ func (s *PushDeviceStore) ListPushDevicesByUser(ctx context.Context, userID int6
 	if err != nil {
 		return nil, fmt.Errorf("list push devices: %w", err)
 	}
-	return pushDevicesFromRows(rows), nil
+	out := make([]domain.PushDevice, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, pushDeviceFromRow(row.PushDevice, row.AuthorizationUserID))
+	}
+	return out, nil
 }
 
 func (s *PushDeviceStore) ListPushDevicesByUsers(ctx context.Context, userIDs []int64) ([]domain.PushDevice, error) {
@@ -70,26 +74,27 @@ func (s *PushDeviceStore) ListPushDevicesByUsers(ctx context.Context, userIDs []
 	if err != nil {
 		return nil, fmt.Errorf("list push devices by users: %w", err)
 	}
-	return pushDevicesFromRows(rows), nil
-}
-
-func pushDevicesFromRows(rows []sqlcgen.PushDevice) []domain.PushDevice {
 	out := make([]domain.PushDevice, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, domain.PushDevice{
-			AuthKeyID:  authKeyIDFromInt64(row.AuthKeyID),
-			UserID:     row.UserID,
-			TokenType:  int(row.TokenType),
-			Token:      row.Token,
-			AppSandbox: row.AppSandbox,
-			Secret:     row.Secret,
-			NoMuted:    row.NoMuted,
-			OtherUIDs:  row.OtherUids,
-			LangCode:   row.LangCode,
-			CreatedAt:  row.CreatedAt.Time,
-		})
+		out = append(out, pushDeviceFromRow(row.PushDevice, row.AuthorizationUserID))
 	}
-	return out
+	return out, nil
+}
+
+func pushDeviceFromRow(row sqlcgen.PushDevice, authorizationUserID int64) domain.PushDevice {
+	return domain.PushDevice{
+		AuthKeyID:           authKeyIDFromInt64(row.AuthKeyID),
+		UserID:              row.UserID,
+		TokenType:           int(row.TokenType),
+		Token:               row.Token,
+		AppSandbox:          row.AppSandbox,
+		Secret:              row.Secret,
+		NoMuted:             row.NoMuted,
+		OtherUIDs:           row.OtherUids,
+		LangCode:            row.LangCode,
+		CreatedAt:           row.CreatedAt.Time,
+		AuthorizationUserID: authorizationUserID,
+	}
 }
 
 func (s *PushDeviceStore) DeletePushDevice(ctx context.Context, authKeyID [8]byte, tokenType int, token string) (bool, error) {

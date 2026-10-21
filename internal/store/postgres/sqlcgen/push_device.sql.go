@@ -53,31 +53,39 @@ func (q *Queries) DeleteStalePushDevice(ctx context.Context, arg DeleteStalePush
 }
 
 const listPushDevicesByUser = `-- name: ListPushDevicesByUser :many
-SELECT auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code, created_at
+SELECT push_devices.auth_key_id, push_devices.token_type, push_devices.token, push_devices.user_id, push_devices.app_sandbox, push_devices.secret, push_devices.no_muted, push_devices.other_uids, push_devices.lang_code, push_devices.created_at, authorizations.user_id AS authorization_user_id
 FROM push_devices
-WHERE user_id = $1
+JOIN authorizations ON authorizations.auth_key_id = push_devices.auth_key_id
+WHERE push_devices.user_id = $1
 `
 
-func (q *Queries) ListPushDevicesByUser(ctx context.Context, userID int64) ([]PushDevice, error) {
+type ListPushDevicesByUserRow struct {
+	PushDevice          PushDevice
+	AuthorizationUserID int64
+}
+
+// 连同授权当前的 user 一起读出（推送发送前核对，避免逐台查询授权）。
+func (q *Queries) ListPushDevicesByUser(ctx context.Context, userID int64) ([]ListPushDevicesByUserRow, error) {
 	rows, err := q.db.Query(ctx, listPushDevicesByUser, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []PushDevice
+	var items []ListPushDevicesByUserRow
 	for rows.Next() {
-		var i PushDevice
+		var i ListPushDevicesByUserRow
 		if err := rows.Scan(
-			&i.AuthKeyID,
-			&i.TokenType,
-			&i.Token,
-			&i.UserID,
-			&i.AppSandbox,
-			&i.Secret,
-			&i.NoMuted,
-			&i.OtherUids,
-			&i.LangCode,
-			&i.CreatedAt,
+			&i.PushDevice.AuthKeyID,
+			&i.PushDevice.TokenType,
+			&i.PushDevice.Token,
+			&i.PushDevice.UserID,
+			&i.PushDevice.AppSandbox,
+			&i.PushDevice.Secret,
+			&i.PushDevice.NoMuted,
+			&i.PushDevice.OtherUids,
+			&i.PushDevice.LangCode,
+			&i.PushDevice.CreatedAt,
+			&i.AuthorizationUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -90,31 +98,38 @@ func (q *Queries) ListPushDevicesByUser(ctx context.Context, userID int64) ([]Pu
 }
 
 const listPushDevicesByUsers = `-- name: ListPushDevicesByUsers :many
-SELECT auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code, created_at
+SELECT push_devices.auth_key_id, push_devices.token_type, push_devices.token, push_devices.user_id, push_devices.app_sandbox, push_devices.secret, push_devices.no_muted, push_devices.other_uids, push_devices.lang_code, push_devices.created_at, authorizations.user_id AS authorization_user_id
 FROM push_devices
-WHERE user_id = ANY($1::bigint[])
+JOIN authorizations ON authorizations.auth_key_id = push_devices.auth_key_id
+WHERE push_devices.user_id = ANY($1::bigint[])
 `
 
-func (q *Queries) ListPushDevicesByUsers(ctx context.Context, userIds []int64) ([]PushDevice, error) {
+type ListPushDevicesByUsersRow struct {
+	PushDevice          PushDevice
+	AuthorizationUserID int64
+}
+
+func (q *Queries) ListPushDevicesByUsers(ctx context.Context, userIds []int64) ([]ListPushDevicesByUsersRow, error) {
 	rows, err := q.db.Query(ctx, listPushDevicesByUsers, userIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []PushDevice
+	var items []ListPushDevicesByUsersRow
 	for rows.Next() {
-		var i PushDevice
+		var i ListPushDevicesByUsersRow
 		if err := rows.Scan(
-			&i.AuthKeyID,
-			&i.TokenType,
-			&i.Token,
-			&i.UserID,
-			&i.AppSandbox,
-			&i.Secret,
-			&i.NoMuted,
-			&i.OtherUids,
-			&i.LangCode,
-			&i.CreatedAt,
+			&i.PushDevice.AuthKeyID,
+			&i.PushDevice.TokenType,
+			&i.PushDevice.Token,
+			&i.PushDevice.UserID,
+			&i.PushDevice.AppSandbox,
+			&i.PushDevice.Secret,
+			&i.PushDevice.NoMuted,
+			&i.PushDevice.OtherUids,
+			&i.PushDevice.LangCode,
+			&i.PushDevice.CreatedAt,
+			&i.AuthorizationUserID,
 		); err != nil {
 			return nil, err
 		}

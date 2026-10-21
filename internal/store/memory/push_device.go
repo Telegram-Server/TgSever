@@ -27,6 +27,7 @@ func NewPushDeviceStore(auths *AuthorizationStore) *PushDeviceStore {
 func (s *PushDeviceStore) RegisterPushDevice(_ context.Context, device domain.PushDevice) error {
 	device = clonePushDevice(device)
 	device.CreatedAt = time.Now()
+	device.AuthorizationUserID = 0
 	s.auths.mu.Lock()
 	defer s.auths.mu.Unlock()
 	if _, ok := s.auths.m[device.AuthKeyID]; !ok {
@@ -45,10 +46,10 @@ func (s *PushDeviceStore) ListPushDevicesByUser(_ context.Context, userID int64)
 	s.auths.mu.RLock()
 	defer s.auths.mu.RUnlock()
 	out := make([]domain.PushDevice, 0)
-	for _, byType := range s.auths.pushDevices {
+	for authKeyID, byType := range s.auths.pushDevices {
 		for _, device := range byType {
 			if device.UserID == userID {
-				out = append(out, clonePushDevice(device))
+				out = append(out, s.withAuthorizationUserLocked(authKeyID, device))
 			}
 		}
 	}
@@ -63,10 +64,10 @@ func (s *PushDeviceStore) ListPushDevicesByUsers(_ context.Context, userIDs []in
 	s.auths.mu.RLock()
 	defer s.auths.mu.RUnlock()
 	out := make([]domain.PushDevice, 0)
-	for _, byType := range s.auths.pushDevices {
+	for authKeyID, byType := range s.auths.pushDevices {
 		for _, device := range byType {
 			if _, ok := want[device.UserID]; ok {
-				out = append(out, clonePushDevice(device))
+				out = append(out, s.withAuthorizationUserLocked(authKeyID, device))
 			}
 		}
 	}
@@ -100,6 +101,13 @@ func (s *PushDeviceStore) DeleteStalePushDevice(_ context.Context, device domain
 		delete(s.auths.pushDevices, device.AuthKeyID)
 	}
 	return true, nil
+}
+
+// withAuthorizationUserLocked 返回登记的副本，带上授权当前的 user（调用方持有 auths.mu）。
+func (s *PushDeviceStore) withAuthorizationUserLocked(authKeyID [8]byte, device domain.PushDevice) domain.PushDevice {
+	device = clonePushDevice(device)
+	device.AuthorizationUserID = s.auths.m[authKeyID].UserID
+	return device
 }
 
 func clonePushDevice(device domain.PushDevice) domain.PushDevice {

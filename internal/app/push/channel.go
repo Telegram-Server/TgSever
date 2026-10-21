@@ -71,7 +71,8 @@ func (s *Service) enqueueRecipientBatch(msg NewMessage, offset int) bool {
 	})
 }
 
-// deliverChatBatch 给一批成员推送：去掉发送者，一次读出整批的设备登记，再按收件人逐个判定。
+// deliverChatBatch 给一批成员推送：去掉发送者，一次读出整批的设备登记（连同授权的 user），
+// 一次判定整批的通知设置，文案模板按语言在本批内只查一次。
 func (s *Service) deliverChatBatch(ctx context.Context, msg NewMessage, members []int64) {
 	recipients := make([]int64, 0, len(members))
 	for _, id := range members {
@@ -98,10 +99,26 @@ func (s *Service) deliverChatBatch(ctx context.Context, msg NewMessage, members 
 	for _, device := range devices {
 		byUser[device.UserID] = append(byUser[device.UserID], device)
 	}
+	// 先过滤出每人要推的设备，再一次判定整批的通知设置（不逐人查询）。
+	targets := make(map[int64][]domain.PushDevice, len(byUser))
+	withTargets := make([]int64, 0, len(byUser))
 	for _, recipient := range recipients {
-		if own := byUser[recipient]; len(own) != 0 {
-			s.deliverMessageToDevices(ctx, recipient, own, msg)
+		if own := s.messageTargets(recipient, byUser[recipient], msg); len(own) != 0 {
+			targets[recipient] = own
+			withTargets = append(withTargets, recipient)
 		}
+	}
+	if len(withTargets) == 0 {
+		return
+	}
+	decisions, err := s.decide(ctx, withTargets, msg.Chat)
+	if err != nil {
+		s.log.Warn("push notify policy failed", zap.Int64("channel_id", msg.Chat.ID), zap.Int("users", len(withTargets)), zap.Error(err))
+		return
+	}
+	render := newJobRenderer(s.render)
+	for _, recipient := range withTargets {
+		s.sendMessage(ctx, render, recipient, targets[recipient], msg, decisions[recipient])
 	}
 }
 

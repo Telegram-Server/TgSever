@@ -175,6 +175,7 @@ func (s *Service) deliverSync(ctx context.Context, kind string, userID int64, pu
 		s.log.Warn("list push devices failed", zap.Int64("user_id", userID), zap.Error(err))
 		return
 	}
+	render := newJobRenderer(s.render)
 	for _, device := range devices {
 		if device.TokenType != domain.PushTokenAPNs || device.UserID != userID {
 			continue
@@ -186,7 +187,7 @@ func (s *Service) deliverSync(ctx context.Context, kind string, userID int64, pu
 		if s.presence != nil && s.presence.AuthorizationInForeground(device.AuthKeyID) {
 			continue
 		}
-		generic := s.render.Render(ctx, device.LangCode, KeyEncryptedMessage, "").Body
+		generic := render.Render(ctx, device.LangCode, KeyEncryptedMessage, "").Body
 		for _, p := range pushes {
 			n, err := buildSyncNotification(p, device.Secret, generic)
 			if err != nil {

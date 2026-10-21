@@ -130,6 +130,26 @@ func PushDeviceContract(t *testing.T, newFixture func(t *testing.T) PushDeviceFi
 		}
 	})
 
+	t.Run("list carries the authorization's current user", func(t *testing.T) {
+		f := newFixture(t)
+		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01"))
+		if got := listPushDevices(t, f, f.UserA); len(got) != 1 || got[0].AuthorizationUserID != f.UserA {
+			t.Fatalf("devices = %+v, want authorization user %d", got, f.UserA)
+		}
+		// 授权的 user 被原地改写（扫码登录）：登记的 UserID 不变，AuthorizationUserID 跟着授权走。
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: f.AuthA1, UserID: f.UserB, Hash: f.HashA1}); err != nil {
+			t.Fatal(err)
+		}
+		got := listPushDevices(t, f, f.UserA)
+		if len(got) != 1 || got[0].UserID != f.UserA || got[0].AuthorizationUserID != f.UserB {
+			t.Fatalf("devices after rebind = %+v, want user %d with authorization user %d", got, f.UserA, f.UserB)
+		}
+		batch, err := f.Devices.ListPushDevicesByUsers(ctx, []int64{f.UserA})
+		if err != nil || len(batch) != 1 || batch[0].AuthorizationUserID != f.UserB {
+			t.Fatalf("batch list after rebind = %+v err=%v, want authorization user %d", batch, err, f.UserB)
+		}
+	})
+
 	t.Run("same token under two authorizations is two registrations", func(t *testing.T) {
 		f := newFixture(t)
 		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "shared"))

@@ -31,6 +31,9 @@ type PushDevice struct {
 	OtherUIDs []int64
 	// LangCode 是登记时客户端的语言代码，服务端按它渲染推送文案；为空时由调用方回落到 en。
 	LangCode string
+	// AuthorizationUserID 是读出登记时授权当前的 user（List* 与登记一起读出，写入时忽略）。
+	// 推送服务用它核对 UserID，不必逐台再查授权；0 表示存储没有提供。
+	AuthorizationUserID int64
 	// CreatedAt 是（最近一次）登记时间，由存储维护，写入时忽略调用方传入的值。
 	CreatedAt time.Time
 }

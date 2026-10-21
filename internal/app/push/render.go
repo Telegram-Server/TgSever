@@ -82,7 +82,37 @@ func NewRenderer(strings LangPackSource) *Renderer {
 
 // Render 按 langCode 渲染 key；该语言缺这个键时回落到 en，再回落到内置模板。
 func (r *Renderer) Render(ctx context.Context, langCode string, key Key, args ...string) Alert {
-	template := r.lookup(ctx, langCode, key)
+	return renderTemplate(r.lookup(ctx, langCode, key), args)
+}
+
+// jobRenderer 是一个推送任务内的渲染器：按 (语言, 键) 缓存查到的模板，同一任务里给多台设备、
+// 多个收件人渲染时语言包只查一次（尤其是每台设备都要的外层通用文案）。只在一个 worker 内使用。
+type jobRenderer struct {
+	r         *Renderer
+	templates map[jobTemplateKey]string
+}
+
+type jobTemplateKey struct {
+	lang string
+	key  Key
+}
+
+func newJobRenderer(r *Renderer) *jobRenderer {
+	return &jobRenderer{r: r, templates: make(map[jobTemplateKey]string)}
+}
+
+// Render 同 Renderer.Render，模板在本任务内缓存。
+func (j *jobRenderer) Render(ctx context.Context, langCode string, key Key, args ...string) Alert {
+	k := jobTemplateKey{lang: langCode, key: key}
+	template, ok := j.templates[k]
+	if !ok {
+		template = j.r.lookup(ctx, langCode, key)
+		j.templates[k] = template
+	}
+	return renderTemplate(template, args)
+}
+
+func renderTemplate(template string, args []string) Alert {
 	title, body, hasTitle := strings.Cut(template, "|")
 	if !hasTitle {
 		body, title = title, ""
