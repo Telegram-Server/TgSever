@@ -59,6 +59,21 @@ func (s *PushDeviceStore) ListPushDevicesByUser(ctx context.Context, userID int6
 	if err != nil {
 		return nil, fmt.Errorf("list push devices: %w", err)
 	}
+	return pushDevicesFromRows(rows), nil
+}
+
+func (s *PushDeviceStore) ListPushDevicesByUsers(ctx context.Context, userIDs []int64) ([]domain.PushDevice, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.q.ListPushDevicesByUsers(ctx, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list push devices by users: %w", err)
+	}
+	return pushDevicesFromRows(rows), nil
+}
+
+func pushDevicesFromRows(rows []sqlcgen.PushDevice) []domain.PushDevice {
 	out := make([]domain.PushDevice, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, domain.PushDevice{
@@ -74,7 +89,7 @@ func (s *PushDeviceStore) ListPushDevicesByUser(ctx context.Context, userID int6
 			CreatedAt:  row.CreatedAt.Time,
 		})
 	}
-	return out, nil
+	return out
 }
 
 func (s *PushDeviceStore) DeletePushDevice(ctx context.Context, authKeyID [8]byte, tokenType int) (bool, error) {

@@ -2203,9 +2203,12 @@ func run(logger *zap.Logger) error {
 			Strings:        langPackService,
 			// 静音、预览、静默按收件人的通知设置（会话设置，退回私聊/群组/频道默认范围）。
 			Policy: pushapp.NewSettingsPolicy(passwordStore, time.Now),
+			// 群组/频道推送按 user_id 分批读取完整成员列表（#98）。
+			Members: channelStore,
 		}, logger.Named("push"))
 		go pushService.Run(ctx)
 		pushObserver = rpc.PushOutboxObserver(pushService)
+		router.SetChannelPushNotifier(pushService)
 		logger.Info("apns push enabled", zap.String("topic", cfg.APNsTopic))
 	}
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),

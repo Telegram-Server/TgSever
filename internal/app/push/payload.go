@@ -32,8 +32,10 @@ type Alert struct {
 
 // MessagePush 是一条新消息推送的展示内容（已渲染、未加密）。
 type MessagePush struct {
-	Chat      Chat
-	MessageID int
+	Chat Chat
+	// FromUserID 是群组消息的发送者（chat_from_id）；私聊、频道、匿名发送时为 0。
+	FromUserID int64
+	MessageID  int
 	// Key 是内部分类键（MESSAGE_TEXT、CHAT_MESSAGE_PHOTO…），也是语言包 "PUSH_"+Key 的后缀。
 	// 它不写进 payload：新消息的顶层 loc-key 会让 NSE 置空通知内容。
 	Key    Key
@@ -53,11 +55,13 @@ type apsPayload struct {
 
 // messageFields 是新消息推送在解密后 JSON（或不加密时外层）里的扁平字段。
 type messageFields struct {
-	FromID    string      `json:"from_id,omitempty"`
-	ChannelID string      `json:"channel_id,omitempty"`
-	MsgID     string      `json:"msg_id,omitempty"`
-	Silent    string      `json:"silent,omitempty"`
-	APS       *apsPayload `json:"aps,omitempty"`
+	FromID    string `json:"from_id,omitempty"`
+	ChannelID string `json:"channel_id,omitempty"`
+	// ChatFromID 是群组消息的发送者（与官方推送的 chat_from_id 同名）；NSE 不读它，仅供识别。
+	ChatFromID string      `json:"chat_from_id,omitempty"`
+	MsgID      string      `json:"msg_id,omitempty"`
+	Silent     string      `json:"silent,omitempty"`
+	APS        *apsPayload `json:"aps,omitempty"`
 }
 
 // encryptedEnvelope 是带 secret 的外层 payload：内容全部在 p 里，外层只有通用文案。
@@ -77,6 +81,9 @@ func (m MessagePush) fields() messageFields {
 		f.FromID = peer
 	default:
 		f.ChannelID = peer
+		if m.Chat.Kind == ChatGroup && m.FromUserID != 0 {
+			f.ChatFromID = strconv.FormatInt(m.FromUserID, 10)
+		}
 	}
 	if m.MessageID != 0 {
 		f.MsgID = strconv.Itoa(m.MessageID)

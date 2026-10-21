@@ -93,6 +93,8 @@ type Config struct {
 	MaxRetries int
 	// RetryBackoff 是第一次重试前的等待，之后每次翻倍，最长 maxRetryBackoff。
 	RetryBackoff time.Duration
+	// MemberBatch 是群组/频道推送每批读取的成员数（#98）。
+	MemberBatch int
 }
 
 const (
@@ -102,6 +104,7 @@ const (
 	defaultMaxRetries   = 3
 	defaultRetryBackoff = 500 * time.Millisecond
 	maxRetryBackoff     = 5 * time.Second
+	defaultMemberBatch  = 500
 )
 
 // Deps 是推送服务的依赖。Sender 为 nil 时服务处于停用状态：所有事件方法直接返回 false。
@@ -116,13 +119,21 @@ type Deps struct {
 	Strings LangPackSource
 	Policy  NotifyPolicy
 	Metrics Metrics
+	// Members 分页列出群组/频道成员（#98）；nil 时 ChannelMessage 只推 NewMessage.Recipients。
+	Members MemberPager
 }
 
 // NewMessage 是一条新消息事件：Recipients 中每个收件人以 Chat（收件人视角的会话）看到这条消息。
 // 私聊每个收件人的 msg_id 不同（各自的 message box），因此私聊每次只带一个收件人。
 type NewMessage struct {
-	Chat       Chat
-	SenderID   int64
+	Chat Chat
+	// ChatTitle 是群组/频道标题（文案参数）；私聊为空。
+	ChatTitle string
+	// SenderID 是实际发送者：不给他推送，other_uids 去重也按他判断。
+	SenderID int64
+	// AuthorName 非空时是文案里展示的发送者名字（匿名管理员、以频道身份发言），
+	// 此时 payload 不带 chat_from_id；为空时按 SenderID 读取用户名字。
+	AuthorName string
 	Recipients []int64
 	MessageID  int
 	Text       string
@@ -147,6 +158,7 @@ type Service struct {
 	render   *Renderer
 	policy   NotifyPolicy
 	metrics  Metrics
+	members  MemberPager
 	log      *zap.Logger
 	queue    chan job
 }
@@ -171,6 +183,9 @@ func NewService(cfg Config, deps Deps, log *zap.Logger) *Service {
 	if cfg.RetryBackoff <= 0 {
 		cfg.RetryBackoff = defaultRetryBackoff
 	}
+	if cfg.MemberBatch <= 0 {
+		cfg.MemberBatch = defaultMemberBatch
+	}
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -188,6 +203,7 @@ func NewService(cfg Config, deps Deps, log *zap.Logger) *Service {
 		render:   NewRenderer(deps.Strings),
 		policy:   deps.Policy,
 		metrics:  metrics,
+		members:  deps.Members,
 		log:      log,
 		queue:    make(chan job, cfg.QueueSize),
 	}
@@ -280,6 +296,13 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 		s.log.Warn("list push devices failed", zap.Int64("user_id", recipient), zap.Error(err))
 		return
 	}
+	s.deliverMessageToDevices(ctx, recipient, devices, msg)
+}
+
+// deliverMessageToDevices 对收件人已读出的设备登记做过滤（类型、other_uids、前台）、
+// 判定通知设置并发送。
+func (s *Service) deliverMessageToDevices(ctx context.Context, recipient int64, devices []domain.PushDevice, msg NewMessage) {
+	var err error
 	targets := devices[:0]
 	for _, device := range devices {
 		if device.TokenType != domain.PushTokenAPNs || device.UserID != recipient {
@@ -308,8 +331,11 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 	if decision.Mute {
 		return
 	}
-	senderName := s.displayName(ctx, recipient, msg.SenderID)
-	key, args := messageAlert(msg, senderName, "", !decision.HidePreview)
+	senderName := msg.AuthorName
+	if senderName == "" {
+		senderName = s.displayName(ctx, recipient, msg.SenderID)
+	}
+	key, args := messageAlert(msg, senderName, msg.ChatTitle, !decision.HidePreview)
 	silent := msg.Silent || decision.Silent
 	for _, device := range targets {
 		if len(device.Secret) != 0 && len(device.Secret) != SecretSize {
@@ -319,11 +345,12 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 			continue
 		}
 		content := MessagePush{
-			Chat:      msg.Chat,
-			MessageID: msg.MessageID,
-			Key:       key,
-			Alert:     s.render.Render(ctx, device.LangCode, key, args...),
-			Silent:    silent,
+			Chat:       msg.Chat,
+			FromUserID: msg.chatFromID(),
+			MessageID:  msg.MessageID,
+			Key:        key,
+			Alert:      s.render.Render(ctx, device.LangCode, key, args...),
+			Silent:     silent,
 		}
 		generic := s.render.Render(ctx, device.LangCode, KeyEncryptedMessage, "").Body
 		payload, err := buildMessagePayload(content, device.Secret, generic)

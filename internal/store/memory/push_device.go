@@ -55,6 +55,24 @@ func (s *PushDeviceStore) ListPushDevicesByUser(_ context.Context, userID int64)
 	return out, nil
 }
 
+func (s *PushDeviceStore) ListPushDevicesByUsers(_ context.Context, userIDs []int64) ([]domain.PushDevice, error) {
+	want := make(map[int64]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		want[id] = struct{}{}
+	}
+	s.auths.mu.RLock()
+	defer s.auths.mu.RUnlock()
+	out := make([]domain.PushDevice, 0)
+	for _, byType := range s.auths.pushDevices {
+		for _, device := range byType {
+			if _, ok := want[device.UserID]; ok {
+				out = append(out, clonePushDevice(device))
+			}
+		}
+	}
+	return out, nil
+}
+
 func (s *PushDeviceStore) DeletePushDevice(_ context.Context, authKeyID [8]byte, tokenType int) (bool, error) {
 	s.auths.mu.Lock()
 	defer s.auths.mu.Unlock()

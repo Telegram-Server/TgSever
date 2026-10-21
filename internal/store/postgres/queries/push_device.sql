@@ -22,3 +22,8 @@ DELETE FROM push_devices WHERE auth_key_id = $1 AND token_type = $2;
 -- name: DeleteStalePushDevice :execrows
 DELETE FROM push_devices
 WHERE auth_key_id = $1 AND token_type = $2 AND token = $3 AND user_id = $4;
+
+-- name: ListPushDevicesByUsers :many
+SELECT auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code, created_at
+FROM push_devices
+WHERE user_id = ANY(@user_ids::bigint[]);

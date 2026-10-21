@@ -89,6 +89,37 @@ func PushDeviceContract(t *testing.T, newFixture func(t *testing.T) PushDeviceFi
 		assertPushDevice(t, got[0], replaced)
 	})
 
+	t.Run("list by several users at once", func(t *testing.T) {
+		f := newFixture(t)
+		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01"))
+		registerPushDevice(t, f, testPushDevice(f.AuthA2, f.UserA, domain.PushTokenAPNs, "aa02"))
+		registerPushDevice(t, f, testPushDevice(f.AuthB, f.UserB, domain.PushTokenAPNs, "bb01"))
+		got, err := f.Devices.ListPushDevicesByUsers(ctx, []int64{f.UserA, f.UserB, 9_000_000_000_001})
+		if err != nil {
+			t.Fatalf("list by users: %v", err)
+		}
+		tokens := make([]string, 0, len(got))
+		for _, d := range got {
+			tokens = append(tokens, d.Token)
+		}
+		slices.Sort(tokens)
+		if !slices.Equal(tokens, []string{"aa01", "aa02", "bb01"}) {
+			t.Fatalf("devices of A and B = %v, want aa01 aa02 bb01", tokens)
+		}
+		for _, d := range got {
+			if d.Token == "bb01" {
+				assertPushDevice(t, d, testPushDevice(f.AuthB, f.UserB, domain.PushTokenAPNs, "bb01"))
+			}
+		}
+		onlyB, err := f.Devices.ListPushDevicesByUsers(ctx, []int64{f.UserB})
+		if err != nil || len(onlyB) != 1 || onlyB[0].Token != "bb01" {
+			t.Fatalf("devices of B = %+v err %v, want bb01 only", onlyB, err)
+		}
+		if none, err := f.Devices.ListPushDevicesByUsers(ctx, nil); err != nil || len(none) != 0 {
+			t.Fatalf("devices of nobody = %+v err %v, want none", none, err)
+		}
+	})
+
 	t.Run("token types are independent per authorization", func(t *testing.T) {
 		f := newFixture(t)
 		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01"))

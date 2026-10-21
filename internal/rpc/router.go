@@ -144,11 +144,13 @@ type Config struct {
 // 与注册见 help.go / auth.go / users.go / updates.go。Router 本身只负责协议外壳：
 // 剥离 invokeWithLayer / initConnection / invokeWithoutUpdates / invokeAfter*，并兜底未注册 RPC。
 type Router struct {
-	cfg               Config
-	appLinks          links.AppLinkBuilder
-	log               *zap.Logger
-	clock             clock.Clock
-	deps              Deps
+	cfg      Config
+	appLinks links.AppLinkBuilder
+	log      *zap.Logger
+	clock    clock.Clock
+	deps     Deps
+	// channelPush 是群组/频道离线推送的入口（router 创建后由 SetChannelPushNotifier 注入，#98）。
+	channelPush       channelPushSlot
 	dispatcher        *tlprofile.Dispatcher
 	clientInfoMu      sync.RWMutex
 	clientInfo        map[clientInfoSessionKey]clientSessionInfo

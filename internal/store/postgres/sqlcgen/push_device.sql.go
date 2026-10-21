@@ -88,6 +88,43 @@ func (q *Queries) ListPushDevicesByUser(ctx context.Context, userID int64) ([]Pu
 	return items, nil
 }
 
+const listPushDevicesByUsers = `-- name: ListPushDevicesByUsers :many
+SELECT auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code, created_at
+FROM push_devices
+WHERE user_id = ANY($1::bigint[])
+`
+
+func (q *Queries) ListPushDevicesByUsers(ctx context.Context, userIds []int64) ([]PushDevice, error) {
+	rows, err := q.db.Query(ctx, listPushDevicesByUsers, userIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PushDevice
+	for rows.Next() {
+		var i PushDevice
+		if err := rows.Scan(
+			&i.AuthKeyID,
+			&i.TokenType,
+			&i.Token,
+			&i.UserID,
+			&i.AppSandbox,
+			&i.Secret,
+			&i.NoMuted,
+			&i.OtherUids,
+			&i.LangCode,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertPushDevice = `-- name: UpsertPushDevice :exec
 INSERT INTO push_devices (auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
