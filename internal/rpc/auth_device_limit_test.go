@@ -104,6 +104,41 @@ func TestDeviceLimitReachedMapsToAuthorizationsTooMuch(t *testing.T) {
 	}
 }
 
+// twoFactorDeviceLimitAuthService 让 2FA 转正返回 domain.ErrDeviceLimitReached（#106）。
+type twoFactorDeviceLimitAuthService struct{ *captureAuthService }
+
+func (twoFactorDeviceLimitAuthService) CompletePasswordSignIn(context.Context, [8]byte, int64) error {
+	return errWrappedDeviceLimitReached
+}
+
+// acceptingPasswordAccountService 让任何 2FA 密码校验与密码找回都通过。
+type acceptingPasswordAccountService struct{ AccountService }
+
+func (acceptingPasswordAccountService) CheckPassword(context.Context, int64, domain.PasswordCheck) error {
+	return nil
+}
+
+func (acceptingPasswordAccountService) RecoverPassword(context.Context, int64, string, *domain.PasswordInputSettings) error {
+	return nil
+}
+
+func newTwoFactorDeviceLimitRouter(t *testing.T) *Router {
+	auth := twoFactorDeviceLimitAuthService{&captureAuthService{pendingPasswordUserID: 42, pendingPassword: true}}
+	return New(Config{}, Deps{Auth: auth, Account: acceptingPasswordAccountService{}}, zaptest.NewLogger(t), clock.System)
+}
+
+func TestDeviceLimitReachedOnCheckPasswordMapsToAuthorizationsTooMuch(t *testing.T) {
+	r := newTwoFactorDeviceLimitRouter(t)
+	_, err := r.onAuthCheckPassword(pendingPasswordContext(), &tg.InputCheckPasswordSRP{SRPID: 1, A: []byte{1}, M1: []byte{1}})
+	assertRPCError(t, "auth.checkPassword", err, 400, "AUTHORIZATIONS_TOO_MUCH")
+}
+
+func TestDeviceLimitReachedOnRecoverPasswordMapsToAuthorizationsTooMuch(t *testing.T) {
+	r := newTwoFactorDeviceLimitRouter(t)
+	_, err := r.onAuthRecoverPassword(pendingPasswordContext(), &tg.AuthRecoverPasswordRequest{Code: "123456"})
+	assertRPCError(t, "auth.recoverPassword", err, 400, "AUTHORIZATIONS_TOO_MUCH")
+}
+
 // 扫码确认的其它错误保持原来的映射：系统账号 → AUTH_KEY_UNREGISTERED，其余 → 内部错误。
 func TestAcceptLoginTokenKeepsOtherErrorMappings(t *testing.T) {
 	const userID = int64(1000000108)
