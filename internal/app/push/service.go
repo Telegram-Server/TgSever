@@ -269,7 +269,7 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 		return
 	}
 	senderName := s.displayName(ctx, recipient, msg.SenderID)
-	key, args := messageAlert(msg, senderName, !decision.HidePreview)
+	key, args := messageAlert(msg, senderName, "", !decision.HidePreview)
 	silent := msg.Silent || decision.Silent
 	for _, device := range targets {
 		if len(device.Secret) != 0 && len(device.Secret) != SecretSize {
