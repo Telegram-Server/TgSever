@@ -71,15 +71,7 @@ func keyPrefix(kind ChatKind) string {
 // chatTitle 是群名/频道名（私聊忽略），由群组/频道推送的接入方（#98）提供。
 func messageAlert(msg NewMessage, senderName, chatTitle string, showPreview bool) (Key, []string) {
 	prefix := keyPrefix(msg.Chat.Kind)
-	var args []string
-	switch msg.Chat.Kind {
-	case ChatGroup:
-		args = []string{senderName, chatTitle}
-	case ChatChannel:
-		args = []string{chatTitle}
-	default:
-		args = []string{senderName}
-	}
+	args := chatArgs(msg.Chat.Kind, senderName, chatTitle)
 	if !showPreview {
 		return Key(prefix + suffixNoText), args
 	}
@@ -98,6 +90,18 @@ func messageAlert(msg NewMessage, senderName, chatTitle string, showPreview bool
 		return Key(prefix + suffixText), append(args, emoji+" "+text)
 	}
 	return Key(prefix + suffix), append(args, extra...)
+}
+
+// chatArgs 是文案开头的会话参数：私聊 [发送者]，群组 [发送者, 群名]，频道 [频道名]。
+func chatArgs(kind ChatKind, senderName, chatTitle string) []string {
+	switch kind {
+	case ChatGroup:
+		return []string{senderName, chatTitle}
+	case ChatChannel:
+		return []string{chatTitle}
+	default:
+		return []string{senderName}
+	}
 }
 
 // classifyMedia 把媒体归到文案类型后缀，并给出该类型的参数；不在覆盖范围内时 ok=false。

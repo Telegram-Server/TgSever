@@ -33,9 +33,21 @@ const channelJobKind = "channel"
 // 再给本批成员去掉发送者、按设备判断前台与通知设置并发送。一条消息同一时刻最多占一个队列位置和
 // 一批成员 id 的内存，大频道不会占满内存，也不会拖慢调用方。
 // 没有注入 Members 时只推 msg.Recipients（同样分批）。
+// 相册的一项（GroupedID 非 0）先按 (会话, grouped_id) 合并，整组只扇出一次（album.go）。
 func (s *Service) ChannelMessage(msg NewMessage) bool {
+	if !s.Enabled() {
+		return false
+	}
 	msg.Recipients = append([]int64(nil), msg.Recipients...)
-	if s.Enabled() && s.members == nil {
+	msg.album = nil
+	if msg.GroupedID != 0 && s.bufferAlbumItem(true, msg) {
+		return true
+	}
+	return s.enqueueChannelMessage(msg)
+}
+
+func (s *Service) enqueueChannelMessage(msg NewMessage) bool {
+	if s.members == nil {
 		return s.enqueueRecipientBatch(msg, 0)
 	}
 	return s.enqueueMemberPage(msg, 0)

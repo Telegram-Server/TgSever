@@ -76,6 +76,7 @@ func channelMessagePush(originUserID int64, res domain.SendChannelMessageResult)
 		Text:      m.Body,
 		Media:     m.Media,
 		Silent:    m.Silent,
+		GroupedID: m.GroupedID,
 	}
 	// 匿名管理员 / 以频道身份发言：不暴露真实发送者，文案里的发送者用群名。
 	// （以另一个频道身份发言时本应展示那个频道的名字；这里不为推送额外查询，统一用群名。）

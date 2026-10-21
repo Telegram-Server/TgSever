@@ -54,6 +54,7 @@ func PushOutboxObserver(notifier PushNotifier) OutboxDeliveryObserver {
 			Text:       msg.Body,
 			Media:      msg.Media,
 			Silent:     msg.Silent,
+			GroupedID:  msg.GroupedID,
 		})
 	}
 }

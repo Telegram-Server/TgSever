@@ -170,6 +170,23 @@ func TestBuiltinTemplatesMatchIOSEnglishLangPack(t *testing.T) {
 			}
 		}
 	}
+	// 相册键：复数键的每个形式都与语言包逐字一致。
+	for _, key := range []string{
+		"MESSAGE_PHOTOS#one", "MESSAGE_PHOTOS#other", "MESSAGE_VIDEOS#one", "MESSAGE_VIDEOS#other",
+		"MESSAGE_DOCS", "MESSAGES#one", "MESSAGES#other",
+		"CHAT_MESSAGE_PHOTOS#one", "CHAT_MESSAGE_PHOTOS#other", "CHAT_MESSAGE_VIDEOS#one", "CHAT_MESSAGE_VIDEOS#other",
+		"CHAT_MESSAGE_DOCS", "CHAT_MESSAGES#one", "CHAT_MESSAGES#other",
+		"CHANNEL_MESSAGE_PHOTOS#one", "CHANNEL_MESSAGE_PHOTOS#other", "CHANNEL_MESSAGE_VIDEOS#one", "CHANNEL_MESSAGE_VIDEOS#other",
+		"CHANNEL_MESSAGE_DOCS", "CHANNEL_MESSAGES#one", "CHANNEL_MESSAGES#other",
+	} {
+		builtin, ok := builtinTemplates[Key(key)]
+		if !ok {
+			t.Fatalf("no builtin template for %s", key)
+		}
+		if want, ok := en["PUSH_"+key]; !ok || want != builtin {
+			t.Fatalf("builtin %s = %q, iOS en langpack has %q (present=%v)", key, builtin, want, ok)
+		}
+	}
 }
 
 // 用 iOS en 语言包渲染几种类型，确认参数位置与客户端文案对得上。

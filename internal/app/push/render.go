@@ -6,6 +6,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/text/feature/plural"
+	"golang.org/x/text/language"
+
 	"telesrv/internal/domain"
 )
 
@@ -67,10 +70,33 @@ var builtinTemplates = map[Key]string{
 	"CHANNEL_MESSAGE_POLL":    "%1$@|📊 Poll \"%2$@\"",
 	"CHANNEL_MESSAGE_QUIZ":    "%1$@|posted the quiz \"%2$@\"",
 	KeyEncryptedMessage:       "You have a new message%1$@",
+	// 相册（albumAlert）：复数键按语言包写成 KEY#one / KEY#other。
+	"MESSAGE_PHOTOS#one":           "%1$@|📷 Photo",
+	"MESSAGE_PHOTOS#other":         "%1$@|📷 %2$d photos",
+	"MESSAGE_VIDEOS#one":           "%1$@|📹 Video",
+	"MESSAGE_VIDEOS#other":         "%1$@|📹 %2$d videos",
+	"MESSAGE_DOCS":                 "%1$@|sent you %2$d files",
+	"MESSAGES#one":                 "%1$@|📷📹 Album",
+	"MESSAGES#other":               "%1$@|📷📹 Albums",
+	"CHAT_MESSAGE_PHOTOS#one":      "%2$@|%1$@: 📷 Photo",
+	"CHAT_MESSAGE_PHOTOS#other":    "%2$@|%1$@: 📷 %3$d photos",
+	"CHAT_MESSAGE_VIDEOS#one":      "%2$@|%1$@: 📹 Video",
+	"CHAT_MESSAGE_VIDEOS#other":    "%2$@|%1$@: 📹 %3$d videos",
+	"CHAT_MESSAGE_DOCS":            "%2$@|%1$@ sent %3$d files",
+	"CHAT_MESSAGES#one":            "%2$@|%1$@: 📷 Album",
+	"CHAT_MESSAGES#other":          "%2$@|%1$@: 📷 Albums",
+	"CHANNEL_MESSAGE_PHOTOS#one":   "%1$@|📷 Photo",
+	"CHANNEL_MESSAGE_PHOTOS#other": "%1$@|📷 %2$d photos",
+	"CHANNEL_MESSAGE_VIDEOS#one":   "%1$@|📹 Video",
+	"CHANNEL_MESSAGE_VIDEOS#other": "%1$@|📹 %2$d videos",
+	"CHANNEL_MESSAGE_DOCS":         "%1$@|posted %2$d files",
+	"CHANNEL_MESSAGES#one":         "%1$@|📷 Album",
+	"CHANNEL_MESSAGES#other":       "%1$@|📷 Albums",
 }
 
 // Renderer 用 iOS 语言包的 PUSH_<KEY> 字符串渲染通知文案。
-// 字符串格式是 "title|body"（按第一个 | 拆分），参数是 %n$@ / %@ 占位符。
+// 字符串格式是 "title|body"（按第一个 | 拆分），参数是 %n$@ / %@ / %n$d / %d 占位符。
+// 复数字符串（语言包里的 KEY#one、KEY#other……）由 RenderCount 按数量与语言的 CLDR 规则选形式。
 type Renderer struct {
 	strings LangPackSource
 }
@@ -82,8 +108,17 @@ func NewRenderer(strings LangPackSource) *Renderer {
 
 // Render 按 langCode 渲染 key；该语言缺这个键时回落到 en，再回落到内置模板。
 func (r *Renderer) Render(ctx context.Context, langCode string, key Key, args ...string) Alert {
-	return renderTemplate(r.lookup(ctx, langCode, key), args)
+	return renderTemplate(r.lookup(ctx, langCode, key, noCount), args)
 }
+
+// RenderCount 同 Render，key 是复数字符串时按 count 选形式（该语言的 CLDR 规则；缺这个形式取 other，
+// 再取不分复数的值）。数量本身仍要作为参数传入（%n$d）。key 不是复数字符串时与 Render 相同。
+func (r *Renderer) RenderCount(ctx context.Context, langCode string, key Key, count int, args ...string) Alert {
+	return renderTemplate(r.lookup(ctx, langCode, key, max(count, 0)), args)
+}
+
+// noCount 表示不按数量渲染：复数字符串取 other 形式。
+const noCount = -1
 
 // jobRenderer 是一个推送任务内的渲染器：按 (语言, 键) 缓存查到的模板，同一任务里给多台设备、
 // 多个收件人渲染时语言包只查一次（尤其是每台设备都要的外层通用文案）。只在一个 worker 内使用。
@@ -93,8 +128,9 @@ type jobRenderer struct {
 }
 
 type jobTemplateKey struct {
-	lang string
-	key  Key
+	lang  string
+	key   Key
+	count int
 }
 
 func newJobRenderer(r *Renderer) *jobRenderer {
@@ -103,10 +139,19 @@ func newJobRenderer(r *Renderer) *jobRenderer {
 
 // Render 同 Renderer.Render，模板在本任务内缓存。
 func (j *jobRenderer) Render(ctx context.Context, langCode string, key Key, args ...string) Alert {
-	k := jobTemplateKey{lang: langCode, key: key}
+	return j.render(ctx, langCode, key, noCount, args)
+}
+
+// RenderCount 同 Renderer.RenderCount，模板在本任务内缓存。
+func (j *jobRenderer) RenderCount(ctx context.Context, langCode string, key Key, count int, args ...string) Alert {
+	return j.render(ctx, langCode, key, max(count, 0), args)
+}
+
+func (j *jobRenderer) render(ctx context.Context, langCode string, key Key, count int, args []string) Alert {
+	k := jobTemplateKey{lang: langCode, key: key, count: count}
 	template, ok := j.templates[k]
 	if !ok {
-		template = j.r.lookup(ctx, langCode, key)
+		template = j.r.lookup(ctx, langCode, key, count)
 		j.templates[k] = template
 	}
 	return renderTemplate(template, args)
@@ -130,7 +175,9 @@ func renderTemplate(template string, args []string) Alert {
 	return alert
 }
 
-func (r *Renderer) lookup(ctx context.Context, langCode string, key Key) string {
+// lookup 取 key 在 langCode（缺失时 en）下的模板，复数字符串按 count 选形式（noCount 取 other）；
+// 语言包都没有时用内置英文模板。
+func (r *Renderer) lookup(ctx context.Context, langCode string, key Key, count int) string {
 	name := "PUSH_" + string(key)
 	if r != nil && r.strings != nil {
 		langCode = strings.TrimSpace(langCode)
@@ -144,16 +191,73 @@ func (r *Renderer) lookup(ctx context.Context, langCode string, key Key) string 
 				continue
 			}
 			for _, s := range pack.Strings {
-				if s.Key == name && !s.Deleted && s.Value != "" {
-					return s.Value
+				if s.Key != name || s.Deleted {
+					continue
+				}
+				if v := pluralValue(s, code, count); v != "" {
+					return v
 				}
 			}
 		}
 	}
-	return builtinTemplates[key]
+	return builtinTemplate(key, count)
 }
 
-// formatIOS 替换 iOS 格式串里的 %n$@、%@（按顺序）与 %%；参数本身原样插入，不再解释。
+// pluralValue 取语言包字符串在 count 下的值：不是复数字符串时就是 Value；否则按 langCode 的
+// CLDR 基数规则选形式，该形式为空时取 other，再取不分复数的 Value。
+func pluralValue(s domain.LangPackString, langCode string, count int) string {
+	if !s.Pluralized {
+		return s.Value
+	}
+	var v string
+	switch pluralForm(langCode, count) {
+	case plural.Zero:
+		v = s.ZeroValue
+	case plural.One:
+		v = s.OneValue
+	case plural.Two:
+		v = s.TwoValue
+	case plural.Few:
+		v = s.FewValue
+	case plural.Many:
+		v = s.ManyValue
+	}
+	if v == "" {
+		v = s.OtherValue
+	}
+	if v == "" {
+		v = s.Value
+	}
+	return v
+}
+
+// pluralForm 返回 count 在 langCode 下的 CLDR 基数复数形式；noCount 或无法识别的语言取 other / en 规则。
+func pluralForm(langCode string, count int) plural.Form {
+	if count < 0 {
+		return plural.Other
+	}
+	tag, err := language.Parse(langCode)
+	if err != nil {
+		tag = language.English
+	}
+	return plural.Cardinal.MatchPlural(tag, count%10_000_000, 0, 0, 0, 0)
+}
+
+// builtinTemplate 取内置英文模板；复数键在 builtinTemplates 里按 "KEY#one"、"KEY#other" 存放（同语言包）。
+func builtinTemplate(key Key, count int) string {
+	if v, ok := builtinTemplates[key]; ok {
+		return v
+	}
+	if pluralForm(defaultLangCode, count) == plural.One {
+		if v, ok := builtinTemplates[key+"#one"]; ok {
+			return v
+		}
+	}
+	return builtinTemplates[key+"#other"]
+}
+
+// formatIOS 替换 iOS 格式串里的 %n$@、%n$d、%@ 与 %d（后两者按顺序）以及 %%；参数本身原样插入，
+// 不再解释（数量参数由调用方格式化成十进制字符串）。
 // 越界的占位符替换为空串。
 func formatIOS(format string, args []string) string {
 	if !strings.Contains(format, "%") {
@@ -173,7 +277,7 @@ func formatIOS(format string, args []string) string {
 			i++
 			continue
 		}
-		if rest[0] == '@' {
+		if rest[0] == '@' || rest[0] == 'd' {
 			if next < len(args) {
 				b.WriteString(args[next])
 			}

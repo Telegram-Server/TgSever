@@ -16,7 +16,8 @@
 //   - VoIP（#99）、已读/删除同步（#100）：新增事件方法，复用 enqueue 与 send；
 //   - 结果分类、重试、失效清理（#101）：classify.go 的 Classify 与 send（所有事件都经 send 发出，
 //     发送前核对登记 user_id，token 失效删除登记，可重试失败按 Config.MaxRetries 退避重试）；
-//   - 指标（#102）：Metrics。
+//   - 指标（#102）：Metrics；
+//   - 相册合并（同一 grouped_id 只推一次）：album.go。
 package push
 
 import (
@@ -115,6 +116,10 @@ type Config struct {
 	UrgentWorkers int
 	// ShutdownTimeout 是关停时处理队列剩余任务的期限：到期后取消仍在进行的发送，Run 返回。
 	ShutdownTimeout time.Duration
+	// AlbumDebounce 是相册（同一 grouped_id）合并推送的去抖时间：每来一项重新计时（见 album.go）。
+	AlbumDebounce time.Duration
+	// AlbumMaxWait 是相册从第一项起最多等多久就推送，即使还在陆续到达。
+	AlbumMaxWait time.Duration
 }
 
 const (
@@ -169,6 +174,11 @@ type NewMessage struct {
 	Media      *domain.MessageMedia
 	// Silent 是发送方以静默方式发送（message.silent）。
 	Silent bool
+	// GroupedID 非 0 时是相册的一项：同组各项合并成一条推送（见 album.go）。
+	GroupedID int64
+
+	// album 非 nil 时这是合并后的相册（MessageID 等字段取最后一项）。
+	album *albumSummary
 }
 
 type job struct {
@@ -192,8 +202,10 @@ type Service struct {
 	// urgent、bulk 是两条 lane 的有界队列（见包注释）。
 	urgent chan job
 	bulk   chan job
-	// stopping 在 Run 的 ctx 结束后为真：不再安排重试，群组扇出不再翻下一页。
+	// stopping 在 Run 的 ctx 结束后为真：不再安排重试，群组扇出不再翻下一页，相册不再缓冲。
 	stopping atomic.Bool
+	// albums 是待合并的相册（album.go）。
+	albums albumBuffer
 
 	misconfigMu         sync.Mutex
 	misconfigLast       time.Time
@@ -232,6 +244,12 @@ func NewService(cfg Config, deps Deps, log *zap.Logger) *Service {
 	if cfg.ShutdownTimeout <= 0 {
 		cfg.ShutdownTimeout = defaultShutdownTimeout
 	}
+	if cfg.AlbumDebounce <= 0 {
+		cfg.AlbumDebounce = defaultAlbumDebounce
+	}
+	if cfg.AlbumMaxWait <= 0 {
+		cfg.AlbumMaxWait = defaultAlbumMaxWait
+	}
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -262,8 +280,8 @@ func (s *Service) Enabled() bool {
 }
 
 // Run 启动 cfg.Workers 个通用 worker 与 cfg.UrgentWorkers 个紧急 worker，阻塞到 ctx 结束。
-// 结束后处理完队列里已有的任务再返回（不再重试、不再翻页），最多等 cfg.ShutdownTimeout：
-// 到期后取消仍在进行的发送并丢下剩余任务。
+// 结束后先把待合并的相册放进队列，处理完队列里已有的任务再返回（不再重试、不再翻页），
+// 最多等 cfg.ShutdownTimeout：到期后取消仍在进行的发送并丢下剩余任务。
 func (s *Service) Run(ctx context.Context) {
 	if !s.Enabled() {
 		<-ctx.Done()
@@ -273,6 +291,9 @@ func (s *Service) Run(ctx context.Context) {
 	// 任务的 ctx 不随 Run 的 ctx 立即取消：关停时已入队的任务仍能发出，到期限才取消。
 	jobCtx, cancelJobs := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelJobs()
+	// worker 看 drainCtx 进入收尾：ctx 结束后先放入待合并的相册，再让 worker 清空队列。
+	drainCtx, startDrain := context.WithCancel(context.WithoutCancel(ctx))
+	defer startDrain()
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -280,6 +301,8 @@ func (s *Service) Run(ctx context.Context) {
 			return
 		}
 		s.stopping.Store(true)
+		s.flushAlbums()
+		startDrain()
 		timer := time.NewTimer(s.cfg.ShutdownTimeout)
 		defer timer.Stop()
 		select {
@@ -291,10 +314,10 @@ func (s *Service) Run(ctx context.Context) {
 	}()
 	var wg sync.WaitGroup
 	for range s.cfg.Workers {
-		wg.Go(func() { s.work(ctx, jobCtx, true) })
+		wg.Go(func() { s.work(drainCtx, jobCtx, true) })
 	}
 	for range s.cfg.UrgentWorkers {
-		wg.Go(func() { s.work(ctx, jobCtx, false) })
+		wg.Go(func() { s.work(drainCtx, jobCtx, false) })
 	}
 	wg.Wait()
 }
@@ -373,8 +396,20 @@ func (s *Service) enqueue(kind string, run func(ctx context.Context)) bool {
 }
 
 // NewMessage 把一条新消息的推送放进队列，立即返回；返回 false 表示服务停用或队列已满被丢弃。
+// 相册的一项（GroupedID 非 0）先放进待合并缓冲区，同组合并成一条推送（album.go）。
 func (s *Service) NewMessage(msg NewMessage) bool {
+	if !s.Enabled() {
+		return false
+	}
 	msg.Recipients = append([]int64(nil), msg.Recipients...)
+	msg.album = nil
+	if msg.GroupedID != 0 && s.bufferAlbumItem(false, msg) {
+		return true
+	}
+	return s.enqueueNewMessage(msg)
+}
+
+func (s *Service) enqueueNewMessage(msg NewMessage) bool {
 	return s.enqueue(messageJobKind, func(ctx context.Context) { s.deliverMessage(ctx, msg) })
 }
 
@@ -464,6 +499,10 @@ func (s *Service) sendMessage(ctx context.Context, kind string, render *jobRende
 		senderName = s.displayName(ctx, recipient, msg.SenderID)
 	}
 	key, args := messageAlert(msg, senderName, msg.ChatTitle, !decision.HidePreview)
+	count := noCount
+	if msg.album != nil && !decision.HidePreview {
+		key, args, count = albumAlert(msg, senderName, msg.ChatTitle)
+	}
 	silent := msg.Silent || decision.Silent
 	for _, device := range targets {
 		if len(device.Secret) != 0 && len(device.Secret) != SecretSize {
@@ -477,7 +516,7 @@ func (s *Service) sendMessage(ctx context.Context, kind string, render *jobRende
 			FromUserID: msg.chatFromID(),
 			MessageID:  msg.MessageID,
 			Key:        key,
-			Alert:      render.Render(ctx, device.LangCode, key, args...),
+			Alert:      render.render(ctx, device.LangCode, key, count, args),
 			Silent:     silent,
 		}
 		generic := render.Render(ctx, device.LangCode, KeyEncryptedMessage, "").Body

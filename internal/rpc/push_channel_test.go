@@ -107,11 +107,11 @@ func TestGroupMemberDeviceReceivesPushForGroupMessage(t *testing.T) {
 func TestChannelMessagePushConversion(t *testing.T) {
 	group := domain.Channel{ID: 70, Title: "Team", Megagroup: true, LinkedChatID: 71}
 	broadcast := domain.Channel{ID: 71, Title: "News", Broadcast: true, LinkedChatID: 70}
-	text := domain.ChannelMessage{ChannelID: 70, ID: 5, SenderUserID: 10, From: domain.Peer{Type: domain.PeerTypeUser, ID: 10}, Body: "hi", Silent: true}
+	text := domain.ChannelMessage{ChannelID: 70, ID: 5, SenderUserID: 10, From: domain.Peer{Type: domain.PeerTypeUser, ID: 10}, Body: "hi", Silent: true, GroupedID: 88}
 
 	got, ok := channelMessagePush(10, domain.SendChannelMessageResult{Channel: group, Message: text})
 	if !ok || got.Chat != (push.Chat{Kind: push.ChatGroup, ID: 70}) || got.ChatTitle != "Team" || got.SenderID != 10 ||
-		got.AuthorName != "" || got.MessageID != 5 || got.Text != "hi" || !got.Silent {
+		got.AuthorName != "" || got.MessageID != 5 || got.Text != "hi" || !got.Silent || got.GroupedID != 88 {
 		t.Fatalf("group message = %+v ok=%v", got, ok)
 	}
 

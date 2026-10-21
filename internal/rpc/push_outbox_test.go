@@ -109,7 +109,7 @@ func TestPushOutboxObserverOnlyForwardsIncomingPrivateMessages(t *testing.T) {
 	var got []push.NewMessage
 	observe := PushOutboxObserver(pushNotifierFunc(func(m push.NewMessage) bool { got = append(got, m); return true }))
 	const me, peer = int64(10), int64(20)
-	incoming := domain.Message{ID: 5, OwnerUserID: me, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: peer}, From: domain.Peer{Type: domain.PeerTypeUser, ID: peer}, Body: "x", Silent: true}
+	incoming := domain.Message{ID: 5, OwnerUserID: me, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: peer}, From: domain.Peer{Type: domain.PeerTypeUser, ID: peer}, Body: "x", Silent: true, GroupedID: 77}
 	deliver := func(eventType domain.UpdateEventType, msg domain.Message) {
 		observe(context.Background(), OutboxDelivery{Item: store.DispatchOutboxItem{TargetUserID: me}, Event: domain.UpdateEvent{UserID: me, Type: eventType, Message: msg}})
 	}
@@ -132,7 +132,7 @@ func TestPushOutboxObserverOnlyForwardsIncomingPrivateMessages(t *testing.T) {
 	}
 	m := got[0]
 	if m.Chat != (push.Chat{Kind: push.ChatPrivate, ID: peer}) || m.SenderID != peer || len(m.Recipients) != 1 || m.Recipients[0] != me ||
-		m.MessageID != 5 || m.Text != "x" || !m.Silent {
+		m.MessageID != 5 || m.Text != "x" || !m.Silent || m.GroupedID != 77 {
 		t.Fatalf("forwarded = %+v", m)
 	}
 }
