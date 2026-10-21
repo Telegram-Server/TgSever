@@ -59,6 +59,12 @@ type Result struct {
 // Sent 报告网关是否接受了这条推送。
 func (r Result) Sent() bool { return r.StatusCode == 200 }
 
+// VoIPCapable 是发送器可选实现的接口：VoIPEnabled 为假时（如 APNs 证书不覆盖 VoIP topic）
+// 推送服务不再排队来电推送。没实现它的发送器视为支持 VoIP。
+type VoIPCapable interface {
+	VoIPEnabled() bool
+}
+
 // Sender 把一条推送请求发到推送网关。APNs 实现在 push/apns；以后加 FCM 只需再写一个实现。
 // err 只表示请求没有得到网关响应（网络错误、超时）；网关拒绝时 err 为 nil，原因在 Result 里。
 type Sender interface {

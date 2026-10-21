@@ -66,6 +66,9 @@ func (s *Service) IncomingCall(call IncomingCall) bool {
 	if call.Updates == nil || call.CalleeID == 0 || call.CalleeID == call.CallerID {
 		return false
 	}
+	if capable, ok := s.sender.(VoIPCapable); ok && !capable.VoIPEnabled() {
+		return false
+	}
 	return s.enqueue("voip", func(ctx context.Context) { s.deliverIncomingCall(ctx, call) })
 }
 

@@ -128,7 +128,7 @@ func TestOpenCertificateExpiry(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cert := writeTestCertUntil(t, tc.notAfter, "co.kaka.tgpro", "co.kaka.tgpro")
+			cert := writeTestCertUntil(t, tc.notAfter, "co.kaka.tgpro", "co.kaka.tgpro", "co.kaka.tgpro.voip")
 			core, logs := observer.New(zap.InfoLevel)
 			sender, status, err := Open(Config{Enabled: true, Topic: "co.kaka.tgpro", CertFile: cert, Now: func() time.Time { return now }}, zap.New(core))
 			if err != nil {

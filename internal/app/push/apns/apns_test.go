@@ -146,7 +146,7 @@ func TestSenderMapsNotificationToAPNsRequest(t *testing.T) {
 	srv.StartTLS()
 	defer srv.Close()
 
-	sender, err := New(Config{Enabled: true, Topic: "co.kaka.tgpro", CertFile: writeTestCert(t, "co.kaka.tgpro", "co.kaka.tgpro")})
+	sender, err := New(Config{Enabled: true, Topic: "co.kaka.tgpro", CertFile: writeTestCert(t, "co.kaka.tgpro", "co.kaka.tgpro", "co.kaka.tgpro.voip")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestSenderSendsZeroExpirationWhenAsked(t *testing.T) {
 	srv.StartTLS()
 	defer srv.Close()
 
-	sender, err := New(Config{Enabled: true, Topic: "co.kaka.tgpro", CertFile: writeTestCert(t, "co.kaka.tgpro", "co.kaka.tgpro")})
+	sender, err := New(Config{Enabled: true, Topic: "co.kaka.tgpro", CertFile: writeTestCert(t, "co.kaka.tgpro", "co.kaka.tgpro", "co.kaka.tgpro.voip")})
 	if err != nil {
 		t.Fatal(err)
 	}

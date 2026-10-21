@@ -35,6 +35,9 @@ Both methods pick the APNs sandbox or production gateway per device from the
 `app_sandbox` flag the client sent at registration. `TELESRV_APNS_TOPIC` is the
 iOS bundle id (for example `co.kaka.tgpro`); VoIP pushes go to
 `<topic>.voip`, so a certificate must list both topics if calls should ring.
+If it does not, startup logs the warning `apns certificate does not cover the
+voip topic; voip push disabled` and only VoIP pushes are turned off; message
+pushes keep working.
 
 ## Certificate setup
 

@@ -3,6 +3,7 @@
 //
 // 两种认证方式二选一：
 //   - 证书（.pem，证书和未加密私钥合在一个文件里）：校验 topic 覆盖 bundle id、检查有效期；
+//     证书不覆盖 bundle id + ".voip" 时只停用 VoIP（启动记警告），普通推送照常；
 //   - .p8 token（Key ID + Team ID + PKCS#8 私钥）：签发 JWT，不会过期，topic 由 Apple 按 Team 授权。
 //
 // 证书已过期不算配置错误：Open 记错误日志并停用推送，服务器照常启动；剩余不足 30 天记警告。
@@ -81,9 +82,23 @@ type Sender struct {
 	development *apns2.Client
 	// certNotAfter 是证书到期时间；.p8 认证时为零值。
 	certNotAfter time.Time
+	// voipDisabled 为真时证书不覆盖 VoIP topic：VoIP 推送不发往网关（返回 ErrVoIPDisabled）。
+	voipDisabled bool
 }
 
-var _ push.Sender = (*Sender)(nil)
+var (
+	_ push.Sender      = (*Sender)(nil)
+	_ push.VoIPCapable = (*Sender)(nil)
+)
+
+// ErrVoIPDisabled 表示证书不覆盖 VoIP topic，VoIP 推送已停用。
+var ErrVoIPDisabled = errors.New("apns: certificate does not cover the voip topic; voip push disabled")
+
+// VoIPEnabled 报告能否发 VoIP 推送：.p8 认证恒为真（topic 由 Apple 按 Team 授权，本地无从检查），
+// 证书认证要求证书覆盖 topic + ".voip"。
+func (s *Sender) VoIPEnabled() bool {
+	return s != nil && !s.voipDisabled
+}
 
 // New 校验配置并创建发送器。未启用时返回 (nil, nil)。错误信息带上出问题的环境变量名。
 // 证书已过期时返回 *CertificateExpiredError（用 Open 把它变成“停用推送”）。
@@ -136,6 +151,10 @@ func Open(cfg Config, log *zap.Logger) (*Sender, Status, error) {
 		return nil, Status{}, err
 	}
 	status := Status{CertNotAfter: sender.certNotAfter}
+	if !sender.VoIPEnabled() {
+		log.Warn("apns certificate does not cover the voip topic; voip push disabled",
+			zap.String("voip_topic", sender.topic+".voip"), zap.String("cert_file", cfg.CertFile))
+	}
 	if notAfter, ok := sender.CertificateNotAfter(); ok {
 		now := time.Now
 		if cfg.Now != nil {
@@ -209,6 +228,7 @@ func newCertSender(topic, path string, now time.Time) (*Sender, error) {
 		production:   apns2.NewClient(cert).Production(),
 		development:  apns2.NewClient(cert).Development(),
 		certNotAfter: leaf.NotAfter,
+		voipDisabled: !slices.Contains(topics, topic+".voip"),
 	}, nil
 }
 
@@ -266,6 +286,9 @@ func (s *Sender) Send(ctx context.Context, n push.Notification) (push.Result, er
 		PushType:    apns2.PushTypeAlert,
 	}
 	if n.Type == push.PushTypeVoIP {
+		if s.voipDisabled {
+			return push.Result{}, ErrVoIPDisabled
+		}
 		note.Topic = s.topic + ".voip"
 		note.PushType = apns2.PushTypeVOIP
 	}
