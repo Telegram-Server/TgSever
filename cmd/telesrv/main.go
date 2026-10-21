@@ -2229,6 +2229,7 @@ func run(logger *zap.Logger) error {
 		pushGauges.Enabled = true
 		pushGauges.QueueLength = pushService.QueueLength
 		pushGauges.QueueCapacity = pushService.QueueCapacity()
+		router.SetCallPushNotifier(pushService)
 		logger.Info("apns push enabled", zap.String("topic", cfg.APNsTopic))
 	}
 	metricRegistry.AddGaugeProvider(obsmetrics.PushGauges(pushGauges))
