@@ -60,6 +60,11 @@ func (s *AuthorizationStore) ClearDeviceLimit(ctx context.Context, userID int64)
 	return n > 0, nil
 }
 
+// CheckDeviceLimit 是不加锁的只读预检，规则与绑定事务里的 checkDeviceLimit 相同。
+func (s *AuthorizationStore) CheckDeviceLimit(ctx context.Context, userID int64, authKeyID [8]byte) error {
+	return checkDeviceLimit(ctx, s.q, userID, authKeyIDToInt64(authKeyID))
+}
+
 // checkDeviceLimit 在绑定事务里、用户行已加锁之后执行：账号有上限（bot 不受限）且已完成
 // 登录的其它授权数达到上限时返回 domain.ErrDeviceLimitReached。同一用户的绑定都先拿用户锁，
 // 所以"计数 + 插入"不会被并发绑定穿插。

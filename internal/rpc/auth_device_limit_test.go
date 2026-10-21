@@ -139,6 +139,51 @@ func TestDeviceLimitReachedOnRecoverPasswordMapsToAuthorizationsTooMuch(t *testi
 	assertRPCError(t, "auth.recoverPassword", err, 400, "AUTHORIZATIONS_TOO_MUCH")
 }
 
+// fullDeviceLimitAuthService 的预检报告名额已满；其余行为同 captureAuthService（绑定、转正都会成功），
+// 所以 RPC 只有在有副作用的步骤之前先做预检才会拒绝。
+type fullDeviceLimitAuthService struct{ *captureAuthService }
+
+func (fullDeviceLimitAuthService) CheckDeviceLimit(context.Context, [8]byte, int64) error {
+	return errWrappedDeviceLimitReached
+}
+
+// recordingRecoveryAccount 记录密码找回是否真的执行（找回会消耗找回码并重置 2FA 密码）。
+type recordingRecoveryAccount struct {
+	AccountService
+	recoverCalls int
+}
+
+func (a *recordingRecoveryAccount) RecoverPassword(context.Context, int64, string, *domain.PasswordInputSettings) error {
+	a.recoverCalls++
+	return nil
+}
+
+// 名额已满时 auth.recoverPassword 在动 2FA 密码之前就拒绝：找回码不被消耗、密码不变。
+func TestDeviceLimitReachedRefusesRecoverPasswordBeforeResettingIt(t *testing.T) {
+	authSvc := fullDeviceLimitAuthService{&captureAuthService{pendingPasswordUserID: 42, pendingPassword: true}}
+	account := &recordingRecoveryAccount{}
+	r := New(Config{}, Deps{Auth: authSvc, Account: account}, zaptest.NewLogger(t), clock.System)
+	_, err := r.onAuthRecoverPassword(pendingPasswordContext(), &tg.AuthRecoverPasswordRequest{Code: "123456"})
+	assertRPCError(t, "auth.recoverPassword", err, 400, "AUTHORIZATIONS_TOO_MUCH")
+	if account.recoverCalls != 0 {
+		t.Fatalf("RecoverPassword calls=%d, want 0 (refused before the password changes)", account.recoverCalls)
+	}
+	if authSvc.completePasswordCount != 0 {
+		t.Fatalf("CompletePasswordSignIn calls=%d, want 0", authSvc.completePasswordCount)
+	}
+}
+
+// 名额已满时扫码确认在清掉新设备的更新状态之前就拒绝。
+func TestDeviceLimitReachedRefusesAcceptLoginTokenBeforeClearingState(t *testing.T) {
+	updates := &captureUpdates{}
+	r := New(Config{}, Deps{Auth: fullDeviceLimitAuthService{&captureAuthService{}}, Updates: updates}, zaptest.NewLogger(t), clock.System)
+	_, err := acceptLoginTokenFromOtherDevice(t, r, 1000000109)
+	assertRPCError(t, "auth.acceptLoginToken", err, 400, "AUTHORIZATIONS_TOO_MUCH")
+	if updates.cleared {
+		t.Fatalf("new device update state cleared for %x, want untouched", updates.clearedAuthKeyID)
+	}
+}
+
 // 扫码确认的其它错误保持原来的映射：系统账号 → AUTH_KEY_UNREGISTERED，其余 → 内部错误。
 func TestAcceptLoginTokenKeepsOtherErrorMappings(t *testing.T) {
 	const userID = int64(1000000108)

@@ -15,6 +15,10 @@ type DeviceLimitStore interface {
 	SetDeviceLimit(ctx context.Context, userID int64, limit int) error
 	// ClearDeviceLimit 清除账号的设备上限；cleared 报告之前是否设置过。
 	ClearDeviceLimit(ctx context.Context, userID int64) (cleared bool, err error)
+	// CheckDeviceLimit 只读地预检：把 authKeyID 绑定（或转正）为 userID 的已完成授权是否会
+	// 超出上限，超限返回 domain.ErrDeviceLimitReached。规则与 Bind / MarkPasswordPassed 相同；
+	// 它不加锁，真正的执行点仍是那两处，这里只用于在有副作用的步骤（如密码找回）之前先拒绝。
+	CheckDeviceLimit(ctx context.Context, userID int64, authKeyID [8]byte) error
 }
 
 // AuthorizationUserLinker 是可选的进程内组合钩子：授权与用户分别存放在两个内存对象里的

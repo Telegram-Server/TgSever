@@ -139,6 +139,45 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		}
 	})
 
+	t.Run("check reports a reached limit without writing", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		first, pending, next := newDeviceLimitKey(t, f), newDeviceLimitKey(t, f), newDeviceLimitKey(t, f)
+		bindDevice(t, f, u.ID, first, false)
+		bindDevice(t, f, u.ID, pending, true)
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, next); err != nil {
+			t.Fatalf("check without a limit: %v", err)
+		}
+		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, 1); err != nil {
+			t.Fatalf("set device limit: %v", err)
+		}
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, next); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("check for a new key at the limit err=%v, want ErrDeviceLimitReached", err)
+		}
+		// 待完成的授权自己转正：名额已被 first 占满，同样超限。
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, pending); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("check for the pending key at the limit err=%v, want ErrDeviceLimitReached", err)
+		}
+		// 已占名额的 auth key 自身不算。
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, first); err != nil {
+			t.Fatalf("check for the key already holding the slot: %v", err)
+		}
+		// 只读：pending 授权仍在、仍待完成。
+		got, found, err := f.Auths.ByAuthKey(ctx, pending)
+		if err != nil || !found || !got.PasswordPending {
+			t.Fatalf("pending authorization after check=%+v found=%v err=%v, want unchanged", got, found, err)
+		}
+
+		bot := f.NewBot(t)
+		bindDevice(t, f, bot.ID, newDeviceLimitKey(t, f), false)
+		if err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
+			t.Fatalf("set device limit on bot: %v", err)
+		}
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, bot.ID, newDeviceLimitKey(t, f)); err != nil {
+			t.Fatalf("check for a bot over its limit: %v", err)
+		}
+	})
+
 	t.Run("promoting without a limit or for a bot is not limited", func(t *testing.T) {
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)

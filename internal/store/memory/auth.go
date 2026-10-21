@@ -397,23 +397,27 @@ func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) e
 // bindLocked 在同一把锁下完成"计数 + 写入"：账号有设备上限时，已完成登录的其它授权
 // （不算当前 auth key 自身、不算 password_pending）达到上限就拒绝，不写入。
 func (s *AuthorizationStore) bindLocked(a domain.Authorization, limited bool) error {
-	if limited {
-		if limit, ok := s.deviceLimits[a.UserID]; ok && s.completedOthersLocked(a.UserID, a.AuthKeyID) >= limit {
-			return domain.ErrDeviceLimitReached
-		}
+	if limited && s.deviceLimitReachedLocked(a.UserID, a.AuthKeyID) {
+		return domain.ErrDeviceLimitReached
 	}
 	s.m[a.AuthKeyID] = a
 	return nil
 }
 
-func (s *AuthorizationStore) completedOthersLocked(userID int64, self [8]byte) int {
+// deviceLimitReachedLocked 报告账号有上限且已完成登录的其它授权（不算 self、不算
+// password_pending）已达上限。调用方持有 mu，并已用 deviceLimitApplies 排除 bot。
+func (s *AuthorizationStore) deviceLimitReachedLocked(userID int64, self [8]byte) bool {
+	limit, ok := s.deviceLimits[userID]
+	if !ok {
+		return false
+	}
 	n := 0
 	for id, existing := range s.m {
 		if existing.UserID == userID && id != self && !existing.PasswordPending {
 			n++
 		}
 	}
-	return n
+	return n >= limit
 }
 
 // LinkAuthorizationUsers 接上同一份用户数据：Bind 据此跳过 bot，SetDeviceLimit 据此拒绝
@@ -473,6 +477,19 @@ func (s *AuthorizationStore) SetDeviceLimit(ctx context.Context, userID int64, l
 		s.deviceLimits = make(map[int64]int)
 	}
 	s.deviceLimits[userID] = limit
+	return nil
+}
+
+func (s *AuthorizationStore) CheckDeviceLimit(ctx context.Context, userID int64, authKeyID [8]byte) error {
+	limited, err := s.deviceLimitApplies(ctx, userID)
+	if err != nil || !limited {
+		return err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.deviceLimitReachedLocked(userID, authKeyID) {
+		return domain.ErrDeviceLimitReached
+	}
 	return nil
 }
 
@@ -560,11 +577,9 @@ func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte,
 	if !ok || expectedUserID == 0 || a.UserID != expectedUserID || !a.PasswordPending {
 		return store.ErrAuthorizationStateChanged
 	}
-	if limited {
-		if limit, ok := s.deviceLimits[a.UserID]; ok && s.completedOthersLocked(a.UserID, id) >= limit {
-			s.removeLocked(id)
-			return domain.ErrDeviceLimitReached
-		}
+	if limited && s.deviceLimitReachedLocked(a.UserID, id) {
+		s.removeLocked(id)
+		return domain.ErrDeviceLimitReached
 	}
 	now := time.Now()
 	a.PasswordPending = false

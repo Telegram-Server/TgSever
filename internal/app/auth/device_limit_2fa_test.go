@@ -88,3 +88,28 @@ func TestDeviceLimitOnlyFirstOfTwoPendingTwoFactorDevicesCompletes(t *testing.T)
 	}
 	f.assertDevices(t, u.ID, 2)
 }
+
+// CheckDeviceLimit 是 2FA 收尾前的只读预检（密码找回会先改掉 2FA 密码，必须在那之前拒绝）：
+// 名额已满时报告超限，且不删除、不转正这条待完成的授权。
+func TestDeviceLimitCheckBeforePasswordRecoveryIsReadOnly(t *testing.T) {
+	f := newDeviceLimitFixture(t)
+	ctx := context.Background()
+	const phone = "15550106004"
+	u := f.existingUser(t, phone)
+	f.setLimit(t, u.ID, 1)
+	f.enableTwoFactor(t, u.ID)
+	f.signInToTwoFactorOn(t, phone, deviceKey(1))
+	if err := f.svc.CheckDeviceLimit(ctx, deviceKey(1), u.ID); err != nil {
+		t.Fatalf("check with a free slot: %v", err)
+	}
+	f.signInToTwoFactorOn(t, phone, deviceKey(2))
+	if err := f.svc.CompletePasswordSignIn(ctx, deviceKey(2), u.ID); err != nil {
+		t.Fatalf("complete 2FA on the second device: %v", err)
+	}
+	if err := f.svc.CheckDeviceLimit(ctx, deviceKey(1), u.ID); !errors.Is(err, domain.ErrDeviceLimitReached) {
+		t.Fatalf("check with the slots full err=%v, want ErrDeviceLimitReached", err)
+	}
+	if id, found, err := f.svc.PendingPasswordUserID(ctx, deviceKey(1)); err != nil || !found || id != u.ID {
+		t.Fatalf("pending device after check user=%d found=%v err=%v, want still pending", id, found, err)
+	}
+}

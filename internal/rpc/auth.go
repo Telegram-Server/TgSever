@@ -306,6 +306,14 @@ func (r *Router) onAuthAcceptLoginToken(ctx context.Context, token []byte) (*tg.
 	authz := accept.authz
 	authz.UserID = userID
 	authz.PasswordPending = false
+	// 先预检设备上限，名额已满时不去清新设备的更新状态；绑定时 store 仍在锁下再查一次。
+	if err := r.deps.Auth.CheckDeviceLimit(ctx, authz.AuthKeyID, userID); err != nil {
+		r.loginTokens.failAccept(token)
+		if errors.Is(err, domain.ErrDeviceLimitReached) {
+			return nil, authorizationsTooMuchErr()
+		}
+		return nil, internalErr()
+	}
 	if err := r.clearAuthKeyState(ctx, authz.AuthKeyID); err != nil {
 		r.loginTokens.failAccept(token)
 		return nil, internalErr()
@@ -725,6 +733,13 @@ func (r *Router) onAuthRecoverPassword(ctx context.Context, req *tg.AuthRecoverP
 			return nil, err
 		}
 		input = &converted
+	}
+	// 密码找回会消耗找回码并重置 2FA 密码，所以 2FA 登录在那之前先预检设备上限；
+	// 转正（completePendingPasswordSignIn）时仍在锁下再检查一次，兜住并发登录。
+	if pending && r.deps.Auth != nil {
+		if err := r.deps.Auth.CheckDeviceLimit(ctx, authKeyID, userID); err != nil {
+			return nil, completePasswordSignInErr(err)
+		}
 	}
 	if err := r.deps.Account.RecoverPassword(ctx, userID, req.Code, input); err != nil {
 		return nil, passwordErr(err)

@@ -164,6 +164,10 @@ func (s *blockingUserAuthService) CompletePasswordSignIn(context.Context, [8]byt
 	return nil
 }
 
+func (s *blockingUserAuthService) CheckDeviceLimit(context.Context, [8]byte, int64) error {
+	return nil
+}
+
 func (s *captureAuthService) BindTempAuthKey(ctx context.Context, _ int64, binding domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error) {
 	s.bindTempCalls++
 	s.bindTempLayer = LayerFrom(ctx)
@@ -360,6 +364,10 @@ func (s *captureAuthService) ResetAuthorizations(context.Context, int64, [8]byte
 
 func (s *captureAuthService) PendingPasswordUserID(context.Context, [8]byte) (int64, bool, error) {
 	return s.pendingPasswordUserID, s.pendingPassword, nil
+}
+
+func (s *captureAuthService) CheckDeviceLimit(context.Context, [8]byte, int64) error {
+	return nil
 }
 
 func (s *captureAuthService) CompletePasswordSignIn(_ context.Context, authKeyID [8]byte, userID int64) error {
