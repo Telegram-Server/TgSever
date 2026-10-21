@@ -316,6 +316,10 @@ func (r *Router) onAuthAcceptLoginToken(ctx context.Context, token []byte) (*tg.
 		if errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 			return nil, authKeyUnregisteredErr()
 		}
+		// 账号设备数已达上限：扫码的这台已登录设备收到 AUTHORIZATIONS_TOO_MUCH，新设备不会登录。
+		if errors.Is(err, domain.ErrDeviceLimitReached) {
+			return nil, authorizationsTooMuchErr()
+		}
 		return nil, internalErr()
 	}
 	if bound.UserID == 0 {

@@ -176,3 +176,45 @@ func TestDeviceLimitDoesNotApplyToBots(t *testing.T) {
 	}
 	f.assertDevices(t, bot.ID, 3)
 }
+
+// 设备上限（#107）：登录密码（FinishVerifiedSignIn）、Passkey（BindVerifiedLogin）、扫码确认
+// （AcceptLoginToken）与验证码登录走同一个绑定步骤，达到上限时都返回 domain.ErrDeviceLimitReached，
+// 且新设备不会被绑定。
+func TestDeviceLimitRejectsEveryOtherLoginEntryOnNewDeviceAtLimit(t *testing.T) {
+	entries := []struct {
+		name  string
+		phone string
+		login func(f deviceLimitFixture, u domain.User, key [8]byte) error
+	}{
+		{"login password", "15550107001", func(f deviceLimitFixture, u domain.User, key [8]byte) error {
+			_, err := f.svc.FinishVerifiedSignIn(context.Background(), domain.Authorization{AuthKeyID: key}, u)
+			return err
+		}},
+		{"passkey", "15550107002", func(f deviceLimitFixture, u domain.User, key [8]byte) error {
+			_, err := f.svc.BindVerifiedLogin(context.Background(), domain.Authorization{AuthKeyID: key}, u.ID)
+			return err
+		}},
+		{"qr accept", "15550107003", func(f deviceLimitFixture, u domain.User, key [8]byte) error {
+			_, err := f.svc.AcceptLoginToken(context.Background(), domain.Authorization{AuthKeyID: key}, u.ID)
+			return err
+		}},
+	}
+	for _, entry := range entries {
+		t.Run(entry.name, func(t *testing.T) {
+			f := newDeviceLimitFixture(t)
+			u := f.existingUser(t, entry.phone)
+			f.setLimit(t, u.ID, 1)
+			if err := entry.login(f, u, deviceKey(1)); err != nil {
+				t.Fatalf("first device below the limit: %v", err)
+			}
+			err := entry.login(f, u, deviceKey(2))
+			if !errors.Is(err, domain.ErrDeviceLimitReached) {
+				t.Fatalf("second device err=%v, want ErrDeviceLimitReached", err)
+			}
+			f.assertDevices(t, u.ID, 1)
+			if _, found, _ := f.svc.Authorization(context.Background(), deviceKey(2)); found {
+				t.Fatal("rejected device was bound")
+			}
+		})
+	}
+}
