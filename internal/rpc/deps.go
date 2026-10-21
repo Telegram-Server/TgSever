@@ -1175,35 +1175,38 @@ type Deps struct {
 	BootstrapUpdates             store.BootstrapUpdateJobStore
 	BotAPIUpdates                store.BotAPIUpdateStore
 	BotCallbacks                 store.BotCallbackRegistryStore
-	Contacts                     ContactsService
-	Dialogs                      DialogsService
-	Chatlists                    ChatlistsService
-	Messages                     MessagesService
-	Translation                  TranslationService
-	Transcriptions               TranscriptionService
-	Stories                      StoriesService
-	Channels                     ChannelsService
-	Communities                  CommunitiesService
-	Files                        FilesService
-	PremiumPromo                 PremiumPromoService
-	Premium                      PremiumService
-	Bots                         BotsService
-	ServiceBotCallbacks          ServiceBotCallbacks
-	ServiceBotInlineResults      ServiceBotInlineResults
-	Polls                        PollsService
-	Phone                        PhoneService
-	GroupCalls                   GroupCallsService
-	LiveStreams                  LiveStreamsService
-	SFU                          sfu.Service
-	TURN                         turnsrv.Service
-	LangPack                     LangPackService
-	Sessions                     SessionBinder
-	Inline                       store.InlineRegistryStore
-	Limiter                      RateLimiter
-	Metrics                      Metrics
-	SecretChats                  SecretChatService
-	Stars                        StarsService
-	Gifts                        GiftsService
+	// PushDevices 保存 account.registerDevice 的设备推送登记（与 APNs 是否配置无关）。
+	// 为 nil 时 registerDevice/unregisterDevice 只回 true、不保存。
+	PushDevices             store.PushDeviceStore
+	Contacts                ContactsService
+	Dialogs                 DialogsService
+	Chatlists               ChatlistsService
+	Messages                MessagesService
+	Translation             TranslationService
+	Transcriptions          TranscriptionService
+	Stories                 StoriesService
+	Channels                ChannelsService
+	Communities             CommunitiesService
+	Files                   FilesService
+	PremiumPromo            PremiumPromoService
+	Premium                 PremiumService
+	Bots                    BotsService
+	ServiceBotCallbacks     ServiceBotCallbacks
+	ServiceBotInlineResults ServiceBotInlineResults
+	Polls                   PollsService
+	Phone                   PhoneService
+	GroupCalls              GroupCallsService
+	LiveStreams             LiveStreamsService
+	SFU                     sfu.Service
+	TURN                    turnsrv.Service
+	LangPack                LangPackService
+	Sessions                SessionBinder
+	Inline                  store.InlineRegistryStore
+	Limiter                 RateLimiter
+	Metrics                 Metrics
+	SecretChats             SecretChatService
+	Stars                   StarsService
+	Gifts                   GiftsService
 	// Wallet 是 Layer 230 应用内 TON 钱包；为 nil 时 wallet.* 回 WALLET_UNAVAILABLE。
 	Wallet  WalletService
 	Passkey PasskeyService

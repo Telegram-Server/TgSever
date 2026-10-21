@@ -223,3 +223,15 @@ type ChannelMessageIDAllocator interface {
 	NextChannelMessageID(ctx context.Context, channelID int64) (int, error)
 	CurrentChannelMessageID(ctx context.Context, channelID int64) (int, error)
 }
+
+// MaxChannelMemberPage 是 ChannelMemberPager 单页的上限。
+const MaxChannelMemberPage = 5000
+
+// ChannelMemberPager 按 user_id keyset 分页列出频道的全部活跃成员（离线推送等后台扇出用）。
+// 是内部调用：不做 viewer 校验，也不受实时扇出上限 MaxChannelRealtimeFanout 约束。
+type ChannelMemberPager interface {
+	// ListActiveChannelMemberIDsAfter 返回 user_id > afterUserID 的活跃成员，按 user_id 升序，
+	// 最多 limit 个（limit <= 0 或超过 MaxChannelMemberPage 时取 MaxChannelMemberPage）。
+	// 频道不存在时返回空。
+	ListActiveChannelMemberIDsAfter(ctx context.Context, channelID, afterUserID int64, limit int) ([]int64, error)
+}

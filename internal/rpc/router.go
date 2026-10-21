@@ -144,11 +144,13 @@ type Config struct {
 // 与注册见 help.go / auth.go / users.go / updates.go。Router 本身只负责协议外壳：
 // 剥离 invokeWithLayer / initConnection / invokeWithoutUpdates / invokeAfter*，并兜底未注册 RPC。
 type Router struct {
-	cfg               Config
-	appLinks          links.AppLinkBuilder
-	log               *zap.Logger
-	clock             clock.Clock
-	deps              Deps
+	cfg      Config
+	appLinks links.AppLinkBuilder
+	log      *zap.Logger
+	clock    clock.Clock
+	deps     Deps
+	// channelPush 是群组/频道离线推送的入口（router 创建后由 SetChannelPushNotifier 注入，#98）。
+	channelPush       notifierSlot[ChannelPushNotifier]
 	dispatcher        *tlprofile.Dispatcher
 	clientInfoMu      sync.RWMutex
 	clientInfo        map[clientInfoSessionKey]clientSessionInfo
@@ -232,6 +234,10 @@ type Router struct {
 	// selfPhotoEchoPushDelay 是头像变更后向当前 session 回显 updateUser 的延迟
 	// （见 photos.go pushSelfPhotoUpdateToCurrentSession）；<=0 时同步推送（测试用）。
 	selfPhotoEchoPushDelay time.Duration
+	// pushDeletes 是私聊删除同步推送的入口（SetPushDeleteNotifier 注入，#100）；空表示不推送。
+	pushDeletes notifierSlot[PushDeleteNotifier]
+	// callPush 是来电 VoIP 推送（#99，SetCallPushNotifier 注入，见 phone_voip_push.go）；空表示未启用。
+	callPush notifierSlot[CallPushNotifier]
 }
 
 type clientInfoSessionKey struct {

@@ -925,7 +925,7 @@ func (r *Router) onAuthLogOut(ctx context.Context) (*tg.AuthLoggedOut, error) {
 	r.unbindAuthKey(id)
 	// bot 登出不广播 offline（bot 无 presence 语义，与登录路径对称）。
 	if userErr == nil && authorized && userID != 0 && !r.userIsBot(ctx, userID) {
-		status, _ := r.setPresenceFromContext(ctx, userID, true, presencePersistSync)
+		status, _ := r.setPresenceFromContext(ctx, userID, true, presencePersistSync, presenceReportBackground)
 		r.pushUserStatus(ctx, userID, status)
 		// 登出后主动清掉本 session 的 presence 条目：连接通常不断开（客户端回登录页），
 		// 上面 unbindAuthKey 已把连接 userID 清 0，TCP 真正断开时 SessionOffline 因 userID=0

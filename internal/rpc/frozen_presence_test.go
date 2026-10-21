@@ -76,11 +76,15 @@ func TestFrozenPresenceNotifyDropsTrackerAndBroadcastsEmptyStatus(t *testing.T) 
 	r := New(Config{}, Deps{Sessions: sessions}, zaptest.NewLogger(t), clock.System)
 	now := time.Now()
 	key := presenceSessionKey{sessionID: 1}
-	r.presence.setSessionStatus(key, userID, domain.UserStatus{
+	authKeyID := [8]byte{0xf1}
+	r.presence.setSessionReport(key, userID, authKeyID, domain.UserStatus{
 		Kind:      domain.UserStatusOnline,
 		Expires:   int(now.Add(userOnlineTTL).Unix()),
 		WasOnline: int(now.Unix()),
-	})
+	}, presenceReportForeground)
+	if !r.AuthorizationInForeground(authKeyID) {
+		t.Fatal("test precondition: session report must record the authorization in foreground")
+	}
 	if err := r.NotifyAccountFreezeChanged(context.Background(), domain.AccountFreeze{
 		UserID: userID,
 		Frozen: true,
@@ -91,6 +95,9 @@ func TestFrozenPresenceNotifyDropsTrackerAndBroadcastsEmptyStatus(t *testing.T) 
 	}
 	if st, ok := r.presence.statusFor(userID, int(now.Unix())); ok {
 		t.Fatalf("frozen presence entry survived freeze: %+v", st)
+	}
+	if r.AuthorizationInForeground(authKeyID) {
+		t.Fatal("frozen account's authorization still reported in foreground")
 	}
 	if !r.isFrozenPresenceUser(userID) {
 		t.Fatal("freeze mask not set")
@@ -186,14 +193,14 @@ func TestFrozenPresenceRenewalDoesNotRefreshLastSeen(t *testing.T) {
 	updater := &captureLastSeenUpdater{}
 	r := New(Config{}, Deps{Users: updater}, zaptest.NewLogger(t), clock.System)
 	r.applyFrozenPresence(userID, true)
-	if _, notify := r.setPresenceFromContext(WithSessionID(WithUserID(context.Background(), userID), 33), userID, false, presencePersistSync); !notify {
+	if _, notify := r.setPresenceFromContext(WithSessionID(WithUserID(context.Background(), userID), 33), userID, false, presencePersistSync, presenceReportNone); !notify {
 		t.Fatal("frozen renewal should notify once")
 	}
 	if updater.calls != 0 {
 		t.Fatalf("frozen renewal persisted last seen %d times, want 0", updater.calls)
 	}
 	liveID := userID + 100
-	if _, notify := r.setPresenceFromContext(WithSessionID(WithUserID(context.Background(), liveID), 34), liveID, false, presencePersistSync); !notify {
+	if _, notify := r.setPresenceFromContext(WithSessionID(WithUserID(context.Background(), liveID), 34), liveID, false, presencePersistSync, presenceReportNone); !notify {
 		t.Fatal("live renewal should notify once")
 	}
 	if updater.calls != 1 {

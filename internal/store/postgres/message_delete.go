@@ -176,6 +176,8 @@ func (s *MessageStore) finishDeleteMessagesTx(ctx context.Context, db sqlcgen.DB
 	}
 	peersByOwner := make(map[int64]map[domain.Peer]struct{})
 	idsByOwner := make(map[int64][]int)
+	// idsByOwnerPeer 记下每个 owner 在各会话删了哪些 id，供删除同步推送使用（事件本身不带会话）。
+	idsByOwnerPeer := make(map[int64]map[domain.Peer][]int)
 	incomingDeletedByPeer := make(deletedUnreadMessages)
 	for _, row := range rows {
 		if row.ownerUserID == 0 || row.boxID == 0 {
@@ -187,6 +189,10 @@ func (s *MessageStore) finishDeleteMessagesTx(ctx context.Context, db sqlcgen.DB
 				peersByOwner[row.ownerUserID] = make(map[domain.Peer]struct{})
 			}
 			peersByOwner[row.ownerUserID][row.peer] = struct{}{}
+			if idsByOwnerPeer[row.ownerUserID] == nil {
+				idsByOwnerPeer[row.ownerUserID] = make(map[domain.Peer][]int)
+			}
+			idsByOwnerPeer[row.ownerUserID][row.peer] = append(idsByOwnerPeer[row.ownerUserID][row.peer], row.boxID)
 		}
 		if row.peer.ID != 0 && row.messageSenderID != 0 && row.messageSenderID != row.ownerUserID {
 			key := deletedOwnerPeerKey{userID: row.ownerUserID, peer: row.peer}
@@ -273,6 +279,7 @@ func (s *MessageStore) finishDeleteMessagesTx(ctx context.Context, db sqlcgen.DB
 			Pts:        pts,
 			PtsCount:   totalPtsCount,
 			Events:     make([]domain.UpdateEvent, 0, 1+len(corrections)+2),
+			ByPeer:     domain.GroupMessageIDsByPeer(idsByOwnerPeer[userID]),
 		}
 		dispatchAuthKeyID := [8]byte{}
 		dispatchSessionID := int64(0)

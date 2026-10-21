@@ -70,6 +70,7 @@ func (d *ExpiryDispatcher) dispatchPrivate(ctx context.Context, now int) bool {
 			d.log.Warn("delete expired private messages", zap.Int64("owner_user_id", req.OwnerUserID), zap.Ints("ids", req.IDs), zap.Error(err))
 			continue
 		}
+		d.router.notifyPushDeletes(res)
 		if d.router.hasReliableUpdateDispatch() {
 			continue
 		}

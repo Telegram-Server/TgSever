@@ -179,6 +179,26 @@ services:
       TELESRV_UPDATE_FILES_DIR: ${TELESRV_UPDATE_FILES_DIR:-}
       TELESRV_UPDATE_ROOT_PUBLIC_KEY: ${TELESRV_UPDATE_ROOT_PUBLIC_KEY:-}
       TELESRV_UPDATE_PUBLIC_URL: ${TELESRV_UPDATE_PUBLIC_URL:-}
+      # iOS offline push (APNs) is off unless TELESRV_APNS_ENABLED=true. The
+      # credentials are not baked into the image: put the push certificate
+      # (certificate + unencrypted private key in one PEM file) or the .p8
+      # key in deploy/docker/apns-keys, readable by uid 10001, which is
+      # mounted read-only at /etc/telesrv-apns (see volumes below). Set
+      # either TELESRV_APNS_CERT_FILE=/etc/telesrv-apns/<file>.pem or
+      # TELESRV_APNS_KEY_FILE=/etc/telesrv-apns/AuthKey_<id>.p8 with KEY_ID
+      # and TEAM_ID, never both. TOPIC is the iOS bundle id and must be listed
+      # in the certificate; a bad configuration stops the server at startup,
+      # an expired certificate only disables push. See docs/apns-push.md.
+      TELESRV_APNS_ENABLED: ${TELESRV_APNS_ENABLED:-false}
+      TELESRV_APNS_TOPIC: ${TELESRV_APNS_TOPIC:-}
+      TELESRV_APNS_CERT_FILE: ${TELESRV_APNS_CERT_FILE:-}
+      TELESRV_APNS_KEY_FILE: ${TELESRV_APNS_KEY_FILE:-}
+      TELESRV_APNS_KEY_ID: ${TELESRV_APNS_KEY_ID:-}
+      TELESRV_APNS_TEAM_ID: ${TELESRV_APNS_TEAM_ID:-}
+      TELESRV_PUSH_QUEUE_SIZE: ${TELESRV_PUSH_QUEUE_SIZE:-4096}
+      TELESRV_PUSH_WORKERS: ${TELESRV_PUSH_WORKERS:-4}
+      TELESRV_PUSH_SEND_TIMEOUT: ${TELESRV_PUSH_SEND_TIMEOUT:-10s}
+      TELESRV_PUSH_MAX_RETRIES: ${TELESRV_PUSH_MAX_RETRIES:-3}
       TELESRV_SFU_ENABLE: ${TELESRV_SFU_ENABLE:-true}
       TELESRV_SFU_UDP_PORT: ${TELESRV_SFU_UDP_PORT:-12399}
       TELESRV_SFU_ADVERTISE_IP: ${TELESRV_SFU_ADVERTISE_IP:?set TELESRV_SFU_ADVERTISE_IP in deploy/docker/.env}
@@ -225,6 +245,11 @@ services:
       # server_updates volume, so a key kept there could be swapped by a
       # compromised server. Empty (only .gitkeep) while updates are off.
       - ./update-keys:/etc/telesrv-updates:ro
+      # APNs push certificate or .p8 key, read-only: the server never writes
+      # here, and a renewed certificate is swapped on the host followed by a
+      # container restart (it is read once at startup). Files must be readable
+      # by uid 10001. Empty (only .gitkeep) while push is off.
+      - ./apns-keys:/etc/telesrv-apns:ro
     network_mode: host
     healthcheck:
       test:
