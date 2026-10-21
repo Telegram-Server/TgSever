@@ -122,8 +122,8 @@ func (q *Queries) PromotePendingAuthorization(ctx context.Context, arg PromotePe
 }
 
 const setDeviceLimit = `-- name: SetDeviceLimit :exec
-INSERT INTO account_restrictions (user_id, device_limit)
-VALUES ($1, $2)
+INSERT INTO account_restrictions (user_id, device_limit, freeze_recorded)
+VALUES ($1, $2, false)
 ON CONFLICT (user_id) DO UPDATE
 SET device_limit = EXCLUDED.device_limit
 `
@@ -133,7 +133,8 @@ type SetDeviceLimitParams struct {
 	DeviceLimit *int32
 }
 
-// 只写 device_limit：冻结相关的列、version 与 updated_at 属于冻结状态，不跟着变。
+// 只写 device_limit：冻结相关的列、version 与 updated_at 属于冻结状态，不跟着变。新插入的行
+// 只为上限而生，freeze_recorded = false，冻结读路径不把它当成冻结记录。
 func (q *Queries) SetDeviceLimit(ctx context.Context, arg SetDeviceLimitParams) error {
 	_, err := q.db.Exec(ctx, setDeviceLimit, arg.UserID, arg.DeviceLimit)
 	return err

@@ -1124,13 +1124,13 @@ func (s *readStore) deviceLimit(ctx context.Context, userID int64) (*int, error)
 }
 
 // restriction 读冻结状态。设备上限（#104）也存在 account_restrictions，只为上限建出来的行
-// 从没被冻结命令写过（frozen=false 且没有 command_id），不算"受限制"。
+// （freeze_recorded = false）不是冻结记录，不算"受限制"。
 func (s *readStore) restriction(ctx context.Context, userID int64) (RestrictionRow, bool, error) {
 	var r RestrictionRow
 	err := s.pool.QueryRow(ctx, `
 SELECT frozen, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at
 FROM account_restrictions
-WHERE user_id = $1 AND (frozen OR command_id <> '')`, userID).Scan(
+WHERE user_id = $1 AND freeze_recorded`, userID).Scan(
 		&r.Frozen, &r.Since, &r.Until, &r.AppealURL,
 		&r.Reason, &r.Actor, &r.CommandID, &r.UpdatedAt,
 	)

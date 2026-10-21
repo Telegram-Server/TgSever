@@ -60,4 +60,16 @@ VALUES ($1, $2, '', 'Staff', '', '', now(), now())`, userID, userID); err != nil
 	if cleared.DeviceLimit != nil {
 		t.Fatalf("DeviceLimit after clearing = %d, want nil", *cleared.DeviceLimit)
 	}
+
+	// 迁移前就有的未冻结行（command_id 为空，例如 0032 的旧发送限制行）仍是冻结记录，照旧显示。
+	if _, err := pool.Exec(ctx, `UPDATE account_restrictions SET freeze_recorded = true, reason = 'legacy review' WHERE user_id = $1`, userID); err != nil {
+		t.Fatalf("turn the row into a legacy unfrozen record: %v", err)
+	}
+	legacy, err := store.AccountDetail(ctx, userID)
+	if err != nil {
+		t.Fatalf("AccountDetail with a legacy unfrozen row: %v", err)
+	}
+	if !legacy.HasRestriction || legacy.Restriction.Frozen || legacy.Restriction.Reason != "legacy review" || legacy.Restriction.CommandID != "" {
+		t.Fatalf("legacy unfrozen row HasRestriction=%v Restriction=%+v, want the unfrozen record", legacy.HasRestriction, legacy.Restriction)
+	}
 }

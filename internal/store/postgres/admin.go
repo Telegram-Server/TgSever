@@ -196,11 +196,13 @@ func scanAdminCommand(row pgx.Row) (domain.AdminCommand, error) {
 	return cmd, nil
 }
 
+// GetAccountFreeze 只读冻结记录：只为设备上限（#104）建出来的 account_restrictions 行
+// （freeze_recorded = false）报告为没有记录。
 func (s *AdminStore) GetAccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error) {
 	row := s.db.QueryRow(ctx, `
 SELECT user_id, frozen, version, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at
 FROM account_restrictions
-WHERE user_id = $1`, userID)
+WHERE user_id = $1 AND freeze_recorded`, userID)
 	r, err := scanAccountFreeze(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -301,7 +303,9 @@ ON CONFLICT (user_id) DO UPDATE SET
 	reason = EXCLUDED.reason,
 	actor = EXCLUDED.actor,
 	command_id = EXCLUDED.command_id,
-	version = account_restrictions.version + 1,
+	-- 只为设备上限建出来的行（freeze_recorded = false）还没有冻结记录，这次是第一次冻结写入。
+	version = CASE WHEN account_restrictions.freeze_recorded THEN account_restrictions.version + 1 ELSE 1 END,
+	freeze_recorded = true,
 	updated_at = now()
 RETURNING user_id, frozen, version, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at`,
 		freeze.UserID, freeze.Frozen, since, until, freeze.AppealURL, freeze.Reason, freeze.Actor, freeze.CommandID,

@@ -122,17 +122,18 @@ type AccountReactionSetting struct {
 }
 
 type AccountRestriction struct {
-	UserID      int64
-	Frozen      bool
-	Reason      string
-	Actor       string
-	CommandID   string
-	UpdatedAt   pgtype.Timestamptz
-	FrozenSince pgtype.Timestamptz
-	FrozenUntil pgtype.Timestamptz
-	AppealUrl   string
-	Version     int64
-	DeviceLimit *int32
+	UserID         int64
+	Frozen         bool
+	Reason         string
+	Actor          string
+	CommandID      string
+	UpdatedAt      pgtype.Timestamptz
+	FrozenSince    pgtype.Timestamptz
+	FrozenUntil    pgtype.Timestamptz
+	AppealUrl      string
+	Version        int64
+	DeviceLimit    *int32
+	FreezeRecorded bool
 }
 
 type AccountSetting struct {
