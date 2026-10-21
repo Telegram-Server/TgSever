@@ -126,6 +126,13 @@ type Config struct {
 	// UpdateRootPublicKey（TELESRV_UPDATE_ROOT_PUBLIC_KEY）是更新根公钥 PEM 文件路径；
 	// 清单有启用的桌面条目时必须配置。只在启动时读取一次。
 	UpdateRootPublicKey string
+	// APNsEnabled（TELESRV_APNS_ENABLED）开启 iOS 离线推送。关闭时不发推送，设备登记照常保存。
+	APNsEnabled bool
+	// APNsTopic（TELESRV_APNS_TOPIC）是 iOS App 的 bundle id，必须在证书的 topic 列表里。
+	APNsTopic string
+	// APNsCertFile（TELESRV_APNS_CERT_FILE）是 APNs 推送证书：证书和未加密私钥合在一个 PEM 文件里。
+	// 启用时在启动阶段读取并校验（可解析、topic 匹配），不通过则启动失败。
+	APNsCertFile string
 	// PublicAppScheme 是公开落地页自动唤起自建客户端时使用的 URL scheme。
 	// 必须与 TDesktop/Android 客户端构建时注册的 scheme 一致，且不能占用 tg/http/https。
 	PublicAppScheme string
@@ -1071,6 +1078,9 @@ func Load() (Config, error) {
 		UpdateFilesDir:                        updateFilesDir,
 		UpdateRootPublicKey:                   updateRootPublicKey,
 		UpdateRequestTimeout:                  envDurationOr("TELESRV_UPDATE_REQUEST_TIMEOUT", 2*time.Second),
+		APNsEnabled:                           envBoolOr("TELESRV_APNS_ENABLED", false),
+		APNsTopic:                             strings.TrimSpace(envAllowEmptyOr("TELESRV_APNS_TOPIC", "")),
+		APNsCertFile:                          strings.TrimSpace(envAllowEmptyOr("TELESRV_APNS_CERT_FILE", "")),
 		PublicAppScheme:                       publicAppScheme,
 		PublicAppLinkBase:                     publicAppLinkBase,
 		PublicWebBaseURL:                      publicWebBaseURL,

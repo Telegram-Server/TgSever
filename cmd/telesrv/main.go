@@ -56,6 +56,8 @@ import (
 	pollsapp "telesrv/internal/app/polls"
 	premiumapp "telesrv/internal/app/premium"
 	privacyapp "telesrv/internal/app/privacy"
+	pushapp "telesrv/internal/app/push"
+	apnspush "telesrv/internal/app/push/apns"
 	ratingapp "telesrv/internal/app/rating"
 	secretchatapp "telesrv/internal/app/secretchat"
 	"telesrv/internal/app/stargifts"
@@ -1800,6 +1802,13 @@ func run(logger *zap.Logger) error {
 	botsService.SetCustomVerification(botVerificationService)
 	botVerificationService.SetApplicantNotifier(botsService)
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
+	// iOS 离线推送：启用时在启动阶段校验证书（可解析、topic 匹配），配置错误直接启动失败；
+	// 未启用时 apnsSender 为 nil，不发推送，设备登记照常保存。
+	apnsSender, err := apnspush.New(apnspush.Config{Enabled: cfg.APNsEnabled, Topic: cfg.APNsTopic, CertFile: cfg.APNsCertFile})
+	if err != nil {
+		return fmt.Errorf("apns push: %w", err)
+	}
+	pushDeviceStore := postgres.NewPushDeviceStore(pool)
 	var appUpdateResolver updatecdn.Resolver
 	// 进程内更新服务：清单与包由公开 Web 的 /_updates/ 提供，help.getAppUpdate 直接
 	// 读同一个 Store。保持 nil 接口（而不是 nil *Handler），未启用时公开 Web 不注册路由。
@@ -1986,7 +1995,7 @@ func run(logger *zap.Logger) error {
 		BootstrapUpdates:             bootstrapUpdateStore,
 		BotAPIUpdates:                botAPIUpdateStore,
 		BotCallbacks:                 botCallbackStore,
-		PushDevices:                  postgres.NewPushDeviceStore(pool),
+		PushDevices:                  pushDeviceStore,
 		Contacts:                     contactsService,
 		Dialogs:                      dialogsService,
 		Chatlists:                    chatlistsService,
@@ -2182,6 +2191,20 @@ func run(logger *zap.Logger) error {
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
 	transcriptionService.SetCompletionHandler(router.PushTranscribedAudioUpdate)
+	// 推送服务按授权查询前台状态（router 的 presence），在 outbox 投递之后异步推送。
+	var pushObserver rpc.OutboxDeliveryObserver
+	if apnsSender != nil {
+		pushService := pushapp.NewService(pushapp.Config{}, pushapp.Deps{
+			Devices:  pushDeviceStore,
+			Presence: router,
+			Users:    usersService,
+			Sender:   apnsSender,
+			Strings:  langPackService,
+		}, logger.Named("push"))
+		go pushService.Run(ctx)
+		pushObserver = rpc.PushOutboxObserver(pushService)
+		logger.Info("apns push enabled", zap.String("topic", cfg.APNsTopic))
+	}
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
 		rpc.WithOutboxWorkers(cfg.OutboxWorkers),
 		rpc.WithOutboxBatch(cfg.OutboxBatch),
@@ -2189,6 +2212,7 @@ func run(logger *zap.Logger) error {
 		rpc.WithOutboxPushTimeout(cfg.OutboundPushTimeout),
 		rpc.WithOutboxMetrics(metricRegistry),
 		rpc.WithOutboxUpdateBuilder(router.BuildOutboxUpdates),
+		rpc.WithOutboxDeliveryObserver(pushObserver),
 	).Run(ctx)
 	go rpc.NewBootstrapUpdateDispatcher(router, logger.Named("rpc").Named("bootstrap")).Run(ctx)
 	go rpc.NewWelcomeDeliveryDispatcher(router, welcomeMessageStore, logger.Named("rpc").Named("welcome-delivery")).Run(ctx)

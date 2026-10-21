@@ -52,6 +52,7 @@ type OutboxDispatcher struct {
 	maxIdleInterval time.Duration
 	workers         int
 	pushTimeout     time.Duration
+	observer        OutboxDeliveryObserver
 }
 
 // OutboxOption 调整 OutboxDispatcher 的运行参数。
@@ -65,6 +66,37 @@ type OutboxUpdateRequest struct {
 
 // OutboxUpdateBuilder 按接收者视角批量把 domain.UpdateEvent 转为 TL updates。
 type OutboxUpdateBuilder func(ctx context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error)
+
+// OutboxDelivery 描述一条已投递（并已标记 delivered）的 outbox 事件。Sessions 是实际送达的
+// 在线 session 数；0 表示目标用户当时没有在线连接。
+type OutboxDelivery struct {
+	Item     store.DispatchOutboxItem
+	Event    domain.UpdateEvent
+	Sessions int
+}
+
+// OutboxDeliveryObserver 在每条事件投递之后被调用（离线推送在这里触发）。它运行在分发
+// worker 的 lane 上，必须立即返回：耗时工作要自己放进队列。
+type OutboxDeliveryObserver func(ctx context.Context, delivery OutboxDelivery)
+
+// WithOutboxDeliveryObserver 注入投递观察者；nil 表示不观察。
+func WithOutboxDeliveryObserver(observer OutboxDeliveryObserver) OutboxOption {
+	return func(d *OutboxDispatcher) {
+		d.observer = observer
+	}
+}
+
+func (d *OutboxDispatcher) observeDelivery(ctx context.Context, item store.DispatchOutboxItem, event domain.UpdateEvent, sessions int) {
+	if d.observer == nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			d.log.Error("outbox delivery observer panicked", zap.Int64("target_user_id", item.TargetUserID), zap.Any("panic", rec))
+		}
+	}()
+	d.observer(ctx, OutboxDelivery{Item: item, Event: event, Sessions: sessions})
+}
 
 // WithOutboxUpdateBuilder 注入按接收者视角的批量 updates 构建器。
 func WithOutboxUpdateBuilder(builder OutboxUpdateBuilder) OutboxOption {
@@ -356,6 +388,8 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 		return
 	}
 	delivered := make([]store.DispatchOutboxItem, 0, len(items))
+	// pushed 保留每条已推送事件的送达 session 数，标记 delivered 之后交给观察者。
+	pushed := make([]OutboxDelivery, 0, len(items))
 	clear(blockedUsers)
 	for i, entry := range ready {
 		item := entry.item
@@ -367,7 +401,8 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 			delivered = append(delivered, item)
 			continue
 		}
-		if _, retriable, err := d.pushOutboxUpdate(ctx, item, update); err != nil {
+		sent, retriable, err := d.pushOutboxUpdate(ctx, item, update)
+		if err != nil {
 			blockedUsers[item.TargetUserID] = struct{}{}
 			if retriable {
 				// 出站队列拥塞：留 dispatching 行靠租约过期重投，不计入 attempts 升级。
@@ -378,10 +413,16 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 			continue
 		}
 		delivered = append(delivered, item)
+		pushed = append(pushed, OutboxDelivery{Item: item, Event: requests[i].Event, Sessions: sent})
 	}
 	if len(delivered) == 0 {
 		return
 	}
+	defer func() {
+		for _, delivery := range pushed {
+			d.observeDelivery(ctx, delivery.Item, delivery.Event, delivery.Sessions)
+		}
+	}()
 	if err := marker.MarkDeliveredBatch(ctx, delivered); err != nil {
 		// 批量标记失败则逐条标记，避免整批已投递却卡在 dispatching 等租约过期重投。
 		d.log.Warn("mark dispatch delivered batch", zap.Error(err))
@@ -455,6 +496,7 @@ func (d *OutboxDispatcher) dispatchPreparedItem(ctx context.Context, item store.
 		return false
 	}
 	d.metrics.OutboxDelivered(time.Since(start))
+	d.observeDelivery(ctx, item, event, sent)
 	d.log.Debug("dispatch outbox delivered",
 		zap.Int64("target_user_id", item.TargetUserID),
 		zap.Int64("outbox_id", item.ID),

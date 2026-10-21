@@ -179,6 +179,16 @@ services:
       TELESRV_UPDATE_FILES_DIR: ${TELESRV_UPDATE_FILES_DIR:-}
       TELESRV_UPDATE_ROOT_PUBLIC_KEY: ${TELESRV_UPDATE_ROOT_PUBLIC_KEY:-}
       TELESRV_UPDATE_PUBLIC_URL: ${TELESRV_UPDATE_PUBLIC_URL:-}
+      # iOS offline push (APNs) is off unless TELESRV_APNS_ENABLED=true. The
+      # push certificate (certificate + unencrypted private key in one PEM
+      # file) is not baked into the image: put it in deploy/docker/apns-keys,
+      # readable by uid 10001, mounted read-only at /etc/telesrv-apns, and set
+      # TELESRV_APNS_CERT_FILE=/etc/telesrv-apns/<file>.pem. TOPIC is the iOS
+      # bundle id and must be listed in the certificate; a bad certificate or
+      # topic stops the server at startup.
+      TELESRV_APNS_ENABLED: ${TELESRV_APNS_ENABLED:-false}
+      TELESRV_APNS_TOPIC: ${TELESRV_APNS_TOPIC:-}
+      TELESRV_APNS_CERT_FILE: ${TELESRV_APNS_CERT_FILE:-}
       TELESRV_SFU_ENABLE: ${TELESRV_SFU_ENABLE:-true}
       TELESRV_SFU_UDP_PORT: ${TELESRV_SFU_UDP_PORT:-12399}
       TELESRV_SFU_ADVERTISE_IP: ${TELESRV_SFU_ADVERTISE_IP:?set TELESRV_SFU_ADVERTISE_IP in deploy/docker/.env}
@@ -225,6 +235,8 @@ services:
       # server_updates volume, so a key kept there could be swapped by a
       # compromised server. Empty (only .gitkeep) while updates are off.
       - ./update-keys:/etc/telesrv-updates:ro
+      # APNs push certificate, read-only. Empty (only .gitkeep) while push is off.
+      - ./apns-keys:/etc/telesrv-apns:ro
     network_mode: host
     healthcheck:
       test:

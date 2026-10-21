@@ -1090,7 +1090,11 @@ func (r *Router) onAccountUpdateStatus(ctx context.Context, offline bool) (bool,
 	if !authorized || userID == 0 {
 		return true, nil
 	}
-	status, _ := r.setPresenceFromContext(ctx, userID, offline, presencePersistSync)
+	report := presenceReportForeground
+	if offline {
+		report = presenceReportBackground
+	}
+	status, _ := r.setPresenceFromContext(ctx, userID, offline, presencePersistSync, report)
 	r.pushUserStatus(ctx, userID, status)
 	return true, nil
 }

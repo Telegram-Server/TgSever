@@ -57,3 +57,5 @@ tmp/
 # server (deploy/docker/compose.yaml). Operator-local; only the placeholder is tracked.
 /deploy/docker/update-keys/*
 !/deploy/docker/update-keys/.gitkeep
+/deploy/docker/apns-keys/*
+!/deploy/docker/apns-keys/.gitkeep

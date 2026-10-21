@@ -186,14 +186,14 @@ func TestFrozenPresenceRenewalDoesNotRefreshLastSeen(t *testing.T) {
 	updater := &captureLastSeenUpdater{}
 	r := New(Config{}, Deps{Users: updater}, zaptest.NewLogger(t), clock.System)
 	r.applyFrozenPresence(userID, true)
-	if _, notify := r.setPresenceFromContext(WithSessionID(WithUserID(context.Background(), userID), 33), userID, false, presencePersistSync); !notify {
+	if _, notify := r.setPresenceFromContext(WithSessionID(WithUserID(context.Background(), userID), 33), userID, false, presencePersistSync, presenceReportNone); !notify {
 		t.Fatal("frozen renewal should notify once")
 	}
 	if updater.calls != 0 {
 		t.Fatalf("frozen renewal persisted last seen %d times, want 0", updater.calls)
 	}
 	liveID := userID + 100
-	if _, notify := r.setPresenceFromContext(WithSessionID(WithUserID(context.Background(), liveID), 34), liveID, false, presencePersistSync); !notify {
+	if _, notify := r.setPresenceFromContext(WithSessionID(WithUserID(context.Background(), liveID), 34), liveID, false, presencePersistSync, presenceReportNone); !notify {
 		t.Fatal("live renewal should notify once")
 	}
 	if updater.calls != 1 {
