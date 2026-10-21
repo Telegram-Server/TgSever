@@ -62,6 +62,53 @@ func TestDeviceLimitOnlyRowIsNotAFreezeRecordPostgres(t *testing.T) {
 	}
 }
 
+// 设置上限与登录绑定拿同一把用户锁：正在进行的登录（持有用户锁的事务）提交之前，设置命令
+// 不返回，所以命令返回之后提交的登录一定按新上限计数。
+func TestSetDeviceLimitWaitsForAnInFlightLoginPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	users := NewUserStore(pool)
+	auths := NewAuthorizationStore(pool)
+	u, err := users.Create(ctx, domain.User{AccessHash: 1, FirstName: "Racing", Phone: "1995" + randomSuffix(t)})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := auths.SetDeviceLimit(ctx, u.ID, 5); err != nil {
+		t.Fatalf("set initial device limit: %v", err)
+	}
+
+	login, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin in-flight login: %v", err)
+	}
+	defer func() { _ = login.Rollback(ctx) }()
+	if err := lockUsersForUpdate(ctx, login, u.ID); err != nil {
+		t.Fatalf("hold the login user lock: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- auths.SetDeviceLimit(ctx, u.ID, 1) }()
+	select {
+	case err := <-done:
+		t.Fatalf("SetDeviceLimit returned (err=%v) while a login held the user lock", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := login.Commit(ctx); err != nil {
+		t.Fatalf("commit in-flight login: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("SetDeviceLimit after the login committed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SetDeviceLimit still blocked after the login committed")
+	}
+	if limit, found, err := auths.GetDeviceLimit(ctx, u.ID); err != nil || !found || limit != 1 {
+		t.Fatalf("device limit = %d found=%v err=%v, want 1", limit, found, err)
+	}
+}
+
 func TestDeviceLimitContractPostgres(t *testing.T) {
 	pool := testPool(t)
 	users := NewUserStore(pool)

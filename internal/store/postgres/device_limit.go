@@ -41,7 +41,14 @@ func (s *AuthorizationStore) SetDeviceLimit(ctx context.Context, userID int64, l
 		return domain.ErrUserNotFound
 	}
 	value := int32(limit)
-	err := s.q.SetDeviceLimit(ctx, sqlcgen.SetDeviceLimitParams{UserID: userID, DeviceLimit: &value})
+	// 与 Bind / 2FA 转正拿同一把用户锁：正在进行的登录提交之后才写入，命令返回之后提交的
+	// 登录一定看到新上限。
+	err := withTx(ctx, s.db, "set device limit", func(tx pgx.Tx) error {
+		if err := lockUsersForUpdate(ctx, tx, userID); err != nil {
+			return fmt.Errorf("lock device limit user: %w", err)
+		}
+		return sqlcgen.New(tx).SetDeviceLimit(ctx, sqlcgen.SetDeviceLimitParams{UserID: userID, DeviceLimit: &value})
+	})
 	if err == nil {
 		return nil
 	}
