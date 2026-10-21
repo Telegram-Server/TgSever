@@ -86,7 +86,7 @@ func (s *Service) deliverChatBatch(ctx context.Context, msg NewMessage, members 
 	batchLister, ok := s.devices.(DeviceBatchLister)
 	if !ok {
 		for _, recipient := range recipients {
-			s.deliverMessageTo(ctx, recipient, msg)
+			s.deliverMessageTo(ctx, channelJobKind, recipient, msg)
 		}
 		return
 	}
@@ -118,7 +118,7 @@ func (s *Service) deliverChatBatch(ctx context.Context, msg NewMessage, members 
 	}
 	render := newJobRenderer(s.render)
 	for _, recipient := range withTargets {
-		s.sendMessage(ctx, render, recipient, targets[recipient], msg, decisions[recipient])
+		s.sendMessage(ctx, channelJobKind, render, recipient, targets[recipient], msg, decisions[recipient])
 	}
 }
 

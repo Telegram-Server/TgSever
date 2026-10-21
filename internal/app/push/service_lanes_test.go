@@ -2,7 +2,9 @@ package push
 
 import (
 	"context"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -165,4 +167,61 @@ func TestShutdownStopsChannelPaging(t *testing.T) {
 	if len(f.members.calls) > 2 {
 		t.Fatalf("member pages read during shutdown = %d, want paging stopped", len(f.members.calls))
 	}
+}
+
+// 群组推送遇到限流（429）时，重试回到批量 lane、指标仍记为 channel：通用 worker 被扇出占满时
+// 重试排在后面，紧急专用 worker 只处理私聊和来电，不被群组重试挤占。
+func TestChannelRetryStaysOnBulkLane(t *testing.T) {
+	f := newChannelFixture(t, Config{Workers: 1, UrgentWorkers: 1, MaxRetries: 1, RetryBackoff: time.Millisecond, SendTimeout: time.Hour})
+	gate := make(chan struct{})
+	var closeGate sync.Once
+	defer closeGate.Do(func() { close(gate) })
+	f.svc.sender = gatedSender{recordingSender: f.sender, gate: gate}
+	var throttledOnce sync.Once
+	f.sender.respond = func(n Notification) (Result, error) {
+		throttled := false
+		if n.Token == "tok-carol" {
+			throttledOnce.Do(func() { throttled = true })
+		}
+		if throttled {
+			return Result{StatusCode: 429, Reason: "TooManyRequests"}, nil
+		}
+		return Result{StatusCode: 200}, nil
+	}
+	// carol 先发（被限流、安排重试），随后 dave 的发送卡住唯一的通用 worker。
+	f.members.members[groupID] = []int64{aliceID, carolID, daveID}
+	f.register([8]byte{3}, carolID, domain.PushTokenAPNs, "tok-carol", nil, presenceNone)
+	f.register([8]byte{4}, daveID, domain.PushTokenAPNs, "slow-dave", nil, presenceNone)
+	f.register([8]byte{2}, bobID, domain.PushTokenAPNs, "tok-bob", nil, presenceNone)
+	f.start()
+	f.svc.ChannelMessage(groupTextFromAlice("hi"))
+	waitForToken(t, f.sender, "tok-carol", time.Second)
+
+	f.svc.NewMessage(textFromAlice("private"))
+	waitForToken(t, f.sender, "tok-bob", time.Second)
+	time.Sleep(30 * time.Millisecond)
+	if got := f.sendsTo("tok-carol"); got != 1 {
+		t.Fatalf("tok-carol sends while the bulk lane is busy = %d, want 1: the retry must wait on the bulk lane", got)
+	}
+
+	closeGate.Do(func() { close(gate) })
+	waitUntil(t, func() bool { return f.sendsTo("tok-carol") == 2 })
+	f.stop()
+	f.metrics.mu.Lock()
+	defer f.metrics.mu.Unlock()
+	if want := []string{"channel", "message", "channel", "channel"}; !slices.Equal(f.metrics.sentKinds, want) {
+		t.Fatalf("send kinds = %v, want %v", f.metrics.sentKinds, want)
+	}
+}
+
+func (f *channelFixture) sendsTo(token string) int {
+	f.sender.mu.Lock()
+	defer f.sender.mu.Unlock()
+	n := 0
+	for _, sent := range f.sender.sent {
+		if sent.Token == token {
+			n++
+		}
+	}
+	return n
 }

@@ -130,8 +130,11 @@ const (
 	defaultShutdownTimeout = 5 * time.Second
 )
 
+// messageJobKind 是私聊新消息推送任务的类型（lane、重试与指标的 kind）。
+const messageJobKind = "message"
+
 // urgentKinds 是走紧急 lane 的任务类型：私聊新消息与 VoIP 来电。其余（群组/频道、同步）走批量 lane。
-var urgentKinds = map[string]bool{"message": true, "voip": true}
+var urgentKinds = map[string]bool{messageJobKind: true, "voip": true}
 
 // Deps 是推送服务的依赖。Sender 为 nil 时服务处于停用状态：所有事件方法直接返回 false。
 type Deps struct {
@@ -372,7 +375,7 @@ func (s *Service) enqueue(kind string, run func(ctx context.Context)) bool {
 // NewMessage 把一条新消息的推送放进队列，立即返回；返回 false 表示服务停用或队列已满被丢弃。
 func (s *Service) NewMessage(msg NewMessage) bool {
 	msg.Recipients = append([]int64(nil), msg.Recipients...)
-	return s.enqueue("message", func(ctx context.Context) { s.deliverMessage(ctx, msg) })
+	return s.enqueue(messageJobKind, func(ctx context.Context) { s.deliverMessage(ctx, msg) })
 }
 
 func (s *Service) deliverMessage(ctx context.Context, msg NewMessage) {
@@ -380,22 +383,24 @@ func (s *Service) deliverMessage(ctx context.Context, msg NewMessage) {
 		if recipient == 0 || recipient == msg.SenderID {
 			continue
 		}
-		s.deliverMessageTo(ctx, recipient, msg)
+		s.deliverMessageTo(ctx, messageJobKind, recipient, msg)
 	}
 }
 
-func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg NewMessage) {
+// deliverMessageTo 读出收件人的设备登记并推送；kind 是任务类型（私聊 message、群组/频道 channel），
+// 决定重试回到哪条 lane 与指标标签。
+func (s *Service) deliverMessageTo(ctx context.Context, kind string, recipient int64, msg NewMessage) {
 	devices, err := s.devices.ListPushDevicesByUser(ctx, recipient)
 	if err != nil {
 		s.log.Warn("list push devices failed", zap.Int64("user_id", recipient), zap.Error(err))
 		return
 	}
-	s.deliverMessageToDevices(ctx, recipient, devices, msg)
+	s.deliverMessageToDevices(ctx, kind, recipient, devices, msg)
 }
 
 // deliverMessageToDevices 对收件人已读出的设备登记做过滤（类型、other_uids、前台）、
 // 判定通知设置并发送（私聊，或设备存储不支持批量读取时的群组逐人路径）。
-func (s *Service) deliverMessageToDevices(ctx context.Context, recipient int64, devices []domain.PushDevice, msg NewMessage) {
+func (s *Service) deliverMessageToDevices(ctx context.Context, kind string, recipient int64, devices []domain.PushDevice, msg NewMessage) {
 	targets := s.messageTargets(recipient, devices, msg)
 	if len(targets) == 0 {
 		return
@@ -405,7 +410,7 @@ func (s *Service) deliverMessageToDevices(ctx context.Context, recipient int64, 
 		s.log.Warn("push notify policy failed", zap.Int64("user_id", recipient), zap.Error(err))
 		return
 	}
-	s.sendMessage(ctx, newJobRenderer(s.render), recipient, targets, msg, decisions[recipient])
+	s.sendMessage(ctx, kind, newJobRenderer(s.render), recipient, targets, msg, decisions[recipient])
 }
 
 // messageTargets 过滤出收件人该收这条消息推送的设备：APNs 普通登记、仍属于收件人、
@@ -449,7 +454,8 @@ func (s *Service) decide(ctx context.Context, recipients []int64, chat Chat) (ma
 }
 
 // sendMessage 按判定结果给收件人的目标设备渲染、加密并发送。render 在一个任务内复用（模板按语言缓存）。
-func (s *Service) sendMessage(ctx context.Context, render *jobRenderer, recipient int64, targets []domain.PushDevice, msg NewMessage, decision NotifyDecision) {
+// kind 是任务类型：可重试失败按它回到原来的 lane（群组重试不进紧急 lane），指标也按它计数。
+func (s *Service) sendMessage(ctx context.Context, kind string, render *jobRenderer, recipient int64, targets []domain.PushDevice, msg NewMessage, decision NotifyDecision) {
 	if decision.Mute {
 		return
 	}
@@ -480,7 +486,7 @@ func (s *Service) sendMessage(ctx context.Context, render *jobRenderer, recipien
 			s.log.Warn("build push payload failed", zap.Int64("user_id", recipient), zap.String("token", RedactToken(device.Token)), zap.Error(err))
 			continue
 		}
-		s.send(ctx, "message", device, Notification{
+		s.send(ctx, kind, device, Notification{
 			Token:    device.Token,
 			Sandbox:  device.AppSandbox,
 			Type:     PushTypeAlert,

@@ -79,6 +79,8 @@ func TestRegistrationOfAnotherUserNowIsNotPushedAndIsDeleted(t *testing.T) {
 type countingMetrics struct {
 	mu      sync.Mutex
 	dropped map[string]int
+	// sentKinds 按发送顺序记下每次发送（含重试）的 kind 标签。
+	sentKinds []string
 }
 
 func (m *countingMetrics) PushQueueDropped(kind string) {
@@ -87,8 +89,13 @@ func (m *countingMetrics) PushQueueDropped(kind string) {
 	m.dropped[kind]++
 }
 
-func (m *countingMetrics) PushSent(string, Result, error) {}
-func (m *countingMetrics) PushDeviceRemoved(string)       {}
+func (m *countingMetrics) PushSent(kind string, _ Result, _ error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sentKinds = append(m.sentKinds, kind)
+}
+
+func (m *countingMetrics) PushDeviceRemoved(string) {}
 
 func TestFullQueueDropsAndCountsWithoutBlocking(t *testing.T) {
 	auths := memory.NewAuthorizationStore()
