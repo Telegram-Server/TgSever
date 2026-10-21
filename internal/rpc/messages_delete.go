@@ -33,6 +33,7 @@ func (r *Router) onMessagesDeleteMessages(ctx context.Context, req *tg.MessagesD
 	if err != nil {
 		return nil, internalErr()
 	}
+	r.notifyPushDeletes(res)
 	self := res.Self()
 	pts, ptsCount := self.AffectedPts()
 	if len(self.MessageIDs) == 0 || pts == 0 {
@@ -109,6 +110,7 @@ func (r *Router) onMessagesDeleteHistory(ctx context.Context, req *tg.MessagesDe
 	if err != nil {
 		return nil, internalErr()
 	}
+	r.notifyPushDeletes(res)
 	self := res.Self()
 	pts, ptsCount := self.AffectedPts()
 	if pts == 0 {

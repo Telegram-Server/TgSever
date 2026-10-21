@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -232,6 +233,8 @@ type Router struct {
 	// selfPhotoEchoPushDelay 是头像变更后向当前 session 回显 updateUser 的延迟
 	// （见 photos.go pushSelfPhotoUpdateToCurrentSession）；<=0 时同步推送（测试用）。
 	selfPhotoEchoPushDelay time.Duration
+	// pushDeletes 是私聊删除同步推送的入口（SetPushDeleteNotifier 注入，#100）；nil 表示不推送。
+	pushDeletes atomic.Pointer[pushDeleteNotifierHolder]
 }
 
 type clientInfoSessionKey struct {

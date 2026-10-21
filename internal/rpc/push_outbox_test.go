@@ -140,3 +140,5 @@ func TestPushOutboxObserverOnlyForwardsIncomingPrivateMessages(t *testing.T) {
 type pushNotifierFunc func(push.NewMessage) bool
 
 func (f pushNotifierFunc) NewMessage(m push.NewMessage) bool { return f(m) }
+
+func (pushNotifierFunc) ReadHistory(push.ReadHistory) bool { return false }

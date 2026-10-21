@@ -2203,6 +2203,8 @@ func run(logger *zap.Logger) error {
 		}, logger.Named("push"))
 		go pushService.Run(ctx)
 		pushObserver = rpc.PushOutboxObserver(pushService)
+		// 私聊删除同步在删除返回时触发（delete_messages 事件不带会话）。
+		router.SetPushDeleteNotifier(pushService)
 		logger.Info("apns push enabled", zap.String("topic", cfg.APNsTopic))
 	}
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
