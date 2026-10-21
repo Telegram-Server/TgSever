@@ -96,7 +96,8 @@ func TestFullQueueDropsAndCountsWithoutBlocking(t *testing.T) {
 	sender := newRecordingSender()
 	sender.block = make(chan struct{})
 	metrics := &countingMetrics{dropped: map[string]int{}}
-	svc := NewService(Config{QueueSize: 1, Workers: 1, SendTimeout: time.Hour}, Deps{
+	// 只留一个 worker（没有紧急专用 worker），队列容量 1：第二条排队，第三条起丢弃。
+	svc := NewService(Config{QueueSize: 1, Workers: 1, UrgentWorkers: -1, SendTimeout: time.Hour}, Deps{
 		Devices: devices, Authorizations: auths, Sender: sender, Metrics: metrics,
 	}, zaptest.NewLogger(t))
 	ctx := context.Background()
@@ -122,7 +123,7 @@ func TestFullQueueDropsAndCountsWithoutBlocking(t *testing.T) {
 		t.Fatal("first message rejected")
 	}
 	// 第一条卡在发送器里（worker 已取走），第二条占满容量为 1 的队列，第三条起丢弃。
-	waitUntil(t, func() bool { return len(svc.queue) == 0 })
+	waitUntil(t, func() bool { return len(svc.urgent) == 0 })
 	if !svc.NewMessage(textFromAlice("2")) {
 		t.Fatal("second message rejected, want queued")
 	}
@@ -162,6 +163,9 @@ func TestRetryableFailureIsRetriedConfiguredTimesThenGivenUp(t *testing.T) {
 	f.register([8]byte{2}, bobID, domain.PushTokenAPNs, "tok-bob", nil, presenceNone)
 	f.start()
 	f.svc.NewMessage(textFromAlice("hello"))
+	// 关停时不再重试：等重试发完再停。
+	waitUntil(t, func() bool { return f.sentCount() == 3 })
+	time.Sleep(20 * time.Millisecond)
 	f.stop()
 
 	// 首次发送 + 2 次重试，之后放弃；登记保留。
@@ -190,6 +194,8 @@ func TestRetryStopsOnceTheGatewayAccepts(t *testing.T) {
 	f.register([8]byte{2}, bobID, domain.PushTokenAPNs, "tok-bob", nil, presenceNone)
 	f.start()
 	f.svc.NewMessage(textFromAlice("hello"))
+	waitUntil(t, func() bool { return f.sentCount() == 3 })
+	time.Sleep(20 * time.Millisecond)
 	f.stop()
 	if got := f.sentCount(); got != 3 {
 		t.Fatalf("send attempts = %d, want 3 (429, timeout, accepted)", got)

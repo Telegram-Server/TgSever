@@ -28,7 +28,8 @@ const channelJobKind = "channel"
 // 返回 false 表示服务停用或队列已满被丢弃（计数 kind=channel）。
 //
 // 收件人是消息发出后的完整成员列表，不是实时分发的在线名单：连接还在、但 App 已报后台的成员也要推。
-// worker 按 MemberBatch 分批读取成员：每批先把下一批放回队列（同样非阻塞，满了就丢弃剩余批次并计数），
+// worker 按 MemberBatch 分批读取成员：每批先把下一批放回队列（同样非阻塞，满了就丢弃剩余批次并计数；
+// 关停期间不再放回），
 // 再给本批成员去掉发送者、按设备判断前台与通知设置并发送。一条消息同一时刻最多占一个队列位置和
 // 一批成员 id 的内存，大频道不会占满内存，也不会拖慢调用方。
 // 没有注入 Members 时只推 msg.Recipients（同样分批）。
@@ -52,7 +53,7 @@ func (s *Service) deliverMemberPage(ctx context.Context, msg NewMessage, afterUs
 			zap.Int64("after_user_id", afterUserID), zap.Error(err))
 		return
 	}
-	if len(members) >= batch {
+	if len(members) >= batch && !s.stopping.Load() {
 		if last := slices.Max(members); last > afterUserID {
 			s.enqueueMemberPage(msg, last)
 		}
@@ -63,7 +64,7 @@ func (s *Service) deliverMemberPage(ctx context.Context, msg NewMessage, afterUs
 func (s *Service) enqueueRecipientBatch(msg NewMessage, offset int) bool {
 	return s.enqueue(channelJobKind, func(ctx context.Context) {
 		end := min(offset+s.cfg.MemberBatch, len(msg.Recipients))
-		if end < len(msg.Recipients) {
+		if end < len(msg.Recipients) && !s.stopping.Load() {
 			s.enqueueRecipientBatch(msg, end)
 		}
 		s.deliverChatBatch(ctx, msg, msg.Recipients[offset:end])

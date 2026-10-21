@@ -208,6 +208,8 @@ func TestChannelMessagePagesMembersInBatches(t *testing.T) {
 	f.members.members[groupID] = ids
 	f.start()
 	f.svc.ChannelMessage(groupTextFromAlice("hi"))
+	// 关停时不再翻页：等所有批次发完再停。
+	waitUntil(t, func() bool { return f.sentCount() == 7 })
 	f.stop()
 
 	if got := len(f.sender.sent); got != 7 {

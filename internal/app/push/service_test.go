@@ -237,7 +237,7 @@ func TestNewMessageSkipsSecretOfWrongLength(t *testing.T) {
 }
 
 func TestNewMessageDoesNotBlockWhenSenderIsStuck(t *testing.T) {
-	f := newServiceFixture(t, Config{QueueSize: 2, Workers: 1, SendTimeout: time.Hour})
+	f := newServiceFixture(t, Config{QueueSize: 2, Workers: 1, UrgentWorkers: -1, SendTimeout: time.Hour})
 	f.sender.block = make(chan struct{})
 	f.register([8]byte{2}, bobID, domain.PushTokenAPNs, "tok-bob", nil, presenceNone)
 	f.start()

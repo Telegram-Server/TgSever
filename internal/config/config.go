@@ -140,9 +140,9 @@ type Config struct {
 	APNsKeyID string
 	// APNsTeamID（TELESRV_APNS_TEAM_ID）是 Apple 开发者账号的 Team ID。
 	APNsTeamID string
-	// PushQueueSize（TELESRV_PUSH_QUEUE_SIZE）是推送任务队列容量，满了直接丢弃。
+	// PushQueueSize（TELESRV_PUSH_QUEUE_SIZE）是推送每条 lane（紧急、批量）的任务队列容量，满了直接丢弃。
 	PushQueueSize int
-	// PushWorkers（TELESRV_PUSH_WORKERS）是固定的推送 worker 数。
+	// PushWorkers（TELESRV_PUSH_WORKERS）是固定的通用推送 worker 数（另有紧急专用 worker）。
 	PushWorkers int
 	// PushSendTimeout（TELESRV_PUSH_SEND_TIMEOUT）是单次发送（一台设备）的超时。
 	PushSendTimeout time.Duration

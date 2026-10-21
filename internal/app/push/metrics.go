@@ -30,18 +30,18 @@ const (
 	RemovedUserMismatch = "user_mismatch"
 )
 
-// QueueLength 返回当前排队等待处理的任务数（监控指标用）。
+// QueueLength 返回当前排队等待处理的任务数（两条 lane 合计，监控指标用）。
 func (s *Service) QueueLength() int {
 	if s == nil {
 		return 0
 	}
-	return len(s.queue)
+	return len(s.urgent) + len(s.bulk)
 }
 
-// QueueCapacity 返回队列容量。
+// QueueCapacity 返回队列容量（两条 lane 合计）。
 func (s *Service) QueueCapacity() int {
 	if s == nil {
 		return 0
 	}
-	return cap(s.queue)
+	return cap(s.urgent) + cap(s.bulk)
 }

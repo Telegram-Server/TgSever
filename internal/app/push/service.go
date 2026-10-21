@@ -4,6 +4,11 @@
 // 只把任务放进进程内有界队列，由固定数量的 worker 查询设备登记、判断前台、渲染文案、
 // 加密 payload 并发送。队列满时丢弃（推送是尽力而为，不持久化），绝不阻塞消息投递。
 //
+// 队列分两条 lane：紧急（私聊新消息、VoIP 来电）与批量（群组/频道扇出、已读/删除同步）。
+// 通用 worker 优先取紧急任务；另有 UrgentWorkers 个只取紧急任务的 worker，大群扇出占满
+// 通用 worker 时私聊和来电（20 秒内不响铃就没意义）也不排在后面。重试不在 worker 里等待：
+// 退避到期后重新放回同一 lane。
+//
 // 后续扩展点：
 //   - 通知规则（静音、预览、静默、other_uids，#96）：NotifyPolicy 与 deliverMessage 里的设备过滤；
 //   - 媒体文案（#97）：keys.go 的 messageAlert；
@@ -19,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -87,7 +93,7 @@ func (nopMetrics) PushDeviceRemoved(string)       {}
 
 // Config 是推送服务的运行参数；零值字段取默认值。
 type Config struct {
-	// QueueSize 是待处理任务队列的容量，满了就丢弃。
+	// QueueSize 是每条 lane（紧急、批量）待处理任务队列的容量，满了就丢弃。
 	QueueSize int
 	// Workers 是固定 worker 数。
 	Workers int
@@ -99,6 +105,10 @@ type Config struct {
 	RetryBackoff time.Duration
 	// MemberBatch 是群组/频道推送每批读取的成员数（#98）。
 	MemberBatch int
+	// UrgentWorkers 是只处理紧急 lane（私聊、来电）的 worker 数；0 取默认值，负数表示没有。
+	UrgentWorkers int
+	// ShutdownTimeout 是关停时处理队列剩余任务的期限：到期后取消仍在进行的发送，Run 返回。
+	ShutdownTimeout time.Duration
 }
 
 const (
@@ -109,7 +119,13 @@ const (
 	defaultRetryBackoff = 500 * time.Millisecond
 	maxRetryBackoff     = 5 * time.Second
 	defaultMemberBatch  = 500
+	// defaultUrgentWorkers 个专用 worker 足够：紧急任务每条只涉及一个收件人的少数设备。
+	defaultUrgentWorkers   = 2
+	defaultShutdownTimeout = 5 * time.Second
 )
+
+// urgentKinds 是走紧急 lane 的任务类型：私聊新消息与 VoIP 来电。其余（群组/频道、同步）走批量 lane。
+var urgentKinds = map[string]bool{"message": true, "voip": true}
 
 // Deps 是推送服务的依赖。Sender 为 nil 时服务处于停用状态：所有事件方法直接返回 false。
 type Deps struct {
@@ -164,7 +180,11 @@ type Service struct {
 	metrics  Metrics
 	members  MemberPager
 	log      *zap.Logger
-	queue    chan job
+	// urgent、bulk 是两条 lane 的有界队列（见包注释）。
+	urgent chan job
+	bulk   chan job
+	// stopping 在 Run 的 ctx 结束后为真：不再安排重试，群组扇出不再翻下一页。
+	stopping atomic.Bool
 
 	misconfigMu         sync.Mutex
 	misconfigLast       time.Time
@@ -194,6 +214,15 @@ func NewService(cfg Config, deps Deps, log *zap.Logger) *Service {
 	if cfg.MemberBatch <= 0 {
 		cfg.MemberBatch = defaultMemberBatch
 	}
+	switch {
+	case cfg.UrgentWorkers == 0:
+		cfg.UrgentWorkers = defaultUrgentWorkers
+	case cfg.UrgentWorkers < 0:
+		cfg.UrgentWorkers = 0
+	}
+	if cfg.ShutdownTimeout <= 0 {
+		cfg.ShutdownTimeout = defaultShutdownTimeout
+	}
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -213,7 +242,8 @@ func NewService(cfg Config, deps Deps, log *zap.Logger) *Service {
 		metrics:  metrics,
 		members:  deps.Members,
 		log:      log,
-		queue:    make(chan job, cfg.QueueSize),
+		urgent:   make(chan job, cfg.QueueSize),
+		bulk:     make(chan job, cfg.QueueSize),
 	}
 }
 
@@ -222,40 +252,86 @@ func (s *Service) Enabled() bool {
 	return s != nil && s.sender != nil && s.devices != nil
 }
 
-// Run 启动 cfg.Workers 个 worker 并阻塞到 ctx 结束；结束时处理完队列里已有的任务再返回。
+// Run 启动 cfg.Workers 个通用 worker 与 cfg.UrgentWorkers 个紧急 worker，阻塞到 ctx 结束。
+// 结束后处理完队列里已有的任务再返回（不再重试、不再翻页），最多等 cfg.ShutdownTimeout：
+// 到期后取消仍在进行的发送并丢下剩余任务。
 func (s *Service) Run(ctx context.Context) {
 	if !s.Enabled() {
 		<-ctx.Done()
 		return
 	}
-	done := make(chan struct{})
+	s.stopping.Store(false)
+	// 任务的 ctx 不随 Run 的 ctx 立即取消：关停时已入队的任务仍能发出，到期限才取消。
+	jobCtx, cancelJobs := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelJobs()
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-jobCtx.Done():
+			return
+		}
+		s.stopping.Store(true)
+		timer := time.NewTimer(s.cfg.ShutdownTimeout)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			s.log.Warn("push shutdown deadline reached; cancelling remaining sends")
+			cancelJobs()
+		case <-jobCtx.Done():
+		}
+	}()
+	var wg sync.WaitGroup
 	for range s.cfg.Workers {
-		go func() {
-			defer func() { done <- struct{}{} }()
-			s.work(ctx)
-		}()
+		wg.Go(func() { s.work(ctx, jobCtx, true) })
 	}
-	for range s.cfg.Workers {
-		<-done
+	for range s.cfg.UrgentWorkers {
+		wg.Go(func() { s.work(ctx, jobCtx, false) })
+	}
+	wg.Wait()
+}
+
+// work 是一个 worker：bulk 为真时两条 lane 都处理（紧急优先），否则只处理紧急 lane。
+func (s *Service) work(ctx, jobCtx context.Context, bulk bool) {
+	var bulkQueue chan job
+	if bulk {
+		bulkQueue = s.bulk
+	}
+	for {
+		// 紧急任务优先：先非阻塞地看一眼紧急 lane。
+		select {
+		case j := <-s.urgent:
+			s.runJob(jobCtx, j)
+			continue
+		default:
+		}
+		select {
+		case j := <-s.urgent:
+			s.runJob(jobCtx, j)
+		case j := <-bulkQueue:
+			s.runJob(jobCtx, j)
+		case <-ctx.Done():
+			s.drain(jobCtx, bulkQueue)
+			return
+		}
 	}
 }
 
-func (s *Service) work(ctx context.Context) {
-	// 发送用的 ctx 不随 Run 的 ctx 取消：关停时队列里已有的任务仍按各自的发送超时处理完。
-	jobCtx := context.WithoutCancel(ctx)
-	for {
+// drain 在关停时处理队列里剩余的任务，直到队列为空或关停期限到。
+func (s *Service) drain(jobCtx context.Context, bulkQueue chan job) {
+	for jobCtx.Err() == nil {
 		select {
-		case j := <-s.queue:
+		case j := <-s.urgent:
 			s.runJob(jobCtx, j)
-		case <-ctx.Done():
-			for {
-				select {
-				case j := <-s.queue:
-					s.runJob(jobCtx, j)
-				default:
-					return
-				}
-			}
+			continue
+		default:
+		}
+		select {
+		case j := <-s.urgent:
+			s.runJob(jobCtx, j)
+		case j := <-bulkQueue:
+			s.runJob(jobCtx, j)
+		default:
+			return
 		}
 	}
 }
@@ -269,13 +345,17 @@ func (s *Service) runJob(ctx context.Context, j job) {
 	j.run(ctx)
 }
 
-// enqueue 非阻塞入队；队列满或服务停用时返回 false。
+// enqueue 按任务类型非阻塞地放进对应 lane；队列满或服务停用时返回 false。
 func (s *Service) enqueue(kind string, run func(ctx context.Context)) bool {
 	if !s.Enabled() {
 		return false
 	}
+	queue := s.bulk
+	if urgentKinds[kind] {
+		queue = s.urgent
+	}
 	select {
-	case s.queue <- job{kind: kind, run: run}:
+	case queue <- job{kind: kind, run: run}:
 		return true
 	default:
 		s.metrics.PushQueueDropped(kind)
@@ -383,39 +463,44 @@ func (s *Service) send(ctx context.Context, kind string, device domain.PushDevic
 	if !s.registrationOwnerMatches(ctx, device) {
 		return
 	}
+	s.attempt(ctx, kind, device, n, 0, s.cfg.RetryBackoff)
+}
+
+// attempt 发第 retry 次（0 是首次）。可重试失败时不在 worker 里等：退避到期后把下一次
+// 放回同一 lane 的队列（满了就放弃并计入丢弃），关停期间不再重试。
+func (s *Service) attempt(ctx context.Context, kind string, device domain.PushDevice, n Notification, retry int, backoff time.Duration) {
 	result, err := s.sendOnce(ctx, kind, n)
-	outcome := Classify(result, err)
-	backoff := s.cfg.RetryBackoff
-	for attempt := 1; outcome == OutcomeRetryable && attempt <= s.cfg.MaxRetries; attempt++ {
-		s.log.Debug("push retry", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
-			zap.String("token", RedactToken(n.Token)), zap.Int("attempt", attempt), zap.Int("status", result.StatusCode),
-			zap.String("reason", result.Reason), zap.Error(err), zap.Duration("backoff", backoff))
-		timer := time.NewTimer(backoff)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		}
-		backoff = min(backoff*2, maxRetryBackoff)
-		result, err = s.sendOnce(ctx, kind, n)
-		outcome = Classify(result, err)
-	}
-	switch outcome {
+	switch Classify(result, err) {
 	case OutcomeSent:
 		s.log.Debug("push sent", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
 			zap.String("token", RedactToken(n.Token)), zap.String("apns_id", result.ID))
+		return
 	case OutcomeInvalidToken:
 		s.deleteStale(ctx, device, RemovedInvalidToken, "invalid token: "+result.Reason)
+		return
+	case OutcomeRetryable:
+		if retry < s.cfg.MaxRetries && !s.stopping.Load() && ctx.Err() == nil {
+			s.log.Debug("push retry", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
+				zap.String("token", RedactToken(n.Token)), zap.Int("attempt", retry+1), zap.Int("status", result.StatusCode),
+				zap.String("reason", result.Reason), zap.Error(err), zap.Duration("backoff", backoff))
+			next := min(backoff*2, maxRetryBackoff)
+			time.AfterFunc(backoff, func() {
+				if s.stopping.Load() {
+					return
+				}
+				s.enqueue(kind, func(ctx context.Context) { s.attempt(ctx, kind, device, n, retry+1, next) })
+			})
+			return
+		}
 	default:
 		if err == nil && IsMisconfiguration(result) {
 			s.logMisconfiguration(kind, result)
 			return
 		}
-		s.log.Warn("push failed", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
-			zap.String("token", RedactToken(n.Token)), zap.Int("status", result.StatusCode),
-			zap.String("reason", result.Reason), zap.Error(err))
 	}
+	s.log.Warn("push failed", zap.String("kind", kind), zap.Int64("user_id", device.UserID),
+		zap.String("token", RedactToken(n.Token)), zap.Int("status", result.StatusCode),
+		zap.String("reason", result.Reason), zap.Int("retries", retry), zap.Error(err))
 }
 
 // misconfigLogInterval 是配置错误告警的最小间隔：配错时每条推送都会失败，逐条记 Error 会刷屏。

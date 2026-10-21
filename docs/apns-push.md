@@ -132,13 +132,19 @@ When push is on, the log shows `apns push enabled` with the topic.
 
 ## Tuning
 
-Push is best effort and never slows message delivery: jobs go into a bounded
-in-memory queue (not persisted) served by a fixed worker pool.
+Push is best effort and never slows message delivery: jobs go into bounded
+in-memory queues (not persisted) served by a fixed worker pool. There are two
+lanes: urgent (private messages and incoming calls) and bulk (group and channel
+fan-out, read and delete sync). Workers take urgent jobs first, and two extra
+workers serve only the urgent lane, so a large channel post never delays a call
+past its ring timeout. Retries wait outside the workers and go back into their
+lane. On shutdown the remaining queued jobs are sent without retries or further
+member pages, for at most 5 seconds.
 
 | Variable | Default | Range | Meaning |
 |---|---|---|---|
-| `TELESRV_PUSH_QUEUE_SIZE` | `4096` | 1–1000000 | Queue capacity; a full queue drops the job and counts it |
-| `TELESRV_PUSH_WORKERS` | `4` | 1–256 | Worker count |
+| `TELESRV_PUSH_QUEUE_SIZE` | `4096` | 1–1000000 | Capacity of each lane's queue; a full queue drops the job and counts it |
+| `TELESRV_PUSH_WORKERS` | `4` | 1–256 | Worker count (both lanes, urgent first), besides the 2 urgent-only workers |
 | `TELESRV_PUSH_SEND_TIMEOUT` | `10s` | 1s–2m | Timeout of one send to one device |
 | `TELESRV_PUSH_MAX_RETRIES` | `3` | 0–10 | Retries after the first attempt for 429, 5xx and timeouts |
 
@@ -152,11 +158,11 @@ Exposed on the debug listener (`TELESRV_DEBUG_ADDR`, default
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `telesrv_push_sent_total` | counter | `type`, `result` | Send attempts. `type` is the push kind (`message`, …); `result` is `sent`, `invalid_token` (410, `BadDeviceToken`, `Unregistered`, `DeviceTokenNotForTopic`), `retryable` (429, 5xx, timeout or network error) or `permanent` (anything else: certificate, topic, payload) |
+| `telesrv_push_sent_total` | counter | `type`, `result` | Send attempts. `type` is the push kind (`message`, …); `result` is `sent`, `invalid_token` (410, `BadDeviceToken`, `Unregistered`), `retryable` (429, 5xx, timeout or network error) or `permanent` (anything else: certificate, topic, payload; `DeviceTokenNotForTopic` and `TopicDisallowed` keep the registration and log a rate-limited error, since they mean the server topic or credentials are wrong) |
 | `telesrv_push_devices_removed_total` | counter | `reason` | Registrations removed automatically (`invalid_token`, `user_mismatch`) |
 | `telesrv_push_queue_dropped_total` | counter | `type` | Jobs dropped because the queue was full |
-| `telesrv_push_queue_length` | gauge | | Jobs waiting now (only while push runs) |
-| `telesrv_push_queue_capacity` | gauge | | `TELESRV_PUSH_QUEUE_SIZE` |
+| `telesrv_push_queue_length` | gauge | | Jobs waiting now in both lanes (only while push runs) |
+| `telesrv_push_queue_capacity` | gauge | | Both lanes: 2 × `TELESRV_PUSH_QUEUE_SIZE` |
 | `telesrv_push_enabled` | gauge | | `1` when pushes are being sent |
 | `telesrv_push_apns_certificate_days_left` | gauge | | Whole days until the certificate expires, negative after expiry; absent with `.p8` |
 

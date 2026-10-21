@@ -65,8 +65,9 @@ func TestServiceReportsMetricsThroughSink(t *testing.T) {
 		Strings: testLangPack(),
 		Metrics: SinkMetrics(sink),
 	}, zaptest.NewLogger(t))
-	if svc.QueueCapacity() != 2 || svc.QueueLength() != 0 {
-		t.Fatalf("queue = %d/%d, want 0/2", svc.QueueLength(), svc.QueueCapacity())
+	// 紧急、批量两条 lane 各 QueueSize。
+	if svc.QueueCapacity() != 4 || svc.QueueLength() != 0 {
+		t.Fatalf("queue = %d/%d, want 0/4", svc.QueueLength(), svc.QueueCapacity())
 	}
 	// worker 未启动：两条进队列，第三条被丢弃。
 	for range 3 {
