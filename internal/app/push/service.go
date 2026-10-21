@@ -54,16 +54,19 @@ type NotifyPolicy interface {
 	Decide(ctx context.Context, recipientUserID int64, chat Chat) (NotifyDecision, error)
 }
 
-// Metrics 记录推送计数（#102 接到 Prometheus 注册表）。
+// Metrics 记录推送计数；SinkMetrics 把它接到 Prometheus 注册表。
 type Metrics interface {
 	PushQueueDropped(kind string)
 	PushSent(kind string, result Result, err error)
+	// PushDeviceRemoved 记录一次自动清理的设备登记（reason：invalid_token、user_mismatch）。
+	PushDeviceRemoved(reason string)
 }
 
 type nopMetrics struct{}
 
 func (nopMetrics) PushQueueDropped(string)        {}
 func (nopMetrics) PushSent(string, Result, error) {}
+func (nopMetrics) PushDeviceRemoved(string)       {}
 
 // Config 是推送服务的运行参数；零值字段取默认值。
 type Config struct {
@@ -73,6 +76,8 @@ type Config struct {
 	Workers int
 	// SendTimeout 是单次发送（一台设备）的超时。
 	SendTimeout time.Duration
+	// MaxRetries 是可重试错误的最大重试次数（不含首次发送，TELESRV_PUSH_MAX_RETRIES），由 #101 的重试使用。
+	MaxRetries int
 }
 
 const (

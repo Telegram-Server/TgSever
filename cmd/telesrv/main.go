@@ -1802,9 +1802,17 @@ func run(logger *zap.Logger) error {
 	botsService.SetCustomVerification(botVerificationService)
 	botVerificationService.SetApplicantNotifier(botsService)
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
-	// iOS 离线推送：启用时在启动阶段校验证书（可解析、topic 匹配），配置错误直接启动失败；
-	// 未启用时 apnsSender 为 nil，不发推送，设备登记照常保存。
-	apnsSender, err := apnspush.New(apnspush.Config{Enabled: cfg.APNsEnabled, Topic: cfg.APNsTopic, CertFile: cfg.APNsCertFile})
+	// iOS 离线推送：启用时在启动阶段校验认证材料（证书或 .p8 二选一），配置错误直接启动失败；
+	// 证书已过期时记错误日志并停用推送，剩余不足 30 天记警告。未启用或已停用时 apnsSender
+	// 为 nil，不发推送，设备登记照常保存。
+	apnsSender, apnsStatus, err := apnspush.Open(apnspush.Config{
+		Enabled:  cfg.APNsEnabled,
+		Topic:    cfg.APNsTopic,
+		CertFile: cfg.APNsCertFile,
+		KeyFile:  cfg.APNsKeyFile,
+		KeyID:    cfg.APNsKeyID,
+		TeamID:   cfg.APNsTeamID,
+	}, logger.Named("push"))
 	if err != nil {
 		return fmt.Errorf("apns push: %w", err)
 	}
@@ -2193,18 +2201,29 @@ func run(logger *zap.Logger) error {
 	transcriptionService.SetCompletionHandler(router.PushTranscribedAudioUpdate)
 	// 推送服务按授权查询前台状态（router 的 presence），在 outbox 投递之后异步推送。
 	var pushObserver rpc.OutboxDeliveryObserver
+	pushGauges := obsmetrics.PushGaugeSource{CertNotAfter: apnsStatus.CertNotAfter}
 	if apnsSender != nil {
-		pushService := pushapp.NewService(pushapp.Config{}, pushapp.Deps{
+		pushService := pushapp.NewService(pushapp.Config{
+			QueueSize:   cfg.PushQueueSize,
+			Workers:     cfg.PushWorkers,
+			SendTimeout: cfg.PushSendTimeout,
+			MaxRetries:  cfg.PushMaxRetries,
+		}, pushapp.Deps{
 			Devices:  pushDeviceStore,
 			Presence: router,
 			Users:    usersService,
 			Sender:   apnsSender,
 			Strings:  langPackService,
+			Metrics:  pushapp.SinkMetrics(metricRegistry),
 		}, logger.Named("push"))
 		go pushService.Run(ctx)
 		pushObserver = rpc.PushOutboxObserver(pushService)
+		pushGauges.Enabled = true
+		pushGauges.QueueLength = pushService.QueueLength
+		pushGauges.QueueCapacity = pushService.QueueCapacity()
 		logger.Info("apns push enabled", zap.String("topic", cfg.APNsTopic))
 	}
+	metricRegistry.AddGaugeProvider(obsmetrics.PushGauges(pushGauges))
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
 		rpc.WithOutboxWorkers(cfg.OutboxWorkers),
 		rpc.WithOutboxBatch(cfg.OutboxBatch),

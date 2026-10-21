@@ -86,6 +86,16 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | `TELESRV_UPDATE_PUBLIC_URL` | nullable HTTP(S) URL / 空；设置 `TELESRV_UPDATE_MANIFEST` 时为 `<TELESRV_PUBLIC_BASE_URL>/_updates` | 通过 `help.getConfig.autoupdate_url_prefix` 下发的更新前缀。进程内模式下留空则自动取 `<TELESRV_PUBLIC_BASE_URL>/_updates`（此时必须配置 `TELESRV_PUBLIC_LINK_WEB_ADDR`），显式值优先（例如 CDN）；独立模式下为客户端可见的 `cmd/telesrv-update` 根地址。未配置清单且为空时关闭 desktop 原生更新。客户端会持久化收到的前缀，应选择长期不变的地址。 |
 | `TELESRV_UPDATE_SERVICE_URL` | nullable HTTP(S) URL / `TELESRV_UPDATE_PUBLIC_URL` | `help.getAppUpdate` 访问独立 `telesrv-update` 的内部地址，可指向 loopback/private route；空值回退到公开更新地址。设置 `TELESRV_UPDATE_MANIFEST` 时必须为空，两者同时配置会启动失败。 |
 | `TELESRV_UPDATE_REQUEST_TIMEOUT` | duration / `2s` | application update resolver 调用超时，必须大于零且不超过 `30s`；resolver 故障返回 `help.noAppUpdate`，不会转成 RPC 500。 |
+| `TELESRV_APNS_ENABLED` | bool / `false` | 开启 iOS 离线推送（APNs）。关闭时照常保存 `account.registerDevice` 登记，只是不推送。详见 `docs/apns-push.md`。 |
+| `TELESRV_APNS_TOPIC` | bundle id / 空 | iOS App 的 bundle id，VoIP 推送用 `<topic>.voip`。开启时必填；证书认证时必须在证书的 topic 列表里。 |
+| `TELESRV_APNS_CERT_FILE` | PEM 文件路径 / 空 | 证书认证：APNs 推送证书和未加密私钥合在一个 PEM 文件里。和 `TELESRV_APNS_KEY_FILE` 二选一。剩余不足 30 天记警告；已过期时记错误日志并停用推送，服务器照常启动。 |
+| `TELESRV_APNS_KEY_FILE` | `.p8` 文件路径 / 空 | token 认证：`AuthKey_<KEY_ID>.p8` 密钥。和 `TELESRV_APNS_CERT_FILE` 二选一；需同时配置 `TELESRV_APNS_KEY_ID` 与 `TELESRV_APNS_TEAM_ID`。 |
+| `TELESRV_APNS_KEY_ID` | 10 位 id / 空 | `.p8` 密钥的 Key ID。 |
+| `TELESRV_APNS_TEAM_ID` | 10 位 id / 空 | `.p8` 密钥所属开发者账号的 Team ID。 |
+| `TELESRV_PUSH_QUEUE_SIZE` | int `1..1000000` / `4096` | 进程内推送任务队列容量，满了直接丢弃（`telesrv_push_queue_dropped_total`）。 |
+| `TELESRV_PUSH_WORKERS` | int `1..256` / `4` | 固定的推送 worker 数。 |
+| `TELESRV_PUSH_SEND_TIMEOUT` | duration `1s..2m` / `10s` | 单次发送（一台设备）的超时。 |
+| `TELESRV_PUSH_MAX_RETRIES` | int `0..10` / `3` | 429、5xx、超时的重试次数（不含首次发送）。 |
 | `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `telesrv` | 落地页自动唤起客户端的 scheme，必须与 patched 客户端注册值一致；禁止 `tg`、`http`、`https`。 |
 | `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / 空 | 多服务客户端可选的 host-based 根，例如 `owpg://example.com`。配置后生成 `owpg://example.com/oauth`、`owpg://example.com/<username>` 等；只允许精确 `<custom-scheme>://<host>`，禁止端口、path、query、fragment。`TELESRV_PUBLIC_APP_SCHEME` 仍作为旧链接输入兼容。 |
 | `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://weba.telesrv.net` | username 页面 Web 客户端入口，校验规则同 `TELESRV_PUBLIC_BASE_URL`。 |

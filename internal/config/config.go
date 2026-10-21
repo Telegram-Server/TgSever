@@ -131,8 +131,23 @@ type Config struct {
 	// APNsTopic（TELESRV_APNS_TOPIC）是 iOS App 的 bundle id，必须在证书的 topic 列表里。
 	APNsTopic string
 	// APNsCertFile（TELESRV_APNS_CERT_FILE）是 APNs 推送证书：证书和未加密私钥合在一个 PEM 文件里。
-	// 启用时在启动阶段读取并校验（可解析、topic 匹配），不通过则启动失败。
+	// 启用时在启动阶段读取并校验（可解析、topic 匹配），不通过则启动失败；证书已过期时
+	// 推送停用（记错误日志），服务器照常启动。和 APNsKeyFile 二选一。
 	APNsCertFile string
+	// APNsKeyFile（TELESRV_APNS_KEY_FILE）是 .p8 token 认证密钥；需同时配置 APNsKeyID 与 APNsTeamID。
+	APNsKeyFile string
+	// APNsKeyID（TELESRV_APNS_KEY_ID）是 .p8 密钥的 Key ID。
+	APNsKeyID string
+	// APNsTeamID（TELESRV_APNS_TEAM_ID）是 Apple 开发者账号的 Team ID。
+	APNsTeamID string
+	// PushQueueSize（TELESRV_PUSH_QUEUE_SIZE）是推送任务队列容量，满了直接丢弃。
+	PushQueueSize int
+	// PushWorkers（TELESRV_PUSH_WORKERS）是固定的推送 worker 数。
+	PushWorkers int
+	// PushSendTimeout（TELESRV_PUSH_SEND_TIMEOUT）是单次发送（一台设备）的超时。
+	PushSendTimeout time.Duration
+	// PushMaxRetries（TELESRV_PUSH_MAX_RETRIES）是可重试错误（429、5xx、超时）的最大重试次数，不含首次发送。
+	PushMaxRetries int
 	// PublicAppScheme 是公开落地页自动唤起自建客户端时使用的 URL scheme。
 	// 必须与 TDesktop/Android 客户端构建时注册的 scheme 一致，且不能占用 tg/http/https。
 	PublicAppScheme string
@@ -1081,6 +1096,13 @@ func Load() (Config, error) {
 		APNsEnabled:                           envBoolOr("TELESRV_APNS_ENABLED", false),
 		APNsTopic:                             strings.TrimSpace(envAllowEmptyOr("TELESRV_APNS_TOPIC", "")),
 		APNsCertFile:                          strings.TrimSpace(envAllowEmptyOr("TELESRV_APNS_CERT_FILE", "")),
+		APNsKeyFile:                           strings.TrimSpace(envAllowEmptyOr("TELESRV_APNS_KEY_FILE", "")),
+		APNsKeyID:                             strings.TrimSpace(envAllowEmptyOr("TELESRV_APNS_KEY_ID", "")),
+		APNsTeamID:                            strings.TrimSpace(envAllowEmptyOr("TELESRV_APNS_TEAM_ID", "")),
+		PushQueueSize:                         envIntOr("TELESRV_PUSH_QUEUE_SIZE", 4096),
+		PushWorkers:                           envIntOr("TELESRV_PUSH_WORKERS", 4),
+		PushSendTimeout:                       envDurationOr("TELESRV_PUSH_SEND_TIMEOUT", 10*time.Second),
+		PushMaxRetries:                        envIntOr("TELESRV_PUSH_MAX_RETRIES", 3),
 		PublicAppScheme:                       publicAppScheme,
 		PublicAppLinkBase:                     publicAppLinkBase,
 		PublicWebBaseURL:                      publicWebBaseURL,
@@ -1468,6 +1490,9 @@ func Load() (Config, error) {
 	if err := validateTelegramLoginConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validatePushConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validateCustomFragmentConfig(cfg); err != nil {
 		return Config{}, err
 	}
@@ -1817,6 +1842,22 @@ func validateGeoIPConfig(cfg Config) error {
 	}
 	if cfg.GeoIPDownCooldown <= 0 || cfg.GeoIPDownCooldown > cfg.GeoIPRateLimitCooldown {
 		return fmt.Errorf("TELESRV_GEOIP_DOWN_COOLDOWN must be greater than zero and at most TELESRV_GEOIP_RATE_LIMIT_COOLDOWN")
+	}
+	return nil
+}
+
+// validatePushConfig 只校验推送调优参数的范围；APNs 认证材料（二选一、文件可读、证书有效期）
+// 在 apns.Open 里读取文件时校验。
+func validatePushConfig(cfg Config) error {
+	switch {
+	case cfg.PushQueueSize < 1 || cfg.PushQueueSize > 1_000_000:
+		return fmt.Errorf("TELESRV_PUSH_QUEUE_SIZE must be between 1 and 1000000")
+	case cfg.PushWorkers < 1 || cfg.PushWorkers > 256:
+		return fmt.Errorf("TELESRV_PUSH_WORKERS must be between 1 and 256")
+	case cfg.PushSendTimeout < time.Second || cfg.PushSendTimeout > 2*time.Minute:
+		return fmt.Errorf("TELESRV_PUSH_SEND_TIMEOUT must be between 1s and 2m")
+	case cfg.PushMaxRetries < 0 || cfg.PushMaxRetries > 10:
+		return fmt.Errorf("TELESRV_PUSH_MAX_RETRIES must be between 0 and 10")
 	}
 	return nil
 }
