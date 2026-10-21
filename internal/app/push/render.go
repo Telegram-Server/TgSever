@@ -22,11 +22,51 @@ const (
 	maxAlertArgRunes = 512
 )
 
-// builtinTemplates 是语言包缺失时的英文兜底（与 iOS en 语言包一致），保证未 seed 语言包时推送照常可用。
+// builtinTemplates 是语言包缺失时的英文兜底（与 iOS en 语言包逐字一致，keys_test 核对），保证未 seed 语言包时推送照常可用。
 var builtinTemplates = map[Key]string{
-	KeyMessageText:      "%1$@|%2$@",
-	KeyMessageNoText:    "%1$@|New message",
-	KeyEncryptedMessage: "You have a new message%1$@",
+	"MESSAGE_TEXT":            "%1$@|%2$@",
+	"MESSAGE_NOTEXT":          "%1$@|New message",
+	"MESSAGE_PHOTO":           "%1$@|📷 Photo",
+	"MESSAGE_VIDEO":           "%1$@|📹 Video",
+	"MESSAGE_DOC":             "%1$@|📎 Document",
+	"MESSAGE_STICKER":         "%1$@|%2$@ Sticker",
+	"MESSAGE_AUDIO":           "%1$@|🎤 Voice message",
+	"MESSAGE_ROUND":           "%1$@|📺 Video message",
+	"MESSAGE_GIF":             "%1$@|📹 GIF",
+	"MESSAGE_CONTACT":         "%1$@|👤 %2$@",
+	"MESSAGE_GEO":             "%1$@|📍 Location",
+	"MESSAGE_GEOLIVE":         "%1$@|Live location",
+	"MESSAGE_POLL":            "%1$@|📊 Poll \"%2$@\"",
+	"MESSAGE_QUIZ":            "%1$@|sent you the quiz \"%2$@\"",
+	"CHAT_MESSAGE_TEXT":       "%2$@|%1$@: %3$@",
+	"CHAT_MESSAGE_NOTEXT":     " %2$@|%1$@: New message",
+	"CHAT_MESSAGE_PHOTO":      "%2$@|%1$@: 📷 Photo",
+	"CHAT_MESSAGE_VIDEO":      "%2$@|%1$@: 📹 Video",
+	"CHAT_MESSAGE_DOC":        "%2$@|%1$@: 📎 Document",
+	"CHAT_MESSAGE_STICKER":    "%2$@|%1$@: %3$@ Sticker",
+	"CHAT_MESSAGE_AUDIO":      "%2$@|%1$@: 🎤 Voice message",
+	"CHAT_MESSAGE_ROUND":      "%2$@|%1$@: 📺 Video message",
+	"CHAT_MESSAGE_GIF":        "%2$@|%1$@: 📹 GIF",
+	"CHAT_MESSAGE_CONTACT":    "%2$@|%1$@: 👤 %3$@",
+	"CHAT_MESSAGE_GEO":        "%2$@|%1$@: 📍 Location",
+	"CHAT_MESSAGE_GEOLIVE":    "%2$@|%1$@: Live location",
+	"CHAT_MESSAGE_POLL":       "%2$@|%1$@: 📊 Poll \"%3$@\"",
+	"CHAT_MESSAGE_QUIZ":       "%2$@|%1$@ sent the quiz \"%3$@\" to the group",
+	"CHANNEL_MESSAGE_TEXT":    "%1$@|%2$@",
+	"CHANNEL_MESSAGE_NOTEXT":  "%1$@|New message",
+	"CHANNEL_MESSAGE_PHOTO":   "%1$@|📷 Photo",
+	"CHANNEL_MESSAGE_VIDEO":   "%1$@|📹 Video",
+	"CHANNEL_MESSAGE_DOC":     "%1$@|📎 Document",
+	"CHANNEL_MESSAGE_STICKER": "%1$@|%2$@ Sticker",
+	"CHANNEL_MESSAGE_AUDIO":   "%1$@|🎤 Voice message",
+	"CHANNEL_MESSAGE_ROUND":   "%1$@|📺 Video message",
+	"CHANNEL_MESSAGE_GIF":     "%1$@|📹 GIF",
+	"CHANNEL_MESSAGE_CONTACT": "%1$@|👤 %2$@",
+	"CHANNEL_MESSAGE_GEO":     "%1$@|📍 Location",
+	"CHANNEL_MESSAGE_GEOLIVE": "%1$@|Live location",
+	"CHANNEL_MESSAGE_POLL":    "%1$@|📊 Poll \"%2$@\"",
+	"CHANNEL_MESSAGE_QUIZ":    "%1$@|posted the quiz \"%2$@\"",
+	KeyEncryptedMessage:       "You have a new message%1$@",
 }
 
 // Renderer 用 iOS 语言包的 PUSH_<KEY> 字符串渲染通知文案。
@@ -51,9 +91,11 @@ func (r *Renderer) Render(ctx context.Context, langCode string, key Key, args ..
 	for i := range args {
 		args[i] = truncateRunes(args[i], maxAlertArgRunes)
 	}
-	alert := Alert{Body: formatIOS(body, args)}
+	// 去掉首尾空白：语言包个别字符串带多余空格（如 en 的 PUSH_CHAT_MESSAGE_NOTEXT），
+	// 空参数（无 emoji 的贴纸）也会留下空格。
+	alert := Alert{Body: strings.TrimSpace(formatIOS(body, args))}
 	if hasTitle {
-		alert.Title = formatIOS(title, args)
+		alert.Title = strings.TrimSpace(formatIOS(title, args))
 	}
 	return alert
 }

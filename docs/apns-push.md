@@ -149,7 +149,7 @@ Exposed on the debug listener (`TELESRV_DEBUG_ADDR`, default
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `telesrv_push_sent_total` | counter | `type`, `result` | Send attempts. `type` is the push kind (`message`, …); `result` is `sent`, `invalid_token` (410, `BadDeviceToken`, `Unregistered`, `DeviceTokenNotForTopic`), `retryable` (429, 5xx, timeout or network error) or `failed` |
+| `telesrv_push_sent_total` | counter | `type`, `result` | Send attempts. `type` is the push kind (`message`, …); `result` is `sent`, `invalid_token` (410, `BadDeviceToken`, `Unregistered`, `DeviceTokenNotForTopic`), `retryable` (429, 5xx, timeout or network error) or `permanent` (anything else: certificate, topic, payload) |
 | `telesrv_push_devices_removed_total` | counter | `reason` | Registrations removed automatically (`invalid_token`, `user_mismatch`) |
 | `telesrv_push_queue_dropped_total` | counter | `type` | Jobs dropped because the queue was full |
 | `telesrv_push_queue_length` | gauge | | Jobs waiting now (only while push runs) |
@@ -160,7 +160,7 @@ Exposed on the debug listener (`TELESRV_DEBUG_ADDR`, default
 Suggested alerts: `telesrv_push_apns_certificate_days_left < 30`;
 `telesrv_push_enabled == 0` where push is expected;
 `rate(telesrv_push_queue_dropped_total[5m]) > 0`; a rising share of
-`result="failed"` or `result="retryable"`. A burst of `failed` with every
+`result="permanent"` or `result="retryable"`. A burst of `permanent` with every
 device usually means the credentials were revoked or the topic is wrong
 (`InvalidProviderToken`, `BadCertificate`, `TopicDisallowed` in the warning
 logs).

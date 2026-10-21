@@ -87,3 +87,16 @@ func (s *PushDeviceStore) DeletePushDevice(ctx context.Context, authKeyID [8]byt
 	}
 	return n > 0, nil
 }
+
+func (s *PushDeviceStore) DeleteStalePushDevice(ctx context.Context, device domain.PushDevice) (bool, error) {
+	n, err := s.q.DeleteStalePushDevice(ctx, sqlcgen.DeleteStalePushDeviceParams{
+		AuthKeyID: authKeyIDToInt64(device.AuthKeyID),
+		TokenType: int32(device.TokenType),
+		Token:     device.Token,
+		UserID:    device.UserID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("delete stale push device: %w", err)
+	}
+	return n > 0, nil
+}

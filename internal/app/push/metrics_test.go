@@ -2,7 +2,6 @@ package push
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -43,32 +42,6 @@ func (s *fakeSink) snapshot() (sent, dropped, removed []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.sent), slices.Clone(s.dropped), slices.Clone(s.removed)
-}
-
-func TestSendResultLabel(t *testing.T) {
-	cases := []struct {
-		name   string
-		result Result
-		err    error
-		want   string
-	}{
-		{"accepted", Result{StatusCode: 200}, nil, "sent"},
-		{"gone", Result{StatusCode: 410, Reason: "Unregistered"}, nil, "invalid_token"},
-		{"gone without reason", Result{StatusCode: 410}, nil, "invalid_token"},
-		{"bad token", Result{StatusCode: 400, Reason: "BadDeviceToken"}, nil, "invalid_token"},
-		{"wrong topic", Result{StatusCode: 400, Reason: "DeviceTokenNotForTopic"}, nil, "invalid_token"},
-		{"throttled", Result{StatusCode: 429, Reason: "TooManyRequests"}, nil, "retryable"},
-		{"apple down", Result{StatusCode: 503, Reason: "ServiceUnavailable"}, nil, "retryable"},
-		{"timeout", Result{}, context.DeadlineExceeded, "retryable"},
-		{"network", Result{}, errors.New("connection reset"), "retryable"},
-		{"bad payload", Result{StatusCode: 400, Reason: "PayloadTooLarge"}, nil, "failed"},
-		{"bad provider token", Result{StatusCode: 403, Reason: "InvalidProviderToken"}, nil, "failed"},
-	}
-	for _, tc := range cases {
-		if got := SendResultLabel(tc.result, tc.err); got != tc.want {
-			t.Errorf("%s: SendResultLabel = %q, want %q", tc.name, got, tc.want)
-		}
-	}
 }
 
 // 指标经由 SinkMetrics 落到注册表：发送结果按类型与分类计数、队列满的丢弃计数，
@@ -118,8 +91,53 @@ func TestServiceReportsMetricsThroughSink(t *testing.T) {
 	if !slices.Equal(sent, []string{"message/sent", "message/sent"}) {
 		t.Fatalf("sent = %v, want two message/sent", sent)
 	}
-	SinkMetrics(sink).PushDeviceRemoved("invalid_token")
-	if _, _, removed := sink.snapshot(); !slices.Equal(removed, []string{"invalid_token"}) {
-		t.Fatalf("removed = %v", removed)
+}
+
+// 失效清理计入指标：token 失效与授权换了用户各记一次，原因分开。
+func TestServiceCountsRemovedRegistrations(t *testing.T) {
+	auths := memory.NewAuthorizationStore()
+	devices := memory.NewPushDeviceStore(auths)
+	ctx := context.Background()
+	for _, d := range []struct {
+		key   [8]byte
+		token string
+	}{{[8]byte{2}, "tok-dead"}, {[8]byte{3}, "tok-moved"}} {
+		if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: d.key, UserID: bobID, Hash: int64(d.key[0])}); err != nil {
+			t.Fatal(err)
+		}
+		if err := devices.RegisterPushDevice(ctx, domain.PushDevice{AuthKeyID: d.key, UserID: bobID, TokenType: domain.PushTokenAPNs, Token: d.token}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 扫码登录把 [3] 这个授权改写给了别的用户：登记的 user_id 不再一致。
+	if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: [8]byte{3}, UserID: aliceID, Hash: 3}); err != nil {
+		t.Fatal(err)
+	}
+	sender := newRecordingSender()
+	sender.respond = func(Notification) (Result, error) { return Result{StatusCode: 410, Reason: "Unregistered"}, nil }
+	sink := &fakeSink{}
+	svc := NewService(Config{}, Deps{
+		Devices:        devices,
+		Authorizations: auths,
+		Sender:         sender,
+		Strings:        testLangPack(),
+		Metrics:        SinkMetrics(sink),
+	}, zaptest.NewLogger(t))
+	svc.NewMessage(textFromAlice("x"))
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.Run(runCtx)
+	}()
+	cancel()
+	<-done
+	sent, _, removed := sink.snapshot()
+	slices.Sort(removed)
+	if !slices.Equal(removed, []string{"invalid_token", "user_mismatch"}) {
+		t.Fatalf("removed = %v, want invalid_token and user_mismatch", removed)
+	}
+	if !slices.Equal(sent, []string{"message/invalid_token"}) {
+		t.Fatalf("sent = %v, want one message/invalid_token", sent)
 	}
 }

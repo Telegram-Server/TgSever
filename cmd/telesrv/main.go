@@ -2203,18 +2203,26 @@ func run(logger *zap.Logger) error {
 	var pushObserver rpc.OutboxDeliveryObserver
 	pushGauges := obsmetrics.PushGaugeSource{CertNotAfter: apnsStatus.CertNotAfter}
 	if apnsSender != nil {
+		// TELESRV_PUSH_MAX_RETRIES=0 表示不重试；push.Config 里 0 取默认值、负数才是不重试。
+		pushMaxRetries := cfg.PushMaxRetries
+		if pushMaxRetries == 0 {
+			pushMaxRetries = -1
+		}
 		pushService := pushapp.NewService(pushapp.Config{
 			QueueSize:   cfg.PushQueueSize,
 			Workers:     cfg.PushWorkers,
 			SendTimeout: cfg.PushSendTimeout,
-			MaxRetries:  cfg.PushMaxRetries,
+			MaxRetries:  pushMaxRetries,
 		}, pushapp.Deps{
-			Devices:  pushDeviceStore,
-			Presence: router,
-			Users:    usersService,
-			Sender:   apnsSender,
-			Strings:  langPackService,
-			Metrics:  pushapp.SinkMetrics(metricRegistry),
+			Devices:        pushDeviceStore,
+			Authorizations: authzStore,
+			Presence:       router,
+			Users:          usersService,
+			Sender:         apnsSender,
+			Strings:        langPackService,
+			// 静音、预览、静默按收件人的通知设置（会话设置，退回私聊/群组/频道默认范围）。
+			Policy:  pushapp.NewSettingsPolicy(passwordStore, time.Now),
+			Metrics: pushapp.SinkMetrics(metricRegistry),
 		}, logger.Named("push"))
 		go pushService.Run(ctx)
 		pushObserver = rpc.PushOutboxObserver(pushService)
