@@ -314,7 +314,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Метод | Путь | Параметры / ответ |
 | --- | --- | --- |
 | GET | `/api/accounts` | Параметры: `q` (поиск), `before_id` (int64), `before_active_us` (int64, микросекунды), `limit` (int). Ответ: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `next_before_active_us`, `listing`. |
-| GET | `/api/accounts/{id}` | Карточка аккаунта: профиль, флаги, статистика (проксируется/читается из БД). |
+| GET | `/api/accounts/{id}` | Карточка аккаунта: профиль, флаги, статистика, `DeviceLimit` (int 1..100, `null` — без ограничений) (проксируется/читается из БД). |
 | GET | `/api/accounts/{id}/avatar` | Аватар аккаунта (файл). |
 | GET | `/api/account-ratings` | Параметры: `q`, `min_level` (int), `user_id` (int64), `before_id` (int64), `limit` (int). Ответ: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/account-ratings/{user_id}` | Ответ: `rating`, `events`. |

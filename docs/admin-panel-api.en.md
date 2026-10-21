@@ -290,7 +290,7 @@ Every mutating request carries in its body:
 | Method | Path | Parameters / response |
 | --- | --- | --- |
 | GET | `/api/accounts` | Params: `q` (search), `before_id` (int64), `before_active_us` (int64, microseconds), `limit` (int). Response: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `next_before_active_us`, `listing`. |
-| GET | `/api/accounts/{id}` | Account card: profile, flags, statistics. |
+| GET | `/api/accounts/{id}` | Account card: profile, flags, statistics, `DeviceLimit` (int 1..100, `null` = unlimited). |
 | GET | `/api/accounts/{id}/avatar` | Account avatar (file). |
 | GET | `/api/account-ratings` | Params: `q`, `min_level` (int), `user_id` (int64), `before_id` (int64), `limit` (int). Response: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/account-ratings/{user_id}` | Response: `rating`, `events`. |

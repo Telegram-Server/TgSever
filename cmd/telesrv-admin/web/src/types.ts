@@ -223,6 +223,8 @@ export type AccountDetail = {
   StarsGranted: boolean;
   Restriction: RestrictionRow;
   HasRestriction: boolean;
+  // DeviceLimit is the account's device limit; null means unlimited.
+  DeviceLimit: number | null;
   Authorizations: AuthorizationRow[];
   AuditLogs: AuditLogRow[];
 };
