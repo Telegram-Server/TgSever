@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 const (
@@ -350,6 +351,8 @@ type AccountDetail struct {
 	StarsGranted   bool
 	Restriction    RestrictionRow
 	HasRestriction bool
+	// DeviceLimit 是账号的设备上限（#104）；nil = 不限制。
+	DeviceLimit    *int
 	Authorizations []AuthorizationRow
 	AuditLogs      []AuditLogRow
 }
@@ -1089,6 +1092,10 @@ WHERE u.id = $1`, userID).Scan(
 	if err != nil {
 		return out, err
 	}
+	out.DeviceLimit, err = s.deviceLimit(ctx, userID)
+	if err != nil {
+		return out, err
+	}
 	out.Authorizations, err = s.authorizations(ctx, userID)
 	if err != nil {
 		return out, err
@@ -1100,12 +1107,30 @@ WHERE u.id = $1`, userID).Scan(
 	return out, nil
 }
 
+// deviceLimit 读账号的设备上限，复用写路径的 sqlc 查询 GetDeviceLimit；没有行 = 不限制。
+func (s *readStore) deviceLimit(ctx context.Context, userID int64) (*int, error) {
+	limit, err := sqlcgen.New(s.pool).GetDeviceLimit(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get device limit: %w", err)
+	}
+	if limit == nil {
+		return nil, nil
+	}
+	n := int(*limit)
+	return &n, nil
+}
+
+// restriction 读冻结状态。设备上限（#104）也存在 account_restrictions，只为上限建出来的行
+// 从没被冻结命令写过（frozen=false 且没有 command_id），不算"受限制"。
 func (s *readStore) restriction(ctx context.Context, userID int64) (RestrictionRow, bool, error) {
 	var r RestrictionRow
 	err := s.pool.QueryRow(ctx, `
 SELECT frozen, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at
 FROM account_restrictions
-WHERE user_id = $1`, userID).Scan(
+WHERE user_id = $1 AND (frozen OR command_id <> '')`, userID).Scan(
 		&r.Frozen, &r.Since, &r.Until, &r.AppealURL,
 		&r.Reason, &r.Actor, &r.CommandID, &r.UpdatedAt,
 	)
