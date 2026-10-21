@@ -10,16 +10,17 @@ import (
 )
 
 const deletePushDevice = `-- name: DeletePushDevice :execrows
-DELETE FROM push_devices WHERE auth_key_id = $1 AND token_type = $2
+DELETE FROM push_devices WHERE auth_key_id = $1 AND token_type = $2 AND token = $3
 `
 
 type DeletePushDeviceParams struct {
 	AuthKeyID int64
 	TokenType int32
+	Token     string
 }
 
 func (q *Queries) DeletePushDevice(ctx context.Context, arg DeletePushDeviceParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deletePushDevice, arg.AuthKeyID, arg.TokenType)
+	result, err := q.db.Exec(ctx, deletePushDevice, arg.AuthKeyID, arg.TokenType, arg.Token)
 	if err != nil {
 		return 0, err
 	}

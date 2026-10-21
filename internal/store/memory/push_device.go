@@ -73,11 +73,11 @@ func (s *PushDeviceStore) ListPushDevicesByUsers(_ context.Context, userIDs []in
 	return out, nil
 }
 
-func (s *PushDeviceStore) DeletePushDevice(_ context.Context, authKeyID [8]byte, tokenType int) (bool, error) {
+func (s *PushDeviceStore) DeletePushDevice(_ context.Context, authKeyID [8]byte, tokenType int, token string) (bool, error) {
 	s.auths.mu.Lock()
 	defer s.auths.mu.Unlock()
 	byType := s.auths.pushDevices[authKeyID]
-	if _, ok := byType[tokenType]; !ok {
+	if current, ok := byType[tokenType]; !ok || current.Token != token {
 		return false, nil
 	}
 	delete(byType, tokenType)

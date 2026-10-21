@@ -72,7 +72,9 @@ func (r *Router) onAccountRegisterDevice(ctx context.Context, req *tg.AccountReg
 	return true, nil
 }
 
-// onAccountUnregisterDevice 删除当前授权下该 token 类型的登记；不存在时同样返回 true。
+// onAccountUnregisterDevice 删除当前授权下该 token 类型、且 token 与 req.Token 相同的登记；
+// 不存在（或已换成别的 token）时同样返回 true。token 轮换时 iOS 先登记新 token 再注销旧 token，
+// 按 token 匹配才不会把刚登记的新 token 删掉。
 func (r *Router) onAccountUnregisterDevice(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (bool, error) {
 	if req == nil {
 		return false, inputRequestInvalidErr()
@@ -91,7 +93,7 @@ func (r *Router) onAccountUnregisterDevice(ctx context.Context, req *tg.AccountU
 	if r.deps.PushDevices == nil {
 		return true, nil
 	}
-	if _, err := r.deps.PushDevices.DeletePushDevice(ctx, authKeyID, req.TokenType); err != nil {
+	if _, err := r.deps.PushDevices.DeletePushDevice(ctx, authKeyID, req.TokenType, req.Token); err != nil {
 		r.log.Warn("unregister push device failed", zap.Int64("user_id", userID), zap.Int("token_type", req.TokenType), zap.Error(err))
 		return false, internalErr()
 	}

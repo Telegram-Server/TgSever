@@ -139,7 +139,7 @@ func PushDeviceContract(t *testing.T, newFixture func(t *testing.T) PushDeviceFi
 		if len(a) != 1 || a[0].AuthKeyID != f.AuthA1 || len(b) != 1 || b[0].AuthKeyID != f.AuthB {
 			t.Fatalf("user A devices = %+v, user B devices = %+v, want one each", a, b)
 		}
-		if deleted, err := f.Devices.DeletePushDevice(ctx, f.AuthA1, domain.PushTokenAPNs); err != nil || !deleted {
+		if deleted, err := f.Devices.DeletePushDevice(ctx, f.AuthA1, domain.PushTokenAPNs, "shared"); err != nil || !deleted {
 			t.Fatalf("delete A1 deleted=%v err=%v", deleted, err)
 		}
 		if b := listPushDevices(t, f, f.UserB); len(b) != 1 {
@@ -152,7 +152,7 @@ func PushDeviceContract(t *testing.T, newFixture func(t *testing.T) PushDeviceFi
 		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01"))
 		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenVoIP, "bb01"))
 		registerPushDevice(t, f, testPushDevice(f.AuthA2, f.UserA, domain.PushTokenAPNs, "aa02"))
-		deleted, err := f.Devices.DeletePushDevice(ctx, f.AuthA1, domain.PushTokenAPNs)
+		deleted, err := f.Devices.DeletePushDevice(ctx, f.AuthA1, domain.PushTokenAPNs, "aa01")
 		if err != nil || !deleted {
 			t.Fatalf("delete deleted=%v err=%v, want deleted", deleted, err)
 		}
@@ -161,8 +161,25 @@ func PushDeviceContract(t *testing.T, newFixture func(t *testing.T) PushDeviceFi
 			got[1].AuthKeyID != f.AuthA2 || got[1].TokenType != domain.PushTokenAPNs {
 			t.Fatalf("devices after delete = %+v, want A1/VoIP and A2/APNs", got)
 		}
-		if deleted, err := f.Devices.DeletePushDevice(ctx, f.AuthA1, domain.PushTokenAPNs); err != nil || deleted {
+		if deleted, err := f.Devices.DeletePushDevice(ctx, f.AuthA1, domain.PushTokenAPNs, "aa01"); err != nil || deleted {
 			t.Fatalf("second delete deleted=%v err=%v, want nothing deleted", deleted, err)
+		}
+	})
+
+	t.Run("delete with another token keeps the current registration", func(t *testing.T) {
+		f := newFixture(t)
+		// token 轮换：客户端先登记新 token，再注销旧 token。
+		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "old"))
+		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "new"))
+		deleted, err := f.Devices.DeletePushDevice(ctx, f.AuthA1, domain.PushTokenAPNs, "old")
+		if err != nil || deleted {
+			t.Fatalf("delete old token deleted=%v err=%v, want nothing deleted", deleted, err)
+		}
+		if got := listPushDevices(t, f, f.UserA); len(got) != 1 || got[0].Token != "new" {
+			t.Fatalf("devices after deleting the old token = %+v, want the new registration kept", got)
+		}
+		if deleted, err := f.Devices.DeletePushDevice(ctx, f.AuthA1, domain.PushTokenAPNs, "new"); err != nil || !deleted {
+			t.Fatalf("delete new token deleted=%v err=%v, want deleted", deleted, err)
 		}
 	})
 

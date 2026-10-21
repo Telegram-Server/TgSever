@@ -17,7 +17,7 @@ FROM push_devices
 WHERE user_id = $1;
 
 -- name: DeletePushDevice :execrows
-DELETE FROM push_devices WHERE auth_key_id = $1 AND token_type = $2;
+DELETE FROM push_devices WHERE auth_key_id = $1 AND token_type = $2 AND token = $3;
 
 -- name: DeleteStalePushDevice :execrows
 DELETE FROM push_devices

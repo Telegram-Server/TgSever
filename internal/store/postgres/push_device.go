@@ -92,10 +92,11 @@ func pushDevicesFromRows(rows []sqlcgen.PushDevice) []domain.PushDevice {
 	return out
 }
 
-func (s *PushDeviceStore) DeletePushDevice(ctx context.Context, authKeyID [8]byte, tokenType int) (bool, error) {
+func (s *PushDeviceStore) DeletePushDevice(ctx context.Context, authKeyID [8]byte, tokenType int, token string) (bool, error) {
 	n, err := s.q.DeletePushDevice(ctx, sqlcgen.DeletePushDeviceParams{
 		AuthKeyID: authKeyIDToInt64(authKeyID),
 		TokenType: int32(tokenType),
+		Token:     token,
 	})
 	if err != nil {
 		return false, fmt.Errorf("delete push device: %w", err)
