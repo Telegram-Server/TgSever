@@ -15,6 +15,7 @@ package push
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -247,6 +248,10 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 	targets := devices[:0]
 	for _, device := range devices {
 		if device.TokenType != domain.PushTokenAPNs || device.UserID != recipient {
+			continue
+		}
+		// 多账号去重：发送者也登录在这台设备上（other_uids），两个账号都在用户手里，不推。
+		if slices.Contains(device.OtherUIDs, msg.SenderID) {
 			continue
 		}
 		if s.presence != nil && s.presence.AuthorizationInForeground(device.AuthKeyID) {
