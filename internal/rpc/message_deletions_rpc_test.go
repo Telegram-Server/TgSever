@@ -134,6 +134,26 @@ func TestBotAPIDeleteMessageRecordsTheBot(t *testing.T) {
 	}
 }
 
+// 群里经 Bot API 的删除同样记为机器人删除，而不是普通用户会话删除。
+func TestBotAPIDeleteChannelMessageRecordsTheBot(t *testing.T) {
+	f := newChannelDeletionLogFixture(t)
+	bot := f.member
+	msg := f.send(t, bot, 320_103, "stale group menu")
+
+	chatID := -botAPIChannelChatIDBase - f.channel.ID
+	if ok, err := f.router.BotAPIDeleteMessage(f.ctx, bot, chatID, msg.ID); err != nil || !ok {
+		t.Fatalf("BotAPIDeleteMessage = %v, %v", ok, err)
+	}
+
+	got, err := f.deletions.ListMessageDeletions(f.ctx, domain.MessageDeletionFilter{ActorUserID: bot, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessageDeletions: %v", err)
+	}
+	if len(got) != 1 || got[0].MessageID != msg.ID || got[0].Source != domain.DeletionSourceBot || got[0].ActorType != domain.DeletionActorBot {
+		t.Fatalf("deletions = %+v, want a bot api deletion of message %d by bot %d", got, msg.ID, bot)
+	}
+}
+
 type channelDeletionLogFixture struct {
 	ctx       context.Context
 	owner     int64

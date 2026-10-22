@@ -1134,7 +1134,7 @@ func (h *handler) deleteMessage(w http.ResponseWriter, r *http.Request, botID in
 	}
 	ok, err := h.gateway.BotAPIDeleteMessage(r.Context(), botID, chatID, messageID)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+		deleteMessageErrors.writeError(w, err)
 		return
 	}
 	writeAPIOK(w, ok)
