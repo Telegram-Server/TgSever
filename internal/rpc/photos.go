@@ -652,6 +652,41 @@ func (r *Router) pushSelfPhotoUpdateWithUser(ctx context.Context, self domain.Us
 	updates := selfPhotoUpdates(self, int(r.clock.Now().Unix()), projected)
 	r.pushUserUpdates(ctx, self.ID, updates)
 	r.pushSelfPhotoUpdateToCurrentSession(ctx, updates)
+	r.pushOwnBotPhotoChangeToOwner(ctx, self)
+}
+
+// pushOwnBotPhotoChangeToOwner 在机器人改了自己的头像（设置或删除）后，给它的所有者推
+// updateUser，附上所有者视角的机器人 user（带 bot_can_edit 与新头像），让所有者客户端
+// 即时刷新。所有自身头像变更都经 pushSelfPhotoUpdateWithUser 汇到这里，Bot API 的
+// setMyProfilePhoto / removeMyProfilePhoto 与 MTProto 直接调用共用同一条通知。
+// 所有者经 bot 参数替机器人改头像时走 pushBotPhotoUpdateToOwner，不经过这里。
+// 不回显当前 session：当前 session 属于机器人，所有者视角的 user 不能发给它。
+func (r *Router) pushOwnBotPhotoChangeToOwner(ctx context.Context, bot domain.User) {
+	if !bot.Bot || bot.ID == 0 || r.deps.Bots == nil || r.deps.Users == nil {
+		return
+	}
+	profile, found, err := r.deps.Bots.BotInfo(ctx, bot.ID)
+	if err != nil || !found {
+		return
+	}
+	ownerUserID := profile.OwnerUserID
+	if ownerUserID == 0 || ownerUserID == bot.ID {
+		return
+	}
+	view, found, err := r.deps.Users.ByID(ctx, ownerUserID, bot.ID)
+	if err != nil || !found {
+		return
+	}
+	// 头像以调用方刚写入的结果为准，不依赖读路径（可能有缓存）已反映变更。
+	view.PhotoID = bot.PhotoID
+	view.PhotoDCID = bot.PhotoDCID
+	view.PhotoStripped = bot.PhotoStripped
+	view.PhotoPersonal = false
+	view.PhotoHasVideo = bot.PhotoHasVideo
+	projected := r.tgUser(view)
+	_ = r.applyBotCanEditToUser(ctx, ownerUserID, view, projected)
+	r.applyUsernamesToPeerObjects(ctx, []tg.UserClass{projected}, nil)
+	r.pushUserUpdates(ctx, ownerUserID, selfPhotoUpdates(view, int(r.clock.Now().Unix()), projected))
 }
 
 func (r *Router) pushBotPhotoUpdateToOwner(ctx context.Context, ownerUserID int64, bot domain.User, projected *tg.User) {

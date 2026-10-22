@@ -185,7 +185,7 @@ Implemented (79 methods + 1 file route):
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
-| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription` |
+| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto` |
 | Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
 | Media | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -327,6 +327,13 @@ Differences from the official gateway:
 Return `{"name": ...}`, `{"description": ...}` and
 `{"short_description": ...}`. `language_code` is accepted but ignored: the
 default-language value is always returned.
+
+### `removeMyProfilePhoto`
+
+No parameters. Removes the bot's current profile photo and returns `True`. A bot
+without a profile photo also gets `True`, as with the official server. The
+bot's owner receives an `updateUser` for the bot, so the change shows up in the
+owner's clients right away.
 
 ## Methods: sending
 

@@ -80,10 +80,10 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 	if err != nil {
 		t.Fatalf("set group username: %v", err)
 	}
-	usersService := appusers.NewService(userStore)
+	files := &fakeFiles{photos: map[int64]domain.Photo{}, docs: map[int64]domain.Document{}}
+	usersService := appusers.NewService(userStore, appusers.WithPhotoProvider(files))
 	messagesService := appmessages.NewService(messageStore, dialogStore)
 	sessions := &captureSessions{channelMembers: map[int64][]int64{channel.ID: {owner.ID, member.ID, bot.ID}}}
-	files := &fakeFiles{photos: map[int64]domain.Photo{}, docs: map[int64]domain.Document{}}
 	router := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
 		Users:         usersService,
 		Messages:      messagesService,
