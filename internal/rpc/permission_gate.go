@@ -36,6 +36,25 @@ var permissionMethodActions = map[string]permissions.ActionKind{
 	// sendScreenshotNotification 尚未实现，先按方法名登记：没有目标信息时按"非收藏夹"判定。
 	// 其他发送方法需要目标（收藏夹放行），在 handler 里调用 checkSendPermission。
 	"messages.sendScreenshotNotification": permissions.ActionSend,
+	// messages.createChat 总是创建群组（没有普通群，落成 megagroup）；channels.createChannel
+	// 按 megagroup/broadcast 区分，在 handler 里判定（checkCreateChannelPermission）。
+	"messages.createChat": permissions.ActionCreateGroup,
+	// 添加联系人的全部入口；删除、读取联系人不登记。contacts.importContactToken 尚未实现，
+	// 按方法名先登记，实现后自动受控。
+	"contacts.addContact":         permissions.ActionAddContact,
+	"contacts.importContacts":     permissions.ActionAddContact,
+	"contacts.acceptContact":      permissions.ActionAddContact,
+	"contacts.importContactToken": permissions.ActionAddContact,
+}
+
+// createChannelPermissionAction 按 channels.createChannel 的 flag 给出动作：与 store 的落库语义
+// 一致——没有 megagroup 或带了 broadcast 都会落成广播频道（两个 flag 都没给时按 broadcast 创建），
+// 只有 megagroup 且不带 broadcast（含论坛）才是群组。
+func createChannelPermissionAction(req *tg.ChannelsCreateChannelRequest) permissions.Action {
+	if req.Megagroup && !req.Broadcast {
+		return permissions.Action{Kind: permissions.ActionCreateGroup}
+	}
+	return permissions.Action{Kind: permissions.ActionCreateChannel}
 }
 
 // checkPermissionRPC 是按方法名的权限闸门；未登录、未登记的方法与未接线的 Router 直接放行。

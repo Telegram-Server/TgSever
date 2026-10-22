@@ -27,6 +27,14 @@ const (
 	ActionDelete
 	// ActionClearHistory 是清空对话，不需要目标信息。
 	ActionClearHistory
+	// ActionCreateGroup 是新建群组：messages.createChat，以及 megagroup（含论坛）的
+	// channels.createChannel。不需要目标信息。
+	ActionCreateGroup
+	// ActionCreateChannel 是新建广播频道：broadcast 的 channels.createChannel。
+	ActionCreateChannel
+	// ActionAddContact 是添加联系人：contacts.addContact、importContacts、acceptContact、
+	// importContactToken。不需要目标信息；删除与读取联系人不受限。
+	ActionAddContact
 )
 
 // TargetKind 是动作作用的会话种类。没有普通群：megagroup、gigagroup、论坛、monoforum 都算
@@ -141,6 +149,18 @@ func Decide(v View, a Action) Denial {
 	case ActionClearHistory:
 		if !flags.ClearHistory {
 			return DenyClearHistory
+		}
+	case ActionCreateGroup:
+		if !flags.CreateGroup {
+			return DenyCreateGroup
+		}
+	case ActionCreateChannel:
+		if !flags.CreateChannel {
+			return DenyCreateChannel
+		}
+	case ActionAddContact:
+		if !flags.AddContact {
+			return DenyAddContact
 		}
 	}
 	return Allowed
