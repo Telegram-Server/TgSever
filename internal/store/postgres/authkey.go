@@ -241,21 +241,29 @@ WHERE auth_key_id = ANY($1::bigint[])`, batch)
 	return nil
 }
 
-func (s *AuthKeyStore) UpdateClientInfo(ctx context.Context, id [8]byte, info store.AuthKeyClientInfo) error {
-	var updated int
+// UpdateClientInfo 实现 store.AuthKeyStore。device_id 一次写入：只在列为 NULL 时写。
+// 是否本次新写入由同一语句里 prev 子查询读到的旧值判断；并发两条连接同时首次上报时
+// 两边都可能读到 NULL 而都报 true，只会多跑一次幂等的补绑，不会漏报。
+func (s *AuthKeyStore) UpdateClientInfo(ctx context.Context, id [8]byte, info store.AuthKeyClientInfo) (bool, error) {
+	var deviceIDStored bool
 	err := s.db.QueryRow(ctx, `
-UPDATE auth_keys
-SET layer = CASE WHEN $2::integer > 0 THEN $2 ELSE layer END,
-    device_model = CASE WHEN $3::text <> '' THEN $3 ELSE device_model END,
-    platform = CASE WHEN $4::text <> '' THEN $4 ELSE platform END,
-    system_version = CASE WHEN $5::text <> '' THEN $5 ELSE system_version END,
-    api_id = CASE WHEN $6::integer <> 0 THEN $6 ELSE api_id END,
-    app_version = CASE WHEN $7::text <> '' THEN $7 ELSE app_version END,
-    device_id = CASE WHEN $8::text <> '' THEN $8 ELSE device_id END
-WHERE auth_key_id = $1
-  AND ($2::integer <= 0 OR layer_observation_id = 0 OR layer = $2::integer)
-RETURNING 1
-`, authKeyIDToInt64(id), info.Layer, info.DeviceModel, info.Platform, info.SystemVersion, info.APIID, info.AppVersion, info.DeviceID).Scan(&updated)
+UPDATE auth_keys AS k
+SET layer = CASE WHEN $2::integer > 0 THEN $2 ELSE k.layer END,
+    device_model = CASE WHEN $3::text <> '' THEN $3 ELSE k.device_model END,
+    platform = CASE WHEN $4::text <> '' THEN $4 ELSE k.platform END,
+    system_version = CASE WHEN $5::text <> '' THEN $5 ELSE k.system_version END,
+    api_id = CASE WHEN $6::integer <> 0 THEN $6 ELSE k.api_id END,
+    app_version = CASE WHEN $7::text <> '' THEN $7 ELSE k.app_version END,
+    device_id = CASE WHEN k.device_id IS NULL AND $8::text <> '' THEN $8 ELSE k.device_id END
+FROM (
+	SELECT device_id IS NULL AS device_id_unset
+	FROM auth_keys
+	WHERE auth_key_id = $1
+) AS prev
+WHERE k.auth_key_id = $1
+  AND ($2::integer <= 0 OR k.layer_observation_id = 0 OR k.layer = $2::integer)
+RETURNING prev.device_id_unset AND $8::text <> ''
+`, authKeyIDToInt64(id), info.Layer, info.DeviceModel, info.Platform, info.SystemVersion, info.APIID, info.AppVersion, info.DeviceID).Scan(&deviceIDStored)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			var (
@@ -269,18 +277,18 @@ WHERE auth_key_id = $1
 `, authKeyIDToInt64(id)).Scan(&currentLayer, &observation)
 			switch {
 			case errors.Is(lookupErr, pgx.ErrNoRows):
-				return store.ErrAuthKeyNotFound
+				return false, store.ErrAuthKeyNotFound
 			case lookupErr != nil:
-				return fmt.Errorf("classify auth key client info update: %w", lookupErr)
+				return false, fmt.Errorf("classify auth key client info update: %w", lookupErr)
 			case info.Layer > 0 && observation > 0 && currentLayer != info.Layer:
-				return store.ErrAuthKeySessionLayerConflict
+				return false, store.ErrAuthKeySessionLayerConflict
 			default:
-				return fmt.Errorf("update auth key client info: guarded update affected no row")
+				return false, fmt.Errorf("update auth key client info: guarded update affected no row")
 			}
 		}
-		return fmt.Errorf("update auth key client info: %w", err)
+		return false, fmt.Errorf("update auth key client info: %w", err)
 	}
-	return nil
+	return deviceIDStored, nil
 }
 
 // Delete 实现 store.AuthKeyStore。不存在时静默成功。

@@ -17,7 +17,7 @@ import (
 // TestInitConnectionDeviceIDEndToEnd 只验证接线（#111）：客户端在 initConnection.params 里
 // 上报的 device_id 经真实的 MTProto 连接落到它的 auth key 上；同一个 auth key 重连时
 // initConnection 不再带 device_id，已持久化的值保持不变。params 解析与非法值矩阵在
-// internal/rpc，非空才覆盖的语义在 storetest。
+// internal/rpc，一次写入的语义在 storetest。
 func TestInitConnectionDeviceIDEndToEnd(t *testing.T) {
 	srv := startLoginPasswordServer(t, loginPasswordServerOptions{})
 	storage := &session.StorageMemory{}

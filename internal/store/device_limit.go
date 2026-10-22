@@ -36,6 +36,8 @@ type DeviceLimitStore interface {
 	// 且还有名额时写入绑定，bound=true；其余情况（没有授权、password_pending、未设上限、
 	// 已绑定、名额已满）什么都不做，bound=false，也不踢下线。在用户锁下判定，与登录争抢
 	// 名额时绑定数不超过上限。
+	// 调用方只在 AuthKeyStore.UpdateClientInfo 报告 device_id 本次新写入时调用，不放在每次
+	// initConnection 的热路径上。
 	BackfillDeviceBinding(ctx context.Context, authKeyID [8]byte) (bound bool, err error)
 	// ClearDeviceLimit 清除账号的设备上限；cleared 报告之前是否设置过。绑定名单保留，
 	// 以后重新设上限时沿用。

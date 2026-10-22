@@ -471,11 +471,13 @@ func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding 
 		}
 		return domain.TempAuthKeyBindingResult{}, err
 	}
-	if err := s.carryDeviceIDToPermanentKey(ctx, binding.PermAuthKeyID, tempDeviceID); err != nil {
+	carried, err := s.carryDeviceIDToPermanentKey(ctx, binding.PermAuthKeyID, tempDeviceID)
+	if err != nil {
 		return domain.TempAuthKeyBindingResult{}, err
 	}
-	// 带过去的 device_id 对已登录的 perm key 同样是一次"之后才持久化"，走延迟补绑。
-	if tempDeviceID != "" {
+	// 带过去的 device_id 对已登录的 perm key 同样是一次"之后才持久化"，走延迟补绑；
+	// perm key 原本就有 device_id（或重放绑定）时没有写入，也就不补绑。
+	if carried {
 		s.backfillDeviceBinding(ctx, authKeyIDFromInt64(binding.PermAuthKeyID))
 	}
 	return result, nil
@@ -497,12 +499,13 @@ func (s *Service) backfillDeviceBinding(ctx context.Context, authKeyID [8]byte) 
 // carryDeviceIDToPermanentKey 把 temp key 上已持久化的 device_id 带到刚绑定的 perm key 上
 // （#111）。客户端可能在 bindTempAuthKey 之前就在 temp key 上发了 initConnection，那时
 // 业务 auth key 还解析不到 perm key；登录时只看 perm key，所以绑定成功后补写一次，
-// 语义与 UpdateClientInfo 一致：temp key 没上报时不动 perm key 上的值。
+// 语义与 UpdateClientInfo 一致：temp key 没上报时不动 perm key 上的值；device_id 一次写入，
+// perm key 已有值时保持原值。返回值报告 perm key 的 device_id 是否本次新写入。
 //
 // 绑定已提交，这里失败时返回错误让客户端重试：重放绑定是幂等的，会再补写一次。
-func (s *Service) carryDeviceIDToPermanentKey(ctx context.Context, permAuthKeyID int64, deviceID string) error {
+func (s *Service) carryDeviceIDToPermanentKey(ctx context.Context, permAuthKeyID int64, deviceID string) (bool, error) {
 	if deviceID == "" || s.authKeys == nil {
-		return nil
+		return false, nil
 	}
 	return s.authKeys.UpdateClientInfo(ctx, authKeyIDFromInt64(permAuthKeyID), store.AuthKeyClientInfo{DeviceID: deviceID})
 }
@@ -1864,7 +1867,7 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 	if s == nil || s.authKeys == nil || authKeyID == ([8]byte{}) {
 		return nil
 	}
-	if err := s.authKeys.UpdateClientInfo(ctx, authKeyID, store.AuthKeyClientInfo{
+	deviceIDStored, err := s.authKeys.UpdateClientInfo(ctx, authKeyID, store.AuthKeyClientInfo{
 		Layer:         info.Layer,
 		DeviceModel:   info.DeviceModel,
 		Platform:      info.Platform,
@@ -1872,10 +1875,17 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 		APIID:         info.APIID,
 		AppVersion:    info.AppVersion,
 		DeviceID:      info.DeviceID,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	if s.auths != nil {
+		// 延迟补绑只在 device_id 本次新写入时触发（已登录的 key 之后才上报，例如老客户端升级
+		// 后重连）；每次重连重复上报同一个值不再进补绑查询。device_id 一次写入，错过这一次
+		// 就不会再有，所以下面镜像更新失败也照样补绑。temp key 上没有授权，store 查不到即返回。
+		if deviceIDStored {
+			defer s.backfillDeviceBinding(ctx, authKeyID)
+		}
 		// Layer is an ordered protocol fact. Its authorization-table mirror is
 		// advanced atomically by the durable Layer evidence/bind transactions.
 		// A generic metadata update is deliberately two-store and can race such
@@ -1886,11 +1896,6 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 		authorizationInfo.LayerObservationID = 0
 		if err := s.auths.UpdateClientInfo(ctx, authKeyID, authorizationInfo); err != nil {
 			return err
-		}
-		// 已登录的 key 之后才上报 device_id（老客户端升级后重连）时补绑；temp key 上没有授权，
-		// store 查不到即返回。
-		if domain.ValidDeviceID(info.DeviceID) {
-			s.backfillDeviceBinding(ctx, authKeyID)
 		}
 	}
 	return nil

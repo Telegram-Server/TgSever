@@ -425,6 +425,35 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		assertBoundDevices(t, f, u.ID, "kept", "new")
 	})
 
+	t.Run("a session copied to another device keeps its bound device id and is revoked by unbinding it", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 1)
+		key := newDeviceKey(t, f, "original")
+		bindDevice(t, f, u.ID, key, false)
+		assertBoundDevices(t, f, u.ID, "original")
+
+		// 同一把 perm key 被拷到另一台机器，那里的 initConnection 上报了别的 device_id。
+		reportDeviceID(t, f, key, "copied")
+		if got, found, err := f.AuthKeys.Revalidate(ctx, key); err != nil || !found || got.DeviceID != "original" {
+			t.Fatalf("device_id=%q found=%v err=%v, want original kept", got.DeviceID, found, err)
+		}
+		if backfill(t, f, key) {
+			t.Fatalf("backfill after a copied session reported another device=true, want false")
+		}
+		assertBoundDevices(t, f, u.ID, "original")
+
+		revoked, err := f.DeviceLimits.UnbindDevice(ctx, u.ID, "original")
+		if err != nil {
+			t.Fatalf("unbind: %v", err)
+		}
+		if len(revoked) != 1 || revoked[0].AuthKeyID != key {
+			t.Fatalf("revoked=%+v, want the copied session", revoked)
+		}
+		assertNoAuthorization(t, f, key)
+		assertBoundDevices(t, f, u.ID)
+	})
+
 	t.Run("unbinding a device that is not bound changes nothing", func(t *testing.T) {
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)
@@ -755,7 +784,7 @@ func backfill(t *testing.T, f DeviceLimitFixture, key [8]byte) bool {
 // reportDeviceID 模拟老客户端升级后重连：已登录的 key 之后才持久化 device_id。
 func reportDeviceID(t *testing.T, f DeviceLimitFixture, key [8]byte, deviceID string) {
 	t.Helper()
-	if err := f.AuthKeys.UpdateClientInfo(context.Background(), key, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
+	if _, err := f.AuthKeys.UpdateClientInfo(context.Background(), key, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
 		t.Fatalf("persist device id on %x: %v", key, err)
 	}
 }
@@ -783,7 +812,7 @@ func newDeviceKey(t *testing.T, f DeviceLimitFixture, deviceID string) [8]byte {
 	}
 	t.Cleanup(func() { _ = f.AuthKeys.Delete(context.Background(), id) })
 	if deviceID != "" {
-		if err := f.AuthKeys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
+		if _, err := f.AuthKeys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
 			t.Fatalf("persist device id on %x: %v", id, err)
 		}
 	}

@@ -67,7 +67,7 @@ func (f *deviceLimitFixture) signIn(t *testing.T, userID int64, deviceID string)
 		t.Fatalf("save auth key: %v", err)
 	}
 	if deviceID != "" {
-		if err := f.keys.UpdateClientInfo(ctx, key, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
+		if _, err := f.keys.UpdateClientInfo(ctx, key, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
 			t.Fatalf("persist device id: %v", err)
 		}
 	}

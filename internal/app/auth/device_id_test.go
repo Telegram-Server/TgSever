@@ -41,7 +41,7 @@ func TestBindTempAuthKeyCarriesDeviceIDToPermanentKey(t *testing.T) {
 		wantPerm           string
 	}{
 		{name: "temp reported", tempID: "desk-temp", wantPerm: "desk-temp"},
-		{name: "temp overrides perm", tempID: "desk-new", permBefore: "desk-old", wantPerm: "desk-new"},
+		{name: "perm keeps its device id", tempID: "desk-new", permBefore: "desk-old", wantPerm: "desk-old"},
 		{name: "temp silent", permBefore: "desk-old", wantPerm: "desk-old"},
 		{name: "neither reported", wantPerm: ""},
 	} {

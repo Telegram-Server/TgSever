@@ -99,25 +99,26 @@ func (s *AuthKeyStore) LoadBindingKeys(_ context.Context, tempID, permID [8]byte
 	}, nil
 }
 
-func (s *AuthKeyStore) UpdateClientInfo(_ context.Context, id [8]byte, info store.AuthKeyClientInfo) error {
+func (s *AuthKeyStore) UpdateClientInfo(_ context.Context, id [8]byte, info store.AuthKeyClientInfo) (bool, error) {
 	s.state.mu.Lock()
 	k, ok := s.state.keys[id]
 	if !ok {
 		s.state.mu.Unlock()
-		return store.ErrAuthKeyNotFound
+		return false, store.ErrAuthKeyNotFound
 	}
 	if info.Layer > 0 && k.LayerObservationID > 0 && info.Layer != k.Layer {
 		s.state.mu.Unlock()
-		return store.ErrAuthKeySessionLayerConflict
+		return false, store.ErrAuthKeySessionLayerConflict
 	}
-	mergeAuthKeyClientInfo(&k, info)
+	deviceIDStored := mergeAuthKeyClientInfo(&k, info)
 	s.state.keys[id] = k
 	s.state.mirrorAuthorizationLayersLocked([][8]byte{id}, k.Layer)
 	s.state.mu.Unlock()
-	return nil
+	return deviceIDStored, nil
 }
 
-func mergeAuthKeyClientInfo(k *store.AuthKeyData, info store.AuthKeyClientInfo) {
+// mergeAuthKeyClientInfo 合并客户端信息，报告 device_id 是否本次新写入。
+func mergeAuthKeyClientInfo(k *store.AuthKeyData, info store.AuthKeyClientInfo) (deviceIDStored bool) {
 	if info.Layer > 0 {
 		k.Layer = info.Layer
 	}
@@ -136,9 +137,12 @@ func mergeAuthKeyClientInfo(k *store.AuthKeyData, info store.AuthKeyClientInfo) 
 	if info.AppVersion != "" {
 		k.AppVersion = info.AppVersion
 	}
-	if info.DeviceID != "" {
+	// device_id 一次写入：只在从未上报时写，之后不再改变（见 store.AuthKeyClientInfo.DeviceID）。
+	if info.DeviceID != "" && k.DeviceID == "" {
 		k.DeviceID = info.DeviceID
+		deviceIDStored = true
 	}
+	return deviceIDStored
 }
 
 // mirrorAuthorizationLayersLocked updates the materialized authorization view

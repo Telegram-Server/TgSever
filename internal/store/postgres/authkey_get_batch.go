@@ -133,7 +133,7 @@ func (s *BatchedAuthKeyStore) LoadBindingKeys(ctx context.Context, tempID, permI
 	return s.base.LoadBindingKeys(ctx, tempID, permID)
 }
 
-func (s *BatchedAuthKeyStore) UpdateClientInfo(ctx context.Context, id [8]byte, info store.AuthKeyClientInfo) error {
+func (s *BatchedAuthKeyStore) UpdateClientInfo(ctx context.Context, id [8]byte, info store.AuthKeyClientInfo) (bool, error) {
 	return s.base.UpdateClientInfo(ctx, id, info)
 }
 

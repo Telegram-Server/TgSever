@@ -156,3 +156,98 @@ func TestDeviceIDCarriedToAPermanentKeyIsBackfilled(t *testing.T) {
 		t.Fatalf("bindings=%+v err=%v, want pfs-desk backfilled", got, err)
 	}
 }
+
+// countingBackfillStore 记录延迟补绑被调用的次数。
+type countingBackfillStore struct {
+	*memory.AuthorizationStore
+	calls *int
+}
+
+func (s countingBackfillStore) BackfillDeviceBinding(ctx context.Context, authKeyID [8]byte) (bool, error) {
+	*s.calls++
+	return s.AuthorizationStore.BackfillDeviceBinding(ctx, authKeyID)
+}
+
+// 补绑只在 device_id 本次新写入时触发：每次重连都带同一个 device_id，或拷走的会话报了
+// 别的 device_id，都不再进补绑查询（热路径）。
+func TestDeviceBackfillRunsOnlyWhenTheDeviceIDIsFirstStored(t *testing.T) {
+	ctx := context.Background()
+	keys := memory.NewAuthKeyStore()
+	key := testAuthKey(0x83)
+	saveAuthKey(t, keys, key)
+	calls := 0
+	svc := NewService(memory.NewUserStore(), countingBackfillStore{memory.NewAuthorizationStore(), &calls}, memory.NewCodeStore(), keys, nil, "12345")
+
+	for _, info := range []domain.AuthKeyClientInfo{
+		{DeviceModel: "PC"},
+		{DeviceID: "desk-0001"},
+		{DeviceID: "desk-0001"},
+		{DeviceID: "desk-0002"},
+	} {
+		if err := svc.UpdateAuthKeyClientInfo(ctx, key.ID, info); err != nil {
+			t.Fatalf("update client info %+v: %v", info, err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("backfill calls=%d, want 1 (only the first stored device id)", calls)
+	}
+}
+
+// PFS：perm key 上已有 device_id 时，temp key 带来的 device_id 不会写到 perm key 上，
+// 也就不触发补绑；重放同一次绑定同样不触发。
+func TestBindTempAuthKeyBackfillsOnlyWhenThePermanentKeyGainsADeviceID(t *testing.T) {
+	ctx := context.Background()
+	keys := memory.NewAuthKeyStore()
+	tempBindings := memory.NewTempAuthKeyBindingStore(keys)
+	permKey, tempKey := testAuthKey(0x93), testAuthKey(0x94)
+	expiresAt := int(time.Now().Add(time.Hour).Unix())
+	saveAuthKey(t, keys, permKey)
+	saveAuthKeyWithExpiry(t, keys, tempKey, expiresAt)
+	calls := 0
+	svc := NewService(memory.NewUserStore(), countingBackfillStore{memory.NewAuthorizationStore(), &calls}, memory.NewCodeStore(), keys, tempBindings, "12345")
+	if err := svc.UpdateAuthKeyClientInfo(ctx, permKey.ID, domain.AuthKeyClientInfo{DeviceID: "perm-desk"}); err != nil {
+		t.Fatalf("report device id on the perm key: %v", err)
+	}
+	if err := svc.UpdateAuthKeyClientInfo(ctx, tempKey.ID, domain.AuthKeyClientInfo{DeviceID: "temp-desk"}); err != nil {
+		t.Fatalf("report device id on the temp key: %v", err)
+	}
+	calls = 0
+
+	const (
+		nonce     = int64(0x7788)
+		sessionID = int64(0x99AA)
+	)
+	encrypted, err := mtcrypto.EncryptBindMessage(
+		bytes.NewReader(bytes.Repeat([]byte{0xAB}, 128)),
+		permKey,
+		int64(0x010203040506070A),
+		&mtcrypto.BindAuthKeyInner{
+			Nonce:         nonce,
+			TempAuthKeyID: tempKey.IntID(),
+			PermAuthKeyID: permKey.IntID(),
+			TempSessionID: sessionID,
+			ExpiresAt:     expiresAt,
+		},
+	)
+	if err != nil {
+		t.Fatalf("encrypt bind message: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := svc.BindTempAuthKey(ctx, sessionID, domain.TempAuthKeyBinding{
+			TempAuthKeyID:    tempKey.ID,
+			PermAuthKeyID:    permKey.IntID(),
+			Nonce:            nonce,
+			ExpiresAt:        expiresAt,
+			EncryptedMessage: encrypted,
+		}); err != nil {
+			t.Fatalf("bind temp auth key (attempt %d): %v", i+1, err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("backfill calls=%d, want 0 when the perm key already had a device id", calls)
+	}
+	perm, _, err := keys.Revalidate(ctx, permKey.ID)
+	if err != nil || perm.DeviceID != "perm-desk" {
+		t.Fatalf("perm device_id=%q err=%v, want perm-desk kept", perm.DeviceID, err)
+	}
+}

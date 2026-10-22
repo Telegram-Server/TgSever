@@ -27,7 +27,7 @@ func TestDeviceBindingsListsBoundDevicesInBindingOrder(t *testing.T) {
 		if err := keys.Save(ctx, store.AuthKeyData{ID: key, ServerSalt: 1}); err != nil {
 			t.Fatalf("save key: %v", err)
 		}
-		if err := keys.UpdateClientInfo(ctx, key, store.AuthKeyClientInfo{DeviceID: d.id}); err != nil {
+		if _, err := keys.UpdateClientInfo(ctx, key, store.AuthKeyClientInfo{DeviceID: d.id}); err != nil {
 			t.Fatalf("persist device id: %v", err)
 		}
 		if err := f.auths.Bind(ctx, domain.Authorization{
