@@ -86,6 +86,14 @@ SELECT version FROM read_model_versions
 WHERE model = 'dialog_light' AND owner_user_id = $1 AND peer_type = 'user' AND peer_id = $2`, observerID, activeUserID).Scan(&dialogVersionBefore); err != nil {
 		t.Fatalf("read initial dialog projection version: %v", err)
 	}
+	// 0193 起 users 插入触发器即为每个用户播种 user_visibility（未冻结也是一条
+	// 版本化事实），所以这里断言冻结让它前进一步，而不是从无到 1。
+	var visibilityVersionBefore int64
+	if err := tx.QueryRow(ctx, `
+SELECT version FROM read_model_versions
+WHERE model = 'user_visibility' AND owner_user_id = 0 AND peer_type = 'user' AND peer_id = $1`, activeUserID).Scan(&visibilityVersionBefore); err != nil {
+		t.Fatalf("read initial user visibility version: %v", err)
+	}
 
 	since := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
 	want := domain.AccountFreeze{
@@ -127,8 +135,8 @@ WHERE model = 'dialog_light' AND owner_user_id = $1 AND peer_type = 'user' AND p
 	}
 	if err := tx.QueryRow(ctx, `
 SELECT version FROM read_model_versions
-WHERE model = 'user_visibility' AND owner_user_id = 0 AND peer_type = 'user' AND peer_id = $1`, activeUserID).Scan(&visibilityVersion); err != nil || visibilityVersion != 1 {
-		t.Fatalf("user visibility version = %d err=%v, want 1", visibilityVersion, err)
+WHERE model = 'user_visibility' AND owner_user_id = 0 AND peer_type = 'user' AND peer_id = $1`, activeUserID).Scan(&visibilityVersion); err != nil || visibilityVersion != visibilityVersionBefore+1 {
+		t.Fatalf("user visibility version = %d err=%v, want %d", visibilityVersion, err, visibilityVersionBefore+1)
 	}
 
 	claimAt := time.Now().UTC().Add(time.Minute)
