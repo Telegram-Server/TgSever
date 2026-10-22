@@ -179,7 +179,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (79 методов + 1 файловый маршрут):
+Реализовано (81 метод + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
@@ -196,6 +196,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 | Callback | `answerCallbackQuery` |
 | Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount` |
 | Управление чатами | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Заявки на вступление | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Файлы | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
 | Webhooks | `setWebhook`, `deleteWebhook`, `getWebhookInfo` |
 | Меню и статус | `setChatMenuButton`, `getChatMenuButton`, `setUserEmojiStatus` |
@@ -748,6 +749,13 @@ inline-сообщения.
 | `setChatPhoto` | `chat_id`, `photo` | только multipart-загрузка |
 | `deleteChatPhoto` | `chat_id` | |
 | `leaveChat` | `chat_id` | |
+| `approveChatJoinRequest` | `chat_id`, `user_id` | нужно право приглашать пользователей (или менять информацию); заявитель вступает, участники и администраторы получают те же обновления, что и при действии администратора-человека |
+| `declineChatJoinRequest` | `chat_id`, `user_id` | нужно право приглашать пользователей (или менять информацию); заявка удаляется |
+
+Несуществующая или уже обработанная заявка —
+`Bad Request: HIDE_REQUESTER_MISSING`; для этих двух методов
+`CHAT_ADMIN_REQUIRED` и `USER_ALREADY_PARTICIPANT` тоже идут с
+официальным префиксом `Bad Request: `.
 
 При `use_independent_chat_permissions=false` (по умолчанию) любое право на
 медиа, опросы, «другие сообщения» или превью ссылок также разрешает обычные
