@@ -773,6 +773,12 @@ type ChannelsService interface {
 	TransferOwnership(ctx context.Context, userID int64, req domain.TransferChannelOwnershipRequest) (domain.TransferChannelOwnershipResult, error)
 	EditMemberRank(ctx context.Context, userID int64, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error)
 	EditBanned(ctx context.Context, userID int64, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error)
+	// EditBannedSenderChat 封禁/解封频道 peer（只接受全封与解封）。
+	EditBannedSenderChat(ctx context.Context, userID int64, req domain.EditChannelBannedSenderChatRequest) (domain.EditChannelBannedSenderChatResult, error)
+	// IsSenderChatBanned 报告频道 senderChatID 是否在 channelID 里被封禁（发言拦截用，不鉴权）。
+	IsSenderChatBanned(ctx context.Context, channelID, senderChatID int64) (bool, error)
+	// GetSenderChatParticipant 返回被封禁频道 peer 的成员投影与频道基础行（查看者须为管理员）。
+	GetSenderChatParticipant(ctx context.Context, userID, channelID, senderChatID int64) (domain.ChannelMember, domain.Channel, error)
 	EditDefaultBannedRights(ctx context.Context, userID int64, req domain.EditChannelDefaultBannedRightsRequest) (domain.Channel, error)
 	DeleteChannel(ctx context.Context, userID int64, req domain.DeleteChannelRequest) (domain.DeleteChannelResult, error)
 	CheckUsername(ctx context.Context, userID, channelID int64, username string) (bool, error)

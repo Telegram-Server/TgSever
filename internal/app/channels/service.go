@@ -954,7 +954,12 @@ func (s *Service) ListAdminLog(ctx context.Context, userID int64, req domain.Cha
 		return domain.ChannelAdminLogResult{}, domain.ErrChannelInvalid
 	}
 	req.Limit = capLimit(req.Limit, domain.MaxChannelAdminLogLimit)
-	return s.channels.ListAdminLog(ctx, req)
+	res, err := s.channels.ListAdminLog(ctx, req)
+	if err != nil {
+		return res, err
+	}
+	res.SenderChats, err = s.senderChatsForAdminLog(ctx, res.Events)
+	return res, err
 }
 
 // GetChannelForChangeInfo validates the current user can change channel metadata.
