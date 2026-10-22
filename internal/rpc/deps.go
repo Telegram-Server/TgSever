@@ -27,9 +27,9 @@ type AuthService interface {
 	UserID(ctx context.Context, authKeyID [8]byte) (int64, bool, error)
 	PendingPasswordUserID(ctx context.Context, authKeyID [8]byte) (int64, bool, error)
 	CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte, expectedUserID int64) error
-	// CheckDeviceLimit 只读预检把 authKeyID 作为 userID 的已完成授权是否超出设备上限
-	// （超限返回 domain.ErrDeviceLimitReached），在有副作用的登录步骤之前调用；绑定与 2FA
-	// 转正时仍会在锁下再检查一次。
+	// CheckDeviceLimit 只读预检把 authKeyID 作为 userID 的已完成授权是否会被设备绑定规则
+	// 拒绝（domain.ErrDeviceLimitReached / domain.ErrDeviceIDRequired），在有副作用的登录
+	// 步骤之前调用；绑定与 2FA 转正时仍会在锁下再判一次。
 	CheckDeviceLimit(ctx context.Context, authKeyID [8]byte, userID int64) error
 	SendCode(ctx context.Context, phone string) (string, error)
 	CodeDelivery(ctx context.Context, phoneCodeHash string) (domain.AuthCodeDelivery, bool, error)

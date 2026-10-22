@@ -71,10 +71,6 @@ FOR UPDATE`, a.UserID).Scan(&active); err != nil {
 	if !active {
 		return domain.ErrAccountDeleted
 	}
-	// 设备上限：用户行已锁，计数与下面的插入在同一把锁下，超限时整个事务回滚、不写入任何行。
-	if err := checkDeviceLimit(ctx, sqlcgen.New(tx), a.UserID, keyID); err != nil {
-		return err
-	}
 	if err := lockPermanentAuthIdentities(ctx, tx, []int64{keyID}); err != nil {
 		return err
 	}
@@ -83,16 +79,31 @@ FOR UPDATE`, a.UserID).Scan(&active); err != nil {
 		expiresAt          int
 		authLayer          int
 		layerObservationID int64
+		deviceID           string
 	)
 	if err := db.QueryRow(ctx, `
-SELECT auth_key_id, expires_at, layer, layer_observation_id
+SELECT auth_key_id, expires_at, layer, layer_observation_id, COALESCE(device_id, '')
 FROM auth_keys
 WHERE auth_key_id = $1
-FOR UPDATE`, keyID).Scan(&lockedKeyID, &expiresAt, &authLayer, &layerObservationID); err != nil {
+FOR UPDATE`, keyID).Scan(&lockedKeyID, &expiresAt, &authLayer, &layerObservationID, &deviceID); err != nil {
 		return fmt.Errorf("lock auth key for authorization: %w", err)
 	}
 	if expiresAt != 0 {
 		return store.ErrAuthKeyNotPermanent
+	}
+	// 设备绑定（#112）：用户锁已持有，device_id 读自刚锁住的 auth key 行（PFS 下即 perm key），
+	// 判定与绑定写入和下面的授权写入在同一事务里，拒绝时整个事务回滚、不写入任何行。
+	// 停在 2FA 的授权不判、不绑定，转正（MarkPasswordPassed）时再判。
+	if !a.PasswordPending {
+		if err := enforceDeviceBinding(ctx, sqlcgen.New(tx), deviceBindingCandidate{
+			UserID:      a.UserID,
+			DeviceID:    deviceID,
+			DeviceModel: a.DeviceModel,
+			Platform:    a.Platform,
+			AppVersion:  a.AppVersion,
+		}, true); err != nil {
+			return err
+		}
 	}
 	if authLayer < 0 || layerObservationID < 0 || (layerObservationID > 0 && authLayer == 0) {
 		return fmt.Errorf(
@@ -234,9 +245,10 @@ WHERE auth_key_id = $1`,
 // password was just verified. A concurrent cross-user Bind must not let A's
 // proof clear B's password_pending flag.
 //
-// 设备上限（#106）：账号没有上限时走一条 UPDATE 的快路径；有上限时转正与 Bind 拿同一把
-// 用户锁（advisory + 用户行），在锁下再检查一次上限。超限时删除这条待完成的授权并提交，然后返回 domain.ErrDeviceLimitReached；
-// 两台设备同时停在 2FA、只剩一个名额时，只有先拿到锁的那台转正。
+// 设备绑定（#106、#112）：账号没有上限时走一条 UPDATE 的快路径；有上限时转正与 Bind 拿同一把
+// 用户锁（advisory + 用户行），在锁下执行绑定规则。被拒绝（domain.ErrDeviceIDRequired /
+// domain.ErrDeviceLimitReached）时删除这条待完成的授权并提交，然后返回该错误；两台新设备
+// 同时停在 2FA、只剩一个名额时，只有先拿到锁的那台转正并绑定。
 func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte, expectedUserID int64) error {
 	if expectedUserID == 0 {
 		return store.ErrAuthorizationStateChanged
@@ -251,9 +263,9 @@ func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte,
 	if promoted == 1 {
 		return nil
 	}
-	var rejected bool
+	var rejected error
 	err = withTx(ctx, s.db, "mark authorization password passed", func(tx pgx.Tx) error {
-		rejected = false
+		rejected = nil
 		if err := lockUsersForUpdate(ctx, tx, expectedUserID); err != nil {
 			return fmt.Errorf("lock authorization user: %w", err)
 		}
@@ -261,16 +273,36 @@ func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte,
 		if err := q.LockUserRowForPasswordPromotion(ctx, expectedUserID); err != nil {
 			return fmt.Errorf("lock authorization user row: %w", err)
 		}
-		switch err := checkDeviceLimit(ctx, q, expectedUserID, keyID); {
-		case errors.Is(err, domain.ErrDeviceLimitReached):
-			n, err := q.DeletePendingAuthorization(ctx, sqlcgen.DeletePendingAuthorizationParams(params))
-			if err != nil {
-				return fmt.Errorf("delete pending authorization over the device limit: %w", err)
+		pending, err := q.GetAuthorizationByAuthKey(ctx, keyID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return store.ErrAuthorizationStateChanged
+			}
+			return fmt.Errorf("read pending authorization: %w", err)
+		}
+		if pending.UserID != expectedUserID || !pending.PasswordPending {
+			return store.ErrAuthorizationStateChanged
+		}
+		deviceID, err := authKeyDeviceID(ctx, q, keyID)
+		if err != nil {
+			return err
+		}
+		switch err := enforceDeviceBinding(ctx, q, deviceBindingCandidate{
+			UserID:      expectedUserID,
+			DeviceID:    deviceID,
+			DeviceModel: pending.DeviceModel,
+			Platform:    pending.Platform,
+			AppVersion:  pending.AppVersion,
+		}, true); {
+		case errors.Is(err, domain.ErrDeviceLimitReached), errors.Is(err, domain.ErrDeviceIDRequired):
+			n, delErr := q.DeletePendingAuthorization(ctx, sqlcgen.DeletePendingAuthorizationParams(params))
+			if delErr != nil {
+				return fmt.Errorf("delete pending authorization rejected by device binding: %w", delErr)
 			}
 			if n != 1 {
 				return store.ErrAuthorizationStateChanged
 			}
-			rejected = true
+			rejected = err
 			return nil
 		case err != nil:
 			return err
@@ -285,15 +317,12 @@ func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte,
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, store.ErrAuthorizationStateChanged) || errors.Is(err, domain.ErrDeviceLimitReached) {
+		if errors.Is(err, store.ErrAuthorizationStateChanged) {
 			return err
 		}
 		return fmt.Errorf("mark authorization password passed: %w", err)
 	}
-	if rejected {
-		return domain.ErrDeviceLimitReached
-	}
-	return nil
+	return rejected
 }
 
 func (s *AuthorizationStore) ListByUser(ctx context.Context, userID int64) ([]domain.Authorization, error) {

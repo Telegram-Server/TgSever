@@ -10,7 +10,8 @@ import (
 )
 
 // 后台给账号设置或清除设备上限（#105）。走普通的命令通道：试运行、按 command id 幂等、写审计。
-// 上限只作用于以后的新登录：调低到比当前设备数还少时不踢任何设备。系统账号、bot、已注销与
+// 上限按已绑定设备数计（#112，绑定规则见 store.DeviceLimitStore），只作用于以后的新登录：
+// 调低到比已绑定数还少时不踢任何设备、不删绑定；清除上限也保留绑定名单。系统账号、bot、已注销与
 // 不存在的账号一律拒绝（USER_INVALID）；取值必须在 [domain.MinDeviceLimit, domain.MaxDeviceLimit]。
 
 const ActionSetDeviceLimit = "account.set_device_limit"

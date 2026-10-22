@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"encoding/binary"
+	"sort"
 	"sync"
 	"time"
 
@@ -301,6 +302,10 @@ type AuthorizationStore struct {
 	m     map[[8]byte]domain.Authorization
 	// deviceLimits 是账号的设备上限（受 mu 保护），与授权在同一把锁下计数和写入。
 	deviceLimits map[int64]int
+	// deviceBindings 是账号的设备绑定名单（#112，受 mu 保护）：userID → device_id → 绑定。
+	// 删除授权（removeLocked）不碰它——退出登录、撤销授权都不解除绑定；只有账号注销
+	// （DeleteDeviceBindings）删除整份名单。
+	deviceBindings map[int64]map[string]domain.DeviceBinding
 	// pushDevices 是挂在授权上的设备推送登记（见 PushDeviceStore），与 m 同受 mu 保护，
 	// 删除授权的每条路径都经 removeLocked 一并清掉。
 	pushDevices map[[8]byte]map[int]domain.PushDevice
@@ -385,43 +390,114 @@ func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) e
 		}
 		a.Layer = key.Layer
 		s.mu.Lock()
-		err := s.bindLocked(a, limited)
+		err := s.bindLocked(a, limited, key.DeviceID)
 		s.mu.Unlock()
 		s.authKeys.mu.RUnlock()
 		s.linkMu.RUnlock()
 		return err
 	}
 	s.linkMu.RUnlock()
+	// 没有接上 auth key 数据时读不到 device_id，按"未上报"处理。
 	s.mu.Lock()
-	err = s.bindLocked(a, limited)
+	err = s.bindLocked(a, limited, "")
 	s.mu.Unlock()
 	return err
 }
 
-// bindLocked 在同一把锁下完成"计数 + 写入"：账号有设备上限时，已完成登录的其它授权
-// （不算当前 auth key 自身、不算 password_pending）达到上限就拒绝，不写入。
-func (s *AuthorizationStore) bindLocked(a domain.Authorization, limited bool) error {
-	if limited && s.deviceLimitReachedLocked(a.UserID, a.AuthKeyID) {
-		return domain.ErrDeviceLimitReached
+// bindLocked 在同一把锁下完成"判定 + 写入"（#112 绑定规则）：账号有设备上限且这次是
+// 完成登录（不是 password_pending）时，按 deviceID 绑定或拒绝；拒绝时不写入任何东西。
+func (s *AuthorizationStore) bindLocked(a domain.Authorization, limited bool, deviceID string) error {
+	if limited && !a.PasswordPending {
+		if err := s.enforceDeviceBindingLocked(a, deviceID, true, time.Now()); err != nil {
+			return err
+		}
 	}
 	s.m[a.AuthKeyID] = a
 	return nil
 }
 
-// deviceLimitReachedLocked 报告账号有上限且已完成登录的其它授权（不算 self、不算
-// password_pending）已达上限。调用方持有 mu，并已用 deviceLimitApplies 排除 bot。
-func (s *AuthorizationStore) deviceLimitReachedLocked(userID int64, self [8]byte) bool {
-	limit, ok := s.deviceLimits[userID]
+// enforceDeviceBindingLocked 对 a 这次"完成登录"执行绑定规则 3–6（规则 1 的 bot 由调用方
+// 用 deviceLimitApplies 排除，规则 2 的 password_pending 由调用方跳过）：账号没有上限 →
+// 放行；deviceID 不合法 → ErrDeviceIDRequired；已绑定 → 放行（write 时刷新最近使用时间）；
+// 绑定数 < 上限 → 放行（write 时写入绑定）；否则 ErrDeviceLimitReached。调用方持有 mu，
+// write=true 时必须是写锁。
+func (s *AuthorizationStore) enforceDeviceBindingLocked(a domain.Authorization, deviceID string, write bool, now time.Time) error {
+	limit, ok := s.deviceLimits[a.UserID]
 	if !ok {
-		return false
+		return nil
 	}
-	n := 0
-	for id, existing := range s.m {
-		if existing.UserID == userID && id != self && !existing.PasswordPending {
-			n++
+	if !domain.ValidDeviceID(deviceID) {
+		return domain.ErrDeviceIDRequired
+	}
+	bound := s.deviceBindings[a.UserID]
+	if b, ok := bound[deviceID]; ok {
+		if write {
+			b.LastUsedAt = now
+			bound[deviceID] = b
+		}
+		return nil
+	}
+	if len(bound) >= limit {
+		return domain.ErrDeviceLimitReached
+	}
+	if write {
+		if bound == nil {
+			if s.deviceBindings == nil {
+				s.deviceBindings = make(map[int64]map[string]domain.DeviceBinding)
+			}
+			bound = make(map[string]domain.DeviceBinding)
+			s.deviceBindings[a.UserID] = bound
+		}
+		bound[deviceID] = domain.DeviceBinding{
+			UserID:      a.UserID,
+			DeviceID:    deviceID,
+			DeviceModel: a.DeviceModel,
+			Platform:    a.Platform,
+			AppVersion:  a.AppVersion,
+			BoundAt:     now,
+			LastUsedAt:  now,
 		}
 	}
-	return n >= limit
+	return nil
+}
+
+// authKeyDeviceID 读 auth key 上持久化的 device_id；没有接上 auth key 数据或 key 不存在时
+// 返回空串（按"未上报"处理）。不持有 mu 时调用。
+func (s *AuthorizationStore) authKeyDeviceID(id [8]byte) string {
+	s.linkMu.RLock()
+	defer s.linkMu.RUnlock()
+	if s.authKeys == nil {
+		return ""
+	}
+	s.authKeys.mu.RLock()
+	defer s.authKeys.mu.RUnlock()
+	return s.authKeys.keys[id].DeviceID
+}
+
+// ListDeviceBindings 按绑定时间先后（同一时刻按 device_id）返回账号的设备绑定名单。
+func (s *AuthorizationStore) ListDeviceBindings(_ context.Context, userID int64) ([]domain.DeviceBinding, error) {
+	s.mu.RLock()
+	out := make([]domain.DeviceBinding, 0, len(s.deviceBindings[userID]))
+	for _, b := range s.deviceBindings[userID] {
+		out = append(out, b)
+	}
+	s.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].BoundAt.Equal(out[j].BoundAt) {
+			return out[i].BoundAt.Before(out[j].BoundAt)
+		}
+		return out[i].DeviceID < out[j].DeviceID
+	})
+	return out, nil
+}
+
+// DeleteDeviceBindings 删除账号的整份设备绑定名单，只供账号注销使用（用户是软删除，
+// 没有外键级联）。退出登录、撤销授权、调整上限都不调用它。
+func (s *AuthorizationStore) DeleteDeviceBindings(_ context.Context, userID int64) error {
+	s.mu.Lock()
+	delete(s.deviceBindings, userID)
+	s.mu.Unlock()
+	return nil
 }
 
 // LinkAuthorizationUsers 接上同一份用户数据：Bind 据此跳过 bot，SetDeviceLimit 据此拒绝
@@ -489,12 +565,10 @@ func (s *AuthorizationStore) CheckDeviceLimit(ctx context.Context, userID int64,
 	if err != nil || !limited {
 		return err
 	}
+	deviceID := s.authKeyDeviceID(authKeyID)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.deviceLimitReachedLocked(userID, authKeyID) {
-		return domain.ErrDeviceLimitReached
-	}
-	return nil
+	return s.enforceDeviceBindingLocked(domain.Authorization{UserID: userID, AuthKeyID: authKeyID}, deviceID, false, time.Time{})
 }
 
 func (s *AuthorizationStore) ClearDeviceLimit(_ context.Context, userID int64) (bool, error) {
@@ -568,24 +642,28 @@ func mergeAuthorizationClientInfo(a *domain.Authorization, info domain.AuthKeyCl
 	a.ActiveAt = time.Now()
 }
 
-// MarkPasswordPassed 转正时在同一把锁下再检查一次设备上限（#106）：其它已完成登录的
-// 授权已达上限时返回 domain.ErrDeviceLimitReached，并删除这条待完成的授权。
+// MarkPasswordPassed 转正是一次"完成登录"，在同一把锁下执行绑定规则（#106、#112）：
+// 绑定或放行；被拒绝（domain.ErrDeviceIDRequired / domain.ErrDeviceLimitReached）时删除
+// 这条待完成的授权并返回该错误。
 func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte, expectedUserID int64) error {
 	limited, err := s.deviceLimitApplies(ctx, expectedUserID)
 	if err != nil {
 		return err
 	}
+	deviceID := s.authKeyDeviceID(id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.m[id]
 	if !ok || expectedUserID == 0 || a.UserID != expectedUserID || !a.PasswordPending {
 		return store.ErrAuthorizationStateChanged
 	}
-	if limited && s.deviceLimitReachedLocked(a.UserID, id) {
-		s.removeLocked(id)
-		return domain.ErrDeviceLimitReached
-	}
 	now := time.Now()
+	if limited {
+		if err := s.enforceDeviceBindingLocked(a, deviceID, true, now); err != nil {
+			s.removeLocked(id)
+			return err
+		}
+	}
 	a.PasswordPending = false
 	a.CreatedAt = now
 	a.ActiveAt = now

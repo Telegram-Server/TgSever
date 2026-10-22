@@ -194,6 +194,10 @@ WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND active`, userID); err 
 	if _, err := sqlcgen.New(tx).DeleteLoginPassword(ctx, userID); err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("delete deleted account login password: %w", err)
 	}
+	// 设备绑定名单（#112）同理：退出登录、撤销授权都不删它，只有注销在这里一起删掉。
+	if _, err := sqlcgen.New(tx).DeleteDeviceBindingsByUser(ctx, userID); err != nil {
+		return domain.AccountDeletionResult{}, fmt.Errorf("delete deleted account device bindings: %w", err)
+	}
 	reason = strings.TrimSpace(reason)
 	reason = truncateUTF8Bytes(reason, 1024)
 	if _, err := tx.Exec(ctx, `

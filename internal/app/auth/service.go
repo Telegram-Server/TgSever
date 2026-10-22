@@ -545,9 +545,10 @@ func (s *Service) PendingPasswordUserID(ctx context.Context, authKeyID [8]byte) 
 }
 
 // CheckDeviceLimit 只读地预检把 authKeyID 作为 userID 的已完成授权（新绑定或 2FA 转正）
-// 是否会超出设备上限，超限返回 domain.ErrDeviceLimitReached。用于在有副作用的步骤之前
+// 是否会被设备绑定规则拒绝（#112）：名额已满且这台设备未绑定返回 domain.ErrDeviceLimitReached，
+// auth key 上没有 device_id 返回 domain.ErrDeviceIDRequired。用于在有副作用的步骤之前
 // 先拒绝（密码找回会消耗找回码并改掉 2FA 密码；扫码确认会清掉新设备的更新状态）；
-// 绑定与转正时 store 仍在锁下再检查一次。授权 store 不支持设备上限时不限制。
+// 绑定与转正时 store 仍在锁下再判一次。授权 store 不支持设备上限时不限制。
 func (s *Service) CheckDeviceLimit(ctx context.Context, authKeyID [8]byte, userID int64) error {
 	if s == nil || userID == 0 {
 		return nil

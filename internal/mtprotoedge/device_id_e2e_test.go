@@ -48,6 +48,17 @@ func TestInitConnectionDeviceIDEndToEnd(t *testing.T) {
 // 服务端，发一个 help.getConfig 后断开。
 func (s *loginPasswordServer) runWithDevice(t *testing.T, storage session.Storage, device telegram.DeviceConfig) {
 	t.Helper()
+	if err := s.runOnDevice(t, storage, device, func(ctx context.Context, raw *tg.Client) error {
+		_, err := raw.HelpGetConfig(ctx)
+		return err
+	}); err != nil {
+		t.Fatalf("client run: %v", err)
+	}
+}
+
+// runOnDevice 用给定的会话存储和 initConnection 设备信息连一次服务端，执行 fn 后断开。
+func (s *loginPasswordServer) runOnDevice(t *testing.T, storage session.Storage, device telegram.DeviceConfig, fn func(ctx context.Context, raw *tg.Client) error) error {
+	t.Helper()
 	client := telegram.NewClient(1, "hash", telegram.Options{
 		PublicKeys:     []exchange.PublicKey{{RSA: &s.rsaKey.PublicKey}},
 		Resolver:       dcs.Plain(dcs.PlainOptions{Protocol: transport.Intermediate}),
@@ -58,12 +69,9 @@ func (s *loginPasswordServer) runWithDevice(t *testing.T, storage session.Storag
 		// 不设 UpdateHandler 时 gotd 会在最外层套 invokeWithoutUpdates，服务端不接受。
 		UpdateHandler: telegram.UpdateHandlerFunc(func(context.Context, tg.UpdatesClass) error { return nil }),
 	})
-	if err := client.Run(s.ctx, func(ctx context.Context) error {
-		_, err := tg.NewClient(client).HelpGetConfig(ctx)
-		return err
-	}); err != nil {
-		t.Fatalf("client run: %v", err)
-	}
+	return client.Run(s.ctx, func(ctx context.Context) error {
+		return fn(ctx, tg.NewClient(client))
+	})
 }
 
 func loadSessionAuthKeyID(t *testing.T, storage session.Storage) [8]byte {

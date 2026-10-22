@@ -67,16 +67,69 @@ func (s *AuthorizationStore) ClearDeviceLimit(ctx context.Context, userID int64)
 	return n > 0, nil
 }
 
-// CheckDeviceLimit 是不加锁的只读预检，规则与绑定事务里的 checkDeviceLimit 相同。
+// CheckDeviceLimit 是不加锁的只读预检，规则与绑定事务里的 enforceDeviceBinding 相同：
+// 不看 password_pending（预检的是"完成登录之后"），不写绑定、不刷新最近使用时间。
 func (s *AuthorizationStore) CheckDeviceLimit(ctx context.Context, userID int64, authKeyID [8]byte) error {
-	return checkDeviceLimit(ctx, s.q, userID, authKeyIDToInt64(authKeyID))
+	deviceID, err := authKeyDeviceID(ctx, s.q, authKeyIDToInt64(authKeyID))
+	if err != nil {
+		return err
+	}
+	return enforceDeviceBinding(ctx, s.q, deviceBindingCandidate{UserID: userID, DeviceID: deviceID}, false)
 }
 
-// checkDeviceLimit 在绑定事务里、用户行已加锁之后执行：账号有上限（bot 不受限）且已完成
-// 登录的其它授权数达到上限时返回 domain.ErrDeviceLimitReached。同一用户的绑定都先拿用户锁，
-// 所以"计数 + 插入"不会被并发绑定穿插。
-func checkDeviceLimit(ctx context.Context, q *sqlcgen.Queries, userID, authKeyID int64) error {
-	limit, err := q.GetEnforcedDeviceLimit(ctx, userID)
+// ListDeviceBindings 按绑定时间先后（同一时刻按 device_id）返回账号的设备绑定名单。
+func (s *AuthorizationStore) ListDeviceBindings(ctx context.Context, userID int64) ([]domain.DeviceBinding, error) {
+	rows, err := s.q.ListDeviceBindings(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list device bindings: %w", err)
+	}
+	out := make([]domain.DeviceBinding, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.DeviceBinding{
+			UserID:      row.UserID,
+			DeviceID:    row.DeviceID,
+			DeviceModel: row.DeviceModel,
+			Platform:    row.Platform,
+			AppVersion:  row.AppVersion,
+			BoundAt:     row.BoundAt.Time,
+			LastUsedAt:  row.LastUsedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+// deviceBindingCandidate 是一次"完成登录"要判定的设备：账号、auth key 上持久化的
+// device_id（空串 = 未上报），以及写入绑定时记录的设备信息。
+type deviceBindingCandidate struct {
+	UserID      int64
+	DeviceID    string
+	DeviceModel string
+	Platform    string
+	AppVersion  string
+}
+
+// authKeyDeviceID 读 auth key 上持久化的 device_id；key 不存在或从未上报都返回空串。
+func authKeyDeviceID(ctx context.Context, q *sqlcgen.Queries, authKeyID int64) (string, error) {
+	deviceID, err := q.GetAuthKeyDeviceID(ctx, authKeyID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read auth key device id: %w", err)
+	}
+	return deviceID, nil
+}
+
+// enforceDeviceBinding 对一次"完成登录"执行绑定规则（见 store.DeviceLimitStore；password_pending
+// 由调用方跳过）：bot 或没有上限 → 放行；device_id 不合法 → domain.ErrDeviceIDRequired；
+// 已绑定 → 放行（write 时刷新最近使用时间）；绑定数 < 上限 → 放行（write 时写入绑定）；
+// 否则 domain.ErrDeviceLimitReached。
+//
+// write=true 时调用方必须已在同一事务里拿到该账号的用户锁（lockUsersForUpdate）：同一账号的
+// 绑定与转正都先拿这把锁，"计数 + 插入"不会被并发登录穿插，绑定数永不超过上限。拒绝时
+// 本函数不写任何行，调用方回滚或按自己的做法收尾。
+func enforceDeviceBinding(ctx context.Context, q *sqlcgen.Queries, c deviceBindingCandidate, write bool) error {
+	limit, err := q.GetEnforcedDeviceLimit(ctx, c.UserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -86,12 +139,44 @@ func checkDeviceLimit(ctx context.Context, q *sqlcgen.Queries, userID, authKeyID
 	if limit == nil {
 		return nil
 	}
-	used, err := q.CountOtherCompletedAuthorizations(ctx, sqlcgen.CountOtherCompletedAuthorizationsParams{UserID: userID, AuthKeyID: authKeyID})
+	if !domain.ValidDeviceID(c.DeviceID) {
+		return domain.ErrDeviceIDRequired
+	}
+	if write {
+		touched, err := q.TouchDeviceBinding(ctx, sqlcgen.TouchDeviceBindingParams{UserID: c.UserID, DeviceID: c.DeviceID})
+		if err != nil {
+			return fmt.Errorf("touch device binding: %w", err)
+		}
+		if touched > 0 {
+			return nil
+		}
+	} else {
+		bound, err := q.DeviceBindingExists(ctx, sqlcgen.DeviceBindingExistsParams{UserID: c.UserID, DeviceID: c.DeviceID})
+		if err != nil {
+			return fmt.Errorf("read device binding: %w", err)
+		}
+		if bound {
+			return nil
+		}
+	}
+	used, err := q.CountDeviceBindings(ctx, c.UserID)
 	if err != nil {
-		return fmt.Errorf("count authorizations for device limit: %w", err)
+		return fmt.Errorf("count device bindings: %w", err)
 	}
 	if used >= int64(*limit) {
 		return domain.ErrDeviceLimitReached
+	}
+	if !write {
+		return nil
+	}
+	if err := q.InsertDeviceBinding(ctx, sqlcgen.InsertDeviceBindingParams{
+		UserID:      c.UserID,
+		DeviceID:    c.DeviceID,
+		DeviceModel: c.DeviceModel,
+		Platform:    c.Platform,
+		AppVersion:  c.AppVersion,
+	}); err != nil {
+		return fmt.Errorf("insert device binding: %w", err)
 	}
 	return nil
 }

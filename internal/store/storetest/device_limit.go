@@ -3,9 +3,11 @@ package storetest
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -13,21 +15,23 @@ import (
 
 // DeviceLimitFixture 是同一份底层数据上的 UserStore、AuthKeyStore、AuthorizationStore，
 // 以及同一个授权 store 的设备上限读写面。NewPhone 每次返回一个还没有人占用的手机号；
-// NewBot 建一个 bot 账号（各实现建 bot 的方式不同）。
+// NewBot 建一个 bot 账号（各实现建 bot 的方式不同）；DeleteAccount 走该实现的账号注销
+// （墓碑 + 撤销授权），用来验证设备绑定随账号一起删除。
 type DeviceLimitFixture struct {
-	Users        store.UserStore
-	AuthKeys     store.AuthKeyStore
-	Auths        store.AuthorizationStore
-	DeviceLimits store.DeviceLimitStore
-	NewPhone     func(t *testing.T) string
-	NewBot       func(t *testing.T) domain.User
+	Users         store.UserStore
+	AuthKeys      store.AuthKeyStore
+	Auths         store.AuthorizationStore
+	DeviceLimits  store.DeviceLimitStore
+	NewPhone      func(t *testing.T) string
+	NewBot        func(t *testing.T) domain.User
+	DeleteAccount func(t *testing.T, userID int64)
 }
 
-// DeviceLimitContract 是设备上限的存储契约（#105）：读、设、清；非法值与不存在的账号被拒绝；
-// Bind 在上限内放行、超限返回 domain.ErrDeviceLimitReached 且不写入；同一个 auth key 重新
-// 绑定、password_pending 授权都不占名额；bot 不受限；并发绑定时"计数 + 插入"原子，任何
-// 时刻都不突破上限。2FA 转正（MarkPasswordPassed，#106）同样检查上限：超限返回
-// domain.ErrDeviceLimitReached 并删除这条待完成的授权；并发转正同样原子。
+// DeviceLimitContract 是设备上限与设备绑定的存储契约（#105、#106、#112）：读、设、清；
+// 非法值与不存在的账号被拒绝；Bind 与 2FA 转正（MarkPasswordPassed）按 store.DeviceLimitStore
+// 文档里的"绑定规则"放行、绑定或拒绝，拒绝时不写入任何行（转正被拒时删除这条待完成的授权）；
+// 只读预检 CheckDeviceLimit 与执行点同一套规则；退出登录、撤销授权、调低或清除上限都不改
+// 绑定名单，账号注销时名单一起删除；并发争抢最后一个名额时绑定数永不超过上限。
 func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimitFixture) {
 	t.Helper()
 	ctx := context.Background()
@@ -70,127 +74,176 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		}
 	})
 
-	t.Run("bind enforces the limit without writing", func(t *testing.T) {
+	t.Run("without a limit every device signs in and nothing is bound", func(t *testing.T) {
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, 2); err != nil {
-			t.Fatalf("set device limit: %v", err)
-		}
-		first, second, third := newDeviceLimitKey(t, f), newDeviceLimitKey(t, f), newDeviceLimitKey(t, f)
-		bindDevice(t, f, u.ID, first, false)
-		bindDevice(t, f, u.ID, second, false)
-		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: third, UserID: u.ID}); !errors.Is(err, domain.ErrDeviceLimitReached) {
-			t.Fatalf("bind over the limit err=%v, want ErrDeviceLimitReached", err)
-		}
-		if _, found, err := f.Auths.ByAuthKey(ctx, third); err != nil || found {
-			t.Fatalf("rejected key found=%v err=%v, want no authorization", found, err)
-		}
-		// 同一个 auth key 重新绑定覆盖原来那一行，不算新设备。
-		bindDevice(t, f, u.ID, first, false)
-		assertDeviceCount(t, f, u.ID, 2)
-
-		if _, err := f.DeviceLimits.ClearDeviceLimit(ctx, u.ID); err != nil {
-			t.Fatalf("clear device limit: %v", err)
-		}
-		bindDevice(t, f, u.ID, third, false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, ""), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "free-a"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "free-b"), false)
 		assertDeviceCount(t, f, u.ID, 3)
+		assertBoundDevices(t, f, u.ID)
 	})
 
-	t.Run("password pending authorizations take no slot", func(t *testing.T) {
+	t.Run("bots are not limited and nothing is bound", func(t *testing.T) {
 		f := newFixture(t)
-		u := createDeviceLimitUser(t, f)
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, 1); err != nil {
-			t.Fatalf("set device limit: %v", err)
-		}
-		pending, done, extra := newDeviceLimitKey(t, f), newDeviceLimitKey(t, f), newDeviceLimitKey(t, f)
-		bindDevice(t, f, u.ID, pending, true)
-		bindDevice(t, f, u.ID, done, false)
-		// 名额已满时，停在 2FA 步骤的授权也在绑定这一步就被拒绝。
-		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: extra, UserID: u.ID, PasswordPending: true}); !errors.Is(err, domain.ErrDeviceLimitReached) {
-			t.Fatalf("pending bind at the limit err=%v, want ErrDeviceLimitReached", err)
-		}
-	})
-
-	t.Run("promoting a pending authorization over the limit rejects and deletes it", func(t *testing.T) {
-		f := newFixture(t)
-		u := createDeviceLimitUser(t, f)
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, 1); err != nil {
-			t.Fatalf("set device limit: %v", err)
-		}
-		first, second := newDeviceLimitKey(t, f), newDeviceLimitKey(t, f)
-		bindDevice(t, f, u.ID, first, true)
-		bindDevice(t, f, u.ID, second, true)
-		if err := f.Auths.MarkPasswordPassed(ctx, first, u.ID); err != nil {
-			t.Fatalf("promote first pending authorization: %v", err)
-		}
-		if err := f.Auths.MarkPasswordPassed(ctx, second, u.ID); !errors.Is(err, domain.ErrDeviceLimitReached) {
-			t.Fatalf("promote over the limit err=%v, want ErrDeviceLimitReached", err)
-		}
-		if _, found, err := f.Auths.ByAuthKey(ctx, second); err != nil || found {
-			t.Fatalf("rejected pending authorization found=%v err=%v, want deleted", found, err)
-		}
-		got, found, err := f.Auths.ByAuthKey(ctx, first)
-		if err != nil || !found || got.PasswordPending {
-			t.Fatalf("promoted authorization=%+v found=%v err=%v, want completed", got, found, err)
-		}
-		// 同一 auth key 的状态不符仍是 ErrAuthorizationStateChanged，不被上限检查吞掉。
-		if err := f.Auths.MarkPasswordPassed(ctx, first, u.ID); !errors.Is(err, store.ErrAuthorizationStateChanged) {
-			t.Fatalf("promote an already completed authorization err=%v, want ErrAuthorizationStateChanged", err)
-		}
-	})
-
-	t.Run("check reports a reached limit without writing", func(t *testing.T) {
-		f := newFixture(t)
-		u := createDeviceLimitUser(t, f)
-		first, pending, next := newDeviceLimitKey(t, f), newDeviceLimitKey(t, f), newDeviceLimitKey(t, f)
-		bindDevice(t, f, u.ID, first, false)
-		bindDevice(t, f, u.ID, pending, true)
-		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, next); err != nil {
-			t.Fatalf("check without a limit: %v", err)
-		}
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, 1); err != nil {
-			t.Fatalf("set device limit: %v", err)
-		}
-		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, next); !errors.Is(err, domain.ErrDeviceLimitReached) {
-			t.Fatalf("check for a new key at the limit err=%v, want ErrDeviceLimitReached", err)
-		}
-		// 待完成的授权自己转正：名额已被 first 占满，同样超限。
-		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, pending); !errors.Is(err, domain.ErrDeviceLimitReached) {
-			t.Fatalf("check for the pending key at the limit err=%v, want ErrDeviceLimitReached", err)
-		}
-		// 已占名额的 auth key 自身不算。
-		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, first); err != nil {
-			t.Fatalf("check for the key already holding the slot: %v", err)
-		}
-		// 只读：pending 授权仍在、仍待完成。
-		got, found, err := f.Auths.ByAuthKey(ctx, pending)
-		if err != nil || !found || !got.PasswordPending {
-			t.Fatalf("pending authorization after check=%+v found=%v err=%v, want unchanged", got, found, err)
-		}
-
 		bot := f.NewBot(t)
-		bindDevice(t, f, bot.ID, newDeviceLimitKey(t, f), false)
 		if err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
 			t.Fatalf("set device limit on bot: %v", err)
 		}
-		if err := f.DeviceLimits.CheckDeviceLimit(ctx, bot.ID, newDeviceLimitKey(t, f)); err != nil {
+		bindDevice(t, f, bot.ID, newDeviceKey(t, f, ""), false)
+		bindDevice(t, f, bot.ID, newDeviceKey(t, f, "bot-a"), false)
+		bindDevice(t, f, bot.ID, newDeviceKey(t, f, "bot-b"), false)
+		assertDeviceCount(t, f, bot.ID, 3)
+		assertBoundDevices(t, f, bot.ID)
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, bot.ID, newDeviceKey(t, f, "")); err != nil {
 			t.Fatalf("check for a bot over its limit: %v", err)
 		}
 	})
 
-	t.Run("promoting without a limit or for a bot is not limited", func(t *testing.T) {
+	t.Run("a device without a device id is rejected without writing", func(t *testing.T) {
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)
-		bindDevice(t, f, u.ID, newDeviceLimitKey(t, f), false)
-		pending := newDeviceLimitKey(t, f)
+		setDeviceLimit(t, f, u.ID, 2)
+		key := newDeviceKey(t, f, "")
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: key, UserID: u.ID}); !errors.Is(err, domain.ErrDeviceIDRequired) {
+			t.Fatalf("bind without a device id err=%v, want ErrDeviceIDRequired", err)
+		}
+		assertNoAuthorization(t, f, key)
+		assertBoundDevices(t, f, u.ID)
+	})
+
+	t.Run("binding records the device and a full list rejects a new one", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 1)
+		first := newDeviceKey(t, f, "phone-1")
+		if err := f.Auths.Bind(ctx, domain.Authorization{
+			AuthKeyID: first, UserID: u.ID, DeviceModel: "Pixel 9", Platform: "Android", AppVersion: "11.2",
+		}); err != nil {
+			t.Fatalf("bind the first device: %v", err)
+		}
+		got := listBindings(t, f, u.ID)
+		if len(got) != 1 {
+			t.Fatalf("bindings=%+v, want one", got)
+		}
+		b := got[0]
+		if b.UserID != u.ID || b.DeviceID != "phone-1" || b.DeviceModel != "Pixel 9" || b.Platform != "Android" || b.AppVersion != "11.2" {
+			t.Fatalf("binding=%+v, want phone-1 Pixel 9 / Android / 11.2", b)
+		}
+		if b.BoundAt.IsZero() || b.LastUsedAt.Before(b.BoundAt) {
+			t.Fatalf("binding times bound=%v last used=%v, want set and ordered", b.BoundAt, b.LastUsedAt)
+		}
+		next := newDeviceKey(t, f, "phone-2")
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: next, UserID: u.ID}); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("bind a new device at the limit err=%v, want ErrDeviceLimitReached", err)
+		}
+		assertNoAuthorization(t, f, next)
+		assertBoundDevices(t, f, u.ID, "phone-1")
+	})
+
+	t.Run("a bound device signs in again after logging out", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 1)
+		first := newDeviceKey(t, f, "laptop")
+		bindDevice(t, f, u.ID, first, false)
+		before := onlyBinding(t, f, u.ID)
+		if err := f.Auths.Delete(ctx, first); err != nil {
+			t.Fatalf("log out: %v", err)
+		}
+		assertBoundDevices(t, f, u.ID, "laptop")
+		time.Sleep(20 * time.Millisecond)
+		// 卸载重装后是新的 auth key，但还是同一个 device_id。
+		reinstalled := newDeviceKey(t, f, "laptop")
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: reinstalled, UserID: u.ID, DeviceModel: "Other"}); err != nil {
+			t.Fatalf("bound device signs in again: %v", err)
+		}
+		after := listBindings(t, f, u.ID)
+		if len(after) != 1 || !after[0].LastUsedAt.After(before.LastUsedAt) {
+			t.Fatalf("bindings after re-login=%+v, want one with a newer last used than %v", after, before.LastUsedAt)
+		}
+		if !after[0].BoundAt.Equal(before.BoundAt) || after[0].DeviceModel != before.DeviceModel {
+			t.Fatalf("re-login rewrote the binding: before=%+v after=%+v", before, after[0])
+		}
+	})
+
+	t.Run("one device id with several authorizations takes one slot", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 2)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "desk"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "desk"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "desk"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "tablet"), false)
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: newDeviceKey(t, f, "third"), UserID: u.ID}); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("third device err=%v, want ErrDeviceLimitReached", err)
+		}
+		assertDeviceCount(t, f, u.ID, 4)
+		assertBoundDevices(t, f, u.ID, "desk", "tablet")
+	})
+
+	t.Run("password pending authorizations are not checked or bound", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 1)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "owner"), false)
+		// 名额已满、甚至没有 device_id，停在 2FA 的授权也先放行，转正时再判。
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "stranger"), true)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, ""), true)
+		assertDeviceCount(t, f, u.ID, 3)
+		assertBoundDevices(t, f, u.ID, "owner")
+	})
+
+	t.Run("promotion binds or rejects and deletes the pending authorization", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 1)
+		noID, first, second, again := newDeviceKey(t, f, ""), newDeviceKey(t, f, "first"), newDeviceKey(t, f, "second"), newDeviceKey(t, f, "first")
+		for _, key := range [][8]byte{noID, first, second, again} {
+			bindDevice(t, f, u.ID, key, true)
+		}
+		if err := f.Auths.MarkPasswordPassed(ctx, noID, u.ID); !errors.Is(err, domain.ErrDeviceIDRequired) {
+			t.Fatalf("promote without a device id err=%v, want ErrDeviceIDRequired", err)
+		}
+		assertNoAuthorization(t, f, noID)
+		if err := f.Auths.MarkPasswordPassed(ctx, first, u.ID); err != nil {
+			t.Fatalf("promote the first device: %v", err)
+		}
+		assertBoundDevices(t, f, u.ID, "first")
+		if err := f.Auths.MarkPasswordPassed(ctx, second, u.ID); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("promote a new device at the limit err=%v, want ErrDeviceLimitReached", err)
+		}
+		assertNoAuthorization(t, f, second)
+		// 已绑定的设备换一个 auth key 转正仍然放行。
+		if err := f.Auths.MarkPasswordPassed(ctx, again, u.ID); err != nil {
+			t.Fatalf("promote the bound device on another key: %v", err)
+		}
+		assertBoundDevices(t, f, u.ID, "first")
+		got, found, err := f.Auths.ByAuthKey(ctx, first)
+		if err != nil || !found || got.PasswordPending {
+			t.Fatalf("promoted authorization=%+v found=%v err=%v, want completed", got, found, err)
+		}
+		// 同一 auth key 的状态不符仍是 ErrAuthorizationStateChanged，不被绑定规则吞掉。
+		if err := f.Auths.MarkPasswordPassed(ctx, first, u.ID); !errors.Is(err, store.ErrAuthorizationStateChanged) {
+			t.Fatalf("promote an already completed authorization err=%v, want ErrAuthorizationStateChanged", err)
+		}
+		if err := f.Auths.MarkPasswordPassed(ctx, second, u.ID); !errors.Is(err, store.ErrAuthorizationStateChanged) {
+			t.Fatalf("promote a deleted authorization err=%v, want ErrAuthorizationStateChanged", err)
+		}
+	})
+
+	t.Run("promoting without a limit or for a bot binds nothing", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		pending := newDeviceKey(t, f, "")
 		bindDevice(t, f, u.ID, pending, true)
 		if err := f.Auths.MarkPasswordPassed(ctx, pending, u.ID); err != nil {
 			t.Fatalf("promote without a limit: %v", err)
 		}
+		assertBoundDevices(t, f, u.ID)
 
 		bot := f.NewBot(t)
-		bindDevice(t, f, bot.ID, newDeviceLimitKey(t, f), false)
-		botPending := newDeviceLimitKey(t, f)
+		botPending := newDeviceKey(t, f, "")
 		bindDevice(t, f, bot.ID, botPending, true)
 		if err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
 			t.Fatalf("set device limit on bot: %v", err)
@@ -198,99 +251,181 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		if err := f.Auths.MarkPasswordPassed(ctx, botPending, bot.ID); err != nil {
 			t.Fatalf("promote for a bot over its limit: %v", err)
 		}
+		assertBoundDevices(t, f, bot.ID)
+	})
+
+	t.Run("check follows the bind rules without writing", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		noID := newDeviceKey(t, f, "")
+		fresh := newDeviceKey(t, f, "fresh")
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, noID); err != nil {
+			t.Fatalf("check without a limit: %v", err)
+		}
+		setDeviceLimit(t, f, u.ID, 1)
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, noID); !errors.Is(err, domain.ErrDeviceIDRequired) {
+			t.Fatalf("check without a device id err=%v, want ErrDeviceIDRequired", err)
+		}
+		// 有空位：放行，但只读，不写绑定。
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, fresh); err != nil {
+			t.Fatalf("check with a free slot: %v", err)
+		}
+		assertBoundDevices(t, f, u.ID)
+
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "owner"), false)
+		before := onlyBinding(t, f, u.ID)
+		pending := newDeviceKey(t, f, "stranger")
+		bindDevice(t, f, u.ID, pending, true)
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, fresh); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("check a new device at the limit err=%v, want ErrDeviceLimitReached", err)
+		}
+		// 待完成的授权预检的是"转正之后"：新设备同样超限。
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, pending); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("check the pending new device at the limit err=%v, want ErrDeviceLimitReached", err)
+		}
+		// 已绑定设备的另一把 auth key 放行，且不刷新最近使用时间。
+		if err := f.DeviceLimits.CheckDeviceLimit(ctx, u.ID, newDeviceKey(t, f, "owner")); err != nil {
+			t.Fatalf("check the bound device on another key: %v", err)
+		}
+		after := listBindings(t, f, u.ID)
+		if len(after) != 1 || !after[0].LastUsedAt.Equal(before.LastUsedAt) {
+			t.Fatalf("bindings after check=%+v, want unchanged %+v", after, before)
+		}
+		got, found, err := f.Auths.ByAuthKey(ctx, pending)
+		if err != nil || !found || !got.PasswordPending {
+			t.Fatalf("pending authorization after check=%+v found=%v err=%v, want unchanged", got, found, err)
+		}
+		// 与执行点一致：预检说超限的，转正同样被拒。
+		if err := f.Auths.MarkPasswordPassed(ctx, pending, u.ID); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("promote after a reached check err=%v, want ErrDeviceLimitReached", err)
+		}
+	})
+
+	t.Run("lowering the limit keeps the bound devices", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 3)
+		keys := map[string][8]byte{}
+		for _, id := range []string{"a", "b", "c"} {
+			keys[id] = newDeviceKey(t, f, id)
+			bindDevice(t, f, u.ID, keys[id], false)
+		}
+		setDeviceLimit(t, f, u.ID, 1)
+		assertBoundDevices(t, f, u.ID, "a", "b", "c")
+		assertDeviceCount(t, f, u.ID, 3)
+		// 超出新上限的已绑定设备仍能重新登录；新设备被拒。
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "c"), false)
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: newDeviceKey(t, f, "d"), UserID: u.ID}); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("new device over the lowered limit err=%v, want ErrDeviceLimitReached", err)
+		}
+		assertBoundDevices(t, f, u.ID, "a", "b", "c")
+	})
+
+	t.Run("clearing the limit keeps the bindings for a later limit", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 1)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "kept"), false)
+		if _, err := f.DeviceLimits.ClearDeviceLimit(ctx, u.ID); err != nil {
+			t.Fatalf("clear device limit: %v", err)
+		}
+		assertBoundDevices(t, f, u.ID, "kept")
+		// 不限制期间登录的设备不被记录。
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "unlimited"), false)
+		assertBoundDevices(t, f, u.ID, "kept")
+		setDeviceLimit(t, f, u.ID, 1)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "kept"), false)
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: newDeviceKey(t, f, "unlimited"), UserID: u.ID}); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("unbound device under the restored limit err=%v, want ErrDeviceLimitReached", err)
+		}
+	})
+
+	t.Run("logging out and revoking keep the bindings", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 3)
+		a, b, c := newDeviceKey(t, f, "a"), newDeviceKey(t, f, "b"), newDeviceKey(t, f, "c")
+		for _, key := range [][8]byte{a, b, c} {
+			bindDevice(t, f, u.ID, key, false)
+		}
+		if err := f.Auths.Delete(ctx, a); err != nil {
+			t.Fatalf("log out: %v", err)
+		}
+		auth, found, err := f.Auths.ByAuthKey(ctx, b)
+		if err != nil || !found {
+			t.Fatalf("read authorization b found=%v err=%v", found, err)
+		}
+		if _, found, err := f.Auths.DeleteByHash(ctx, u.ID, auth.Hash); err != nil || !found {
+			t.Fatalf("revoke by hash found=%v err=%v", found, err)
+		}
+		if _, err := f.Auths.DeleteByUserExcept(ctx, u.ID, [8]byte{}); err != nil {
+			t.Fatalf("reset authorizations: %v", err)
+		}
+		assertDeviceCount(t, f, u.ID, 0)
+		assertBoundDevices(t, f, u.ID, "a", "b", "c")
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: newDeviceKey(t, f, "d"), UserID: u.ID}); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("new device after revoking everything err=%v, want ErrDeviceLimitReached", err)
+		}
+	})
+
+	t.Run("deleting the account removes its bindings", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		other := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 2)
+		setDeviceLimit(t, f, other.ID, 2)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "gone-a"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "gone-b"), false)
+		bindDevice(t, f, other.ID, newDeviceKey(t, f, "gone-a"), false)
+		f.DeleteAccount(t, u.ID)
+		assertBoundDevices(t, f, u.ID)
+		assertBoundDevices(t, f, other.ID, "gone-a")
 	})
 
 	t.Run("concurrent promotes never exceed the limit", func(t *testing.T) {
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)
 		const limit, attempts = 2, 10
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, limit); err != nil {
-			t.Fatalf("set device limit: %v", err)
-		}
+		setDeviceLimit(t, f, u.ID, limit)
 		keys := make([][8]byte, attempts)
 		for i := range keys {
-			keys[i] = newDeviceLimitKey(t, f)
+			keys[i] = newDeviceKey(t, f, newDeviceIDValue(t))
 			bindDevice(t, f, u.ID, keys[i], true)
 		}
-		start := make(chan struct{})
-		errs := make([]error, attempts)
-		var wg sync.WaitGroup
-		for i := range keys {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				<-start
-				errs[i] = f.Auths.MarkPasswordPassed(ctx, keys[i], u.ID)
-			}(i)
-		}
-		close(start)
-		wg.Wait()
-		promoted := 0
-		for i, err := range errs {
-			switch {
-			case err == nil:
-				promoted++
-			case errors.Is(err, domain.ErrDeviceLimitReached):
-			default:
-				t.Fatalf("concurrent promote %d: %v", i, err)
-			}
-		}
-		if promoted != limit {
+		errs := runConcurrently(attempts, func(i int) error {
+			return f.Auths.MarkPasswordPassed(ctx, keys[i], u.ID)
+		})
+		if promoted := countAccepted(t, errs, "promote"); promoted != limit {
 			t.Fatalf("concurrent promotes succeeded=%d, want exactly %d", promoted, limit)
 		}
 		// 被拒绝的待完成授权都已删除，只剩转正的那几条。
 		assertDeviceCount(t, f, u.ID, limit)
-	})
-
-	t.Run("bots are not limited", func(t *testing.T) {
-		f := newFixture(t)
-		bot := f.NewBot(t)
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
-			t.Fatalf("set device limit on bot: %v", err)
+		if got := listBindings(t, f, u.ID); len(got) != limit {
+			t.Fatalf("bindings=%d, want %d", len(got), limit)
 		}
-		bindDevice(t, f, bot.ID, newDeviceLimitKey(t, f), false)
-		bindDevice(t, f, bot.ID, newDeviceLimitKey(t, f), false)
-		assertDeviceCount(t, f, bot.ID, 2)
 	})
 
-	t.Run("concurrent binds never exceed the limit", func(t *testing.T) {
+	t.Run("concurrent new devices racing for the last slot bind exactly one", func(t *testing.T) {
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)
 		const limit, attempts = 3, 12
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, limit); err != nil {
-			t.Fatalf("set device limit: %v", err)
-		}
+		setDeviceLimit(t, f, u.ID, limit)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "held-1"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "held-2"), false)
 		keys := make([][8]byte, attempts)
 		for i := range keys {
-			keys[i] = newDeviceLimitKey(t, f)
+			keys[i] = newDeviceKey(t, f, newDeviceIDValue(t))
 		}
-		start := make(chan struct{})
-		errs := make([]error, attempts)
-		var wg sync.WaitGroup
-		for i := range keys {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				<-start
-				errs[i] = f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: keys[i], UserID: u.ID})
-			}(i)
-		}
-		close(start)
-		wg.Wait()
-		bound := 0
-		for i, err := range errs {
-			switch {
-			case err == nil:
-				bound++
-			case errors.Is(err, domain.ErrDeviceLimitReached):
-			default:
-				t.Fatalf("concurrent bind %d: %v", i, err)
-			}
-		}
-		if bound != limit {
-			t.Fatalf("concurrent binds succeeded=%d, want exactly %d", bound, limit)
+		errs := runConcurrently(attempts, func(i int) error {
+			return f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: keys[i], UserID: u.ID})
+		})
+		if bound := countAccepted(t, errs, "bind"); bound != 1 {
+			t.Fatalf("concurrent binds for the last slot succeeded=%d, want exactly 1", bound)
 		}
 		assertDeviceCount(t, f, u.ID, limit)
+		if got := listBindings(t, f, u.ID); len(got) != limit {
+			t.Fatalf("bindings=%d, want %d", len(got), limit)
+		}
 	})
 }
 
@@ -303,7 +438,25 @@ func createDeviceLimitUser(t *testing.T, f DeviceLimitFixture) domain.User {
 	return created
 }
 
-func newDeviceLimitKey(t *testing.T, f DeviceLimitFixture) [8]byte {
+func setDeviceLimit(t *testing.T, f DeviceLimitFixture, userID int64, limit int) {
+	t.Helper()
+	if err := f.DeviceLimits.SetDeviceLimit(context.Background(), userID, limit); err != nil {
+		t.Fatalf("set device limit %d: %v", limit, err)
+	}
+}
+
+func newDeviceIDValue(t *testing.T) string {
+	t.Helper()
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		t.Fatalf("random device id: %v", err)
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+// newDeviceKey 建一把 permanent auth key；deviceID 非空时像客户端上报过 initConnection.params
+// 那样持久化到这把 key 上，空串表示从未上报。
+func newDeviceKey(t *testing.T, f DeviceLimitFixture, deviceID string) [8]byte {
 	t.Helper()
 	var id [8]byte
 	if _, err := rand.Read(id[:]); err != nil {
@@ -314,6 +467,11 @@ func newDeviceLimitKey(t *testing.T, f DeviceLimitFixture) [8]byte {
 		t.Fatalf("save auth key %x: %v", id, err)
 	}
 	t.Cleanup(func() { _ = f.AuthKeys.Delete(context.Background(), id) })
+	if deviceID != "" {
+		if err := f.AuthKeys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
+			t.Fatalf("persist device id on %x: %v", id, err)
+		}
+	}
 	return id
 }
 
@@ -322,6 +480,81 @@ func bindDevice(t *testing.T, f DeviceLimitFixture, userID int64, key [8]byte, p
 	if err := f.Auths.Bind(context.Background(), domain.Authorization{AuthKeyID: key, UserID: userID, PasswordPending: pending}); err != nil {
 		t.Fatalf("bind %x (pending=%v): %v", key, pending, err)
 	}
+}
+
+func onlyBinding(t *testing.T, f DeviceLimitFixture, userID int64) domain.DeviceBinding {
+	t.Helper()
+	got := listBindings(t, f, userID)
+	if len(got) != 1 {
+		t.Fatalf("bindings=%+v, want exactly one", got)
+	}
+	return got[0]
+}
+
+func listBindings(t *testing.T, f DeviceLimitFixture, userID int64) []domain.DeviceBinding {
+	t.Helper()
+	got, err := f.DeviceLimits.ListDeviceBindings(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("list device bindings: %v", err)
+	}
+	return got
+}
+
+// assertBoundDevices 断言账号的绑定名单恰好是 want（按绑定先后）。
+func assertBoundDevices(t *testing.T, f DeviceLimitFixture, userID int64, want ...string) {
+	t.Helper()
+	got := listBindings(t, f, userID)
+	ids := make([]string, 0, len(got))
+	for _, b := range got {
+		ids = append(ids, b.DeviceID)
+	}
+	if len(ids) != len(want) {
+		t.Fatalf("bound devices=%v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("bound devices=%v, want %v", ids, want)
+		}
+	}
+}
+
+func assertNoAuthorization(t *testing.T, f DeviceLimitFixture, key [8]byte) {
+	t.Helper()
+	if _, found, err := f.Auths.ByAuthKey(context.Background(), key); err != nil || found {
+		t.Fatalf("authorization on %x found=%v err=%v, want none", key, found, err)
+	}
+}
+
+func runConcurrently(n int, fn func(i int) error) []error {
+	start := make(chan struct{})
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = fn(i)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	return errs
+}
+
+func countAccepted(t *testing.T, errs []error, what string) int {
+	t.Helper()
+	accepted := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			accepted++
+		case errors.Is(err, domain.ErrDeviceLimitReached):
+		default:
+			t.Fatalf("concurrent %s %d: %v", what, i, err)
+		}
+	}
+	return accepted
 }
 
 func assertDeviceLimit(t *testing.T, f DeviceLimitFixture, userID int64, want int, wantFound bool) {

@@ -122,6 +122,11 @@ func TestDeviceLimitContractPostgres(t *testing.T) {
 			NewPhone: func(t *testing.T) string {
 				return "1997" + randomSuffix(t)
 			},
+			DeleteAccount: func(t *testing.T, userID int64) {
+				if _, err := NewAccountLifecycleStore(pool).ExecuteAccountDeletion(context.Background(), userID, domain.AccountDeletionManual, "device binding contract", time.Now()); err != nil {
+					t.Fatalf("delete account: %v", err)
+				}
+			},
 			NewBot: func(t *testing.T) domain.User {
 				ctx := context.Background()
 				u, err := users.Create(ctx, domain.User{AccessHash: 1, FirstName: "Bot"})

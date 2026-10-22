@@ -306,11 +306,12 @@ func (r *Router) onAuthAcceptLoginToken(ctx context.Context, token []byte) (*tg.
 	authz := accept.authz
 	authz.UserID = userID
 	authz.PasswordPending = false
-	// 先预检设备上限，名额已满时不去清新设备的更新状态；绑定时 store 仍在锁下再查一次。
+	// 先按设备绑定规则预检（看的是发起 exportLoginToken 的新设备的 auth key），名额已满或
+	// 新设备没有 device_id 时不去清新设备的更新状态；绑定时 store 仍在锁下再判一次。
 	if err := r.deps.Auth.CheckDeviceLimit(ctx, authz.AuthKeyID, userID); err != nil {
 		r.loginTokens.failAccept(token)
-		if errors.Is(err, domain.ErrDeviceLimitReached) {
-			return nil, authorizationsTooMuchErr()
+		if rejected := deviceBindingRejectionErr(err); rejected != nil {
+			return nil, rejected
 		}
 		return nil, internalErr()
 	}
@@ -324,9 +325,10 @@ func (r *Router) onAuthAcceptLoginToken(ctx context.Context, token []byte) (*tg.
 		if errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 			return nil, authKeyUnregisteredErr()
 		}
-		// 账号设备数已达上限：扫码的这台已登录设备收到 AUTHORIZATIONS_TOO_MUCH，新设备不会登录。
-		if errors.Is(err, domain.ErrDeviceLimitReached) {
-			return nil, authorizationsTooMuchErr()
+		// 设备绑定拒绝：扫码的这台已登录设备收到 AUTHORIZATIONS_TOO_MUCH / DEVICE_ID_REQUIRED，
+		// 新设备不会登录。
+		if rejected := deviceBindingRejectionErr(err); rejected != nil {
+			return nil, rejected
 		}
 		return nil, internalErr()
 	}
@@ -734,7 +736,7 @@ func (r *Router) onAuthRecoverPassword(ctx context.Context, req *tg.AuthRecoverP
 		}
 		input = &converted
 	}
-	// 密码找回会消耗找回码并重置 2FA 密码，所以 2FA 登录在那之前先预检设备上限；
+	// 密码找回会消耗找回码并重置 2FA 密码，所以 2FA 登录在那之前先按设备绑定规则预检；
 	// 转正（completePendingPasswordSignIn）时仍在锁下再检查一次，兜住并发登录。
 	if pending && r.deps.Auth != nil {
 		if err := r.deps.Auth.CheckDeviceLimit(ctx, authKeyID, userID); err != nil {
@@ -756,11 +758,11 @@ func (r *Router) onAuthRecoverPassword(ctx context.Context, req *tg.AuthRecoverP
 	return &tg.AuthAuthorization{User: r.tgSelfUserWithUsernames(ctx, u)}, nil
 }
 
-// completePasswordSignInErr 映射 2FA 转正失败：设备数已达上限（#106）时返回
-// AUTHORIZATIONS_TOO_MUCH（待完成的授权已被删除），其余仍是内部错误。
+// completePasswordSignInErr 映射 2FA 转正失败：设备绑定拒绝（#106、#112）时返回
+// AUTHORIZATIONS_TOO_MUCH / DEVICE_ID_REQUIRED（待完成的授权已被删除），其余仍是内部错误。
 func completePasswordSignInErr(err error) error {
-	if errors.Is(err, domain.ErrDeviceLimitReached) {
-		return authorizationsTooMuchErr()
+	if rejected := deviceBindingRejectionErr(err); rejected != nil {
+		return rejected
 	}
 	return internalErr()
 }
