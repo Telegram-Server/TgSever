@@ -987,6 +987,10 @@ type FilesService interface {
 	// profile_photos；与 CreatePhotoFromBytes（消息照片 m/x）不同。Bot API setMyProfilePhoto 用它。
 	CreateAvatarFromBytes(ctx context.Context, data []byte) (domain.Photo, error)
 	CreateAvatarVideoFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64) (domain.Photo, error)
+	// CreateAvatarVideoFromBytes 把内存里的头像视频字节按 512KB 分片保存后组装成视频头像
+	// （'u' 尺寸 + s/a/c 静帧），videoStartTs 写入 video_start_ts。Bot API setMyProfilePhoto
+	// 的 animated 用它。
+	CreateAvatarVideoFromBytes(ctx context.Context, data []byte, videoStartTs float64) (domain.Photo, error)
 	CreateAvatarVideoMarkupFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, markup domain.PhotoSize) (domain.Photo, error)
 	CreateAvatarMarkup(ctx context.Context, size domain.PhotoSize) (domain.Photo, error)
 	CreateDocumentFromUpload(ctx context.Context, file domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error)

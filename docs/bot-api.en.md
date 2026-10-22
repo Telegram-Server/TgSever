@@ -360,18 +360,29 @@ owner's clients right away.
 |---|---|---|
 | `photo` | InputProfilePhoto | required; JSON object, request must be `multipart/form-data` |
 
-Only `InputProfilePhotoStatic` is supported:
-`{"type":"static","photo":"attach://<field>"}`, where `<field>` is a file part
-of the same request. Profile photos cannot reuse a `file_id` or a URL, as
-officially. The image is stored with the profile-photo size rules (`s`, `a`,
-`c`), becomes the bot's current photo, and `True` is returned. As with
-`removeMyProfilePhoto`, the owner receives an `updateUser` for the bot.
+Two kinds are supported:
+
+- `InputProfilePhotoStatic`: `{"type":"static","photo":"attach://<field>"}`.
+  The image is stored with the profile-photo size rules (`s`, `a`, `c`).
+- `InputProfilePhotoAnimated`:
+  `{"type":"animated","animation":"attach://<field>","main_frame_timestamp":<seconds>}`.
+  The MPEG4 video becomes a video avatar (video size `u`), saved in 512 KB
+  upload parts, so videos larger than one part work. `main_frame_timestamp` is
+  optional (default `0`, a number or a numeric string) and is stored as the
+  video's `video_start_ts`, which clients use as the still frame.
+
+`<field>` is a file part of the same request. Profile photos cannot reuse a
+`file_id` or a URL, as officially. The file becomes the bot's current photo and
+`True` is returned. As with `removeMyProfilePhoto`, the owner receives an
+`updateUser` for the bot.
 
 Errors: a missing or malformed `photo` gives `Bad Request: parameter "photo"
 is required`, `Bad Request: can't parse InputProfilePhoto JSON object` or
 `Bad Request: invalid InputProfilePhoto type specified`; a `photo` that does not
 point to an uploaded file gives `Bad Request: profile photo must be uploaded as
-a new file using attach://`. A file that is not a decodable image gives
+a new file using attach://`. A `main_frame_timestamp` that is not a number gives
+`Bad Request: field "main_frame_timestamp" must be a valid Number`; a negative
+one gives `Bad Request: wrong main frame timestamp specified`. A file that is not a decodable image gives
 `Bad Request: IMAGE_PROCESS_FAILED`; a file over 10 MB gives
 `Bad Request: file is too big`.
 
