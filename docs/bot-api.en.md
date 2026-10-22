@@ -214,7 +214,7 @@ one answers that group with `501 METHOD_NOT_FOUND`.
 
 ## Updates
 
-Six update kinds are produced:
+Seven update kinds are produced:
 
 | `allowed_updates` value | Update key | Delivered by default |
 |---|---|---|
@@ -224,6 +224,7 @@ Six update kinds are produced:
 | `pre_checkout_query` | `pre_checkout_query` | yes |
 | `my_chat_member` | `my_chat_member` | yes |
 | `chat_member` | `chat_member` | **no** — only when listed explicitly |
+| `chat_join_request` | `chat_join_request` | yes |
 
 `allowed_updates` is a JSON array of up to 100 strings, accepted both by
 `getUpdates` and by `setWebhook`, and it persists per bot. The filter is
@@ -273,6 +274,21 @@ Known differences from the official gateway:
   does not record who promoted an admin;
 - there is no `invite_link` field; `via_join_request` and
   `via_chat_folder_invite_link` are filled.
+
+### `chat_join_request`
+
+Carries an official `ChatJoinRequest`: `chat`, `from` (the applicant),
+`user_chat_id` (the applicant's id, i.e. the private chat with the bot),
+`date`, `bio` when the applicant has one that the bot may see, and
+`invite_link` (a `ChatInviteLink`) when the request came through an invite
+link.
+
+It is queued when a user applies to a supergroup or channel that needs
+approval — either through an invite link with `creates_join_request`, or by
+joining a public chat that has join requests enabled — and only for bots that
+are the creator or an administrator with `can_invite_users` at that moment.
+It belongs to the default set. `invite_link` is the link as it was when the
+request was made, so `pending_join_request_count` counts this request too.
 
 Queue retention is controlled by `TELESRV_BOT_API_UPDATE_RETENTION`
 (default `24h`); acknowledged updates are dropped earlier.

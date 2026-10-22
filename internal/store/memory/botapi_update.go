@@ -239,8 +239,8 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 	} else if domain.BotAPIUpdateKindNeedsOptIn(req.Kind) {
 		return domain.BotAPIUpdate{}, false, nil
 	}
-	if req.ChatMember != nil {
-		// 成员变化没有消息去重键，每次变化都是独立的一条。
+	if req.ChatMember != nil || req.ChatJoinRequest != nil {
+		// 成员变化与入群申请没有消息去重键，每次都是独立的一条。
 		key = fmt.Sprintf("%d:%s:member:%d", req.BotUserID, req.Kind, s.nextID)
 	}
 	if existingID, ok := s.byKey[key]; ok {
@@ -251,17 +251,18 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 		}
 	}
 	row := domain.BotAPIUpdate{
-		ID:          s.nextID,
-		BotUserID:   req.BotUserID,
-		Kind:        req.Kind,
-		Peer:        req.Peer,
-		MessageID:   req.MessageID,
-		SourcePts:   req.SourcePts,
-		Date:        req.Date,
-		Callback:    cloneBotAPICallback(req.Callback),
-		PreCheckout: cloneBotAPIPreCheckout(req.PreCheckout),
-		Ephemeral:   cloneBotAPIEphemeral(req.Ephemeral),
-		ChatMember:  cloneBotAPIChatMember(req.ChatMember),
+		ID:              s.nextID,
+		BotUserID:       req.BotUserID,
+		Kind:            req.Kind,
+		Peer:            req.Peer,
+		MessageID:       req.MessageID,
+		SourcePts:       req.SourcePts,
+		Date:            req.Date,
+		Callback:        cloneBotAPICallback(req.Callback),
+		PreCheckout:     cloneBotAPIPreCheckout(req.PreCheckout),
+		Ephemeral:       cloneBotAPIEphemeral(req.Ephemeral),
+		ChatMember:      cloneBotAPIChatMember(req.ChatMember),
+		ChatJoinRequest: cloneBotAPIChatJoinRequest(req.ChatJoinRequest),
 	}
 	s.nextID++
 	s.rows = append(s.rows, row)
@@ -431,13 +432,17 @@ func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	// payment exists, so it carries no peer and no message id.
 	if req.Kind != domain.BotAPIUpdateMessage && req.Kind != domain.BotAPIUpdateEditedMessage &&
 		req.Kind != domain.BotAPIUpdateCallbackQuery && req.Kind != domain.BotAPIUpdatePreCheckoutQuery &&
-		req.Kind != domain.BotAPIUpdateMyChatMember && req.Kind != domain.BotAPIUpdateChatMember {
+		req.Kind != domain.BotAPIUpdateMyChatMember && req.Kind != domain.BotAPIUpdateChatMember &&
+		req.Kind != domain.BotAPIUpdateChatJoinRequest {
 		return fmt.Errorf("invalid bot api update kind %q", req.Kind)
 	}
 	if err := domain.ValidateBotAPIChatMemberRequest(req); err != nil {
 		return err
 	}
-	if req.ChatMember != nil {
+	if err := domain.ValidateBotAPIChatJoinRequestRequest(req); err != nil {
+		return err
+	}
+	if req.ChatMember != nil || req.ChatJoinRequest != nil {
 		return nil
 	}
 	switch req.Peer.Type {
@@ -504,7 +509,20 @@ func cloneBotAPIUpdate(row domain.BotAPIUpdate) domain.BotAPIUpdate {
 	row.PreCheckout = cloneBotAPIPreCheckout(row.PreCheckout)
 	row.Ephemeral = cloneBotAPIEphemeral(row.Ephemeral)
 	row.ChatMember = cloneBotAPIChatMember(row.ChatMember)
+	row.ChatJoinRequest = cloneBotAPIChatJoinRequest(row.ChatJoinRequest)
 	return row
+}
+
+func cloneBotAPIChatJoinRequest(in *domain.BotChatJoinRequest) *domain.BotChatJoinRequest {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.Invite != nil {
+		invite := *in.Invite
+		out.Invite = &invite
+	}
+	return &out
 }
 
 func cloneBotAPIChatMember(in *domain.BotChatMemberUpdated) *domain.BotChatMemberUpdated {
