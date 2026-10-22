@@ -83,6 +83,9 @@ func newPermissionMappingFixture(t *testing.T) *permissionMappingFixture {
 		Channels:    appchannels.NewService(f.channels),
 		SecretChats: permissionSecretChats{chat: chat},
 		Permissions: perms,
+		// 业务自动化可用，sendQuickReplyMessages 才会走到发送权限判定。
+		Account:  &permissionQuickReplies{},
+		Messages: permissionNoMessages{},
 	}, zaptest.NewLogger(t), clock.System)
 	ctx := WithAuthKeyID(WithUserID(context.Background(), me.ID), authKey)
 	return &permissionMappingFixture{router: router, perms: perms, ctx: ctx, me: me, other: other, group: group, chat: chat, users: f.users}
