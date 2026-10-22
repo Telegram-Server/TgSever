@@ -35,6 +35,9 @@ type BotStore interface {
 	SetBotInlineGeo(ctx context.Context, botUserID int64, inlineGeo bool) (newVersion int, err error)
 	SetBotNochats(ctx context.Context, botUserID int64, nochats bool) (newVersion int, err error)
 	SetBotChatHistory(ctx context.Context, botUserID int64, chatHistory bool) (newVersion int, err error)
+	// SetBotDefaultAdminRights 写入 bot 的群（forChannels=false）或频道（forChannels=true）
+	// 默认管理员权限；零值即清空。bot 不存在返回 domain.ErrBotNotFound。
+	SetBotDefaultAdminRights(ctx context.Context, botUserID int64, forChannels bool, rights domain.ChannelAdminRights) (newVersion int, err error)
 	CanBotSendMessage(ctx context.Context, botUserID, userID int64) (bool, error)
 	AllowBotSendMessage(ctx context.Context, botUserID, userID int64, fromRequest bool) (created bool, err error)
 

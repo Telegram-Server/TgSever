@@ -166,8 +166,9 @@ func TestDeclinedPreCheckoutLeavesInvoiceUnsettled(t *testing.T) {
 	if err := chain.payStarsForm(t, invoice, stored.ID); err == nil {
 		t.Fatal("decline was ignored")
 	}
+	// 私聊发票按买家信箱键入（chat_id = 买家），与 sellInvoice 的查找保持一致。
 	reloaded, found, err := chain.router.deps.Bots.BotInvoiceByMessage(context.Background(),
-		chain.botID, chain.botID, invoice.MsgID)
+		chain.botID, chain.buyerID, invoice.MsgID)
 	if err != nil || !found {
 		t.Fatalf("lookup after decline: %v found=%v", err, found)
 	}

@@ -180,13 +180,13 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (90 methods + 1 file route):
+Implemented (92 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
 | Migration | `logOut`, `close` (no-op: always `True`, no state is touched, no 10-minute `close` limit) |
-| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto` |
+| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
 | Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
 | Media | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -337,6 +337,24 @@ No parameters. Removes the bot's current profile photo and returns `True`. A bot
 without a profile photo also gets `True`, as with the official server. The
 bot's owner receives an `updateUser` for the bot, so the change shows up in the
 owner's clients right away.
+
+### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `rights` | JSON `ChatAdministratorRights` | `setMy…` only; omitted clears the defaults |
+| `for_channels` | boolean | `true` for channels, otherwise groups |
+
+`setMyDefaultAdministratorRights` goes through MTProto
+`bots.setBotGroupDefaultAdminRights` / `bots.setBotBroadcastDefaultAdminRights`;
+clients see the new value in the bot's `userFull`
+(`bot_group_admin_rights` / `bot_broadcast_admin_rights`) and preselect it
+when adding the bot as an administrator. Setting the current value again is
+still `true` (MTProto answers `RIGHTS_NOT_MODIFIED`). A `rights` value that is
+not a JSON object, or a known field that is not a boolean, is `BAD_REQUEST`.
+
+`getMyDefaultAdministratorRights` returns the `ChatAdministratorRights` object
+with every field present; all are `false` when nothing was set.
 
 ## Methods: sending
 

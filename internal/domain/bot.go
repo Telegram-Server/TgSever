@@ -54,6 +54,8 @@ var (
 	ErrBotInfoInvalid = errors.New("bot info invalid")
 	// ErrBotMenuButtonInvalid 表示 menu button 文本/URL 非法。
 	ErrBotMenuButtonInvalid = errors.New("bot menu button invalid")
+	// ErrBotAdminRightsNotModified 表示写入的默认管理员权限与当前值相同（RIGHTS_NOT_MODIFIED）。
+	ErrBotAdminRightsNotModified = errors.New("bot default admin rights not modified")
 	// ErrBotInlinePlaceholderInvalid 表示 inline placeholder 为空以外的文本越界。
 	ErrBotInlinePlaceholderInvalid = errors.New("bot inline placeholder invalid")
 	// ErrBotAppInvalid 表示 bot app 元数据、URL 或 access hash 非法。
@@ -358,6 +360,10 @@ type BotProfile struct {
 	HasAttachMenu     bool
 	HasPreviewMedias  bool
 	AppSettings       *BotAppSettings
+	// GroupAdminRights / BroadcastAdminRights 是 bot 被加为群 / 频道管理员时建议的默认权限
+	//（bots.setBotGroupDefaultAdminRights / setBotBroadcastDefaultAdminRights），零值表示未设置。
+	GroupAdminRights     ChannelAdminRights
+	BroadcastAdminRights ChannelAdminRights
 }
 
 // BotChatState 是内置 bot（当前仅 BotFather）与某用户的对话状态机持久态。
