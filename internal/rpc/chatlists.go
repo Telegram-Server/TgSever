@@ -316,6 +316,9 @@ func (r *Router) onChatlistsLeaveChatlist(ctx context.Context, req *tg.Chatlists
 	if err != nil {
 		return nil, err
 	}
+	if err := r.checkChatlistLeavePermission(ctx, userID, peers); err != nil {
+		return nil, err
+	}
 	result, err := r.deps.Chatlists.Leave(ctx, userID, chatlistFilterID(req.Chatlist), peers, int(r.clock.Now().Unix()))
 	if err != nil {
 		return nil, chatlistErr(err)

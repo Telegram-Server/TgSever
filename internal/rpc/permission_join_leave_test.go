@@ -195,6 +195,69 @@ func TestPermissionChatlistJoinChecksEveryChat(t *testing.T) {
 	})
 }
 
+type recordingLeaveChatlists struct {
+	fakeChatlistsService
+	leaveCalls int
+}
+
+func (f *recordingLeaveChatlists) Leave(ctx context.Context, userID int64, filterID int, peers []domain.DialogFolderPeer, date int) (domain.ChatlistLeaveResult, error) {
+	f.leaveCalls++
+	return f.fakeChatlistsService.Leave(ctx, userID, filterID, peers, date)
+}
+
+func TestPermissionChatlistLeaveChecksEveryJoinedChat(t *testing.T) {
+	// setup 让员工加入 joinGroup/joinChannel 指定的会话，再按 mutate 收紧权限。
+	setup := func(t *testing.T, joinGroup, joinChannel bool, mutate func(*domain.AccountPermissionFlags)) (*permissionJoinLeaveFixture, *recordingLeaveChatlists) {
+		f := newPermissionJoinLeaveFixture(t)
+		for ch, join := range map[*tg.Channel]bool{f.group: joinGroup, f.channel: joinChannel} {
+			if !join {
+				continue
+			}
+			if err := f.join(ch); err != nil {
+				t.Fatalf("join %q: %v", ch.Title, err)
+			}
+		}
+		chatlists := &recordingLeaveChatlists{}
+		f.router.deps.Chatlists = chatlists
+		f.restrict(mutate)
+		return f, chatlists
+	}
+	leave := func(f *permissionJoinLeaveFixture, chats ...*tg.Channel) error {
+		peers := make([]tg.InputPeerClass, 0, len(chats))
+		for _, ch := range chats {
+			peers = append(peers, chatlistPeer(ch))
+		}
+		_, err := f.router.onChatlistsLeaveChatlist(f.userCtx(f.staff), &tg.ChatlistsLeaveChatlistRequest{
+			Chatlist: tg.InputChatlistDialogFilter{FilterID: 3}, Peers: peers,
+		})
+		return err
+	}
+
+	t.Run("a forbidden group rejects the whole request", func(t *testing.T) {
+		f, chatlists := setup(t, true, true, func(p *domain.AccountPermissionFlags) { p.LeaveGroup = false })
+		assertPermissionDenied(t, leave(f, f.channel, f.group), "TELESRV_PERMISSION_LEAVE_GROUP")
+		if chatlists.leaveCalls != 0 {
+			t.Fatalf("Leave called %d times, want none (no partial leave)", chatlists.leaveCalls)
+		}
+		if err := leave(f, f.channel); err != nil || chatlists.leaveCalls != 1 {
+			t.Fatalf("leave with only a broadcast: err %v calls %d", err, chatlists.leaveCalls)
+		}
+	})
+	t.Run("a forbidden channel rejects the whole request", func(t *testing.T) {
+		f, chatlists := setup(t, true, true, func(p *domain.AccountPermissionFlags) { p.LeaveChannel = false })
+		assertPermissionDenied(t, leave(f, f.group, f.channel), "TELESRV_PERMISSION_LEAVE_CHANNEL")
+		if chatlists.leaveCalls != 0 {
+			t.Fatalf("Leave called %d times, want none", chatlists.leaveCalls)
+		}
+	})
+	t.Run("chats the account is not in are not leaves", func(t *testing.T) {
+		f, chatlists := setup(t, false, true, func(p *domain.AccountPermissionFlags) { p.LeaveGroup = false })
+		if err := leave(f, f.channel, f.group); err != nil || chatlists.leaveCalls != 1 {
+			t.Fatalf("leave with a group the account is not in: err %v calls %d", err, chatlists.leaveCalls)
+		}
+	})
+}
+
 func TestPermissionLeaveUsesResolvedChatKind(t *testing.T) {
 	setup := func(t *testing.T, mutate func(*domain.AccountPermissionFlags)) *permissionJoinLeaveFixture {
 		f := newPermissionJoinLeaveFixture(t)

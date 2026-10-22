@@ -22,6 +22,28 @@ func (r *Router) checkChannelPermission(ctx context.Context, userID int64, kind 
 	return decidePermission(view, permissions.Action{Kind: kind, Target: permissions.ChannelTarget(channel)})
 }
 
+// checkChatlistLeavePermission 按聊天文件夹里每个会话分别判定退出权限：退出文件夹会顺带退出其中
+// 的会话，所以任一被禁止退出的会话都让整个请求被拒绝，不部分退出。账号不在其中的会话不算退出，跳过。
+func (r *Router) checkChatlistLeavePermission(ctx context.Context, userID int64, peers []domain.DialogFolderPeer) error {
+	view, enforced, err := r.enforcedPermissionView(ctx, userID)
+	if err != nil || !enforced || r.deps.Channels == nil {
+		return err
+	}
+	for _, item := range peers {
+		if item.Peer.Type != domain.PeerTypeChannel || item.Peer.ID == 0 {
+			continue
+		}
+		current, err := r.deps.Channels.ResolveChannel(ctx, userID, item.Peer.ID)
+		if err != nil || current.Forbidden || current.Self.UserID != userID || current.Self.Status != domain.ChannelMemberActive {
+			continue
+		}
+		if err := decidePermission(view, permissions.Action{Kind: permissions.ActionLeave, Target: permissions.ChannelTarget(current.Channel)}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // checkChatlistJoinPermission 按聊天文件夹里每个会话分别判定加入权限；任一会话被禁止时整个
 // 请求被拒绝，不部分加入。已经加入的会话不算新的加入，跳过。
 func (r *Router) checkChatlistJoinPermission(ctx context.Context, userID int64, peers []domain.DialogFolderPeer) error {
