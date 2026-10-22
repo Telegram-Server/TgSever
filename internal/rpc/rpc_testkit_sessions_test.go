@@ -24,7 +24,7 @@ type captureSessions struct {
 	message            bin.Encoder
 	userMessage        bin.Encoder // 最近一次 PushToUser* 的消息（与 message 区分：message 也被 PushToSession 覆盖）
 	pushUserIDs        []int64
-	userPushes         map[int64][]bin.Encoder // 按收件人记录 PushToUser* 的消息，断言「谁收到了什么」
+	userPushes         []capturedUserPush // 每次 PushToUser* 的收件人与消息，按顺序
 	onlineUserIDs      []int64
 	channelViewers     map[int64][]int64
 	channelMembers     map[int64][]int64
@@ -61,6 +61,25 @@ func (s *captureSessions) snapshot() captureSessionsSnapshot {
 	}
 }
 
+// capturedUserPush 是一次 PushToUser* 的记录。
+type capturedUserPush struct {
+	userID  int64
+	message tg.UpdatesClass
+}
+
+// pushesTo 返回推给 userID 的全部消息（按推送顺序）。
+func (s *captureSessions) pushesTo(userID int64) []tg.UpdatesClass {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []tg.UpdatesClass
+	for _, push := range s.userPushes {
+		if push.userID == userID {
+			out = append(out, push.message)
+		}
+	}
+	return out
+}
+
 func (s *captureSessions) pushedUserIDs() []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,13 +108,6 @@ func (s *captureSessions) clearMessages() {
 	s.userMessage = nil
 	s.pushUserIDs = nil
 	s.userPushes = nil
-}
-
-// userPushesTo 按时间顺序返回推给 userID 的全部 PushToUser* 消息。
-func (s *captureSessions) userPushesTo(userID int64) []bin.Encoder {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]bin.Encoder(nil), s.userPushes[userID]...)
 }
 
 func (s *captureSessions) BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte) {
@@ -178,10 +190,7 @@ func (s *captureSessions) PushToUserExceptAuthKeySession(_ context.Context, user
 	s.message = msg
 	s.userMessage = msg
 	s.pushUserIDs = append(s.pushUserIDs, userID)
-	if s.userPushes == nil {
-		s.userPushes = map[int64][]bin.Encoder{}
-	}
-	s.userPushes[userID] = append(s.userPushes[userID], msg)
+	s.userPushes = append(s.userPushes, capturedUserPush{userID: userID, message: msg})
 	return 1, nil
 }
 

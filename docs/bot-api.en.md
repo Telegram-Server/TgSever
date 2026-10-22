@@ -180,11 +180,12 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (79 methods + 1 file route):
+Implemented (84 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
+| Migration | `logOut`, `close` (no-op: always `True`, no state is touched, no 10-minute `close` limit) |
 | Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto` |
 | Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
@@ -197,6 +198,7 @@ Implemented (79 methods + 1 file route):
 | Callback | `answerCallbackQuery` |
 | Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount` |
 | Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Join requests | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Files | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
 | Webhooks | `setWebhook`, `deleteWebhook`, `getWebhookInfo` |
 | Menus & status | `setChatMenuButton`, `getChatMenuButton`, `setUserEmojiStatus` |
@@ -756,6 +758,13 @@ method is `CHAT_ID_INVALID`. Pinning methods also work in private chats.
 | `setChatPhoto` | `chat_id`, `photo` | multipart upload only |
 | `deleteChatPhoto` | `chat_id` | |
 | `leaveChat` | `chat_id` | |
+| `approveChatJoinRequest` | `chat_id`, `user_id` | needs the invite-users (or change-info) right; the applicant joins and members and admins get the same updates as for a human admin |
+| `declineChatJoinRequest` | `chat_id`, `user_id` | needs the invite-users (or change-info) right; the request is dropped |
+
+A join request that does not exist or was already handled is
+`Bad Request: HIDE_REQUESTER_MISSING`; for these two methods
+`CHAT_ADMIN_REQUIRED` and `USER_ALREADY_PARTICIPANT` also carry the
+official `Bad Request: ` prefix.
 
 With `use_independent_chat_permissions=false` (the default), any media, poll,
 "other messages" or web-preview permission also allows plain text messages, as
@@ -1036,7 +1045,7 @@ commonly reached ones:
   `getForumTopicIconStickers` and the rest of the topic family;
 - queries: `getUserProfilePhotos`, `getUserChatBoosts`;
 - bot administration: `setMyDefaultAdministratorRights`,
-  `getMyDefaultAdministratorRights`, `close`, `logOut`;
+  `getMyDefaultAdministratorRights`;
 - reactions (`setMessageReaction`), stickers and sticker sets, stories,
   business-account methods, and Telegram Passport.
 
