@@ -740,6 +740,9 @@ func tgPeerColor(color domain.ChannelPeerColor) tg.PeerColorClass {
 }
 
 func tgChannelParticipant(selfUserID int64, member domain.ChannelMember) tg.ChannelParticipantClass {
+	if member.SenderChatID != 0 {
+		return tgSenderChatParticipant(member)
+	}
 	switch member.Role {
 	case domain.ChannelRoleCreator:
 		out := &tg.ChannelParticipantCreator{

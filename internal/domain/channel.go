@@ -520,6 +520,10 @@ type ChannelMember struct {
 	// private linked discussion group without joining it. Guest must never be
 	// written to channel_members and is still projected to clients as left.
 	Guest bool
+	// SenderChatID 非零表示这条记录描述的是一个被封禁的频道 peer（见
+	// ChannelBannedSenderChat.Member），此时 UserID 为零。它只出现在 kicked 列表、
+	// 单个成员查询和管理日志里，从不写入 channel_members。
+	SenderChatID int64 `json:",omitempty"`
 }
 
 // CanInviteUsers reports whether this active member may directly add users.
@@ -1210,6 +1214,8 @@ type ChannelAdminLogRequest struct {
 type ChannelAdminLogResult struct {
 	Channel Channel
 	Events  []ChannelAdminLogEvent
+	// SenderChats 是事件里频道 peer 参与者（SenderChatID 非零）对应的频道基础行。
+	SenderChats []Channel
 }
 
 // ChannelView contains channel data personalized for a viewer.
@@ -1233,8 +1239,10 @@ type ChannelParticipantList struct {
 	Channel      Channel
 	Participants []ChannelMember
 	Users        []User
-	Count        int
-	Hash         int64
+	// SenderChats 是 Participants 里频道 peer（SenderChatID 非零）对应的频道基础行。
+	SenderChats []Channel
+	Count       int
+	Hash        int64
 }
 
 // ChannelParticipantsFilterKind identifies channels.getParticipants filters.

@@ -566,6 +566,9 @@ func channelChatID(chat tg.ChatClass) (int64, bool) {
 }
 
 func tgChannelParticipantForUpdate(selfUserID int64, member domain.ChannelMember) tg.ChannelParticipantClass {
+	if member.SenderChatID != 0 {
+		return tgSenderChatParticipant(member)
+	}
 	if member.UserID == 0 {
 		return nil
 	}

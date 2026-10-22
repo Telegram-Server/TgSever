@@ -794,6 +794,13 @@ type ChannelAntispamDecision struct {
 	CreatedAt             pgtype.Timestamptz
 }
 
+type ChannelBannedSenderChat struct {
+	ChannelID      int64
+	SenderChatID   int64
+	BannedByUserID int64
+	BannedAt       int32
+}
+
 type ChannelBoostSlot struct {
 	UserID        int64
 	Slot          int32
