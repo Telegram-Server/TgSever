@@ -23,8 +23,9 @@ func deviceIDFromInitConnectionParams(params any) string {
 	if !ok {
 		return ""
 	}
+	// 接口里装着 nil 指针（typed-nil）同样视为未上报，不能解引用。
 	object, ok := value.(*tg.JSONObject)
-	if !ok {
+	if !ok || object == nil {
 		return ""
 	}
 	for _, field := range object.Value {
@@ -32,7 +33,7 @@ func deviceIDFromInitConnectionParams(params any) string {
 			continue
 		}
 		str, ok := field.Value.(*tg.JSONString)
-		if !ok || !domain.ValidDeviceID(str.Value) {
+		if !ok || str == nil || !domain.ValidDeviceID(str.Value) {
 			return ""
 		}
 		return str.Value
