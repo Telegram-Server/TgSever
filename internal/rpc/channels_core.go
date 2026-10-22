@@ -399,6 +399,14 @@ func (r *Router) onChannelsGetSendAs(ctx context.Context, req *tg.ChannelsGetSen
 					if ch.ID == 0 || ch.ID == view.Channel.ID {
 						continue
 					}
+					// 在本群被封禁的频道不能作为发言身份（#138），不列为候选；查询失败按拒绝处理。
+					banned, banErr := r.deps.Channels.IsSenderChatBanned(ctx, view.Channel.ID, ch.ID)
+					if banErr != nil {
+						return nil, internalErr()
+					}
+					if banned {
+						continue
+					}
 					sendAs := tg.SendAsPeer{Peer: &tg.PeerChannel{ChannelID: ch.ID}}
 					if !view.Channel.Broadcast && !ch.Verified && ch.ID != view.Channel.LinkedChatID {
 						sendAs.PremiumRequired = true

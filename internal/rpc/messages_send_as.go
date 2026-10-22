@@ -137,7 +137,7 @@ func (r *Router) validateForeignChannelSendAs(ctx context.Context, userID, toCha
 		if !target.Channel.SignatureProfiles || !canSendAsForeignChannel(target) {
 			return sendAsPeerInvalidErr()
 		}
-		return nil
+		return r.checkSenderChatNotBanned(ctx, toChannelID, sendAsChannelID)
 	}
 	if !view.Channel.Verified && !r.userIsPremium(ctx, userID) && target.Channel.LinkedChatID != sendAsChannelID {
 		return sendAsPeerInvalidErr()

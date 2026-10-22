@@ -474,3 +474,58 @@ func TestBannedSenderChatWebViewResult(t *testing.T) {
 		t.Fatalf("webview result after unban: %v", err)
 	}
 }
+
+// channels.getSendAs 的候选不包含在该群被封禁的频道，解封后恢复（review #14）。
+func TestBannedSenderChatExcludedFromGetSendAs(t *testing.T) {
+	f := newBannedSendAsFixture(t)
+	candidates := func() []tg.SendAsPeer {
+		t.Helper()
+		got, err := f.router.onChannelsGetSendAs(f.posterCtx(), &tg.ChannelsGetSendAsRequest{Peer: inputPeerChannel(f.group)})
+		if err != nil {
+			t.Fatalf("get send as: %v", err)
+		}
+		return got.Peers
+	}
+	f.setBanned(true)
+	peers := candidates()
+	if _, ok := findSendAsChannel(peers, f.banned.ID); ok {
+		t.Fatalf("banned channel offered as send_as: %#v", peers)
+	}
+	if _, ok := findSendAsChannel(peers, f.other.ID); !ok {
+		t.Fatalf("unbanned channel missing from send_as: %#v", peers)
+	}
+	f.setBanned(false)
+	if _, ok := findSendAsChannel(candidates(), f.banned.ID); !ok {
+		t.Fatal("channel not offered again after unban")
+	}
+}
+
+// 广播频道（开启署名档案）里同样不能以被封禁的频道身份发言（review #1）。
+func TestBannedSenderChatCannotPostInBroadcastChannel(t *testing.T) {
+	f := newBannedSendAsFixture(t)
+	target := createBroadcastChannelRPC(t, f.router, f.poster.ID, "Profiles Target")
+	if _, err := f.router.onChannelsToggleSignatures(f.posterCtx(), &tg.ChannelsToggleSignaturesRequest{
+		Channel: &tg.InputChannel{ChannelID: target.ID, AccessHash: target.AccessHash}, SignaturesEnabled: true, ProfilesEnabled: true,
+	}); err != nil {
+		t.Fatalf("enable signature profiles: %v", err)
+	}
+	if _, err := f.router.onChannelsEditBanned(f.posterCtx(), &tg.ChannelsEditBannedRequest{
+		Channel:      &tg.InputChannel{ChannelID: target.ID, AccessHash: target.AccessHash},
+		Participant:  inputPeerChannel(f.banned),
+		BannedRights: tg.ChatBannedRights{ViewMessages: true, SendMessages: true, UntilDate: 2147483647},
+	}); err != nil {
+		t.Fatalf("ban sender chat in broadcast: %v", err)
+	}
+	send := func(sendAs *tg.Channel, randomID int64) (tg.UpdatesClass, error) {
+		return f.router.onMessagesSendMessage(f.posterCtx(), &tg.MessagesSendMessageRequest{
+			Peer: inputPeerChannel(target), Message: "post", RandomID: randomID, SendAs: inputPeerChannel(sendAs),
+		})
+	}
+	_, err := send(f.banned, 138801)
+	wantSendAsPeerInvalid(t, "post as banned channel in broadcast", err)
+	other, err := send(f.other, 138802)
+	if err != nil {
+		t.Fatalf("post as unbanned channel in broadcast: %v", err)
+	}
+	wantSentAs(t, "post as unbanned channel in broadcast", other, f.other.ID)
+}
