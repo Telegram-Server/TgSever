@@ -604,12 +604,25 @@ func TestChannelStoreSendMessageViaBotIDSurvivesReadPaths(t *testing.T) {
 	assertMarkup("sent message", sent.Message.ReplyMarkup)
 	assertMarkup("sent event", sent.Event.Message.ReplyMarkup)
 
-	duplicate, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+	// 同 random_id 但载荷不同的请求按 4390ebf5 的指纹语义失败关闭，不能覆盖首次发送。
+	if _, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
 		UserID:    owner.ID,
 		ChannelID: channelID,
 		RandomID:  990301,
 		Message:   "changed text must not win",
 		Date:      1700001102,
+	}); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("changed channel via replay err = %v, want ErrMessageRandomIDDuplicate", err)
+	}
+	// 完全相同的重放复用首次结果，via_bot_id 与 reply_markup 必须随快照返回。
+	duplicate, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+		UserID:      owner.ID,
+		ChannelID:   channelID,
+		RandomID:    990301,
+		Message:     "inline channel via",
+		ViaBotID:    bot.ID,
+		ReplyMarkup: markup,
+		Date:        1700001101,
 	})
 	if err != nil {
 		t.Fatalf("duplicate channel via: %v", err)
@@ -1371,6 +1384,7 @@ func TestChannelStoreDeleteHistoryForEveryoneBatchesHugeMaxID(t *testing.T) {
 	channelID = created.Channel.ID
 
 	total := domain.MaxDeleteHistoryBatch + 2
+	// 创建事件占用 FirstChannelEventPts（745112fd），种子消息 id 从 2 起，pts 依次接在其后。
 	if _, err := pool.Exec(ctx, `
 WITH src AS (
   SELECT generate_series(2, $3::int + 1) AS id
@@ -1398,9 +1412,9 @@ msgs AS (
     1700000600 + id,
     'bulk channel history',
     '[]'::jsonb,
-    id
+    id + $4::int - 1
   FROM src
-  RETURNING id, message_date
+  RETURNING id, message_date, pts
 )
 INSERT INTO channel_update_events (
   channel_id,
@@ -1414,7 +1428,7 @@ INSERT INTO channel_update_events (
 )
 SELECT
   $1::bigint,
-  id,
+  pts,
   1,
   message_date,
   'new_channel_message',
@@ -1422,15 +1436,15 @@ SELECT
   $2::bigint,
   '{}'::jsonb
 FROM msgs
-`, channelID, owner.ID, total); err != nil {
+`, channelID, owner.ID, total, domain.FirstChannelEventPts); err != nil {
 		t.Fatalf("seed bulk channel messages: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
 UPDATE channels
 SET top_message_id = $2,
-    pts = $2,
+    pts = $3,
     updated_at = now()
-WHERE id = $1`, channelID, total+1); err != nil {
+WHERE id = $1`, channelID, total+1, total+domain.FirstChannelEventPts); err != nil {
 		t.Fatalf("update channel bulk top: %v", err)
 	}
 
@@ -1444,7 +1458,7 @@ WHERE id = $1`, channelID, total+1); err != nil {
 	if err != nil {
 		t.Fatalf("DeleteChannelHistory first batch: %v", err)
 	}
-	wantFirstPts := total + 1 + domain.MaxDeleteHistoryBatch
+	wantFirstPts := total + domain.FirstChannelEventPts + domain.MaxDeleteHistoryBatch
 	if first.Offset != 1 || first.Event.Pts != wantFirstPts || first.Event.PtsCount != domain.MaxDeleteHistoryBatch || len(first.DeletedIDs) != domain.MaxDeleteHistoryBatch {
 		t.Fatalf("first batch = %+v, want offset=1 pts=%d pts_count=%d", first, wantFirstPts, domain.MaxDeleteHistoryBatch)
 	}

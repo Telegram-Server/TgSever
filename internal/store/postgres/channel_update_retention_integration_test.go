@@ -150,12 +150,13 @@ func TestDeleteExpiredChannelUpdateEventsContinuesPastCandidatePagePostgres(t *t
 	if deleted != len(channelIDs) {
 		t.Fatalf("deleted expired channel updates = %d, want %d (must continue after page 256)", deleted, len(channelIDs))
 	}
+	// 建频道时 floor 初始化为 InitialChannelPts，创建事件位于 FirstChannelEventPts（745112fd）。
 	var remaining, advanced int
 	if err := pool.QueryRow(ctx, `
 SELECT
   (SELECT count(*) FROM channel_update_events WHERE channel_id = ANY($1::bigint[]))::int,
   (SELECT count(*) FROM channel_update_checkpoints
-   WHERE channel_id = ANY($1::bigint[]) AND retained_through_pts = 1)::int`, channelIDs).Scan(&remaining, &advanced); err != nil {
+   WHERE channel_id = ANY($1::bigint[]) AND retained_through_pts = $2)::int`, channelIDs, domain.FirstChannelEventPts).Scan(&remaining, &advanced); err != nil {
 		t.Fatalf("read paged channel retention result: %v", err)
 	}
 	if remaining != 0 || advanced != len(channelIDs) {
@@ -193,19 +194,21 @@ func TestDeleteExpiredChannelUpdateEventsIsolatesGapAndContinuesPostgres(t *test
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
 	})
 
-	// Deliberately model a persisted invariant violation: floor=0 but the first event ends at pts=2
-	// with pts_count=1. The bad channel is the oldest global candidate and must be reported without
-	// preventing the healthy channel behind it from advancing.
+	// Deliberately model a persisted invariant violation: floor=InitialChannelPts but the first
+	// event ends one pts later than contiguous (FirstChannelEventPts+1) with pts_count=1. The bad
+	// channel is the oldest global candidate and must be reported without preventing the healthy
+	// channel behind it from advancing.
+	gapPts := domain.FirstChannelEventPts + 1
 	if _, err := pool.Exec(ctx, `
 WITH moved_event AS (
-  UPDATE channel_update_events SET pts = 2, date = 1 WHERE channel_id = $1 RETURNING channel_id
+  UPDATE channel_update_events SET pts = $2, date = 1 WHERE channel_id = $1 RETURNING channel_id
 ), moved_channel AS (
-  UPDATE channels SET pts = 2 WHERE id = $1 RETURNING id
+  UPDATE channels SET pts = $2 WHERE id = $1 RETURNING id
 )
 UPDATE channel_update_checkpoints
-SET latest_pts = 2, latest_event_date = 1
+SET latest_pts = $2, latest_event_date = 1
 WHERE channel_id = $1
-`, bad.Channel.ID); err != nil {
+`, bad.Channel.ID, gapPts); err != nil {
 		t.Fatalf("inject channel retention gap: %v", err)
 	}
 
@@ -226,7 +229,8 @@ SELECT
 `, bad.Channel.ID, healthy.Channel.ID).Scan(&badFloor, &badRows, &healthyFloor, &healthyRows); scanErr != nil {
 		t.Fatalf("read isolated retention state: %v", scanErr)
 	}
-	if badFloor != 0 || badRows != 1 || healthyFloor != 1 || healthyRows != 0 {
-		t.Fatalf("isolated state bad=%d/%d healthy=%d/%d, want 0/1 and 1/0", badFloor, badRows, healthyFloor, healthyRows)
+	if badFloor != domain.InitialChannelPts || badRows != 1 || healthyFloor != domain.FirstChannelEventPts || healthyRows != 0 {
+		t.Fatalf("isolated state bad=%d/%d healthy=%d/%d, want %d/1 and %d/0", badFloor, badRows, healthyFloor, healthyRows,
+			domain.InitialChannelPts, domain.FirstChannelEventPts)
 	}
 }
