@@ -429,7 +429,7 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 		// 不重复通知管理员、不重复入队 chat_join_request。
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
-			r.enqueueBotAPIChatJoinRequest(ctx, res.Channel, userID, "", date)
+			r.enqueueBotAPIChatJoinRequest(ctx, res.Channel, userID, nil, "", date)
 		}
 		return nil, channelInviteErr(err)
 	}

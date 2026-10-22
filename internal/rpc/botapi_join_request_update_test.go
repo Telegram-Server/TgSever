@@ -1,10 +1,12 @@
 package rpc
 
 import (
+	"context"
 	"testing"
 
 	"github.com/iamxvbaba/td/tg"
 
+	appchannels "telesrv/internal/app/channels"
 	"telesrv/internal/domain"
 )
 
@@ -169,6 +171,32 @@ func TestBotAPIChatJoinRequestStaysQueuedUntilConfirmed(t *testing.T) {
 		if event.Type == domain.UpdateEventBotChatJoinRequest {
 			t.Fatalf("confirmed chat_join_request returned again: %+v", event)
 		}
+	}
+}
+
+// unreadableInvites 让按管理员身份读取邀请链接失败，其余能力委托给真实服务。
+type unreadableInvites struct{ *appchannels.Service }
+
+func (unreadableInvites) GetExportedInvite(context.Context, int64, domain.GetChannelInviteRequest) (domain.ChannelInvite, error) {
+	return domain.ChannelInvite{}, domain.ErrChannelAdminRequired
+}
+
+// chat_join_request 的 invite_link 是申请所用链接本身，不依赖收件机器人能否读取该链接（review #6）。
+func TestBotAPIChatJoinRequestInviteLinkIndependentOfBotAccess(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.promoteBot(t, domain.ChannelAdminRights{InviteUsers: true})
+	f.memberLeaves(t)
+	hash := f.exportInvite(t, true)
+	f.router.deps.Channels = unreadableInvites{f.channels}
+	if _, err := f.router.onMessagesImportChatInvite(WithUserID(f.ctx, f.member.ID), " "+hash+" "); err == nil {
+		t.Fatal("import of a request-needed invite joined directly")
+	}
+	events := botJoinRequestEvents(t, f)
+	if len(events) != 1 {
+		t.Fatalf("chat_join_request events = %+v, want one", events)
+	}
+	if link := events[0].BotChatJoinRequest.InviteLink; link == nil || link.Invite.Hash != hash || link.Creator.ID != f.owner.ID {
+		t.Fatalf("invite_link = %+v, want link %q created by the owner", link, hash)
 	}
 }
 

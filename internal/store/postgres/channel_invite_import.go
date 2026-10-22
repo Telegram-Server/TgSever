@@ -73,7 +73,9 @@ func (s *ChannelStore) ImportInvite(ctx context.Context, req domain.ImportChanne
 			return domain.CreateChannelResult{}, fmt.Errorf("commit pending channel invite request: %w", err)
 		}
 		committed = true
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		// recordPendingInviteImporterTx 已在同一事务里把 requested_count 加一。
+		invite.RequestedCount++
+		return domain.CreateChannelResult{Channel: channel, RequestInvite: &invite}, domain.ErrInviteRequestSent
 	}
 	result, err := s.approveInviteImporterTx(ctx, tx, channel, invite, req.UserID, 0, req.Date)
 	if err != nil {

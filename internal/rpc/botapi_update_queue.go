@@ -3,7 +3,10 @@ package rpc
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -744,17 +747,23 @@ func (r *Router) enqueueBotAPIMemberChange(ctx context.Context, change botAPIMem
 
 // enqueueBotAPIChatJoinRequest 是两条待审批申请路径（需要审批的邀请链接、开启审批的群的
 // 公开用户名）的出口：给群里有邀请权限的机器人管理员各入队一条 chat_join_request。
-// inviteHash 为空表示通过用户名申请。邀请链接快照与 bio 都按收件机器人的视角读取：
-// 前者要求它有管理链接的权限，后者遵循申请人的 bio 隐私设置。
-func (r *Router) enqueueBotAPIChatJoinRequest(ctx context.Context, channel domain.Channel, userID int64, inviteHash string, date int) {
+// invite 为本次申请所用的邀请链接快照（存储随申请一并返回），为 nil 且 inviteHash 为空表示
+// 通过用户名申请。链接快照对所有收件机器人相同，不按各机器人的身份读取；bio 按收件机器人的
+// 视角读取，遵循申请人的 bio 隐私设置。
+func (r *Router) enqueueBotAPIChatJoinRequest(ctx context.Context, channel domain.Channel, userID int64, invite *domain.ChannelInvite, inviteHash string, date int) {
 	if r == nil || r.deps.BotAPIUpdates == nil || channel.ID == 0 || userID == 0 {
 		return
 	}
 	if date <= 0 {
 		date = int(r.clock.Now().Unix())
 	}
+	inviteHash = strings.TrimSpace(inviteHash)
 	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
 		chat := domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}
+		snapshot := invite
+		if snapshot == nil && inviteHash != "" {
+			snapshot = r.botAPIJoinRequestInvite(jobCtx, channel, inviteHash)
+		}
 		for _, admin := range r.botAPIChannelAdminBots(jobCtx, channel) {
 			botID := admin.UserID
 			if botID == userID || (admin.Role != domain.ChannelRoleCreator && !admin.AdminRights.InviteUsers) {
@@ -764,13 +773,9 @@ func (r *Router) enqueueBotAPIChatJoinRequest(ctx context.Context, channel domai
 				Chat: chat, UserID: userID, Date: date,
 				Bio: r.botAPIJoinRequestBio(jobCtx, botID, userID),
 			}
-			if inviteHash != "" {
-				invite, err := r.deps.Channels.GetExportedInvite(jobCtx, botID, domain.GetChannelInviteRequest{
-					UserID: botID, ChannelID: channel.ID, Hash: inviteHash,
-				})
-				if err == nil {
-					request.Invite = &invite
-				}
+			if snapshot != nil {
+				link := *snapshot
+				request.Invite = &link
 			}
 			if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(jobCtx, domain.EnqueueBotAPIUpdateRequest{
 				BotUserID: botID, Kind: domain.BotAPIUpdateChatJoinRequest, Peer: chat, Date: date,
@@ -780,6 +785,23 @@ func (r *Router) enqueueBotAPIChatJoinRequest(ctx context.Context, channel domai
 			}
 		}
 	})
+}
+
+// botAPIJoinRequestInvite 是存储没有随申请返回链接快照时的后备：以群主身份（总能读取任何链接）
+// 按 hash 读取。读取失败时记录日志，更新照常投递但不带 invite_link。
+func (r *Router) botAPIJoinRequestInvite(ctx context.Context, channel domain.Channel, hash string) *domain.ChannelInvite {
+	if r.deps.Channels == nil || channel.CreatorUserID == 0 {
+		return nil
+	}
+	invite, err := r.deps.Channels.GetExportedInvite(ctx, channel.CreatorUserID, domain.GetChannelInviteRequest{
+		UserID: channel.CreatorUserID, ChannelID: channel.ID, Hash: hash,
+	})
+	if err != nil {
+		r.log.Warn("load invite link for bot api chat_join_request failed",
+			zap.Int64("channel_id", channel.ID), zap.Error(err))
+		return nil
+	}
+	return &invite
 }
 
 // botAPIJoinRequestBio 是申请人对该机器人可见的 bio，与 getChat 的裁剪一致；读取失败按无 bio 处理。

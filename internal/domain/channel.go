@@ -1452,6 +1452,10 @@ type CreateChannelResult struct {
 	Message    ChannelMessage
 	Event      ChannelUpdateEvent
 	Recipients []int64
+	// RequestInvite 只在 ImportInvite 因链接需要审批而新产生入群申请（随 ErrInviteRequestSent
+	// 返回）时设置：本次申请所用邀请链接的快照（已计入本次申请），供 chat_join_request 的
+	// invite_link 使用，不依赖收件人能否按自己的身份读取该链接。
+	RequestInvite *ChannelInvite
 }
 
 // MergeJoined 把批量批准入群中的一次结果并入累计结果：Channel/Message/Event/Recipients 取
