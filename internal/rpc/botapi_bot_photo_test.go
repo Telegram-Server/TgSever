@@ -33,7 +33,7 @@ func (f botAPIBridgeFixture) setBotPhotoAsBot(t *testing.T) int64 {
 // 是所有者视角（bot_can_edit）并带着 wantPhotoID（0 表示头像已清空）。
 func (f botAPIBridgeFixture) ownerSeesBotPhoto(t *testing.T, wantPhotoID int64) {
 	t.Helper()
-	pushes := f.sessions.userPushesTo(f.owner.ID)
+	pushes := f.sessions.pushesTo(f.owner.ID)
 	if len(pushes) == 0 {
 		t.Fatalf("owner received no push after the bot's photo changed")
 	}
