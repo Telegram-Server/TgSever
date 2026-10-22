@@ -21,7 +21,8 @@ const (
 	// ActionEdit 是编辑消息（messages.editMessage），不需要目标信息。
 	ActionEdit
 	// ActionSend 是发送消息（含转发、inline 结果、定时消息立即发送、quick reply 发送、
-	// 秘密聊天的建立与发送），需要目标信息：发往收藏夹（TargetSelf）不受限制。
+	// 秘密聊天的建立与发送），需要目标信息：发往收藏夹（TargetSelf）不受限制；发送白名单
+	// 开启时，私聊与秘密聊天的对方必须在名单里（发送关闭优先于白名单）。
 	ActionSend
 	// ActionDelete 是删除消息（含开启或修改自动删除计时器），不需要目标信息。
 	ActionDelete
@@ -141,6 +142,13 @@ func Decide(v View, a Action) Denial {
 		}
 		if !flags.Send {
 			return DenySend
+		}
+		// 发送白名单（#121）只约束私聊与秘密聊天的对方（含 bot）；群组、频道不看名单。
+		// 秘密聊天对方未知（UserID 为 0）时按名单外处理。
+		if v.permissions.SendWhitelistEnabled && (a.Target.Kind == TargetPrivate || a.Target.Kind == TargetSecretChat) {
+			if _, ok := v.whitelist[a.Target.UserID]; !ok {
+				return DenySendWhitelist
+			}
 		}
 	case ActionDelete:
 		if !flags.Delete {

@@ -14,6 +14,7 @@ import (
 	appchannels "telesrv/internal/app/channels"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 )
 
 // permissionSecretChats 只实现 GetSecretChat：权限判定据此找出秘密聊天的对方，其余方法
@@ -57,6 +58,7 @@ type permissionMappingFixture struct {
 	other  domain.User
 	group  *tg.Channel
 	chat   domain.SecretChat
+	users  *memory.UserStore
 }
 
 func newPermissionMappingFixture(t *testing.T) *permissionMappingFixture {
@@ -83,7 +85,7 @@ func newPermissionMappingFixture(t *testing.T) *permissionMappingFixture {
 		Permissions: perms,
 	}, zaptest.NewLogger(t), clock.System)
 	ctx := WithAuthKeyID(WithUserID(context.Background(), me.ID), authKey)
-	return &permissionMappingFixture{router: router, perms: perms, ctx: ctx, me: me, other: other, group: group, chat: chat}
+	return &permissionMappingFixture{router: router, perms: perms, ctx: ctx, me: me, other: other, group: group, chat: chat, users: f.users}
 }
 
 func (f *permissionMappingFixture) dispatch(t *testing.T, req bin.Encoder) error {
