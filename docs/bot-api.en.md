@@ -180,11 +180,12 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (80 methods + 1 file route):
+Implemented (82 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
+| Migration | `logOut`, `close` (no-op: always `True`, no state is touched, no 10-minute `close` limit) |
 | Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription` |
 | Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
@@ -1048,7 +1049,7 @@ commonly reached ones:
   `getForumTopicIconStickers` and the rest of the topic family;
 - queries: `getUserChatBoosts`;
 - bot administration: `setMyDefaultAdministratorRights`,
-  `getMyDefaultAdministratorRights`, `close`, `logOut`;
+  `getMyDefaultAdministratorRights`;
 - reactions (`setMessageReaction`), stickers and sticker sets, stories,
   business-account methods, and Telegram Passport.
 
