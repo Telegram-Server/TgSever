@@ -179,13 +179,13 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (89 методов + 1 файловый маршрут):
+Реализовано (91 метод + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
 | Бот и команды | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
 | Миграция | `logOut`, `close` (заглушки: всегда `True`, состояние не меняется, 10-минутного ограничения `close` нет) |
-| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto` |
+| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
 | Обновления | `getUpdates`, `dropPendingUpdates` (расширение telesrv) |
 | Текст | `sendMessage`, `sendRichMessage` |
 | Медиа | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -336,6 +336,25 @@ MTProto), поэтому другие клиенты видят изменени
 Без параметров. Удаляет текущее фото профиля бота и возвращает `True`. Если
 фото нет, тоже возвращается `True`, как на официальном сервере. Владелец бота
 получает `updateUser` для бота, и его клиенты сразу показывают изменение.
+
+### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
+
+| Параметр | Тип | Комментарий |
+|---|---|---|
+| `rights` | JSON `ChatAdministratorRights` | только `setMy…`; отсутствие очищает права по умолчанию |
+| `for_channels` | логический | `true` для каналов, иначе для групп |
+
+`setMyDefaultAdministratorRights` идёт через MTProto
+`bots.setBotGroupDefaultAdminRights` / `bots.setBotBroadcastDefaultAdminRights`;
+клиенты видят новое значение в `userFull` бота
+(`bot_group_admin_rights` / `bot_broadcast_admin_rights`) и заранее отмечают
+эти права при назначении бота администратором. Повторная установка того же
+значения тоже возвращает `true` (MTProto отвечает `RIGHTS_NOT_MODIFIED`).
+`rights`, который не является JSON-объектом, или известное поле не логического
+типа дают `BAD_REQUEST`.
+
+`getMyDefaultAdministratorRights` возвращает объект `ChatAdministratorRights`
+со всеми полями; если ничего не задано, все они `false`.
 
 ## Методы: отправка
 

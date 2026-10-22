@@ -348,6 +348,7 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 	}
 	if u.Bot {
 		full.SetBotInfo(r.tgBotInfo(ctx, currentUserID, u))
+		r.applyBotDefaultAdminRights(ctx, &full, u.ID)
 	}
 	if r.deps.Dialogs != nil && u.ID != currentUserID {
 		list, err := r.deps.Dialogs.GetPeerDialogs(ctx, currentUserID, []domain.Peer{{Type: domain.PeerTypeUser, ID: u.ID}})
