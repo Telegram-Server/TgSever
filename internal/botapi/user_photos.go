@@ -19,9 +19,9 @@ type UserPhotosGateway interface {
 }
 
 const (
-	// 官方 Bot API 的 getUserProfilePhotos 错误描述。
+	// 官方 Bot API 的 getUserProfilePhotos 参数错误描述（网关解析 user_id 失败时直接写出；
+	// 网关错误码的说明见 official_errors.go 的 getUserProfilePhotosErrors）。
 	userPhotosInvalidUserIDDescription = "Bad Request: invalid user_id specified"
-	userPhotosUserNotFoundDescription  = "Bad Request: user not found"
 
 	// maxUserProfilePhotosLimit 是官方 limit 的上限，也是缺省值。
 	maxUserProfilePhotosLimit = 100
@@ -54,11 +54,7 @@ func (h *handler) getUserProfilePhotos(w http.ResponseWriter, r *http.Request, b
 	limit := min(max(apiInt(values["limit"], maxUserProfilePhotosLimit), 1), maxUserProfilePhotosLimit)
 	photos, total, err := gateway.BotAPIGetUserProfilePhotos(r.Context(), botID, userID, offset, limit)
 	if err != nil {
-		description := apiErrorDescription(err)
-		if description == "USER_ID_INVALID" {
-			description = userPhotosUserNotFoundDescription
-		}
-		writeAPIError(w, http.StatusBadRequest, description)
+		getUserProfilePhotosErrors.writeError(w, err)
 		return
 	}
 	writeAPIOK(w, apiUserProfilePhotosResult(photos, total))

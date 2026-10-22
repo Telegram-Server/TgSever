@@ -43,14 +43,6 @@ func removeMyProfilePhoto(h *handler, w http.ResponseWriter, r *http.Request, bo
 	writeAPIOK(w, true)
 }
 
-// setMyProfilePhotoErrors 是 setMyProfilePhoto 的失败说明。官方服务端把 MTProto 错误
-// 转成 "Bad Request: <CODE>"：图片解不开时 Telegram 回 IMAGE_PROCESS_FAILED（本服务的
-// 处理器报 PHOTO_INVALID）；文件过大与官方上传超限同一句。
-var setMyProfilePhotoErrors = newOfficialErrorDescriptions(map[string]string{
-	"PHOTO_INVALID": "Bad Request: IMAGE_PROCESS_FAILED",
-	"FILE_TOO_BIG":  "Bad Request: file is too big",
-})
-
 // setMyProfilePhoto 把 multipart 上传的文件设为机器人自己的头像；photo 是 InputProfilePhoto。
 func setMyProfilePhoto(h *handler, w http.ResponseWriter, r *http.Request, botID int64) {
 	gateway, ok := h.gateway.(BotProfilePhotoGateway)

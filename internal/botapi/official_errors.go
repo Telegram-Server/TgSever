@@ -9,8 +9,9 @@ import (
 //
 // 官方说明随方法而变：同是 MESSAGE_ID_INVALID，deleteMessage 报
 // "message to delete not found"，editMessageText 报 "message to edit not found"。
-// 因此每个方法（或方法组）在自己的文件里用 newOfficialErrorDescriptions 声明一张表，
-// 不做全局表；表里没有的错误码保持 apiErrorDescription 的结果（TL 错误码本身）。
+// 因此每个方法（或方法组）用 newOfficialErrorDescriptions 声明一张表，不做全局表；表里
+// 没有的错误码保持 apiErrorDescription 的结果（TL 错误码本身）。所有表集中在本文件，
+// 方法处理函数里不再写 switch 映射，新方法也在这里加表。
 type officialErrorDescriptions map[string]string
 
 // newOfficialErrorDescriptions 建表并把表里的错误码登记进 apiErrorDescription 的
@@ -54,4 +55,41 @@ var deleteMessagesErrors = newOfficialErrorDescriptions(map[string]string{
 	"MESSAGE_IDS_EMPTY":        "Bad Request: message identifiers are not specified",
 	"MESSAGE_IDS_TOO_MUCH":     "Bad Request: too many message identifiers specified",
 	"MESSAGE_IDS_INVALID":      "Bad Request: invalid message identifier specified",
+})
+
+// setMyProfilePhotoErrors 是 setMyProfilePhoto 的失败说明。官方服务端把 MTProto 错误
+// 转成 "Bad Request: <CODE>"：图片解不开时 Telegram 回 IMAGE_PROCESS_FAILED（本服务的
+// 处理器报 PHOTO_INVALID）；文件过大与官方上传超限同一句。
+var setMyProfilePhotoErrors = newOfficialErrorDescriptions(map[string]string{
+	"PHOTO_INVALID": "Bad Request: IMAGE_PROCESS_FAILED",
+	"FILE_TOO_BIG":  "Bad Request: file is too big",
+})
+
+// senderChatBanErrors 是两个方法的官方失败说明。官方网关经 TDLib 的
+// setChatMemberStatus 执行：没有封禁权限报 restrict/unrestrict 那句；sender_chat_id
+// 不是合法的 chat 标识报 invalid chat identifier；目标频道不存在（处理器的
+// PEER_ID_INVALID）报 member not found。
+var senderChatBanErrors = newOfficialErrorDescriptions(map[string]string{
+	"CHAT_ADMIN_REQUIRED":    "Bad Request: not enough rights to restrict/unrestrict chat member",
+	"SENDER_CHAT_ID_INVALID": "Bad Request: invalid chat identifier specified",
+	"PEER_ID_INVALID":        "Bad Request: member not found",
+})
+
+// chatInviteLinkErrors 是 create/edit/revoke/exportChatInviteLink 的官方失败说明。
+var chatInviteLinkErrors = newOfficialErrorDescriptions(map[string]string{
+	"CHAT_ADMIN_REQUIRED": "Bad Request: not enough rights to manage chat invite links",
+})
+
+// joinRequestErrors 是 approveChatJoinRequest / declineChatJoinRequest 的官方失败说明：
+// 官方对这几种 MTProto 错误原样转出，前面加 "Bad Request: "。
+var joinRequestErrors = newOfficialErrorDescriptions(map[string]string{
+	"HIDE_REQUESTER_MISSING":   "Bad Request: HIDE_REQUESTER_MISSING",
+	"USER_ALREADY_PARTICIPANT": "Bad Request: USER_ALREADY_PARTICIPANT",
+	"CHAT_ADMIN_REQUIRED":      "Bad Request: CHAT_ADMIN_REQUIRED",
+})
+
+// getUserProfilePhotosErrors 是 getUserProfilePhotos 的官方失败说明：用户不存在或机器人
+// 看不到（网关的 USER_ID_INVALID）报 user not found。
+var getUserProfilePhotosErrors = newOfficialErrorDescriptions(map[string]string{
+	"USER_ID_INVALID": "Bad Request: user not found",
 })

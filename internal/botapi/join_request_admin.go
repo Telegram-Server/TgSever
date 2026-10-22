@@ -50,19 +50,8 @@ func (h *handler) answerChatJoinRequest(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if err := call(gateway, r.Context(), botID, chatID, userID); err != nil {
-		writeAPIError(w, http.StatusBadRequest, joinRequestErrorDescription(err))
+		joinRequestErrors.writeError(w, err)
 		return
 	}
 	writeAPIOK(w, true)
-}
-
-// joinRequestErrorDescription 把审批失败映射成官方 Bot API 的说明文本：官方对这几种
-// MTProto 错误原样转出，前面加 "Bad Request: "；其余错误保持网关错误码。
-func joinRequestErrorDescription(err error) string {
-	switch code := apiErrorDescription(err); code {
-	case "HIDE_REQUESTER_MISSING", "USER_ALREADY_PARTICIPANT", "CHAT_ADMIN_REQUIRED":
-		return "Bad Request: " + code
-	default:
-		return code
-	}
 }

@@ -20,16 +20,6 @@ type SenderChatBanGateway interface {
 // 超级群/频道的 chat_id。
 var errSenderChatIDInvalid = errors.New("SENDER_CHAT_ID_INVALID")
 
-// senderChatBanErrors 是两个方法的官方失败说明。官方网关经 TDLib 的
-// setChatMemberStatus 执行：没有封禁权限报 restrict/unrestrict 那句；sender_chat_id
-// 不是合法的 chat 标识报 invalid chat identifier；目标频道不存在（处理器的
-// PEER_ID_INVALID）报 member not found。
-var senderChatBanErrors = newOfficialErrorDescriptions(map[string]string{
-	"CHAT_ADMIN_REQUIRED":    "Bad Request: not enough rights to restrict/unrestrict chat member",
-	"SENDER_CHAT_ID_INVALID": "Bad Request: invalid chat identifier specified",
-	"PEER_ID_INVALID":        "Bad Request: member not found",
-})
-
 func init() {
 	registerMethods(map[string]methodFunc{
 		"banChatSenderChat":   (*handler).banChatSenderChat,

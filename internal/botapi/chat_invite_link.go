@@ -42,17 +42,6 @@ func init() {
 	registerErrorMarkers(chatInviteLinkErrorMarkers...)
 }
 
-// chatInviteLinkErrorDescription 把邀请链接方法的失败映射成官方 Bot API 的说明文本；
-// 其余错误保持网关错误码。
-func chatInviteLinkErrorDescription(err error) string {
-	switch code := apiErrorDescription(err); code {
-	case "CHAT_ADMIN_REQUIRED":
-		return "Bad Request: not enough rights to manage chat invite links"
-	default:
-		return code
-	}
-}
-
 // apiChatInviteLink 投影官方 ChatInviteLink 对象；零值的可选字段按官方省略。
 // chat_join_request 更新里的 invite_link 也复用它。
 func apiChatInviteLink(link domain.BotAPIChatInviteLink) map[string]any {
@@ -159,7 +148,7 @@ func chatInviteLinkOptions(values map[string]string) (domain.BotAPIChatInviteLin
 
 func writeChatInviteLinkResult(w http.ResponseWriter, link domain.BotAPIChatInviteLink, err error) {
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, chatInviteLinkErrorDescription(err))
+		chatInviteLinkErrors.writeError(w, err)
 		return
 	}
 	writeAPIOK(w, apiChatInviteLink(link))
@@ -217,7 +206,7 @@ func (h *handler) exportChatInviteLink(w http.ResponseWriter, r *http.Request, b
 	}
 	link, err := gateway.BotAPIExportChatInviteLink(r.Context(), botID, chatID)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, chatInviteLinkErrorDescription(err))
+		chatInviteLinkErrors.writeError(w, err)
 		return
 	}
 	writeAPIOK(w, link)
