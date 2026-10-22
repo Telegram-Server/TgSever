@@ -1,9 +1,13 @@
 package rpc
 
 import (
+	"bytes"
+	"image"
+	"image/png"
 	"testing"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 
 	"telesrv/internal/domain"
 )
@@ -112,5 +116,93 @@ func TestBotAPIRemoveMyProfilePhotoRejectsNonBot(t *testing.T) {
 
 	if _, err := f.router.BotAPIRemoveMyProfilePhoto(f.ctx, f.owner.ID); err == nil {
 		t.Fatal("removeMyProfilePhoto accepted a non-bot user id")
+	}
+}
+
+// testProfilePNG 生成一张 w×h 的真实 PNG，作为 bot 上传的头像字节。
+func testProfilePNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func staticProfilePhoto(data []byte) domain.BotAPIProfilePhoto {
+	return domain.BotAPIProfilePhoto{Kind: domain.BotAPIProfilePhotoStatic, FileName: "avatar.png", MimeType: "image/png", Data: data}
+}
+
+// setMyProfilePhoto（static）：上传的图片按头像规则（s/a/c）存成 bot 的当前头像，
+// 所有者的会话收到带新头像的 updateUser。
+func TestBotAPISetMyProfilePhotoStoresAvatarSizesAndNotifiesOwner(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+
+	ok, err := f.router.BotAPISetMyProfilePhoto(f.ctx, f.bot.ID, staticProfilePhoto(testProfilePNG(t, 640, 480)))
+	if err != nil || !ok {
+		t.Fatalf("setMyProfilePhoto = %v, %v; want true", ok, err)
+	}
+
+	cur, found, err := f.files.CurrentProfilePhotoKind(f.ctx, domain.PeerTypeUser, f.bot.ID, domain.ProfilePhotoKindProfile)
+	if err != nil || !found {
+		t.Fatalf("bot current photo found=%v err=%v, want the new photo", found, err)
+	}
+	types := map[string]bool{}
+	for _, size := range cur.Sizes {
+		types[size.Type] = true
+	}
+	if len(cur.Sizes) != 3 || !types["s"] || !types["a"] || !types["c"] {
+		t.Fatalf("bot avatar sizes = %+v, want avatar s/a/c sizes", cur.Sizes)
+	}
+	f.ownerSeesBotPhoto(t, cur.ID)
+}
+
+// 解不开的图片被拒（PHOTO_INVALID），原头像保持不变。
+func TestBotAPISetMyProfilePhotoRejectsNonImage(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	before := f.setBotPhotoAsBot(t)
+
+	_, err := f.router.BotAPISetMyProfilePhoto(f.ctx, f.bot.ID, staticProfilePhoto([]byte("not an image")))
+	if !tgerr.Is(err, "PHOTO_INVALID") {
+		t.Fatalf("setMyProfilePhoto with non-image err = %v, want PHOTO_INVALID", err)
+	}
+	if cur, found, _ := f.files.CurrentProfilePhotoKind(f.ctx, domain.PeerTypeUser, f.bot.ID, domain.ProfilePhotoKindProfile); !found || cur.ID != before {
+		t.Fatalf("bot current photo = %d found=%v, want unchanged %d", cur.ID, found, before)
+	}
+}
+
+// 超过头像上限（10MB）的文件被拒（FILE_TOO_BIG），不会成为头像。
+func TestBotAPISetMyProfilePhotoRejectsOversizedFile(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	oversized := append(testProfilePNG(t, 8, 8), make([]byte, 10<<20)...)
+
+	_, err := f.router.BotAPISetMyProfilePhoto(f.ctx, f.bot.ID, staticProfilePhoto(oversized))
+	if !tgerr.Is(err, "FILE_TOO_BIG") {
+		t.Fatalf("setMyProfilePhoto with 10MB+ file err = %v, want FILE_TOO_BIG", err)
+	}
+	if _, found, _ := f.files.CurrentProfilePhotoKind(f.ctx, domain.PeerTypeUser, f.bot.ID, domain.ProfilePhotoKindProfile); found {
+		t.Fatal("oversized file became the bot's photo")
+	}
+}
+
+func TestBotAPISetMyProfilePhotoRejectsNonBot(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+
+	if _, err := f.router.BotAPISetMyProfilePhoto(f.ctx, f.owner.ID, staticProfilePhoto(testProfilePNG(t, 8, 8))); err == nil {
+		t.Fatal("setMyProfilePhoto accepted a non-bot user id")
+	}
+	if _, found, _ := f.files.CurrentProfilePhotoKind(f.ctx, domain.PeerTypeUser, f.owner.ID, domain.ProfilePhotoKindProfile); found {
+		t.Fatal("non-bot user got a profile photo through setMyProfilePhoto")
+	}
+}
+
+// 尚不支持的头像种类被拒，而不是被当作静态图处理。
+func TestBotAPISetMyProfilePhotoRejectsUnknownKind(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	photo := staticProfilePhoto(testProfilePNG(t, 8, 8))
+	photo.Kind = "sticker"
+
+	if _, err := f.router.BotAPISetMyProfilePhoto(f.ctx, f.bot.ID, photo); !tgerr.Is(err, "PHOTO_INVALID") {
+		t.Fatalf("setMyProfilePhoto with unknown kind err = %v, want PHOTO_INVALID", err)
 	}
 }

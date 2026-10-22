@@ -2,7 +2,12 @@ package botapi
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
+
+	"telesrv/internal/domain"
 )
 
 // BotProfilePhotoGateway 管理机器人自己的头像，对应 MTProto photos.updateProfilePhoto /
@@ -11,11 +16,14 @@ import (
 // 可选接口：网关不实现时这组方法回 501 METHOD_NOT_FOUND。
 type BotProfilePhotoGateway interface {
 	BotAPIRemoveMyProfilePhoto(ctx context.Context, botID int64) (bool, error)
+	// BotAPISetMyProfilePhoto 按头像规则保存上传的文件并设为机器人的当前头像。
+	BotAPISetMyProfilePhoto(ctx context.Context, botID int64, photo domain.BotAPIProfilePhoto) (bool, error)
 }
 
 func init() {
 	registerMethods(map[string]methodFunc{
 		"removeMyProfilePhoto": removeMyProfilePhoto,
+		"setMyProfilePhoto":    setMyProfilePhoto,
 	})
 }
 
@@ -31,4 +39,108 @@ func removeMyProfilePhoto(h *handler, w http.ResponseWriter, r *http.Request, bo
 		return
 	}
 	writeAPIOK(w, true)
+}
+
+// setMyProfilePhotoErrors 是 setMyProfilePhoto 的失败说明。官方服务端把 MTProto 错误
+// 转成 "Bad Request: <CODE>"：图片解不开时 Telegram 回 IMAGE_PROCESS_FAILED（本服务的
+// 处理器报 PHOTO_INVALID）；文件过大与官方上传超限同一句。
+var setMyProfilePhotoErrors = newOfficialErrorDescriptions(map[string]string{
+	"PHOTO_INVALID": "Bad Request: IMAGE_PROCESS_FAILED",
+	"FILE_TOO_BIG":  "Bad Request: file is too big",
+})
+
+// setMyProfilePhoto 把 multipart 上传的文件设为机器人自己的头像；photo 是 InputProfilePhoto。
+func setMyProfilePhoto(h *handler, w http.ResponseWriter, r *http.Request, botID int64) {
+	gateway, ok := h.gateway.(BotProfilePhotoGateway)
+	if !ok {
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
+		return
+	}
+	values, files, err := requestValuesWithFiles(r)
+	if err != nil {
+		setMyProfilePhotoErrors.writeError(w, err)
+		return
+	}
+	photo, description := parseInputProfilePhoto(values["photo"], files)
+	if description != "" {
+		writeAPIError(w, http.StatusBadRequest, description)
+		return
+	}
+	if _, err := gateway.BotAPISetMyProfilePhoto(r.Context(), botID, photo); err != nil {
+		setMyProfilePhotoErrors.writeError(w, err)
+		return
+	}
+	writeAPIOK(w, true)
+}
+
+const (
+	inputProfilePhotoRequiredDescription = `Bad Request: parameter "photo" is required`
+	inputProfilePhotoParseDescription    = "Bad Request: can't parse InputProfilePhoto JSON object"
+	inputProfilePhotoTypeDescription     = "Bad Request: invalid InputProfilePhoto type specified"
+	inputProfilePhotoUploadDescription   = "Bad Request: profile photo must be uploaded as a new file using attach://"
+)
+
+// inputProfilePhotoParser 解析某一种 InputProfilePhoto 的专属字段；失败时返回说明文本。
+type inputProfilePhotoParser func(object map[string]json.RawMessage, files map[string]uploadedFile) (domain.BotAPIProfilePhoto, string)
+
+// inputProfilePhotoParsers 按 type 分派。新种类（animated：animation 文件 +
+// main_frame_timestamp）在这里登记一个解析函数，文件部分复用 profilePhotoUpload。
+var inputProfilePhotoParsers = map[domain.BotAPIProfilePhotoKind]inputProfilePhotoParser{
+	domain.BotAPIProfilePhotoStatic: parseInputProfilePhotoStatic,
+}
+
+// parseInputProfilePhoto 解析 setMyProfilePhoto 的 photo 参数（JSON 序列化的 InputProfilePhoto）。
+// 返回的说明非空表示参数错误。
+func parseInputProfilePhoto(raw string, files map[string]uploadedFile) (domain.BotAPIProfilePhoto, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return domain.BotAPIProfilePhoto{}, inputProfilePhotoRequiredDescription
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &object); err != nil || object == nil {
+		return domain.BotAPIProfilePhoto{}, inputProfilePhotoParseDescription
+	}
+	var kind string
+	if rawKind, found := object["type"]; !found || json.Unmarshal(rawKind, &kind) != nil {
+		return domain.BotAPIProfilePhoto{}, inputProfilePhotoTypeDescription
+	}
+	parse, found := inputProfilePhotoParsers[domain.BotAPIProfilePhotoKind(kind)]
+	if !found {
+		return domain.BotAPIProfilePhoto{}, inputProfilePhotoTypeDescription
+	}
+	return parse(object, files)
+}
+
+// parseInputProfilePhotoStatic 解析 InputProfilePhotoStatic：photo 字段指向上传的图片。
+func parseInputProfilePhotoStatic(object map[string]json.RawMessage, files map[string]uploadedFile) (domain.BotAPIProfilePhoto, string) {
+	file, err := profilePhotoUpload(object, "photo", files)
+	if err != nil {
+		return domain.BotAPIProfilePhoto{}, inputProfilePhotoUploadDescription
+	}
+	return domain.BotAPIProfilePhoto{
+		Kind:     domain.BotAPIProfilePhotoStatic,
+		FileName: file.Name,
+		MimeType: file.MimeType,
+		Data:     file.Bytes,
+	}, ""
+}
+
+var errProfilePhotoNotUploaded = errors.New("profile photo is not an uploaded file")
+
+// profilePhotoUpload 取 InputProfilePhoto 里 field 字段引用的上传文件。官方规定头像不能复用：
+// 只接受 "attach://<name>" 指向本次 multipart 请求里的文件，file_id 与 URL 都拒绝。
+func profilePhotoUpload(object map[string]json.RawMessage, field string, files map[string]uploadedFile) (uploadedFile, error) {
+	var ref string
+	if raw, found := object[field]; !found || json.Unmarshal(raw, &ref) != nil {
+		return uploadedFile{}, errProfilePhotoNotUploaded
+	}
+	name, isAttach := strings.CutPrefix(strings.TrimSpace(ref), "attach://")
+	if !isAttach || name == "" {
+		return uploadedFile{}, errProfilePhotoNotUploaded
+	}
+	file, found := files[name]
+	if !found || len(file.Bytes) == 0 {
+		return uploadedFile{}, errProfilePhotoNotUploaded
+	}
+	return file, nil
 }
