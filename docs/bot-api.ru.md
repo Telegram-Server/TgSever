@@ -179,7 +179,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (91 метод + 1 файловый маршрут):
+Реализовано (92 метода + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
@@ -192,7 +192,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 | Альбомы, опросы, dice, actions | `sendMediaGroup`, `sendPoll`, `sendDice`, `sendChatAction` |
 | Гео | `sendContact`, `sendLocation`, `sendVenue` |
 | Пересылка | `forwardMessage`, `forwardMessages`, `copyMessage`, `copyMessages` |
-| Правка/удаление | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
+| Правка/удаление | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage`, `deleteMessages` |
 | Правка/удаление ephemeral | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
 | Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
@@ -674,6 +674,21 @@ inline-сообщения.
 
 `chat_id` + `message_id`. Возвращает `true`. Удаление уже удалённого или
 чужого сообщения возвращает `false` либо ошибку, как и на официальном шлюзе.
+
+### `deleteMessages`
+
+`chat_id` + `message_ids` (JSON-массив из 1–100 положительных id; повторы
+игнорируются). Работает в личных чатах, супергруппах и каналах по тем же
+правилам, что и `deleteMessage`: в личном чате удаляются только сообщения
+диалога с этим `chat_id`; в группе бот удаляет свои сообщения без прав, а
+чужие — только с правом администратора на удаление сообщений. Отсутствующие
+и недоступные для удаления сообщения пропускаются, остальные удаляются одним
+пакетом (участники получают одно обновление об удалении); результат — `true`.
+Если удалить нельзя ни одного, возвращается `Bad Request: message can't be
+deleted` или `Bad Request: message to delete not found`. Пустой список,
+больше 100 id или неположительный id — ошибка параметров (`Bad Request:
+message identifiers are not specified` / `too many message identifiers
+specified` / `invalid message identifier specified`).
 
 ### `answerCallbackQuery`
 
