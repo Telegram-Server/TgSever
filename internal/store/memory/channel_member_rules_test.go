@@ -18,3 +18,7 @@ func TestChannelOwnerLeavePrevious(t *testing.T) {
 func TestChannelAdminProtection(t *testing.T) {
 	storetest.ChannelAdminProtection(t, memory.NewChannelStore(), [4]int64{201, 202, 203, 204})
 }
+
+func TestChannelHideAllJoinRequestsExclude(t *testing.T) {
+	storetest.ChannelHideAllJoinRequestsExclude(t, memory.NewChannelStore(), [3]int64{321, 322, 323})
+}

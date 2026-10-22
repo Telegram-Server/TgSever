@@ -24,6 +24,7 @@ check an operator permission (`permission`).
 | POST | `/api/login` | Log in. Body: `{"secret": "..."}`. Validates the config secret, issues a signed session cookie and CSRF cookie. The only mutating route without a CSRF token (no session yet); only Origin is checked. |
 | POST | `/api/logout` | Log out. Destroys the session and CSRF cookie. |
 | GET | `/api/session` | Returns `{"actor": "...", "permissions": [...], "csrf_token": "..."}`. Called by the panel on startup. |
+| GET | `/api/public/icon` | The server icon, unauthenticated, so the login page can show it. `404` when no icon is configured (the page then falls back to `/logo.png`). Not cached. |
 
 The session lives in a signed cookie (default TTL 12 hours); there is no
 server-side session store. Every request except `GET/HEAD/OPTIONS` and
@@ -179,6 +180,14 @@ because nothing checked them. Do not hand-edit them; edit the source and rerun.
 `--check` exits non-zero when they are stale, which is the form worth putting in
 CI.
 
+The `## API: ...` tables further down are prose and are written by hand, but
+`--check` also holds them to `server.go`: every route needs a row (an action
+either in an action table or as a `POST /api/actions/...` row), a row for a
+route that is no longer registered fails, and the **Permission** column of the
+action tables is generated -- `--write` fills in the right the route enforces.
+When this check was added, 18 GET routes and 23 actions had no row at all, and
+most action rows said "—" where the route needed a specific right.
+
 SPA routes are declarative: any unknown frontend path is served as `/`
 (index.html) and the router decides what to render
 (`web/src/pages/Routes.tsx`). The tables below come from `nav.ts`, the single
@@ -283,6 +292,7 @@ Every mutating request carries in its body:
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/dashboard` | Summary: `counts`, `storage`, and optionally `host`. |
+| GET | `/api/stats` | Params: `days` (int, default 14, max 90). Response: today's and total Stars granted and gifts sent, `star_balance_total`, `users_total`, `online_now`, `days`, and the daily `users_chart`, `active_chart`, `stars_chart` series. |
 | GET | `/api/storage/stats` | Object storage statistics. |
 
 ## API: accounts
@@ -293,6 +303,8 @@ Every mutating request carries in its body:
 | GET | `/api/accounts/{id}` | Account card: profile, flags, statistics, `DeviceLimit` (int 1..100, `null` = unlimited). |
 | GET | `/api/accounts/{id}/avatar` | Account avatar (file). |
 | GET | `/api/accounts/{id}/device-bindings` | Devices bound to the account (see `set-device-limit`), oldest binding first. Response: `user_id`, `bindings` (empty array when none) of `device_id`, `device_model`, `platform`, `app_version` (as reported at binding time), `bound_at`, `last_used_at` (RFC 3339). Proxied from Admin API `/v1/accounts/{id}/device-bindings`, not cached. |
+| GET | `/api/accounts/shared-devices` | Groups of accounts signed in from the same device (model, system version, platform, IP). Params: `offset` (int), `limit` (int). Response: `rows` (each with `DeviceModel`, `SystemVersion`, `Platform`, `IP`, `AccountCount`, `LastActiveAt`, `Accounts`), `limit`, `offset`, `has_more`, `next_offset`. |
+| GET | `/api/accounts/{id}/permissions` | The account's staff permission control (see `set-permissions`). Response: `user_id`, `enabled`, the eleven flags (`send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact`, `true` = allowed), `send_whitelist` (`enabled`, `user_ids`), `updated_at`. An account that was never configured reads as `enabled: false` with every flag allowed. Proxied from Admin API `/v1/accounts/{id}/permissions`, not cached. |
 | GET | `/api/account-ratings` | Params: `q`, `min_level` (int), `user_id` (int64), `before_id` (int64), `limit` (int). Response: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/account-ratings/{user_id}` | Response: `rating`, `events`. |
 
@@ -345,6 +357,8 @@ Every mutating request carries in its body:
 | Method | Path | Parameters / response |
 | --- | --- | --- |
 | GET | `/api/gifts` | Response: `Gifts` (gift list). |
+| GET | `/api/gifts/{id}/attributes` | Upgrade pools of a gift. Response: `gift_id`, `visual_only`, `has_upgrade`, `models`, `patterns`, `backdrops`. An unknown gift answers `400`. |
+| GET | `/api/nft-gifts` | Upgraded (unique) gifts, newest first. Params: `gift_id` (int64), `owner_user_id` (int64), `q` (slug prefix, or a substring of title, address or owner name), `before_id` (int64), `limit` (int). Response: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/auctions` | Response: `Auctions` — live state of all operator-authored auctions and scheduled drops. |
 | GET | `/api/official-gifts` | Response: proxied from Admin API (`/v1/official-gifts`). |
 | GET | `/api/official-gifts/{id}/animation` | Official gift animation (file). |
@@ -423,6 +437,83 @@ catalog, and stripping marks requires `botverification.manage`.
 
 ---
 
+## API: Stars
+
+| Method | Path | Parameters / response |
+| --- | --- | --- |
+| GET | `/api/stars/top` | Accounts by Stars balance. Params: `q`, `before_id` (int64), `limit` (int). Response: `rows`, `has_more`, `next_before_id`. |
+| GET | `/api/stars/ledger/{user_id}` | One account's Stars ledger, newest first. Params: `before_id` (int64), `limit` (int). Response: `account`, `entries`, `has_more`, `next_before_id`; `404` when the account has no Stars account. |
+
+## API: donations
+
+All routes need `donations.manage`. The mechanism is described in [donations.md](donations.md).
+
+| Method | Path | Parameters / body |
+| --- | --- | --- |
+| GET | `/api/donations/wallet` | Whether a donation wallet exists and how many addresses have been handed out. |
+| GET | `/api/donations/chains` | Response: `chains`, `tokens`. |
+| GET | `/api/donations/deposits` | Params: `before_id` (int64), `limit` (int). Response: `rows`, `has_more`, `next_before_id`. |
+| POST | `/api/actions/donation-chain-update` | Common fields + `chain_key` (string), `rpc_url`, `ws_url` (string), `enabled` (bool), `confirmations_required` (int), `price_feed_address` (string), `manual_usd_rate_micros` (int64). |
+
+## API: item prices
+
+All routes need `prices.manage`.
+
+| Method | Path | Parameters / body |
+| --- | --- | --- |
+| GET | `/api/item-prices` | Response: `rows` (defaults merged with the overrides), `stars_rate`, `star_packages` (the Stars package sizes, read-only: they follow from the rate). |
+| POST | `/api/actions/item-price-update` | Common fields + `product_code` (string), `stars_price` (int), `bid` (int64), `enabled` (bool). |
+| POST | `/api/actions/item-price-set-rate` | Common fields + `stars_rate` (int64). |
+
+## API: server settings
+
+All routes need `server.manage`. Sign-up and code login are described in
+[sign-up-switch.md](sign-up-switch.md) and [code-login-switch.md](code-login-switch.md).
+
+| Method | Path | Parameters / body |
+| --- | --- | --- |
+| GET | `/api/server/identity` | Name, description and message templates, plus the defaults from the environment and the effective sign-up and code-login state with its source. |
+| GET | `/api/server/icon` | The server icon (file); `404` when none is configured. |
+| GET | `/api/server/env` | The `.env` settings, grouped as in `.env.example` (always an array). |
+| GET | `/api/server/status` | Host (hostname, distro, OS, architecture, Go version) and probes of Postgres, Redis, MTProto and Docker. |
+| POST | `/api/actions/set-server-identity` | Common fields + `name`, `description` (string). |
+| POST | `/api/actions/set-welcome-message-templates` | Common fields + `phone_template`, `email_template` (string). |
+| POST | `/api/actions/set-login-code-message-template` | Common fields + `template` (string; empty restores the default). An invalid template answers `422`. |
+| POST | `/api/actions/set-sign-up-enabled` | Common fields + `mode` (`on`, `off` or `follow_env`; anything else answers `422`). |
+| POST | `/api/actions/set-code-login-enabled` | Common fields + `mode` (`on`, `off` or `follow_env`; anything else answers `422`). |
+| POST | `/api/actions/upload-server-icon` | **multipart**: `metadata` (JSON with the common fields) and an image `file` (up to 2 MiB). |
+| POST | `/api/actions/remove-server-icon` | Common fields only. |
+| POST | `/api/actions/update-server-env` | Common fields + `values` (object, key → value). Takes effect when telesrv restarts. The audit trail records which keys changed, never their values. When the audit store is unreachable the write still goes through, unaudited, because this editor is how a broken database setting is repaired. |
+
+## API: client updates
+
+The update service is described in [update-service.md](update-service.md).
+
+| Method | Path | Parameters / body |
+| --- | --- | --- |
+| GET | `/api/client-updates` | State of the update service: `mode`, `public_url`, `service_url`, `reload_error`, `max_package_size`, and the published `entries`. Needs `updates.read`. Proxied from Admin API `/v1/client-updates`, not cached. |
+| POST | `/api/actions/client-update-upload` | Raw package bytes as the body (`application/octet-stream`), with `reason` (required), `command_id` and `allow_downgrade` (bool) in the query string; stages the package. Needs `updates.publish`. A body over the limit answers `413`, a wrong content type `415`. |
+| POST | `/api/actions/client-update-publish` | Common fields + `staging_id` (string), `allow_downgrade` (bool); publishes a staged package. Needs `updates.publish`. |
+| POST | `/api/actions/client-update-disable` | Common fields + `platform`, `channel` (string); stops offering that entry. Needs `updates.publish`. |
+| POST | `/api/actions/client-update-enable` | Common fields + `platform`, `channel` (string); offers a disabled entry again. Needs `updates.publish`. |
+
+## API: operator accounts
+
+All routes need `admins.manage`. The built-in operator has no row and cannot be edited.
+
+| Method | Path | Parameters / body |
+| --- | --- | --- |
+| GET | `/api/admin-users` | Response: `system` (the built-in operator, read-only), `rows`, `available_permissions` (the rights that can be granted). |
+| POST | `/api/actions/create-admin-operator` | Common fields + `username`, `password` (string), `permissions` ([]string), `enabled` (bool, default `true`). The password is never echoed or stored in the audit trail. |
+| POST | `/api/actions/set-admin-operator-access` | Common fields + `id` (int64), `permissions` ([]string), `enabled` (bool, default `true`). Refused when it would leave nobody holding `admins.manage`. Applies from the operator's next request. |
+| POST | `/api/actions/set-admin-operator-password` | Common fields + `id` (int64), `password` (string). Signs out the operator's existing sessions. |
+
+## API: audit log
+
+| Method | Path | Parameters / response |
+| --- | --- | --- |
+| GET | `/api/audit-logs` | Needs `audit.read`. Params: `actor`, `action`, `status`, `limit` (int, max 200). Response: `rows`. |
+
 ## API: account actions
 
 All routes are `POST /api/actions/...`, require a session and CSRF. The request
@@ -431,26 +522,29 @@ body always contains the **common command fields** (`command_id`, `reason`,
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `set-frozen` | `user_id` (int64), `frozen` (bool), `freeze_until` (time, opt.), `freeze_appeal_url` (string, opt.) | — |
+| `set-frozen` | `user_id` (int64), `frozen` (bool), `freeze_until` (time, opt.), `freeze_appeal_url` (string, opt.) | `accounts.manage` |
 | `grant-premium` | `user_id` (int64), `months` (int) | `premium.manage` |
 | `upsert-premium-plan` | `months` (int), `duration_days` (int), `amount_stars` (int64), `fiat_currency` (string), `fiat_amount` (int64), `store_product` (string), `store_quantity` (int), `enabled` (bool), `sort_order` (int), `label` (string), `expected_version` (int64) | `premium.manage` |
-| `grant-stars` | `user_id` (int64), `amount` (int64) | — |
-| `debit-stars` | `user_id` (int64), `amount` (int64, 1..1000000000); insufficient balance rejects the debit | — |
-| `set-verified` | `user_id` (int64), `verified` (bool) | — |
-| `set-account-flags` | `user_id` (int64), `scam` (bool), `fake` (bool) | — |
-| `set-support` | `user_id` (int64), `support` (bool) | — |
-| `set-account-username` | `user_id` (int64), `username` (string) | — |
-| `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | — |
-| `set-account-phone` | `user_id` (int64), `phone` (string) | — |
-| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.), `password` (string, opt., 1..256 UTF-8 bytes); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED`; with `password` the account and its login password are created together — see below | — |
-| `set-account-login-email` | `user_id` (int64), `email` (string) | — |
-| `set-login-password` | `user_id` (int64), `password` (string, 1..256 UTF-8 bytes), `revoke_sessions` (bool, opt.); sets or resets the login password without the old one — see below | — |
-| `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100, or `null` to clear); caps how many devices the account may be used on. A device (the `device_id` the client reports in `initConnection.params`) is bound to the account the first time it completes a login, and the cap counts bound devices; logging out or revoking a session does not unbind it, only `unbind-device` does. Once the cap is reached only bound devices can log in: a new device is refused with `AUTHORIZATIONS_TOO_MUCH`, a client that reports no `device_id` with `DEVICE_ID_REQUIRED`. Devices already signed in stay, and lowering or clearing the cap keeps the bound list. Setting the cap binds the account's devices that are already signed in and have reported a `device_id`, oldest login first, until the cap is filled; the rest stay signed in unbound. `details.backfilled_devices` gives how many were bound (in a dry run, how many would be). A signed-in device that reports its `device_id` later is bound if a slot is free, and left alone otherwise. System accounts, bots, deleted and missing accounts fail with `USER_INVALID`, a value outside 1..100 with `DEVICE_LIMIT_INVALID` | — |
-| `unbind-device` | `user_id` (int64), `device_id` (a `device_id` from `GET /api/accounts/{id}/device-bindings`); unbinds that device from the account, freeing its slot under the device limit, and signs the account out on every session of that device the same way a remote session revoke does: the protocol key is kept, so the client reconnects, gets `401 AUTH_KEY_UNREGISTERED` and logs out. Unbinding and revoking happen in one transaction. `details.revoked_count` gives how many sessions were signed out (in a dry run, how many would be), `details.revoked_hashes` their hashes. System accounts, bots, deleted and missing accounts fail with `USER_INVALID`, a device that is not bound with `DEVICE_BINDING_NOT_FOUND` | — |
-| `set-account-avatar` | **multipart**: `metadata` field (JSON with common fields + `user_id` (int64)) and a file in `file` | — |
-| `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |
-| `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, seconds) | — |
-| `revoke-sessions` | `user_id` (int64), `hash` (int64, opt.), `keep_hash` (int64, opt.), `revoke_all` (bool) | — |
+| `grant-stars` | `user_id` (int64), `amount` (int64) | `premium.manage` |
+| `debit-stars` | `user_id` (int64), `amount` (int64, 1..1000000000); insufficient balance rejects the debit | `premium.manage` |
+| `set-verified` | `user_id` (int64), `verified` (bool) | `verification.review` |
+| `set-account-flags` | `user_id` (int64), `scam` (bool), `fake` (bool) | `accounts.manage` |
+| `set-support` | `user_id` (int64), `support` (bool) | `accounts.manage` |
+| `set-account-username` | `user_id` (int64), `username` (string) | `accounts.manage` |
+| `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | `accounts.manage` |
+| `set-account-phone` | `user_id` (int64), `phone` (string) | `accounts.manage` |
+| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.), `password` (string, opt., 1..256 UTF-8 bytes); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED`; with `password` the account and its login password are created together — see below | `accounts.manage` |
+| `set-account-login-email` | `user_id` (int64), `email` (string) | `accounts.manage` |
+| `set-login-password` | `user_id` (int64), `password` (string, 1..256 UTF-8 bytes), `revoke_sessions` (bool, opt.); sets or resets the login password without the old one — see below | `accounts.manage` |
+| `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100, or `null` to clear); caps how many devices the account may be used on. A device (the `device_id` the client reports in `initConnection.params`) is bound to the account the first time it completes a login, and the cap counts bound devices; logging out or revoking a session does not unbind it, only `unbind-device` does. Once the cap is reached only bound devices can log in: a new device is refused with `AUTHORIZATIONS_TOO_MUCH`, a client that reports no `device_id` with `DEVICE_ID_REQUIRED`. Devices already signed in stay, and lowering or clearing the cap keeps the bound list. Setting the cap binds the account's devices that are already signed in and have reported a `device_id`, oldest login first, until the cap is filled; the rest stay signed in unbound. `details.backfilled_devices` gives how many were bound (in a dry run, how many would be). A signed-in device that reports its `device_id` later is bound if a slot is free, and left alone otherwise. System accounts, bots, deleted and missing accounts fail with `USER_INVALID`, a value outside 1..100 with `DEVICE_LIMIT_INVALID` | `accounts.manage` |
+| `unbind-device` | `user_id` (int64), `device_id` (a `device_id` from `GET /api/accounts/{id}/device-bindings`); unbinds that device from the account, freeing its slot under the device limit, and signs the account out on every session of that device the same way a remote session revoke does: the protocol key is kept, so the client reconnects, gets `401 AUTH_KEY_UNREGISTERED` and logs out. Unbinding and revoking happen in one transaction. `details.revoked_count` gives how many sessions were signed out (in a dry run, how many would be), `details.revoked_hashes` their hashes. System accounts, bots, deleted and missing accounts fail with `USER_INVALID`, a device that is not bound with `DEVICE_BINDING_NOT_FOUND` | `accounts.manage` |
+| `delete-account` | `user_id` (int64); deletes the account the way the account-deletion flow does (tombstone) and drops its live sessions. Refused while this process cannot reach the sessions, so a bound session never keeps a deleted user | `accounts.manage` |
+| `grant-stars-all` | `amount` (int64, 1..1000000000); credits every real account with `amount` Stars in one transaction. A dry run only counts the accounts. Clients are not notified one by one | `premium.manage` |
+| `set-permissions` | `user_id` (int64), `enabled` (bool), the eleven flags `send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact` (bool, `true` = allowed), `send_whitelist` (`enabled` (bool), `user_ids` ([]int64, the whole list)); staff permission control. A field left out keeps its current value: the merge happens at write time under a lock on the account's settings, so two operators changing different items at once both keep their change. An account configured for the first time starts with everything allowed. With `enabled` off nothing is enforced and the settings are kept. Refused operations answer `403 TELESRV_PERMISSION_*`; the account's sessions get `updateConfig` and read the settings from `help.getAppConfig` (`telesrv_permissions`). System accounts, bots, deleted and missing accounts fail with `USER_INVALID`; a whitelist over 1000 entries, with a missing or deleted account, or with the account itself fails with `PERMISSION_WHITELIST_INVALID` (duplicates are dropped) | `accounts.manage` |
+| `set-account-avatar` | **multipart**: `metadata` field (JSON with common fields + `user_id` (int64)) and a file in `file` | `accounts.manage` |
+| `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | `accounts.manage` |
+| `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, seconds) | `accounts.manage` |
+| `revoke-sessions` | `user_id` (int64), `hash` (int64, opt.), `keep_hash` (int64, opt.), `revoke_all` (bool) | `accounts.manage` |
 
 Example (granting Premium, the case from above):
 
@@ -575,74 +669,76 @@ Content-Type: application/json
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `set-channel-flags` | `channel_id` (int64), `scam` (bool), `fake` (bool) | — |
-| `set-channel-settings` | `channel_id` (int64), `gigagroup` (*bool), `antispam` (*bool), `participants_hidden` (*bool), `noforwards` (*bool), `join_to_send` (*bool), `join_request` (*bool), `slowmode_seconds` (*int) — all optional pointers | — |
-| `set-channel-username` | `channel_id` (int64), `username` (string) | — |
-| `set-channel-color` | `channel_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |
-| `set-channel-emoji-status` | `channel_id` (int64), `document_id` (int64), `until` (int) | — |
-| `set-channel-avatar` | **multipart**: `metadata` (JSON with common fields + `channel_id` (int64)) and a file `file` | — |
-| `set-channel-verified` | `channel_id` (int64), `verified` (bool) | — |
+| `set-channel-flags` | `channel_id` (int64), `scam` (bool), `fake` (bool) | `channels.manage` |
+| `set-channel-settings` | `channel_id` (int64), `gigagroup` (*bool), `antispam` (*bool), `participants_hidden` (*bool), `noforwards` (*bool), `join_to_send` (*bool), `join_request` (*bool), `slowmode_seconds` (*int) — all optional pointers | `channels.manage` |
+| `set-channel-username` | `channel_id` (int64), `username` (string) | `channels.manage` |
+| `set-channel-color` | `channel_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | `channels.manage` |
+| `set-channel-emoji-status` | `channel_id` (int64), `document_id` (int64), `until` (int) | `channels.manage` |
+| `set-channel-avatar` | **multipart**: `metadata` (JSON with common fields + `channel_id` (int64)) and a file `file` | `channels.manage` |
+| `set-channel-verified` | `channel_id` (int64), `verified` (bool) | `verification.review` |
 
 ## API: bot actions
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `create-bot` | `owner_user_id` (int64), `name` (string), `username` (string) | — |
-| `delete-bot` | `bot_user_id` (int64) | — |
+| `create-bot` | `owner_user_id` (int64), `name` (string), `username` (string) | `bots.manage` |
+| `delete-bot` | `bot_user_id` (int64) | `bots.manage` |
 | `export-bot-token` | `bot_user_id` (int64) | `bots.token.read` |
-| `create-broadcast` | `message` (string), `target_mode` (string), `user_ids` ([]int64, opt.) | — |
+| `create-broadcast` | `message` (string), `target_mode` (string), `user_ids` ([]int64, opt.) | `broadcasts.send` |
 
 ## API: sticker and emoji actions
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `create-sticker-set` | **multipart**: `metadata` (JSON: common fields + `title`, `short_name`, `kind`, `emoji`, `keywords`) and a file `file` | — |
-| `rename-sticker-set` | `set_id` (int64), `title` (string) | — |
-| `add-sticker-to-set` | **multipart**: `metadata` (JSON: common fields + `set_id` (string), `emoji`, `keywords`) and a file `file` | — |
-| `remove-sticker-from-set` | `set_id` (int64), `document_id` (int64) | — |
-| `set-sticker-set-archived` | `set_id` (int64), `archived` (bool) | — |
-| `set-sticker-set-sort-order` | `set_id` (int64), `sort_order` (int) | — |
-| `delete-sticker-set` | `set_id` (int64) | — |
+| `create-sticker-set` | **multipart**: `metadata` (JSON: common fields + `title`, `short_name`, `kind`, `emoji`, `keywords`) and a file `file` | `content.manage` |
+| `rename-sticker-set` | `set_id` (int64), `title` (string) | `content.manage` |
+| `add-sticker-to-set` | **multipart**: `metadata` (JSON: common fields + `set_id` (string), `emoji`, `keywords`) and a file `file` | `content.manage` |
+| `remove-sticker-from-set` | `set_id` (int64), `document_id` (int64) | `content.manage` |
+| `set-sticker-set-archived` | `set_id` (int64), `archived` (bool) | `content.manage` |
+| `set-sticker-set-sort-order` | `set_id` (int64), `sort_order` (int) | `content.manage` |
+| `delete-sticker-set` | `set_id` (int64) | `content.manage` |
 
 ## API: GIF catalog actions
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `create-gif-catalog-entry` | **multipart**: `metadata` (JSON: common fields + `title`) and a file `file` | — |
-| `set-gif-catalog-enabled` | `id` (int64, sent as string), `enabled` (bool) | — |
-| `set-gif-catalog-sort-order` | `id` (int64, string), `sort_order` (int) | — |
-| `delete-gif-catalog-entry` | `id` (int64, string) | — |
+| `create-gif-catalog-entry` | **multipart**: `metadata` (JSON: common fields + `title`) and a file `file` | `content.manage` |
+| `set-gif-catalog-enabled` | `id` (int64, sent as string), `enabled` (bool) | `content.manage` |
+| `set-gif-catalog-sort-order` | `id` (int64, string), `sort_order` (int) | `content.manage` |
+| `set-gif-catalog-category` | `id` (int64, string), `category` (string) | `content.manage` |
+| `delete-gif-catalog-entry` | `id` (int64, string) | `content.manage` |
 
 ## API: gift and collectible actions
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `import-gift` | **multipart**: `metadata` (JSON: common fields + `gift_id` (int64), `title`, `stars` (int64), `convert_stars` (int64), `enabled` (bool), `sort_order` (int), `auction` (bool), `auction_slug`, `gifts_per_round` (int), `auction_start_date` (int), `auction_round_duration` (int), `availability_total` (int), `locked_until_date` (int)) and a file `file` | — |
-| `import-official-gift` | common fields + `source_gift_id` (string), `gift_id` (int64), `title`, `stars` (int64), `convert_stars` (int64), `enabled` (bool), `sort_order` (int), `include_collectible` (bool), `upgrade_stars` (int64), `supply_total` (int), `slug_prefix` (string), `locked_until_date` (int) | — |
-| `publish-gift-collectibles` | **multipart**, `gift_id` sent in query (`?gift_id=`): `metadata` (JSON: common fields + `upgrade_stars` (int64), `supply_total` (int), `slug_prefix` (string), `models` ([]object), `patterns` ([]object), `backdrops` ([]object)); animations are files keyed by the `models`/`patterns` entries | — |
-| `set-gift-enabled` | `gift_id` (int64), `enabled` (bool) | — |
-| `set-gift-sort-order` | `gift_id` (int64), `sort_order` (int) | — |
-| `give-gift` | common fields + `sender_user_id` (int64), `user_id` (int64), `channel_id` (int64), `gift_id` (int64), `hide_name` (bool), `message` (string), `upgrade` (bool), `model_attribute_id` (int64), `pattern_attribute_id` (int64), `backdrop_attribute_id` (int64) | — |
-| `set-nft-gift-wallet` | common fields + `ref` (string: slug, NFT address or numeric id), `wallet_name` (string, defaults to the typed `wallet_address` value), `wallet_address` (string: a TON mainnet address; a `.ton` name resolved on chain through TON DNS, falling back to the flashfragment username of the same name when DNS has no record; or a Telegram identity — `rayo`, `@rayo`, `rayo.t.me`, `t.me/rayo` — resolved only through flashfragment records: username claim, username mint, verified wallet of the collectible username owner, TON Connect. The typed name is never stored as an address, and the record that matched is reported as `wallet_source` in details), `host_user_id` (int64, optional), `clear` (bool, releases the gift back to its Telegram owner instead of binding a wallet) | — |
+| `import-gift` | **multipart**: `metadata` (JSON: common fields + `gift_id` (int64), `title`, `stars` (int64), `convert_stars` (int64), `enabled` (bool), `sort_order` (int), `auction` (bool), `auction_slug`, `gifts_per_round` (int), `auction_start_date` (int), `auction_round_duration` (int), `availability_total` (int), `locked_until_date` (int)) and a file `file` | `gifts.manage` |
+| `import-official-gift` | common fields + `source_gift_id` (string), `gift_id` (int64), `title`, `stars` (int64), `convert_stars` (int64), `enabled` (bool), `sort_order` (int), `include_collectible` (bool), `upgrade_stars` (int64), `supply_total` (int), `slug_prefix` (string), `locked_until_date` (int) | `gifts.manage` |
+| `import-gift-pack` | **multipart**: `metadata` (JSON with the common fields) and a zip `file` (up to 32 MiB); imports a whole gift pack at once | `gifts.manage` |
+| `publish-gift-collectibles` | **multipart**, `gift_id` sent in query (`?gift_id=`): `metadata` (JSON: common fields + `upgrade_stars` (int64), `supply_total` (int), `slug_prefix` (string), `models` ([]object), `patterns` ([]object), `backdrops` ([]object)); animations are files keyed by the `models`/`patterns` entries | `gifts.manage` |
+| `set-gift-enabled` | `gift_id` (int64), `enabled` (bool) | `gifts.manage` |
+| `set-gift-sort-order` | `gift_id` (int64), `sort_order` (int) | `gifts.manage` |
+| `give-gift` | common fields + `sender_user_id` (int64), `user_id` (int64), `channel_id` (int64), `gift_id` (int64), `hide_name` (bool), `message` (string), `upgrade` (bool), `model_attribute_id` (int64), `pattern_attribute_id` (int64), `backdrop_attribute_id` (int64) | `gifts.manage` |
+| `set-nft-gift-wallet` | common fields + `ref` (string: slug, NFT address or numeric id), `wallet_name` (string, defaults to the typed `wallet_address` value), `wallet_address` (string: a TON mainnet address; a `.ton` name resolved on chain through TON DNS, falling back to the flashfragment username of the same name when DNS has no record; or a Telegram identity — `rayo`, `@rayo`, `rayo.t.me`, `t.me/rayo` — resolved only through flashfragment records: username claim, username mint, verified wallet of the collectible username owner, TON Connect. The typed name is never stored as an address, and the record that matched is reported as `wallet_source` in details), `host_user_id` (int64, optional), `clear` (bool, releases the gift back to its Telegram owner instead of binding a wallet) | `gifts.manage` |
 
 ## API: collectible username actions
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `mint-collectible-username` | `username` (string), `owner_user_id` (int64), `owner_channel_id` (int64), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64), `url` (string), `purchase_date` (int/unix or date) | — |
-| `transfer-collectible-username` | `username` (string), `to_user_id` (int64), `to_channel_id` (int64) | — |
-| `revoke-collectible-username` | `username` (string), `burn` (bool) | — |
-| `delete-collectible-username` | `username` (string) | — |
+| `mint-collectible-username` | `username` (string), `owner_user_id` (int64), `owner_channel_id` (int64), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64), `url` (string), `purchase_date` (int/unix or date) | `usernames.manage` |
+| `transfer-collectible-username` | `username` (string), `to_user_id` (int64), `to_channel_id` (int64) | `usernames.manage` |
+| `revoke-collectible-username` | `username` (string), `burn` (bool) | `usernames.manage` |
+| `delete-collectible-username` | `username` (string) | `usernames.manage` |
 
 ## API: anonymous number actions
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `mint-collectible-phone` | `phone` (string), `tier` (string), `owner_user_id` (int64), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64), `url` (string), `purchase_date` (int/unix or date) | — |
-| `update-collectible-phone-price` | `phone` (string), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64) | — |
-| `transfer-collectible-phone` | `phone` (string), `to_user_id` (int64) | — |
-| `revoke-collectible-phone` | `phone` (string), `burn` (bool) | — |
-| `delete-collectible-phone` | `phone` (string) | — |
+| `mint-collectible-phone` | `phone` (string), `tier` (string), `owner_user_id` (int64), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64), `url` (string), `purchase_date` (int/unix or date) | `phones.manage` |
+| `update-collectible-phone-price` | `phone` (string), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64) | `phones.manage` |
+| `transfer-collectible-phone` | `phone` (string), `to_user_id` (int64) | `phones.manage` |
+| `revoke-collectible-phone` | `phone` (string), `burn` (bool) | `phones.manage` |
+| `delete-collectible-phone` | `phone` (string) | `phones.manage` |
 
 ## Gift inventory when importing or replacing a revision
 
@@ -665,15 +761,15 @@ does not reserve stock. The catalog badge shows remaining / total copies.
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `recompute-account-rating` | `user_id` (int64) | — |
-| `adjust-account-rating` | `user_id` (int64), `amount` (int64) | — |
+| `recompute-account-rating` | `user_id` (int64) | `ratings.manage` |
+| `adjust-account-rating` | `user_id` (int64), `amount` (int64) | `ratings.manage` |
 
 ## API: message deletion
 
 | Path | Specific body fields | Permission |
 | --- | --- | --- |
-| `delete-messages` | `owner_user_id` (int64), `peer_id` (int64), `ids` ([]int), `revoke` (bool) | — |
-| `delete-history` | `owner_user_id` (int64), `peer_id` (int64), `max_id` (int), `min_date` (int), `max_date` (int), `max_batches` (int), `just_clear` (bool), `revoke` (bool) | — |
+| `delete-messages` | `owner_user_id` (int64), `peer_id` (int64), `ids` ([]int), `revoke` (bool) | `messages.manage` |
+| `delete-history` | `owner_user_id` (int64), `peer_id` (int64), `max_id` (int), `min_date` (int), `max_date` (int), `max_batches` (int), `just_clear` (bool), `revoke` (bool) | `messages.manage` |
 
 ## API: verification decisions (request bodies)
 

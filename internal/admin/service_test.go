@@ -874,6 +874,11 @@ func (m *memoryCommandRepo) BeginCommand(_ context.Context, cmd domain.AdminComm
 	return cmd, true, nil
 }
 
+func (m *memoryCommandRepo) Command(_ context.Context, commandID string) (domain.AdminCommand, bool, error) {
+	cmd, ok := m.items[commandID]
+	return cmd, ok, nil
+}
+
 func (m *memoryCommandRepo) FinishCommand(_ context.Context, commandID string, status domain.AdminCommandStatus, resultJSON []byte, errorText string) (domain.AdminCommand, error) {
 	cmd := m.items[commandID]
 	cmd.Status = status

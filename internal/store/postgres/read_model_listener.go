@@ -42,6 +42,24 @@ type ReadModelCacheSet struct {
 	StarGifts           StarGiftCatalogCache
 	AccountSettings     AccountSettingsReadModelCache
 	UserProjectionFacts UserProjectionFactReadModelCache
+	AccountPermissions  AccountPermissionsReadModelCache
+	// AccountPermissionsNotifier 在权限变更通知到达时向本实例上该账号的会话推送 updateConfig。
+	// 写入所在的实例由管理命令自己推送，所以那个实例会收到两次 updateConfig：客户端第二次重拉
+	// appConfig 带着新 hash，得到 appConfigNotModified，代价可以忽略；换来的是 LISTEN 断开时
+	// 写入实例仍然能推送。
+	AccountPermissionsNotifier AccountPermissionsChangeNotifier
+}
+
+// AccountPermissionsReadModelCache 是员工权限视图的进程内缓存（app/permissions.Service，#119）；
+// 权限写入在同一事务里 bump read model "account_permissions"，据此跨实例失效。
+type AccountPermissionsReadModelCache interface {
+	InvalidateAccountPermissions(userID int64)
+	FlushAccountPermissions()
+}
+
+// AccountPermissionsChangeNotifier 由 rpc.Router 实现：失效本实例的权限视图并推送 updateConfig。
+type AccountPermissionsChangeNotifier interface {
+	NotifyAccountPermissionsChanged(ctx context.Context, userID int64) error
 }
 
 type UserProjectionFactReadModelCache interface {
@@ -382,6 +400,10 @@ func (l *ReadModelChangeListener) flush(reasons ...string) {
 		l.caches.UserProjectionFacts.FlushUserProjectionFactReadModel()
 		flushed = append(flushed, "user_projection_facts")
 	}
+	if l.caches.AccountPermissions != nil {
+		l.caches.AccountPermissions.FlushAccountPermissions()
+		flushed = append(flushed, "account_permissions")
+	}
 	// 注意：BaseUsers(Redis) 刻意不在重连时 flush——它是跨实例共享缓存，整库清空会误伤
 	// 其它实例；漏掉的通知由其 5min TTL 兜底。
 	l.log.Info("read model caches flushed",
@@ -488,6 +510,19 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			}
 			if l.caches.Stories != nil {
 				l.caches.Stories.InvalidateStoryReadModelPeer(domain.Peer{Type: domain.PeerTypeUser, ID: evt.PeerID})
+			}
+		}
+	case "account_permissions":
+		if evt.PeerType != "user" || evt.PeerID == 0 {
+			break
+		}
+		if l.caches.AccountPermissions != nil {
+			l.caches.AccountPermissions.InvalidateAccountPermissions(evt.PeerID)
+		}
+		if l.caches.AccountPermissionsNotifier != nil {
+			if err := l.caches.AccountPermissionsNotifier.NotifyAccountPermissionsChanged(context.Background(), evt.PeerID); err != nil {
+				l.log.Warn("push updateConfig after account permissions change",
+					zap.Int64("user_id", evt.PeerID), zap.Error(err))
 			}
 		}
 	case "user_collectible_phone":

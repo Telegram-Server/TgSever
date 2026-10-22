@@ -82,6 +82,25 @@ type AccountPassword struct {
 	PasswordChangedAt       pgtype.Timestamptz
 }
 
+type AccountPermission struct {
+	UserID               int64
+	Enabled              bool
+	AllowSend            bool
+	AllowDelete          bool
+	AllowEdit            bool
+	AllowClearHistory    bool
+	AllowCreateGroup     bool
+	AllowCreateChannel   bool
+	AllowJoinGroup       bool
+	AllowJoinChannel     bool
+	AllowLeaveGroup      bool
+	AllowLeaveChannel    bool
+	AllowAddContact      bool
+	SendWhitelistEnabled bool
+	UpdatedAt            pgtype.Timestamptz
+	CommandID            string
+}
+
 type AccountPrivacyRule struct {
 	OwnerUserID int64
 	PrivacyKey  string
@@ -144,6 +163,11 @@ type AccountRestriction struct {
 	Version        int64
 	DeviceLimit    *int32
 	FreezeRecorded bool
+}
+
+type AccountSendWhitelist struct {
+	UserID       int64
+	MemberUserID int64
 }
 
 type AccountSetting struct {

@@ -204,6 +204,8 @@ const (
 
 type CommandRepository interface {
 	BeginCommand(ctx context.Context, cmd domain.AdminCommand) (domain.AdminCommand, bool, error)
+	// Command 按 command id 读取已有的命令记录；没有时 found=false。
+	Command(ctx context.Context, commandID string) (cmd domain.AdminCommand, found bool, err error)
 	FinishCommand(ctx context.Context, commandID string, status domain.AdminCommandStatus, resultJSON []byte, errorText string) (domain.AdminCommand, error)
 	ListRecentCommands(ctx context.Context, limit int, actor string) ([]domain.AdminCommand, error)
 }
@@ -566,7 +568,11 @@ type Dependencies struct {
 	LoginPasswordFingerprintKey []byte
 	// DeviceLimits 是账号设备上限的读写面（见 devicelimit.go）。
 	DeviceLimits DeviceLimitStore
-	Now          func() time.Time
+	// Permissions 是员工权限控制的业务模块，PermissionsNotifier 在权限写入后推送
+	// updateConfig（见 permissions.go）。
+	Permissions         AccountPermissionsService
+	PermissionsNotifier AccountPermissionsNotifier
+	Now                 func() time.Time
 }
 
 type Service struct {
@@ -618,6 +624,8 @@ type Service struct {
 	// loginPasswordFingerprintKey 见 Dependencies.LoginPasswordFingerprintKey。
 	loginPasswordFingerprintKey []byte
 	deviceLimits                DeviceLimitStore
+	permissions                 AccountPermissionsService
+	permissionsNotifier         AccountPermissionsNotifier
 	now                         func() time.Time
 }
 
@@ -767,6 +775,12 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.DeviceLimits != nil {
 		s.deviceLimits = deps.DeviceLimits
+	}
+	if deps.Permissions != nil {
+		s.permissions = deps.Permissions
+	}
+	if deps.PermissionsNotifier != nil {
+		s.permissionsNotifier = deps.PermissionsNotifier
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -5177,10 +5191,7 @@ func (s *Service) runCommand(ctx context.Context, meta CommandMeta, action strin
 		return CommandResult{}, err
 	}
 	if !created {
-		if cmd.Action != action || cmd.DryRun != meta.DryRun || !sameJSON(cmd.RequestJSON, requestJSON) {
-			return CommandResult{CommandID: meta.CommandID, Action: action, Status: string(domain.AdminCommandFailed), Error: "COMMAND_ID_CONFLICT", Message: "command_id is already bound to a different request"}, fmt.Errorf("COMMAND_ID_CONFLICT")
-		}
-		return resultFromCommand(cmd), nil
+		return replayCommand(cmd, meta, action, requestJSON)
 	}
 	result, opErr := fn()
 	result.CommandID = meta.CommandID
@@ -5222,6 +5233,39 @@ func (s *Service) runCommand(ctx context.Context, meta CommandMeta, action strin
 		return response, err
 	}
 	return response, opErr
+}
+
+// replayCommand 处理 command id 已有记录的提交：同一请求返回记录的结果，不同请求返回
+// COMMAND_ID_CONFLICT。
+func replayCommand(cmd domain.AdminCommand, meta CommandMeta, action string, requestJSON []byte) (CommandResult, error) {
+	if cmd.Action != action || cmd.DryRun != meta.DryRun || !sameJSON(cmd.RequestJSON, requestJSON) {
+		return CommandResult{CommandID: meta.CommandID, Action: action, Status: string(domain.AdminCommandFailed), Error: "COMMAND_ID_CONFLICT", Message: "command_id is already bound to a different request"}, fmt.Errorf("COMMAND_ID_CONFLICT")
+	}
+	return resultFromCommand(cmd), nil
+}
+
+// existingCommand 在进入命令通道之前查 command id 是否已有记录：有记录时（replayed=true）
+// 按 runCommand 的规则返回记录的结果或 COMMAND_ID_CONFLICT。命令在进入通道前要做"只拒绝新
+// 提交、不留命令记录"的校验时先调用它，重放与冲突就不会被那道校验挡住。并发的新提交仍由
+// runCommand 里的 BeginCommand 收敛。
+func (s *Service) existingCommand(ctx context.Context, meta CommandMeta, action string, request any) (result CommandResult, replayed bool, err error) {
+	if s == nil || s.commands == nil {
+		return CommandResult{}, false, fmt.Errorf("admin command store is not configured")
+	}
+	meta, err = normalizeCommandMeta(meta)
+	if err != nil {
+		return CommandResult{}, false, err
+	}
+	cmd, found, err := s.commands.Command(ctx, meta.CommandID)
+	if err != nil || !found {
+		return CommandResult{}, false, err
+	}
+	requestJSON, err := json.Marshal(request)
+	if err != nil {
+		return CommandResult{}, false, fmt.Errorf("marshal admin request: %w", err)
+	}
+	result, err = replayCommand(cmd, meta, action, requestJSON)
+	return result, true, err
 }
 
 // normalizeCommandMeta trims the metadata every command carries and checks it

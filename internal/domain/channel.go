@@ -2326,6 +2326,9 @@ type HideChannelJoinRequestsRequest struct {
 	Approved  bool
 	Limit     int
 	Date      int
+	// ExcludeUserIDs 是这一批跳过的申请人：既不批准也不拒绝，申请保持待处理，也不占 Limit。
+	// 用于批量批准时跳过被员工权限控制禁止加入的申请人（#118）。
+	ExcludeUserIDs []int64
 }
 
 // ChannelHistoryFilter describes channel history query conditions.

@@ -24,6 +24,9 @@ func (r *Router) onChannelsCreateChannel(ctx context.Context, req *tg.ChannelsCr
 	if err != nil {
 		return nil, internalErr()
 	}
+	if err := r.checkPermission(ctx, userID, createChannelPermissionAction(req)); err != nil {
+		return nil, err
+	}
 	res, err := r.deps.Channels.CreateChannel(ctx, userID, domain.CreateChannelRequest{
 		CreatorUserID: userID,
 		Title:         req.Title,

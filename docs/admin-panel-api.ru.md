@@ -33,6 +33,7 @@
 | POST | `/api/login` | Вход. Тело: `{"secret": "..."}`. Проверяет секрет из конфига, выдаёт подписанную cookie-сессию и cookie CSRF. Единственный изменяющий маршрут без CSRF-токена; проверяется только Origin. |
 | POST | `/api/logout` | Выход. Уничтожает сессию и cookie CSRF. |
 | GET | `/api/session` | Возвращает `{"actor": "...", "permissions": [...], "csrf_token": "..."}`. Панель вызывает его при старте. |
+| GET | `/api/public/icon` | Иконка сервера без аутентификации, чтобы её показывала страница входа. `404`, если иконка не задана (тогда страница берёт `/logo.png`). Не кешируется. |
 
 Сессия живёт в подписанной cookie (TTL по умолчанию 12 часов), серверного
 хранилища сессий нет. Все запросы, кроме `GET/HEAD/OPTIONS` и `/api/login`,
@@ -196,6 +197,14 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 правьте исходники и перезапускайте скрипт. `--check` возвращает ненулевой код,
 когда таблицы устарели, — именно этот вызов имеет смысл вызывать в CI.
 
+Таблицы `## API: ...` ниже — это текст, их пишут руками, но `--check` сверяет и
+их с `server.go`: у каждого маршрута должна быть строка (у действия — либо в
+таблице действий, либо строкой `POST /api/actions/...`), строка маршрута, который
+больше не зарегистрирован, — ошибка, а столбец **Право** в таблицах действий
+генерируется: `--write` подставляет право, которое проверяет маршрут. Когда эту
+проверку добавили, у 18 GET-маршрутов и 23 действий строк не было вовсе, а в
+большинстве строк действий стояло «—» там, где маршрут требует конкретное право.
+
 ## Страницы интерфейса (SPA)
 
 SPA-роуты декларативны: любой неизвестный путь фронтенда отдаётся сервером как
@@ -307,6 +316,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Метод | Путь | Описание |
 | --- | --- | --- |
 | GET | `/api/dashboard` | Сводка: `counts`, `storage`, при наличии — `host`. |
+| GET | `/api/stats` | Параметры: `days` (int, по умолчанию 14, максимум 90). Ответ: начисленные Stars и отправленные подарки за сегодня и всего, `star_balance_total`, `users_total`, `online_now`, `days` и дневные ряды `users_chart`, `active_chart`, `stars_chart`. |
 | GET | `/api/storage/stats` | Статистика объектного хранилища. |
 
 ## API: аккаунты
@@ -317,6 +327,8 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | GET | `/api/accounts/{id}` | Карточка аккаунта: профиль, флаги, статистика, `DeviceLimit` (int 1..100, `null` — без ограничений) (проксируется/читается из БД). |
 | GET | `/api/accounts/{id}/avatar` | Аватар аккаунта (файл). |
 | GET | `/api/accounts/{id}/device-bindings` | Устройства, привязанные к аккаунту (см. `set-device-limit`), от самой ранней привязки. Ответ: `user_id`, `bindings` (пустой массив, если привязок нет) с полями `device_id`, `device_model`, `platform`, `app_version` (на момент привязки), `bound_at`, `last_used_at` (RFC 3339). Проксируется в Admin API `/v1/accounts/{id}/device-bindings`, не кэшируется. |
+| GET | `/api/accounts/shared-devices` | Группы аккаунтов, входивших с одного устройства (модель, версия системы, платформа, IP). Параметры: `offset` (int), `limit` (int). Ответ: `rows` (у каждой `DeviceModel`, `SystemVersion`, `Platform`, `IP`, `AccountCount`, `LastActiveAt`, `Accounts`), `limit`, `offset`, `has_more`, `next_offset`. |
+| GET | `/api/accounts/{id}/permissions` | Управление правами сотрудника для аккаунта (см. `set-permissions`). Ответ: `user_id`, `enabled`, одиннадцать флагов (`send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact`, `true` = разрешено), `send_whitelist` (`enabled`, `user_ids`), `updated_at`. Аккаунт, который ни разу не настраивали, читается как `enabled: false` со всеми флагами разрешёнными. Проксируется из Admin API `/v1/accounts/{id}/permissions`, не кешируется. |
 | GET | `/api/account-ratings` | Параметры: `q`, `min_level` (int), `user_id` (int64), `before_id` (int64), `limit` (int). Ответ: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/account-ratings/{user_id}` | Ответ: `rating`, `events`. |
 
@@ -369,6 +381,8 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Метод | Путь | Параметры / ответ |
 | --- | --- | --- |
 | GET | `/api/gifts` | Ответ: `Gifts` (список подарков). |
+| GET | `/api/gifts/{id}/attributes` | Пулы улучшения подарка. Ответ: `gift_id`, `visual_only`, `has_upgrade`, `models`, `patterns`, `backdrops`. Неизвестный подарок — `400`. |
+| GET | `/api/nft-gifts` | Улучшенные (уникальные) подарки, сначала новые. Параметры: `gift_id` (int64), `owner_user_id` (int64), `q` (префикс slug или подстрока названия, адреса или имени владельца), `before_id` (int64), `limit` (int). Ответ: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/auctions` | Ответ: `Auctions` — текущее состояние всех авторских аукционов и запланированных дропов. |
 | GET | `/api/official-gifts` | Ответ: проксируется из Admin API (`/v1/official-gifts`). |
 | GET | `/api/official-gifts/{id}/animation` | Анимация официального подарка (файл). |
@@ -447,6 +461,83 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 
 ---
 
+## API: Stars
+
+| Метод | Путь | Параметры / ответ |
+| --- | --- | --- |
+| GET | `/api/stars/top` | Аккаунты по балансу Stars. Параметры: `q`, `before_id` (int64), `limit` (int). Ответ: `rows`, `has_more`, `next_before_id`. |
+| GET | `/api/stars/ledger/{user_id}` | Журнал Stars одного аккаунта, сначала новые. Параметры: `before_id` (int64), `limit` (int). Ответ: `account`, `entries`, `has_more`, `next_before_id`; `404`, если у аккаунта нет счёта Stars. |
+
+## API: пожертвования
+
+Все маршруты требуют `donations.manage`. Механизм описан в [donations.md](donations.md).
+
+| Метод | Путь | Параметры / тело |
+| --- | --- | --- |
+| GET | `/api/donations/wallet` | Есть ли кошелёк для пожертвований и сколько адресов выдано. |
+| GET | `/api/donations/chains` | Ответ: `chains`, `tokens`. |
+| GET | `/api/donations/deposits` | Параметры: `before_id` (int64), `limit` (int). Ответ: `rows`, `has_more`, `next_before_id`. |
+| POST | `/api/actions/donation-chain-update` | Общие поля + `chain_key` (string), `rpc_url`, `ws_url` (string), `enabled` (bool), `confirmations_required` (int), `price_feed_address` (string), `manual_usd_rate_micros` (int64). |
+
+## API: цены товаров
+
+Все маршруты требуют `prices.manage`.
+
+| Метод | Путь | Параметры / тело |
+| --- | --- | --- |
+| GET | `/api/item-prices` | Ответ: `rows` (значения по умолчанию с переопределениями), `stars_rate`, `star_packages` (размеры пакетов Stars, только для чтения: следуют из курса). |
+| POST | `/api/actions/item-price-update` | Общие поля + `product_code` (string), `stars_price` (int), `bid` (int64), `enabled` (bool). |
+| POST | `/api/actions/item-price-set-rate` | Общие поля + `stars_rate` (int64). |
+
+## API: настройки сервера
+
+Все маршруты требуют `server.manage`. Регистрация и вход по коду описаны в
+[sign-up-switch.md](sign-up-switch.md) и [code-login-switch.md](code-login-switch.md).
+
+| Метод | Путь | Параметры / тело |
+| --- | --- | --- |
+| GET | `/api/server/identity` | Название, описание и шаблоны сообщений, а также значения по умолчанию из окружения и действующее состояние регистрации и входа по коду с источником. |
+| GET | `/api/server/icon` | Иконка сервера (файл); `404`, если не задана. |
+| GET | `/api/server/env` | Настройки `.env`, сгруппированные как в `.env.example` (всегда массив). |
+| GET | `/api/server/status` | Хост (имя, дистрибутив, ОС, архитектура, версия Go) и проверки Postgres, Redis, MTProto и Docker. |
+| POST | `/api/actions/set-server-identity` | Общие поля + `name`, `description` (string). |
+| POST | `/api/actions/set-welcome-message-templates` | Общие поля + `phone_template`, `email_template` (string). |
+| POST | `/api/actions/set-login-code-message-template` | Общие поля + `template` (string; пустая строка возвращает значение по умолчанию). Неверный шаблон — `422`. |
+| POST | `/api/actions/set-sign-up-enabled` | Общие поля + `mode` (`on`, `off` или `follow_env`; другое значение — `422`). |
+| POST | `/api/actions/set-code-login-enabled` | Общие поля + `mode` (`on`, `off` или `follow_env`; другое значение — `422`). |
+| POST | `/api/actions/upload-server-icon` | **multipart**: `metadata` (JSON с общими полями) и изображение `file` (до 2 МиБ). |
+| POST | `/api/actions/remove-server-icon` | Только общие поля. |
+| POST | `/api/actions/update-server-env` | Общие поля + `values` (объект ключ → значение). Вступает в силу после перезапуска telesrv. В журнал аудита попадают изменённые ключи, но не значения. Если хранилище аудита недоступно, запись всё равно выполняется без аудита: этот редактор — способ починить сломанную настройку базы данных. |
+
+## API: обновления клиентов
+
+Сервис обновлений описан в [update-service.md](update-service.md).
+
+| Метод | Путь | Параметры / тело |
+| --- | --- | --- |
+| GET | `/api/client-updates` | Состояние сервиса обновлений: `mode`, `public_url`, `service_url`, `reload_error`, `max_package_size` и опубликованные записи `entries`. Требует `updates.read`. Проксируется из Admin API `/v1/client-updates`, не кешируется. |
+| POST | `/api/actions/client-update-upload` | Тело — байты пакета (`application/octet-stream`), в строке запроса `reason` (обязателен), `command_id` и `allow_downgrade` (bool); подготавливает пакет. Требует `updates.publish`. Слишком большое тело — `413`, неверный тип содержимого — `415`. |
+| POST | `/api/actions/client-update-publish` | Общие поля + `staging_id` (string), `allow_downgrade` (bool); публикует подготовленный пакет. Требует `updates.publish`. |
+| POST | `/api/actions/client-update-disable` | Общие поля + `platform`, `channel` (string); перестаёт предлагать эту запись. Требует `updates.publish`. |
+| POST | `/api/actions/client-update-enable` | Общие поля + `platform`, `channel` (string); снова предлагает отключённую запись. Требует `updates.publish`. |
+
+## API: учётные записи операторов
+
+Все маршруты требуют `admins.manage`. У встроенного оператора нет строки, и его нельзя изменить.
+
+| Метод | Путь | Параметры / тело |
+| --- | --- | --- |
+| GET | `/api/admin-users` | Ответ: `system` (встроенный оператор, только чтение), `rows`, `available_permissions` (права, которые можно выдать). |
+| POST | `/api/actions/create-admin-operator` | Общие поля + `username`, `password` (string), `permissions` ([]string), `enabled` (bool, по умолчанию `true`). Пароль никогда не возвращается и не попадает в журнал аудита. |
+| POST | `/api/actions/set-admin-operator-access` | Общие поля + `id` (int64), `permissions` ([]string), `enabled` (bool, по умолчанию `true`). Отклоняется, если после изменения никто не будет держать `admins.manage`. Действует со следующего запроса оператора. |
+| POST | `/api/actions/set-admin-operator-password` | Общие поля + `id` (int64), `password` (string). Завершает существующие сессии оператора. |
+
+## API: журнал аудита
+
+| Метод | Путь | Параметры / ответ |
+| --- | --- | --- |
+| GET | `/api/audit-logs` | Требует `audit.read`. Параметры: `actor`, `action`, `status`, `limit` (int, максимум 200). Ответ: `rows`. |
+
 ## API: действия над аккаунтами
 
 Все маршруты — `POST /api/actions/...`, требуют сессию и CSRF. Тело запроса
@@ -455,26 +546,29 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `set-frozen` | `user_id` (int64), `frozen` (bool), `freeze_until` (time, опц.), `freeze_appeal_url` (string, опц.) | — |
+| `set-frozen` | `user_id` (int64), `frozen` (bool), `freeze_until` (time, опц.), `freeze_appeal_url` (string, опц.) | `accounts.manage` |
 | `grant-premium` | `user_id` (int64), `months` (int) | `premium.manage` |
 | `upsert-premium-plan` | `months` (int), `duration_days` (int), `amount_stars` (int64), `fiat_currency` (string), `fiat_amount` (int64), `store_product` (string), `store_quantity` (int), `enabled` (bool), `sort_order` (int), `label` (string), `expected_version` (int64) | `premium.manage` |
-| `grant-stars` | `user_id` (int64), `amount` (int64) | — |
-| `debit-stars` | `user_id` (int64), `amount` (int64, 1..1000000000); при недостаточном балансе списание отклоняется | — |
-| `set-verified` | `user_id` (int64), `verified` (bool) | — |
-| `set-account-flags` | `user_id` (int64), `scam` (bool), `fake` (bool) | — |
-| `set-support` | `user_id` (int64), `support` (bool) | — |
-| `set-account-username` | `user_id` (int64), `username` (string) | — |
-| `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | — |
-| `set-account-phone` | `user_id` (int64), `phone` (string) | — |
-| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, необязательно), `password` (string, необязательно, 1..256 байт UTF-8); создаёт обычный аккаунт без сессии, работает и при закрытой регистрации; занятый номер даёт `PHONE_NUMBER_OCCUPIED`; с `password` аккаунт и пароль для входа создаются вместе — см. ниже | — |
-| `set-account-login-email` | `user_id` (int64), `email` (string) | — |
-| `set-login-password` | `user_id` (int64), `password` (string, 1..256 байт UTF-8), `revoke_sessions` (bool, опц.); задаёт или сбрасывает пароль для входа без старого пароля — см. ниже | — |
-| `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100 или `null`, чтобы снять); ограничивает число устройств, на которых можно пользоваться аккаунтом. Устройство (`device_id`, который клиент сообщает в `initConnection.params`) привязывается к аккаунту при первом завершённом входе, и лимит считает привязанные устройства; выход из аккаунта или отзыв сессии привязку не снимает, это делает только `unbind-device`. Когда лимит исчерпан, войти могут только привязанные устройства: новое устройство получает `AUTHORIZATIONS_TOO_MUCH`, клиент без `device_id` — `DEVICE_ID_REQUIRED`. Уже вошедшие устройства остаются, а снижение или снятие лимита сохраняет список привязок. При установке лимита уже вошедшие устройства, сообщившие `device_id`, привязываются в порядке входа, пока лимит не заполнится; остальные остаются в аккаунте без привязки. `details.backfilled_devices` — сколько устройств привязано (в пробном запуске — сколько было бы привязано). Вошедшее устройство, сообщившее `device_id` позже, привязывается, если есть свободное место, иначе ничего не меняется. Системные аккаунты, боты, удалённые и несуществующие аккаунты дают `USER_INVALID`, значение вне 1..100 — `DEVICE_LIMIT_INVALID` | — |
-| `unbind-device` | `user_id` (int64), `device_id` (`device_id` из `GET /api/accounts/{id}/device-bindings`); отвязывает устройство от аккаунта, освобождая место в лимите устройств, и завершает все сеансы аккаунта на этом устройстве так же, как удалённый отзыв сессии: протокольный ключ сохраняется, клиент переподключается, получает `401 AUTH_KEY_UNREGISTERED` и выходит из аккаунта. Отвязка и отзыв выполняются в одной транзакции. `details.revoked_count` — сколько сеансов завершено (в пробном запуске — сколько было бы), `details.revoked_hashes` — их хэши. Системные аккаунты, боты, удалённые и несуществующие аккаунты дают `USER_INVALID`, непривязанное устройство — `DEVICE_BINDING_NOT_FOUND` | — |
-| `set-account-avatar` | **multipart**: поле `metadata` (JSON с общими полями + `user_id` (int64)) и файл в поле `file` | — |
-| `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |
-| `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, секунды) | — |
-| `revoke-sessions` | `user_id` (int64), `hash` (int64, опц.), `keep_hash` (int64, опц.), `revoke_all` (bool) | — |
+| `grant-stars` | `user_id` (int64), `amount` (int64) | `premium.manage` |
+| `debit-stars` | `user_id` (int64), `amount` (int64, 1..1000000000); при недостаточном балансе списание отклоняется | `premium.manage` |
+| `set-verified` | `user_id` (int64), `verified` (bool) | `verification.review` |
+| `set-account-flags` | `user_id` (int64), `scam` (bool), `fake` (bool) | `accounts.manage` |
+| `set-support` | `user_id` (int64), `support` (bool) | `accounts.manage` |
+| `set-account-username` | `user_id` (int64), `username` (string) | `accounts.manage` |
+| `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | `accounts.manage` |
+| `set-account-phone` | `user_id` (int64), `phone` (string) | `accounts.manage` |
+| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, необязательно), `password` (string, необязательно, 1..256 байт UTF-8); создаёт обычный аккаунт без сессии, работает и при закрытой регистрации; занятый номер даёт `PHONE_NUMBER_OCCUPIED`; с `password` аккаунт и пароль для входа создаются вместе — см. ниже | `accounts.manage` |
+| `set-account-login-email` | `user_id` (int64), `email` (string) | `accounts.manage` |
+| `set-login-password` | `user_id` (int64), `password` (string, 1..256 байт UTF-8), `revoke_sessions` (bool, опц.); задаёт или сбрасывает пароль для входа без старого пароля — см. ниже | `accounts.manage` |
+| `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100 или `null`, чтобы снять); ограничивает число устройств, на которых можно пользоваться аккаунтом. Устройство (`device_id`, который клиент сообщает в `initConnection.params`) привязывается к аккаунту при первом завершённом входе, и лимит считает привязанные устройства; выход из аккаунта или отзыв сессии привязку не снимает, это делает только `unbind-device`. Когда лимит исчерпан, войти могут только привязанные устройства: новое устройство получает `AUTHORIZATIONS_TOO_MUCH`, клиент без `device_id` — `DEVICE_ID_REQUIRED`. Уже вошедшие устройства остаются, а снижение или снятие лимита сохраняет список привязок. При установке лимита уже вошедшие устройства, сообщившие `device_id`, привязываются в порядке входа, пока лимит не заполнится; остальные остаются в аккаунте без привязки. `details.backfilled_devices` — сколько устройств привязано (в пробном запуске — сколько было бы привязано). Вошедшее устройство, сообщившее `device_id` позже, привязывается, если есть свободное место, иначе ничего не меняется. Системные аккаунты, боты, удалённые и несуществующие аккаунты дают `USER_INVALID`, значение вне 1..100 — `DEVICE_LIMIT_INVALID` | `accounts.manage` |
+| `unbind-device` | `user_id` (int64), `device_id` (`device_id` из `GET /api/accounts/{id}/device-bindings`); отвязывает устройство от аккаунта, освобождая место в лимите устройств, и завершает все сеансы аккаунта на этом устройстве так же, как удалённый отзыв сессии: протокольный ключ сохраняется, клиент переподключается, получает `401 AUTH_KEY_UNREGISTERED` и выходит из аккаунта. Отвязка и отзыв выполняются в одной транзакции. `details.revoked_count` — сколько сеансов завершено (в пробном запуске — сколько было бы), `details.revoked_hashes` — их хэши. Системные аккаунты, боты, удалённые и несуществующие аккаунты дают `USER_INVALID`, непривязанное устройство — `DEVICE_BINDING_NOT_FOUND` | `accounts.manage` |
+| `delete-account` | `user_id` (int64); удаляет аккаунт так же, как процедура удаления аккаунта (надгробие), и сбрасывает его живые сессии. Отклоняется, пока этот процесс не может достать до сессий, чтобы привязанная сессия не сохранила удалённого пользователя | `accounts.manage` |
+| `grant-stars-all` | `amount` (int64, 1..1000000000); начисляет `amount` Stars каждому реальному аккаунту в одной транзакции. Пробный запуск только считает аккаунты. Клиенты по одному не уведомляются | `premium.manage` |
+| `set-permissions` | `user_id` (int64), `enabled` (bool), одиннадцать флагов `send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact` (bool, `true` = разрешено), `send_whitelist` (`enabled` (bool), `user_ids` ([]int64, весь список)); управление правами сотрудника. Не переданное поле сохраняет текущее значение: слияние выполняется при записи под блокировкой настроек аккаунта, поэтому если два оператора одновременно меняют разные пункты, сохраняются оба изменения. Аккаунт, настраиваемый впервые, начинает со всего разрешённого. При выключенном `enabled` ничего не применяется, настройки сохраняются. Запрещённые операции отвечают `403 TELESRV_PERMISSION_*`; сессии аккаунта получают `updateConfig` и читают настройки из `help.getAppConfig` (`telesrv_permissions`). Системные аккаунты, боты, удалённые и несуществующие аккаунты — `USER_INVALID`; белый список длиннее 1000 записей, с несуществующим или удалённым аккаунтом или с самим аккаунтом — `PERMISSION_WHITELIST_INVALID` (дубликаты отбрасываются) | `accounts.manage` |
+| `set-account-avatar` | **multipart**: поле `metadata` (JSON с общими полями + `user_id` (int64)) и файл в поле `file` | `accounts.manage` |
+| `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | `accounts.manage` |
+| `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, секунды) | `accounts.manage` |
+| `revoke-sessions` | `user_id` (int64), `hash` (int64, опц.), `keep_hash` (int64, опц.), `revoke_all` (bool) | `accounts.manage` |
 
 Пример (выдача Premium, как в вопросе выше):
 
@@ -591,88 +685,90 @@ Content-Type: application/json
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `set-channel-flags` | `channel_id` (int64), `scam` (bool), `fake` (bool) | — |
-| `set-channel-settings` | `channel_id` (int64), `gigagroup` (*bool), `antispam` (*bool), `participants_hidden` (*bool), `noforwards` (*bool), `join_to_send` (*bool), `join_request` (*bool), `slowmode_seconds` (*int) — все опциональные указатели | — |
-| `set-channel-username` | `channel_id` (int64), `username` (string) | — |
-| `set-channel-color` | `channel_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | — |
-| `set-channel-emoji-status` | `channel_id` (int64), `document_id` (int64), `until` (int) | — |
-| `set-channel-avatar` | **multipart**: `metadata` (JSON с общими полями + `channel_id` (int64)) и файл `file` | — |
-| `set-channel-verified` | `channel_id` (int64), `verified` (bool) | — |
+| `set-channel-flags` | `channel_id` (int64), `scam` (bool), `fake` (bool) | `channels.manage` |
+| `set-channel-settings` | `channel_id` (int64), `gigagroup` (*bool), `antispam` (*bool), `participants_hidden` (*bool), `noforwards` (*bool), `join_to_send` (*bool), `join_request` (*bool), `slowmode_seconds` (*int) — все опциональные указатели | `channels.manage` |
+| `set-channel-username` | `channel_id` (int64), `username` (string) | `channels.manage` |
+| `set-channel-color` | `channel_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | `channels.manage` |
+| `set-channel-emoji-status` | `channel_id` (int64), `document_id` (int64), `until` (int) | `channels.manage` |
+| `set-channel-avatar` | **multipart**: `metadata` (JSON с общими полями + `channel_id` (int64)) и файл `file` | `channels.manage` |
+| `set-channel-verified` | `channel_id` (int64), `verified` (bool) | `verification.review` |
 
 ## API: действия над ботами
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `create-bot` | `owner_user_id` (int64), `name` (string), `username` (string) | — |
-| `delete-bot` | `bot_user_id` (int64) | — |
+| `create-bot` | `owner_user_id` (int64), `name` (string), `username` (string) | `bots.manage` |
+| `delete-bot` | `bot_user_id` (int64) | `bots.manage` |
 | `export-bot-token` | `bot_user_id` (int64) | `bots.token.read` |
-| `create-broadcast` | `message` (string), `target_mode` (string), `user_ids` ([]int64, опц.) | — |
+| `create-broadcast` | `message` (string), `target_mode` (string), `user_ids` ([]int64, опц.) | `broadcasts.send` |
 
 ## API: действия над стикерами и emoji
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `create-sticker-set` | **multipart**: `metadata` (JSON: общие поля + `title`, `short_name`, `kind`, `emoji`, `keywords`) и файл `file` | — |
-| `rename-sticker-set` | `set_id` (int64), `title` (string) | — |
-| `add-sticker-to-set` | **multipart**: `metadata` (JSON: общие поля + `set_id` (string), `emoji`, `keywords`) и файл `file` | — |
-| `remove-sticker-from-set` | `set_id` (int64), `document_id` (int64) | — |
-| `set-sticker-set-archived` | `set_id` (int64), `archived` (bool) | — |
-| `set-sticker-set-sort-order` | `set_id` (int64), `sort_order` (int) | — |
-| `delete-sticker-set` | `set_id` (int64) | — |
+| `create-sticker-set` | **multipart**: `metadata` (JSON: общие поля + `title`, `short_name`, `kind`, `emoji`, `keywords`) и файл `file` | `content.manage` |
+| `rename-sticker-set` | `set_id` (int64), `title` (string) | `content.manage` |
+| `add-sticker-to-set` | **multipart**: `metadata` (JSON: общие поля + `set_id` (string), `emoji`, `keywords`) и файл `file` | `content.manage` |
+| `remove-sticker-from-set` | `set_id` (int64), `document_id` (int64) | `content.manage` |
+| `set-sticker-set-archived` | `set_id` (int64), `archived` (bool) | `content.manage` |
+| `set-sticker-set-sort-order` | `set_id` (int64), `sort_order` (int) | `content.manage` |
+| `delete-sticker-set` | `set_id` (int64) | `content.manage` |
 
 ## API: действия над GIF-каталогом
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `create-gif-catalog-entry` | **multipart**: `metadata` (JSON: общие поля + `title`) и файл `file` | — |
-| `set-gif-catalog-enabled` | `id` (int64, передаётся как строка), `enabled` (bool) | — |
-| `set-gif-catalog-sort-order` | `id` (int64, строка), `sort_order` (int) | — |
-| `delete-gif-catalog-entry` | `id` (int64, строка) | — |
+| `create-gif-catalog-entry` | **multipart**: `metadata` (JSON: общие поля + `title`) и файл `file` | `content.manage` |
+| `set-gif-catalog-enabled` | `id` (int64, передаётся как строка), `enabled` (bool) | `content.manage` |
+| `set-gif-catalog-sort-order` | `id` (int64, строка), `sort_order` (int) | `content.manage` |
+| `set-gif-catalog-category` | `id` (int64, строка), `category` (string) | `content.manage` |
+| `delete-gif-catalog-entry` | `id` (int64, строка) | `content.manage` |
 
 ## API: действия над подарками и коллекционками
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `import-gift` | **multipart**: `metadata` (JSON: общие поля + `gift_id` (int64), `title`, `stars` (int64), `convert_stars` (int64), `enabled` (bool), `sort_order` (int), `auction` (bool), `auction_slug`, `gifts_per_round` (int), `auction_start_date` (int), `auction_round_duration` (int), `availability_total` (int), `locked_until_date` (int)) и файл `file` | — |
-| `import-official-gift` | общие поля + `source_gift_id` (string), `gift_id` (int64), `title`, `stars` (int64), `convert_stars` (int64), `enabled` (bool), `sort_order` (int), `include_collectible` (bool), `upgrade_stars` (int64), `supply_total` (int), `slug_prefix` (string), `locked_until_date` (int) | — |
-| `publish-gift-collectibles` | **multipart**, `gift_id` передаётся в query (`?gift_id=`): `metadata` (JSON: общие поля + `upgrade_stars` (int64), `supply_total` (int), `slug_prefix` (string), `models` ([]объект), `patterns` ([]объект), `backdrops` ([]объект)); анимации — файлы по ключам из `models`/`patterns` | — |
-| `set-gift-enabled` | `gift_id` (int64), `enabled` (bool) | — |
-| `set-gift-sort-order` | `gift_id` (int64), `sort_order` (int) | — |
-| `give-gift` | общие поля + `sender_user_id` (int64), `user_id` (int64), `channel_id` (int64), `gift_id` (int64), `hide_name` (bool), `message` (string), `upgrade` (bool), `model_attribute_id` (int64), `pattern_attribute_id` (int64), `backdrop_attribute_id` (int64) | — |
-| `set-nft-gift-wallet` | общие поля + `ref` (string: slug, адрес NFT или числовой id), `wallet_name` (string, по умолчанию — введённое значение `wallet_address`), `wallet_address` (string: адрес TON mainnet; имя `.ton`, разрешаемое в цепи через TON DNS с запасным вариантом — flashfragment-имя пользователя с тем же именем, если в DNS нет записи; либо telegram-идентичность `rayo`, `@rayo`, `rayo.t.me`, `t.me/rayo`, разрешаемая только через записи flashfragment: claim имени, mint имени, подтверждённый кошелёк владельца коллекционного имени, TON Connect. Введённое имя никогда не сохраняется как адрес, а сработавшая запись попадает в details как `wallet_source`), `host_user_id` (int64, необязательно), `clear` (bool, вместо привязки кошелька возвращает подарок своему Telegram-владельцу) | — |
+| `import-gift` | **multipart**: `metadata` (JSON: общие поля + `gift_id` (int64), `title`, `stars` (int64), `convert_stars` (int64), `enabled` (bool), `sort_order` (int), `auction` (bool), `auction_slug`, `gifts_per_round` (int), `auction_start_date` (int), `auction_round_duration` (int), `availability_total` (int), `locked_until_date` (int)) и файл `file` | `gifts.manage` |
+| `import-official-gift` | общие поля + `source_gift_id` (string), `gift_id` (int64), `title`, `stars` (int64), `convert_stars` (int64), `enabled` (bool), `sort_order` (int), `include_collectible` (bool), `upgrade_stars` (int64), `supply_total` (int), `slug_prefix` (string), `locked_until_date` (int) | `gifts.manage` |
+| `import-gift-pack` | **multipart**: `metadata` (JSON с общими полями) и zip-файл `file` (до 32 МиБ); импортирует целый набор подарков сразу | `gifts.manage` |
+| `publish-gift-collectibles` | **multipart**, `gift_id` передаётся в query (`?gift_id=`): `metadata` (JSON: общие поля + `upgrade_stars` (int64), `supply_total` (int), `slug_prefix` (string), `models` ([]объект), `patterns` ([]объект), `backdrops` ([]объект)); анимации — файлы по ключам из `models`/`patterns` | `gifts.manage` |
+| `set-gift-enabled` | `gift_id` (int64), `enabled` (bool) | `gifts.manage` |
+| `set-gift-sort-order` | `gift_id` (int64), `sort_order` (int) | `gifts.manage` |
+| `give-gift` | общие поля + `sender_user_id` (int64), `user_id` (int64), `channel_id` (int64), `gift_id` (int64), `hide_name` (bool), `message` (string), `upgrade` (bool), `model_attribute_id` (int64), `pattern_attribute_id` (int64), `backdrop_attribute_id` (int64) | `gifts.manage` |
+| `set-nft-gift-wallet` | общие поля + `ref` (string: slug, адрес NFT или числовой id), `wallet_name` (string, по умолчанию — введённое значение `wallet_address`), `wallet_address` (string: адрес TON mainnet; имя `.ton`, разрешаемое в цепи через TON DNS с запасным вариантом — flashfragment-имя пользователя с тем же именем, если в DNS нет записи; либо telegram-идентичность `rayo`, `@rayo`, `rayo.t.me`, `t.me/rayo`, разрешаемая только через записи flashfragment: claim имени, mint имени, подтверждённый кошелёк владельца коллекционного имени, TON Connect. Введённое имя никогда не сохраняется как адрес, а сработавшая запись попадает в details как `wallet_source`), `host_user_id` (int64, необязательно), `clear` (bool, вместо привязки кошелька возвращает подарок своему Telegram-владельцу) | `gifts.manage` |
 
 ## API: действия над коллекционными юзернеймами
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `mint-collectible-username` | `username` (string), `owner_user_id` (int64), `owner_channel_id` (int64), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64), `url` (string), `purchase_date` (int/unix или дата) | — |
-| `transfer-collectible-username` | `username` (string), `to_user_id` (int64), `to_channel_id` (int64) | — |
-| `revoke-collectible-username` | `username` (string), `burn` (bool) | — |
-| `delete-collectible-username` | `username` (string) | — |
+| `mint-collectible-username` | `username` (string), `owner_user_id` (int64), `owner_channel_id` (int64), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64), `url` (string), `purchase_date` (int/unix или дата) | `usernames.manage` |
+| `transfer-collectible-username` | `username` (string), `to_user_id` (int64), `to_channel_id` (int64) | `usernames.manage` |
+| `revoke-collectible-username` | `username` (string), `burn` (bool) | `usernames.manage` |
+| `delete-collectible-username` | `username` (string) | `usernames.manage` |
 
 ## API: действия над анонимными номерами
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `mint-collectible-phone` | `phone` (string), `tier` (string), `owner_user_id` (int64), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64), `url` (string), `purchase_date` (int/unix или дата) | — |
-| `update-collectible-phone-price` | `phone` (string), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64) | — |
-| `transfer-collectible-phone` | `phone` (string), `to_user_id` (int64) | — |
-| `revoke-collectible-phone` | `phone` (string), `burn` (bool) | — |
-| `delete-collectible-phone` | `phone` (string) | — |
+| `mint-collectible-phone` | `phone` (string), `tier` (string), `owner_user_id` (int64), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64), `url` (string), `purchase_date` (int/unix или дата) | `phones.manage` |
+| `update-collectible-phone-price` | `phone` (string), `currency` (string), `amount` (int64), `crypto_currency` (string), `crypto_amount` (int64) | `phones.manage` |
+| `transfer-collectible-phone` | `phone` (string), `to_user_id` (int64) | `phones.manage` |
+| `revoke-collectible-phone` | `phone` (string), `burn` (bool) | `phones.manage` |
+| `delete-collectible-phone` | `phone` (string) | `phones.manage` |
 
 ## API: действия над рейтингом аккаунтов
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `recompute-account-rating` | `user_id` (int64) | — |
-| `adjust-account-rating` | `user_id` (int64), `amount` (int64) | — |
+| `recompute-account-rating` | `user_id` (int64) | `ratings.manage` |
+| `adjust-account-rating` | `user_id` (int64), `amount` (int64) | `ratings.manage` |
 
 ## API: удаление сообщений
 
 | Путь | Специфичные поля тела | Право |
 | --- | --- | --- |
-| `delete-messages` | `owner_user_id` (int64), `peer_id` (int64), `ids` ([]int), `revoke` (bool) | — |
-| `delete-history` | `owner_user_id` (int64), `peer_id` (int64), `max_id` (int), `min_date` (int), `max_date` (int), `max_batches` (int), `just_clear` (bool), `revoke` (bool) | — |
+| `delete-messages` | `owner_user_id` (int64), `peer_id` (int64), `ids` ([]int), `revoke` (bool) | `messages.manage` |
+| `delete-history` | `owner_user_id` (int64), `peer_id` (int64), `max_id` (int), `min_date` (int), `max_date` (int), `max_batches` (int), `just_clear` (bool), `revoke` (bool) | `messages.manage` |
 
 ## API: решения верификации (тела запросов)
 

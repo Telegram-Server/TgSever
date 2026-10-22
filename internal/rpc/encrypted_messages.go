@@ -59,6 +59,12 @@ func (r *Router) sendEncryptedCommon(ctx context.Context, peer tg.InputEncrypted
 	if !ok {
 		return nil, internalErr()
 	}
+	// 服务消息（sendEncryptedService：密钥协商、已读、删除等协议层消息）不算发送消息。
+	if !isService {
+		if err := r.checkSecretChatSendPermission(ctx, userID, peer.ChatID); err != nil {
+			return nil, err
+		}
+	}
 	_, stored, err := r.deps.SecretChats.SendEncrypted(ctx, peer.ChatID, userID, deviceAuthKeyID, peer.AccessHash, domain.SecretMessageDelivery{
 		RandomID:  randomID,
 		Bytes:     data,

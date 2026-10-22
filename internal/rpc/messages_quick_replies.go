@@ -172,6 +172,10 @@ func (r *Router) onMessagesSendQuickReplyMessages(ctx context.Context, req *tg.M
 	if peer.Type != domain.PeerTypeUser {
 		return nil, peerIDInvalidErr()
 	}
+	// 员工权限在读取快捷回复、发送任何一条之前判定。
+	if err := r.checkSendPermission(ctx, userID, peer); err != nil {
+		return nil, err
+	}
 	list, err := svc.GetQuickReplyMessages(ctx, userID, req.ShortcutID, req.ID)
 	if err != nil {
 		return nil, businessAutomationErr(err)

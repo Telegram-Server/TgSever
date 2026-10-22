@@ -59,6 +59,9 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	if !ok || toPeer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
+	if err := r.checkSendPermission(ctx, userID, toPeer); err != nil {
+		return nil, err
+	}
 	// Forwarding is a private write and resolves its target through a peer
 	// reference, which never reads the users row. Without this a deleted account
 	// keeps collecting forwarded history after it stopped accepting messages.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"slices"
 	"sort"
 	"strings"
 	"telesrv/internal/domain"
@@ -678,6 +679,9 @@ func (s *ChannelStore) HideAllChatJoinRequests(_ context.Context, req domain.Hid
 			continue
 		}
 		if inviteID != 0 && importer.InviteID != inviteID {
+			continue
+		}
+		if slices.Contains(req.ExcludeUserIDs, importer.UserID) {
 			continue
 		}
 		targets = append(targets, importer)

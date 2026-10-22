@@ -123,6 +123,13 @@ func (r *e2eAdminCommands) BeginCommand(_ context.Context, cmd domain.AdminComma
 	return cmd, true, nil
 }
 
+func (r *e2eAdminCommands) Command(_ context.Context, commandID string) (domain.AdminCommand, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cmd, ok := r.items[commandID]
+	return cmd, ok, nil
+}
+
 func (r *e2eAdminCommands) FinishCommand(_ context.Context, commandID string, status domain.AdminCommandStatus, resultJSON []byte, errorText string) (domain.AdminCommand, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

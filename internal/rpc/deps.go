@@ -1164,6 +1164,7 @@ type Deps struct {
 	Help                         HelpService
 	AppUpdates                   updatecdn.Resolver
 	AccountFreeze                AccountFreezeService
+	Permissions                  AccountPermissionsService
 	AccountFreezeNotifications   AccountFreezeNotificationService
 	AccountDeletionNotifications AccountDeletionNotificationService
 	AICompose                    AIComposeService

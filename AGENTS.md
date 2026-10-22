@@ -80,7 +80,11 @@ The rules that keep it that way:
   `web/src` change without a rebuilt `dist` does not ship. Delete the old hashed
   assets rather than leaving them.
 - **Regenerate the API docs:** `python3 scripts/gen_admin_panel_doc_tables.py --write`
-  (both `docs/admin-panel-api.*.md`); `--check` fails if they are stale.
+  (both `docs/admin-panel-api.*.md`); `--check` fails if they are stale. A new
+  route in `cmd/telesrv-admin/server.go` also needs a hand-written row in the
+  doc's `## API: ...` tables in both languages: `--check` fails on a route with
+  no row and on a row for a route that is gone, and `--write` fills in the
+  Permission column of the action tables from the route's gate.
 
 ### SQL codegen
 

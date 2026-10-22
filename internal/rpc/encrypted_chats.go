@@ -177,6 +177,9 @@ func (r *Router) onMessagesRequestEncryption(ctx context.Context, req *tg.Messag
 	if !found || participant.ID == 0 || participant.ID == adminID || participant.Bot {
 		return nil, userIDInvalidErr()
 	}
+	if err := r.checkSecretChatCounterpartPermission(ctx, adminID, participant.ID); err != nil {
+		return nil, err
+	}
 	if blocked, err := r.peerBlocksUser(ctx, adminID, participant.ID); err != nil {
 		return nil, err
 	} else if blocked {
@@ -215,6 +218,9 @@ func (r *Router) onMessagesAcceptEncryption(ctx context.Context, req *tg.Message
 	participantAuthKeyID, ok := businessAuthKeyIDFrom(ctx)
 	if !ok {
 		return nil, internalErr()
+	}
+	if err := r.checkSecretChatSendPermission(ctx, userID, req.Peer.ChatID); err != nil {
+		return nil, err
 	}
 	chat, err := r.deps.SecretChats.AcceptEncryption(ctx, req.Peer.ChatID, userID,
 		participantAuthKeyID, req.Peer.AccessHash, req.GB, req.KeyFingerprint)

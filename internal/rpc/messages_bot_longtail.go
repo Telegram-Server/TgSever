@@ -36,6 +36,10 @@ func (r *Router) onMessagesSendWebViewData(ctx context.Context, req *tg.Messages
 	if bot.ID == userID {
 		return nil, botInvalidErr()
 	}
+	// mini app 回传的数据以用户身份发进与 bot 的私聊，按发送判定。
+	if err := r.checkSendPermission(ctx, userID, domain.Peer{Type: domain.PeerTypeUser, ID: bot.ID}); err != nil {
+		return nil, err
+	}
 	recipientBlocked, err := r.peerBlocksUser(ctx, userID, bot.ID)
 	if err != nil {
 		return nil, err
@@ -103,6 +107,10 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 	}
 	if !found || !botUser.Bot {
 		return nil, botInvalidErr()
+	}
+	// 选中的会话以一条消息的形式发给 bot，按发送判定。
+	if err := r.checkSendPermission(ctx, userID, botPeer); err != nil {
+		return nil, err
 	}
 	webAppReqID, fromWebApp := req.GetWebappReqID()
 	idempotencyKey := webAppReqID

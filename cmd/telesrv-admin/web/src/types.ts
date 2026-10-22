@@ -69,6 +69,29 @@ export type DeviceBindingList = {
   bindings: DeviceBinding[];
 };
 
+// AccountPermissions mirrors admin.AccountPermissionsResult: an account's staff
+// permission settings (#118). found=false means no record yet — the master
+// switch is off and every flag holds its default (allowed).
+export type AccountPermissions = {
+  user_id: number;
+  found: boolean;
+  enabled: boolean;
+  send: boolean;
+  delete: boolean;
+  edit: boolean;
+  clear_history: boolean;
+  create_group: boolean;
+  create_channel: boolean;
+  join_group: boolean;
+  join_channel: boolean;
+  leave_group: boolean;
+  leave_channel: boolean;
+  add_contact: boolean;
+  send_whitelist: { enabled: boolean; user_ids: number[] };
+  updated_at?: string;
+  command_id?: string;
+};
+
 // SharedDeviceAccount is one account whose authorizations matched a
 // SharedDeviceGroup's device fingerprint.
 export type SharedDeviceAccount = {

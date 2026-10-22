@@ -6,6 +6,10 @@ web/src/nav.ts, web/src/permissions.tsx and cmd/telesrv-admin/server.go
 instead, and the doc carries the generated marker so a hand edit is visible in
 review as a diff against the next regeneration.
 
+The hand-written "## API: ..." tables are held to server.go as well: --check
+fails on a route without a row and on a row for a route that is gone, and the
+Permission column of the action tables is generated (--write fills it in).
+
 Usage:
     python3 scripts/gen_admin_panel_doc_tables.py            # print
     python3 scripts/gen_admin_panel_doc_tables.py --check     # exit 1 if stale
@@ -173,6 +177,164 @@ def parse_routes() -> list[tuple[str, str, str, str]]:
         gate = gate.rsplit(".", 1)[-1]
         out.append((m.group("method"), m.group("path"), gate, m.group("handler")))
     return out
+
+
+# --------------------------------------------------- route and action coverage
+#
+# The doc's per-route tables ("## API: ..." -- Method | Path | ...) and action
+# tables (Path | Specific body fields | Permission) are prose, so they are not
+# generated wholesale. They rotted anyway: when the check below was written, 18
+# GET routes and 23 actions had no row in either language and two rows named
+# routes that had been registered differently. So the *set* of rows is checked
+# against server.go, and the one column that is pure fact -- which right an
+# action needs -- is generated.
+
+STATEMENT_RE = re.compile(r'mux\.Handle(?P<func>Func)?\(\s*"(?P<method>GET|POST|PUT|DELETE)\s+(?P<path>[^"]+)"\s*,')
+GO_PERM_CONST_RE = re.compile(r'^\s*(permission\w+)\s*=\s*"([^"]*)"', re.M)
+SESSION_ONLY = "(session)"
+PUBLIC = "(public)"
+
+
+def go_permission_consts() -> dict[str, str]:
+    return dict(GO_PERM_CONST_RE.findall(SECURITY_GO.read_text(encoding="utf-8")))
+
+
+def wrapper_gates(consts: dict[str, str]) -> dict[str, list[str]]:
+    """Map the small route wrappers (serverManage, premiumManage, ...) to the
+    right each one demands, read from the wrapper's own body so a wrapper that
+    changes its right changes the doc with it."""
+    out: dict[str, list[str]] = {}
+    for path in sorted(SERVER_GO.parent.glob("*.go")):
+        src = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"func \(s \*server\) (\w+)\([^)]*\) http\.Handler \{\n(?P<body>(?:.*\n){1,4}?)\}", src):
+            consts_used = re.findall(r"\b(permission\w+)\b", m.group("body"))
+            if consts_used:
+                out[m.group(1)] = [consts.get(c, c) for c in consts_used[:1]]
+    return out
+
+
+def parse_route_rights() -> list[tuple[str, str, tuple[str, ...]]]:
+    """Return [(method, path, rights)] for every route the panel registers.
+
+    rights is the tuple of grantable rights the route checks (all of them, for
+    scopedRouteAll), or (PUBLIC,) / (SESSION_ONLY,) for the routes that need no
+    right. A route whose gate this cannot read is an error rather than a guess:
+    an unreadable gate documented as "—" is how a wrong right ends up in print.
+    """
+    src = SERVER_GO.read_text(encoding="utf-8")
+    body = src[src.index("func (s *server) routes() http.Handler {"):]
+    body = body[: body.index("\n}\n")]
+    consts = go_permission_consts()
+    wrappers = wrapper_gates(consts)
+    out = []
+    matches = list(STATEMENT_RE.finditer(body))
+    for i, m in enumerate(matches):
+        rest = body[m.end() : matches[i + 1].start() if i + 1 < len(matches) else len(body)]
+        method, path = m.group("method"), m.group("path")
+        if m.group("func"):
+            rights: tuple[str, ...] = (PUBLIC,)
+        elif (g := re.match(r"\s*s\.scopedRoute\(\s*(permission\w+)", rest)) is not None:
+            value = consts[g.group(1)]
+            rights = (value or SESSION_ONLY,)
+        elif (g := re.match(r"\s*s\.scopedRouteAll\(\s*\[\]string\{([^}]*)\}", rest)) is not None:
+            rights = tuple(consts[c.strip()] for c in g.group(1).split(",") if c.strip())
+        elif (g := re.match(r"\s*s\.(\w+)\(", rest)) is not None and g.group(1) in wrappers:
+            rights = tuple(wrappers[g.group(1)])
+        else:
+            raise ValueError(f"cannot read the gate of {method} {path} in server.go")
+        out.append((method, path, rights))
+    return out
+
+
+ACTION_PREFIX = "/api/actions/"
+ROUTE_ROW_RE = re.compile(r"^\|\s*(GET|POST|PUT|DELETE)\s*\|\s*`([^`]+)`", re.M)
+# The action tables are the ones whose first two header cells are these, in
+# either language; a third "Permission" cell is the generated column.
+ACTION_HEADERS = {("Path", "Specific body fields"), ("Путь", "Специфичные поля тела")}
+
+
+def split_row(line: str) -> list[str]:
+    """Cells of one markdown table row. Pipes inside backticks are not cell
+    separators (a few body-field descriptions quote `a|b` values)."""
+    cells, cur, tick = [], [], False
+    for ch in line.strip().strip("|"):
+        if ch == "`":
+            tick = not tick
+        if ch == "|" and not tick:
+            cells.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    cells.append("".join(cur).strip())
+    return cells
+
+
+def action_table_rows(doc: str) -> list[tuple[int, str, list[str], bool]]:
+    """Return [(line index, action name, cells, has permission column)]."""
+    lines = doc.split("\n")
+    out = []
+    in_table, has_perm = False, False
+    for i, line in enumerate(lines):
+        if not line.startswith("|"):
+            in_table = False
+            continue
+        cells = split_row(line)
+        if len(cells) >= 2 and (cells[0], cells[1]) in ACTION_HEADERS:
+            in_table, has_perm = True, len(cells) >= 3
+            continue
+        if not in_table or set(line) <= set("|- "):
+            continue
+        m = re.fullmatch(r"`([a-z0-9-]+)`", cells[0])
+        if m:
+            out.append((i, m.group(1), cells, has_perm))
+    return out
+
+
+def rights_cell(rights: tuple[str, ...]) -> str:
+    return " + ".join(f"`{r}`" for r in rights)
+
+
+def coverage_problems(doc_path: pathlib.Path, routes: list[tuple[str, str, tuple[str, ...]]]) -> list[str]:
+    doc = doc_path.read_text(encoding="utf-8")
+    documented = set(ROUTE_ROW_RE.findall(doc))
+    actions = {name: (cells, has_perm) for _i, name, cells, has_perm in action_table_rows(doc)}
+    known = {(m, p) for m, p, _r in routes}
+    known_actions = {p[len(ACTION_PREFIX):]: r for m, p, r in routes if p.startswith(ACTION_PREFIX)}
+    problems = []
+    for method, path, rights in routes:
+        if path.startswith(ACTION_PREFIX):
+            # An action is documented either as a row of an action table or,
+            # where a section lists its routes by method, as a POST row.
+            if path[len(ACTION_PREFIX):] not in actions and (method, path) not in documented:
+                problems.append(f"no row for {method} {path}")
+        elif (method, path) not in documented:
+            problems.append(f"no row for {method} {path}")
+    for method, path in sorted(documented - known):
+        if path.startswith("/api/"):
+            problems.append(f"row for {method} {path}, which server.go does not register")
+    for name, (cells, has_perm) in sorted(actions.items()):
+        if name not in known_actions:
+            problems.append(f"action row `{name}`, which server.go does not register")
+        elif has_perm and cells[-1] != rights_cell(known_actions[name]):
+            problems.append(f"action `{name}`: permission {cells[-1]!r}, server.go enforces {rights_cell(known_actions[name])}")
+    return problems
+
+
+def rewrite_permission_cells(doc_path: pathlib.Path, routes: list[tuple[str, str, tuple[str, ...]]]) -> bool:
+    """Set every action row's Permission cell to the right server.go enforces.
+    The other cells are prose and are left alone. Returns True if it changed."""
+    known_actions = {p[len(ACTION_PREFIX):]: r for _m, p, r in routes if p.startswith(ACTION_PREFIX)}
+    doc = doc_path.read_text(encoding="utf-8")
+    lines = doc.split("\n")
+    for i, name, cells, has_perm in action_table_rows(doc):
+        if has_perm and name in known_actions:
+            cells[-1] = rights_cell(known_actions[name])
+            lines[i] = "| " + " | ".join(cells) + " |"
+    updated = "\n".join(lines)
+    if updated == doc:
+        return False
+    doc_path.write_text(updated, encoding="utf-8")
+    return True
 
 
 # ------------------------------------------------------- section tab placement
@@ -372,6 +534,16 @@ def main() -> int:
             print("stale generated tables:\n  " + "\n  ".join(stale), file=sys.stderr)
             print("\nrun: python3 scripts/gen_admin_panel_doc_tables.py --write", file=sys.stderr)
             return 1
+        routes = parse_route_rights()
+        gaps = [f"{d.name}: {p}" for d in docs if d.exists() for p in coverage_problems(d, routes)]
+        if gaps:
+            print("API tables out of step with server.go:\n  " + "\n  ".join(gaps), file=sys.stderr)
+            print(
+                "\nadd or remove the row (the description is prose, write it by hand), then run"
+                " --write to fill in the Permission column",
+                file=sys.stderr,
+            )
+            return 1
         misplaced = misplaced_section_tabs()
         if misplaced:
             print(
@@ -385,6 +557,7 @@ def main() -> int:
             )
             return 1
         print("generated admin-panel doc tables are current")
+        print("every server.go route has a row, with the right it enforces")
         print("section tab bars are placed as PageFrame children")
         return 0
 
@@ -399,6 +572,8 @@ def main() -> int:
             for name, body in blocks.items():
                 if BEGIN.format(block=name) in doc and splice(doc_path, name, body):
                     changed.append(f"{doc_path.name}: {name}")
+            if rewrite_permission_cells(doc_path, parse_route_rights()):
+                changed.append(f"{doc_path.name}: action permissions")
         print("rewrote:\n  " + "\n  ".join(changed) if changed else "nothing to rewrite")
         return 0
 

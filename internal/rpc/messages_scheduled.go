@@ -84,6 +84,10 @@ func (r *Router) onMessagesSendScheduledMessages(ctx context.Context, req *tg.Me
 	if err != nil {
 		return nil, err
 	}
+	// 只拦"立即发送"这个请求；到点由 ScheduledDispatcher 派发的已排队消息不经过这里，不回溯。
+	if err := r.checkSendPermission(ctx, userID, peer); err != nil {
+		return nil, err
+	}
 	scheduledSvc, ok := r.deps.Messages.(scheduledMessagesService)
 	if len(req.ID) == 0 {
 		return tgEmptyUpdates(int(r.clock.Now().Unix())), nil

@@ -152,6 +152,18 @@ ON CONFLICT (command_id) DO NOTHING`, commandID); err != nil {
 	return nil
 }
 
+// Command 按 command id 读取命令记录；没有时 found=false（复用 BeginCommand 读已有记录的查询）。
+func (s *AdminStore) Command(ctx context.Context, commandID string) (domain.AdminCommand, bool, error) {
+	cmd, err := s.commandByID(ctx, commandID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.AdminCommand{}, false, nil
+	}
+	if err != nil {
+		return domain.AdminCommand{}, false, err
+	}
+	return cmd, true, nil
+}
+
 func (s *AdminStore) commandByID(ctx context.Context, commandID string) (domain.AdminCommand, error) {
 	cmd, err := scanAdminCommand(s.db.QueryRow(ctx, `
 SELECT command_id, actor, action, target_user_id, target_peer_type, target_peer_id,

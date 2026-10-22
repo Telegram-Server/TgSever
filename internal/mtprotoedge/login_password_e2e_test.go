@@ -33,6 +33,7 @@ import (
 	"telesrv/internal/app/help"
 	loginpasswordapp "telesrv/internal/app/loginpassword"
 	messageapp "telesrv/internal/app/messages"
+	permissionsapp "telesrv/internal/app/permissions"
 	"telesrv/internal/app/updates"
 	"telesrv/internal/app/users"
 	"telesrv/internal/domain"
@@ -116,6 +117,9 @@ type loginPasswordServer struct {
 	// router 是服务端的 RPC 路由，也是后台关闭被撤销授权的在线连接的 admin.AuthKeyRevoker
 	// （生产里同样接的是 router），供后台解绑设备在进程内接上。
 	router *rpc.Router
+	// permissions 是服务端的员工权限模块（RPC 闸门与 appConfig 叠加层用的同一个），供后台设置
+	// 员工权限（admin.AccountPermissionsService）在进程内接上。
+	permissions *permissionsapp.Service
 }
 
 // tombstoningUserStore 在内存 UserStore 外面加一层"已注销"标记。内存 store 没有账号
@@ -195,13 +199,15 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	lifecycle := memory.NewAccountLifecycleStore(baseUsers, loginPasswordStore,
 		memory.WithAccountLifecyclePasswords(cloudPasswords), memory.WithAccountLifecycleAuthorizations(authorizations))
 
+	permissionsService := permissionsapp.NewService(memory.NewAccountPermissionsStore(baseUsers), userStore)
 	deps := rpc.Deps{
+		Permissions:   permissionsService,
 		Auth:          authService,
 		LoginPassword: loginPasswords,
 		Sessions:      activeSessions,
 		Account:       account.NewService(cloudPasswords, account.WithUsers(userStore), account.WithAccountLifecycle(lifecycle)),
 		Help: help.NewService(helpStore, helpStore, help.WithPasswordLogin(opts.enabled), help.WithSignUpAllowed(authService.SignUpAllowed),
-			help.WithCodeLoginAllowed(authService.CodeLoginAllowed)),
+			help.WithCodeLoginAllowed(authService.CodeLoginAllowed), help.WithAccountPermissionsProvider(permissionsService)),
 		Users:    users.NewService(userStore),
 		Updates:  updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
 		Contacts: contacts.NewService(memory.NewContactStore()),
@@ -232,7 +238,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		}
 		<-outboxDone
 	})
-	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords, authorizations: authorizations, authKeys: authKeyStore, router: router}
+	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords, authorizations: authorizations, authKeys: authKeyStore, router: router, permissions: permissionsService}
 }
 
 // run 用一个全新的 auth key 连上服务端执行 fn。fn 里的断言失败要 return error，

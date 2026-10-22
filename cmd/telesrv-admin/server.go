@@ -94,6 +94,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/accounts/{id}", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountDetailAPI)))
 	mux.Handle("GET /api/accounts/{id}/avatar", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountAvatarAPI)))
 	mux.Handle("GET /api/accounts/{id}/device-bindings", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleDeviceBindingsAPI)))
+	mux.Handle("GET /api/accounts/{id}/permissions", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountPermissionsAPI)))
 	mux.Handle("GET /api/channels", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelDetailAPI)))
 	mux.Handle("GET /api/channels/{id}/avatar", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelAvatarAPI)))
@@ -167,6 +168,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/create-account", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleCreateAccountAPI)))
 	mux.Handle("POST /api/actions/set-login-password", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginPasswordAPI)))
 	mux.Handle("POST /api/actions/set-device-limit", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetDeviceLimitAPI)))
+	mux.Handle("POST /api/actions/set-permissions", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPermissionsAPI)))
 	mux.Handle("POST /api/actions/unbind-device", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleUnbindDeviceAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
@@ -981,6 +983,16 @@ func (s *server) handleDeviceBindingsAPI(w http.ResponseWriter, r *http.Request)
 	s.proxyAdminJSONNoStore(w, r, fmt.Sprintf("/v1/accounts/%d/device-bindings", id), 1<<20)
 }
 
+// handleAccountPermissionsAPI 代理账号的员工权限（#119）。不缓存：修改之后要立刻看到新设置。
+func (s *server) handleAccountPermissionsAPI(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInt64(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid account id")
+		return
+	}
+	s.proxyAdminJSONNoStore(w, r, fmt.Sprintf("/v1/accounts/%d/permissions", id), 1<<20)
+}
+
 func (s *server) handleChannelAvatarAPI(w http.ResponseWriter, r *http.Request) {
 	s.proxyAvatar(w, r, "channels")
 }
@@ -1209,6 +1221,54 @@ func (s *server) handleSetDeviceLimitAPI(w http.ResponseWriter, r *http.Request)
 		DeviceLimit: body.DeviceLimit,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-device-limit", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setPermissionsAPIRequest struct {
+	CommandID     string                             `json:"command_id"`
+	Reason        string                             `json:"reason"`
+	Confirm       bool                               `json:"confirm"`
+	UserID        int64                              `json:"user_id"`
+	Enabled       *bool                              `json:"enabled"`
+	Send          *bool                              `json:"send"`
+	Delete        *bool                              `json:"delete"`
+	Edit          *bool                              `json:"edit"`
+	ClearHistory  *bool                              `json:"clear_history"`
+	CreateGroup   *bool                              `json:"create_group"`
+	CreateChannel *bool                              `json:"create_channel"`
+	JoinGroup     *bool                              `json:"join_group"`
+	JoinChannel   *bool                              `json:"join_channel"`
+	LeaveGroup    *bool                              `json:"leave_group"`
+	LeaveChannel  *bool                              `json:"leave_channel"`
+	AddContact    *bool                              `json:"add_contact"`
+	SendWhitelist *admin.PermissionsWhitelistRequest `json:"send_whitelist"`
+}
+
+// handleSetPermissionsAPI 设置账号的员工权限（总开关、11 项、发送白名单），转发给服务端
+// POST /v1/accounts/set-permissions。给出的字段整体替换，未给出的沿用当前值。
+func (s *server) handleSetPermissionsAPI(w http.ResponseWriter, r *http.Request) {
+	var body setPermissionsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetPermissionsRequest{
+		CommandMeta:   s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-permissions"),
+		UserID:        body.UserID,
+		Enabled:       body.Enabled,
+		Send:          body.Send,
+		Delete:        body.Delete,
+		Edit:          body.Edit,
+		ClearHistory:  body.ClearHistory,
+		CreateGroup:   body.CreateGroup,
+		CreateChannel: body.CreateChannel,
+		JoinGroup:     body.JoinGroup,
+		JoinChannel:   body.JoinChannel,
+		LeaveGroup:    body.LeaveGroup,
+		LeaveChannel:  body.LeaveChannel,
+		AddContact:    body.AddContact,
+		SendWhitelist: body.SendWhitelist,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-permissions", req)
 	writeCommandResultAPI(w, result, err)
 }
 

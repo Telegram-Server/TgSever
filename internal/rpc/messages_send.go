@@ -349,6 +349,9 @@ func (r *Router) sendSingleSendMessage(ctx context.Context, req *tg.MessagesSend
 	if !ok || peer.ID == 0 {
 		return nil, false, peerIDInvalidErr()
 	}
+	if err := r.checkSendPermission(ctx, userID, peer); err != nil {
+		return nil, false, err
+	}
 	idempotencyFingerprint, err := sendMessageIdempotencyFingerprint(req)
 	if len(splitFingerprint) != 0 {
 		idempotencyFingerprint = splitFingerprint[0]

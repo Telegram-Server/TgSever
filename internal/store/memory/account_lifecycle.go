@@ -21,6 +21,7 @@ type AccountLifecycleStore struct {
 	loginPasswords *LoginPasswordStore
 	passwords      accountLifecyclePasswords
 	authorizations accountLifecycleAuthorizations
+	permissions    accountLifecyclePermissions
 }
 
 var _ store.AccountLifecycleStore = (*AccountLifecycleStore)(nil)
@@ -38,6 +39,17 @@ type accountLifecycleAuthorizations interface {
 // accountLifecycleDeviceBindings 删除被注销账号的设备绑定名单（memory.AuthorizationStore 实现）。
 type accountLifecycleDeviceBindings interface {
 	DeleteDeviceBindings(ctx context.Context, userID int64) error
+}
+
+// accountLifecyclePermissions 删除被注销账号的员工权限设置与指向它的白名单条目
+// （memory.AccountPermissionsStore 实现，#119）。
+type accountLifecyclePermissions interface {
+	DeleteAccountPermissions(ctx context.Context, userID int64) error
+}
+
+// WithAccountLifecyclePermissions 注入员工权限 store，注销时删除该账号的权限设置与白名单条目。
+func WithAccountLifecyclePermissions(permissions accountLifecyclePermissions) AccountLifecycleOption {
+	return func(s *AccountLifecycleStore) { s.permissions = permissions }
 }
 
 // AccountLifecycleOption 调整内存账号生命周期 store。
@@ -151,6 +163,11 @@ func (s *AccountLifecycleStore) ExecuteAccountDeletion(ctx context.Context, user
 	// 设备绑定名单随账号一起删除（#112）；退出登录、撤销授权都不删它，所以单独调用。
 	if bindings, ok := s.authorizations.(accountLifecycleDeviceBindings); ok {
 		if err := bindings.DeleteDeviceBindings(ctx, userID); err != nil {
+			return domain.AccountDeletionResult{}, err
+		}
+	}
+	if s.permissions != nil {
+		if err := s.permissions.DeleteAccountPermissions(ctx, userID); err != nil {
 			return domain.AccountDeletionResult{}, err
 		}
 	}
