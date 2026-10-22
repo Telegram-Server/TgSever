@@ -157,7 +157,7 @@ func messageMetadataParamsFrom(silent, noforwards bool, reply *domain.MessageRep
 		meta.QuoteText = reply.QuoteText
 		meta.QuoteEntitiesJSON = quoteEntities
 		meta.QuoteOffset = int32(reply.QuoteOffset)
-		meta.ReplyExternalJSON, err = domain.EncodeMessageReplyExternal(reply.External)
+		meta.ReplyExternalJSON, err = domain.EncodeMessageReplyDetails(reply)
 		if err != nil {
 			return messageMetadataParams{}, err
 		}
@@ -181,24 +181,29 @@ func messageMetadataParamsFrom(silent, noforwards bool, reply *domain.MessageRep
 
 func messageMetadataFromFields(silent, noforwards bool, replyToMsgID int32, replyToPeerType string, replyToPeerID int64, replyToTopID int32, replyToStoryID int32, quoteText, quoteEntitiesJSON string, quoteOffset int32, replyExternalJSON string, fwdFromPeerType string, fwdFromPeerID int64, fwdFromName string, fwdDate int32, fwdSavedFromPeerType string, fwdSavedFromPeerID int64, fwdSavedFromMsgID int32) (bool, bool, *domain.MessageReply, *domain.MessageForward, error) {
 	var reply *domain.MessageReply
-	external, err := domain.DecodeMessageReplyExternal([]byte(replyExternalJSON))
+	details, err := domain.DecodeMessageReplyDetails([]byte(replyExternalJSON))
 	if err != nil {
 		return false, false, nil, nil, err
 	}
-	if replyToMsgID > 0 || replyToStoryID > 0 || external != nil {
+	// External source peers and destination topic kinds are independent.
+	forumTopic := details.ForumTopic || replyToTopID > 0 && replyToPeerType == string(domain.PeerTypeUser)
+	if replyToMsgID > 0 || replyToTopID > 0 && forumTopic || replyToStoryID > 0 || details.External != nil {
 		quoteEntities, err := decodeMessageEntities(quoteEntitiesJSON)
 		if err != nil {
 			return false, false, nil, nil, err
 		}
 		reply = &domain.MessageReply{
-			MessageID:     int(replyToMsgID),
-			Peer:          domain.Peer{Type: domain.PeerType(replyToPeerType), ID: replyToPeerID},
-			TopMessageID:  int(replyToTopID),
-			StoryID:       int(replyToStoryID),
-			QuoteText:     quoteText,
-			QuoteEntities: quoteEntities,
-			QuoteOffset:   int(quoteOffset),
-			External:      external,
+			MessageID:       int(replyToMsgID),
+			Peer:            domain.Peer{Type: domain.PeerType(replyToPeerType), ID: replyToPeerID},
+			TopMessageID:    int(replyToTopID),
+			ForumTopic:      forumTopic,
+			StoryID:         int(replyToStoryID),
+			QuoteText:       quoteText,
+			QuoteEntities:   quoteEntities,
+			QuoteOffset:     int(quoteOffset),
+			External:        details.External,
+			ChecklistTaskID: details.ChecklistTaskID,
+			PollOption:      details.PollOption,
 		}
 	}
 	var forward *domain.MessageForward

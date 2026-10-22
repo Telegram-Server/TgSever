@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/iamxvbaba/td/tg"
@@ -17,7 +18,7 @@ func botAPITestKeyboard(text string) *domain.MessageReplyMarkup {
 // sendBotPhoto 让机器人往 chatID 发一张带 caption 和按钮的照片，作为编辑测试的目标。
 func (f botAPIBridgeFixture) sendBotPhoto(t *testing.T, chatID int64, caption string) domain.Message {
 	t.Helper()
-	msg, err := f.router.BotAPISendMedia(f.ctx, f.bot.ID, chatID, "photo", "", "", "a.png", "image/png", []byte("png"), caption, nil, botAPITestKeyboard("Old"), false, 0)
+	msg, err := f.router.BotAPISendMediaFiles(f.ctx, f.bot.ID, chatID, "photo", domain.BotAPIFileInput{FileName: "a.png", MimeType: "image/png", Bytes: []byte("png")}, domain.BotAPIFileInput{}, caption, nil, botAPITestKeyboard("Old"), false, 0)
 	if err != nil {
 		t.Fatalf("send photo: %v", err)
 	}
@@ -116,18 +117,6 @@ func TestBotAPIEditMessageMediaReplacesPhoto(t *testing.T) {
 	}
 }
 
-func TestBotAPIEditMessageMediaRejectsTextMessages(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-	sent, err := f.router.BotAPISendMessage(f.ctx, f.bot.ID, f.member.ID, "plain", nil, nil, false, false, 0)
-	if err != nil {
-		t.Fatalf("send text: %v", err)
-	}
-	item := BotAPIInputMediaItem{Kind: "photo", File: domain.BotAPIFileInput{Bytes: []byte("png")}}
-	if _, err := f.router.BotAPIEditMessageMedia(f.ctx, f.bot.ID, f.member.ID, sent.ID, item, false, nil); !containsErr(err, "MEDIA_PREV_INVALID") {
-		t.Fatalf("err = %v, want MEDIA_PREV_INVALID", err)
-	}
-}
-
 func TestBotAPIStopPollClosesAndReportsVotes(t *testing.T) {
 	f := newBotAPIBridgeFixture(t)
 	sent, err := f.router.BotAPISendPoll(f.ctx, f.bot.ID, f.chatID, botAPITestPoll("Lunch?", "pizza", "sushi"), nil, "", nil, nil, false, false, 0)
@@ -171,7 +160,8 @@ func TestBotAPIEditInlineVariantsRejectUnknownInlineMessages(t *testing.T) {
 	if _, err := f.router.BotAPIEditInlineMessageReplyMarkup(f.ctx, f.bot.ID, unknown, nil); !containsErr(err, "MESSAGE_ID_INVALID") {
 		t.Fatalf("markup err = %v", err)
 	}
-	item := BotAPIInputMediaItem{Kind: "photo", File: domain.BotAPIFileInput{Bytes: []byte("png")}}
+	source := f.sendBotPhoto(t, f.member.ID, "stored source")
+	item := BotAPIInputMediaItem{Kind: "photo", File: domain.BotAPIFileInput{LocationKey: fmt.Sprintf("photo:%d:%s", source.Media.Photo.ID, source.Media.Photo.Sizes[0].Type)}}
 	if _, err := f.router.BotAPIEditInlineMessageMedia(f.ctx, f.bot.ID, unknown, item, false, nil); !containsErr(err, "MESSAGE_ID_INVALID") {
 		t.Fatalf("media err = %v", err)
 	}

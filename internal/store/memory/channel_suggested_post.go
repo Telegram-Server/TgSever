@@ -73,6 +73,9 @@ func (s *ChannelStore) toggleSuggestedPostApprovalLocked(req domain.ToggleSugges
 	key := memorySuggestedPostKey{monoforumID: mono.ID, messageID: original.ID}
 	approval, exists := s.suggestedPostApprovals[key]
 	if exists && approval.state != domain.SuggestedPostStateBalanceLow {
+		if req.Reject != (approval.state == domain.SuggestedPostStateRejected) {
+			return domain.ToggleSuggestedPostApprovalResult{}, domain.ErrSuggestedPostAlreadyHandled
+		}
 		out := cloneSuggestedPostResult(approval.lastResult)
 		out.Duplicate = true
 		return out, nil
@@ -256,7 +259,9 @@ func (s *ChannelStore) ProcessSuggestedPostLifecycle(_ context.Context, req doma
 				approval.state, result.State, changed = domain.SuggestedPostStateRefunded, domain.SuggestedPostStateRefunded, true
 			} else if approval.settlementDue <= req.Now {
 				s.settleSuggestedPostPaymentLocked(parent.ID, approval.price)
-				service, event := s.appendSuggestedPostServiceLocked(mono, parent, approval.actorUserID, approval.savedPeer, key.messageID, req.Now, domain.ChannelMessageAction{Type: domain.ChannelActionSuggestedPostSuccess, SuggestedPostPrice: cloneSuggestedPostPrice(approval.price)})
+				received := cloneSuggestedPostPrice(approval.price)
+				received.Amount = received.Amount * paidMessageChannelCommissionPermille / 1000
+				service, event := s.appendSuggestedPostServiceLocked(mono, parent, approval.actorUserID, approval.savedPeer, key.messageID, req.Now, domain.ChannelMessageAction{Type: domain.ChannelActionSuggestedPostSuccess, SuggestedPostPrice: received})
 				result.ServiceMessage, result.ServiceEvent = service, event
 				approval.state, result.State, changed = domain.SuggestedPostStateCompleted, domain.SuggestedPostStateCompleted, true
 			}

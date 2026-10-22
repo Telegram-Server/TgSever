@@ -69,3 +69,13 @@ func (s *ChannelStore) editChannelSenderBan(req domain.EditChannelBannedRequest)
 	s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{ChannelID: req.ChannelID, UserID: req.UserID, Date: req.Date, Type: adminLogBanType(previous, member), PrevParticipant: ptrChannelMember(previous), NewParticipant: ptrChannelMember(member)})
 	return domain.EditChannelBannedResult{Channel: channel, Previous: previous, Participant: member, Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0), Date: req.Date}, nil
 }
+
+func (s *ChannelStore) senderIdentityBannedLocked(channelID, senderID int64) bool {
+	owner := s.channels[senderID].CreatorUserID
+	for bannedID := range s.senderBans[channelID] {
+		if bannedID == senderID || (owner != 0 && s.channels[bannedID].CreatorUserID == owner) {
+			return true
+		}
+	}
+	return false
+}

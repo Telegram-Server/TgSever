@@ -222,7 +222,7 @@ func TestCallbackActionTargetsExactDeviceAndExpiresAtFifteenSeconds(t *testing.T
 	const queryID = int64(777)
 	created, err := f.service.PutCallbackAction(context.Background(), domain.EphemeralCallbackAction{
 		QueryID: queryID, BotUserID: testBotID, UserID: testHumanID, Peer: incoming.Peer,
-		MessageID: incoming.ID, Device: callback.Device, CreatedAt: f.now,
+		MessageID: incoming.ID, FromEphemeral: true, Device: callback.Device, CreatedAt: f.now,
 		ExpiresAt: f.now.Add(domain.EphemeralReplyWindow),
 	})
 	if err != nil || !created {
@@ -241,6 +241,50 @@ func TestCallbackActionTargetsExactDeviceAndExpiresAtFifteenSeconds(t *testing.T
 		CallbackQueryID: queryID, Content: domain.EphemeralContent{Message: "too late"},
 	}); !errors.Is(err, domain.ErrEphemeralReplyExpired) {
 		t.Fatalf("expired callback action err=%v", err)
+	}
+}
+
+func TestReplaceCallbackMessageRetainsDeviceAndRejectsEphemeralSources(t *testing.T) {
+	f := newServiceFixture()
+	ctx := context.Background()
+	action := domain.EphemeralCallbackAction{
+		QueryID: 9001, BotUserID: testBotID, UserID: testHumanID,
+		Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: testChannel}, MessageID: 73,
+		Device:    domain.EphemeralDevice{UserID: testHumanID, BusinessAuthKeyID: testDeviceKey, SessionID: testSession},
+		CreatedAt: f.now, ExpiresAt: f.now.Add(domain.EphemeralReplyWindow),
+	}
+	if _, err := f.service.PutCallbackAction(ctx, action); err != nil {
+		t.Fatal(err)
+	}
+	request := domain.SendBotEphemeralRequest{
+		BotUserID: testBotID, ReceiverUserID: testHumanID, Peer: action.Peer,
+		CallbackQueryID: action.QueryID, ReplaceCallbackQueryMessage: true, RandomID: 901,
+		Content: domain.EphemeralContent{Message: "private replacement"},
+	}
+	message, fresh, err := f.service.SendFromBot(ctx, request)
+	if err != nil || !fresh {
+		t.Fatalf("replace fresh=%v err=%v", fresh, err)
+	}
+	stored, found, err := f.store.GetEphemeralMessage(ctx, action.Peer, message.ID, f.now)
+	if err != nil || !found || stored.ReplaceMessageID != 73 || stored.OriginDevice != action.Device {
+		t.Fatalf("replacement lost target/device: %+v found=%v err=%v", stored, found, err)
+	}
+	request.ReplaceCallbackQueryMessage = false
+	if _, _, err := f.service.SendFromBot(ctx, request); !errors.Is(err, domain.ErrEphemeralRandomIDConflict) {
+		t.Fatalf("retry altered replacement mode: %v", err)
+	}
+	action.QueryID++
+	action.FromEphemeral = true
+	if _, err := f.service.PutCallbackAction(ctx, action); err != nil {
+		t.Fatal(err)
+	}
+	request.CallbackQueryID, request.RandomID, request.ReplaceCallbackQueryMessage = action.QueryID, 902, true
+	if _, _, err := f.service.SendFromBot(ctx, request); !errors.Is(err, domain.ErrEphemeralInvalid) {
+		t.Fatalf("ephemeral callback replaced rather than requiring edit: %v", err)
+	}
+	request.CallbackQueryID = 0
+	if _, _, err := f.service.SendFromBot(ctx, request); !errors.Is(err, domain.ErrEphemeralInvalid) {
+		t.Fatalf("replacement without callback accepted: %v", err)
 	}
 }
 

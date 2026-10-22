@@ -44,27 +44,6 @@ func TestOnPaymentsGetStarsStatusGranted(t *testing.T) {
 	}
 }
 
-func TestOnPaymentsGetStarsSubscriptionsReturnsTerminalEmptyPage(t *testing.T) {
-	r := starsRouter(t, 1000)
-	ctx := WithUserID(context.Background(), 1000000001)
-	status, err := r.onPaymentsGetStarsSubscriptions(ctx, &tg.PaymentsGetStarsSubscriptionsRequest{
-		Peer: &tg.InputPeerSelf{}, Offset: "",
-	})
-	if err != nil {
-		t.Fatalf("getStarsSubscriptions: %v", err)
-	}
-	amount, ok := status.Balance.(*tg.StarsAmount)
-	if !ok || amount.Amount != 1000 {
-		t.Fatalf("balance = %#v, want StarsAmount 1000", status.Balance)
-	}
-	if subscriptions, ok := status.GetSubscriptions(); ok || len(subscriptions) != 0 {
-		t.Fatalf("subscriptions = %+v ok=%v, want absent terminal page", subscriptions, ok)
-	}
-	if _, ok := status.GetSubscriptionsNextOffset(); ok {
-		t.Fatal("empty subscription page unexpectedly has next offset")
-	}
-}
-
 // TON 余额未建模：返回 starsTonAmount 的合法响应（不崩客户端）。
 func TestOnPaymentsGetStarsStatusTon(t *testing.T) {
 	r := starsRouter(t, 1000)

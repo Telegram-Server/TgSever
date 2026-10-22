@@ -273,4 +273,16 @@ func TestDeletedOwnerAlbumAndSavedMusicAreEmpty(t *testing.T) {
 	if !ok || list.Count != 0 || len(list.Documents) != 0 {
 		t.Fatalf("deleted owner saved music = %T %+v, want empty", saved, saved)
 	}
+	bot, err := userStore.Create(ctx, domain.User{Bot: true, FirstName: "Deleted-profile reader", Username: "deleted_profile_reader_bot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiPhotos, total, err := r.BotAPIGetUserProfilePhotos(ctx, bot.ID, owner.ID, 0, 10)
+	if err != nil || total != 0 || len(apiPhotos) != 0 {
+		t.Fatalf("Bot API deleted album=%+v total=%d err=%v", apiPhotos, total, err)
+	}
+	apiAudios, err := r.BotAPIGetUserProfileAudios(ctx, bot.ID, owner.ID, 0, 10)
+	if err != nil || apiAudios.Count != 0 || len(apiAudios.Documents) != 0 {
+		t.Fatalf("Bot API deleted audios=%+v err=%v", apiAudios, err)
+	}
 }

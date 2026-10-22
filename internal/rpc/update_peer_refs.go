@@ -32,6 +32,7 @@ func (r *Router) enrichUpdateEventsWithPeerCacheStrict(ctx context.Context, view
 func (r *Router) prepareUpdateEventsForViewer(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent) []domain.UpdateEvent {
 	out := append([]domain.UpdateEvent(nil), events...)
 	for i := range out {
+		out[i].Message.Media = r.enrichPaidMedia(ctx, viewerUserID, out[i].Message.Media)
 		if out[i].Type == domain.UpdateEventChannelState {
 			if service, ok := r.deps.Channels.(ChannelAuthoritativeProjectionService); ok {
 				views, err := service.GetChannelsAuthoritative(ctx, viewerUserID, []int64{out[i].Peer.ID})
@@ -232,6 +233,9 @@ func (r *Router) enrichChannelDifferenceStrict(ctx context.Context, viewerUserID
 }
 
 func (r *Router) enrichChannelDifferenceUsers(ctx context.Context, viewerUserID int64, diff domain.ChannelDifference, strictUsers bool) (domain.ChannelDifference, error) {
+	diff.NewMessages = r.enrichPaidChannelMessages(ctx, viewerUserID, diff.NewMessages)
+	diff.Events = r.enrichPaidChannelEvents(ctx, viewerUserID, diff.Events)
+	diff.OtherUpdates = r.enrichPaidChannelEvents(ctx, viewerUserID, diff.OtherUpdates)
 	userIDs := make(map[int64]struct{})
 	channelIDs := make(map[int64]struct{})
 	for _, event := range diff.Events {
@@ -266,6 +270,7 @@ func (r *Router) enrichChannelDifferenceUsers(ctx context.Context, viewerUserID 
 }
 
 func (r *Router) enrichChannelHistory(ctx context.Context, viewerUserID int64, history domain.ChannelHistory) domain.ChannelHistory {
+	history.Messages = r.enrichPaidChannelMessages(ctx, viewerUserID, history.Messages)
 	userIDs := make(map[int64]struct{})
 	channelIDs := make(map[int64]struct{})
 	for _, msg := range history.Messages {
@@ -284,6 +289,7 @@ func (r *Router) enrichChannelHistory(ctx context.Context, viewerUserID int64, h
 }
 
 func (r *Router) enrichChannelDiscussion(ctx context.Context, viewerUserID int64, discussion domain.ChannelDiscussionMessage) domain.ChannelDiscussionMessage {
+	discussion.Messages = r.enrichPaidChannelMessages(ctx, viewerUserID, discussion.Messages)
 	userIDs := make(map[int64]struct{})
 	channelIDs := make(map[int64]struct{})
 	for _, msg := range discussion.Messages {
@@ -300,6 +306,7 @@ func (r *Router) enrichChannelDiscussion(ctx context.Context, viewerUserID int64
 }
 
 func (r *Router) enrichMessageList(ctx context.Context, viewerUserID int64, list domain.MessageList) domain.MessageList {
+	list.Messages = r.enrichPaidPrivateMessages(ctx, viewerUserID, list.Messages)
 	userIDs := make(map[int64]struct{})
 	channelIDs := make(map[int64]struct{})
 	for _, msg := range list.Messages {
@@ -332,6 +339,10 @@ func (r *Router) preloadedMessageUsers(list domain.MessageList) []domain.User {
 func collectMessagePeerRefs(msg domain.Message, currentChannelID int64, userIDs, channelIDs map[int64]struct{}) {
 	addDomainPeerRef(msg.From, currentChannelID, userIDs, channelIDs)
 	addDomainPeerRef(msg.Peer, currentChannelID, userIDs, channelIDs)
+	addDomainPeerRef(msg.GuestChatViaFrom, currentChannelID, userIDs, channelIDs)
+	if msg.BusinessBotID != 0 {
+		userIDs[msg.BusinessBotID] = struct{}{}
+	}
 	if msg.Forward != nil {
 		addDomainPeerRef(msg.Forward.From, currentChannelID, userIDs, channelIDs)
 		addDomainPeerRef(msg.Forward.SavedFrom, currentChannelID, userIDs, channelIDs)
@@ -426,6 +437,7 @@ func collectChannelMessagePeerRefs(msg domain.ChannelMessage, currentChannelID i
 		userIDs[msg.SenderUserID] = struct{}{}
 	}
 	addDomainPeerRef(msg.From, currentChannelID, userIDs, channelIDs)
+	addDomainPeerRef(msg.GuestChatViaFrom, currentChannelID, userIDs, channelIDs)
 	if msg.SendAs != nil {
 		addDomainPeerRef(*msg.SendAs, currentChannelID, userIDs, channelIDs)
 	}

@@ -375,6 +375,6 @@ func cloneEphemeralContent(content domain.EphemeralContent) domain.EphemeralCont
 	content.Entities = append([]domain.MessageEntity(nil), content.Entities...)
 	content.Media = cloneRequestedPeerMedia(content.Media)
 	content.ReplyMarkup = cloneReplyMarkup(content.ReplyMarkup)
-	content.RichMessage = cloneRichMessage(content.RichMessage)
+	content.RichMessage = domain.CloneRichMessage(content.RichMessage)
 	return content
 }

@@ -170,6 +170,10 @@ func (r *Router) onMessagesSetTyping(ctx context.Context, req *tg.MessagesSetTyp
 	if topMsgIDSet {
 		switch {
 		case topMsgID <= 0:
+			switch req.Action.(type) {
+			case *tg.SendMessageTextDraftAction, *tg.InputSendMessageRichMessageDraftAction, *tg.SendMessageRichMessageDraftAction, *tg.SendMessageStopDraftAction:
+				return false, msgIDInvalidErr()
+			}
 			topMsgID = 0
 		case topMsgID > domain.MaxMessageBoxID:
 			return false, msgIDInvalidErr()
@@ -183,9 +187,17 @@ func (r *Router) onMessagesSetTyping(ctx context.Context, req *tg.MessagesSetTyp
 	if err != nil {
 		return false, err
 	}
+	if peer.Type == domain.PeerTypeUser && r.userIsBot(ctx, peer.ID) {
+		if err := r.ensureBotAccess(ctx, peer.ID, userID); err != nil {
+			return false, err
+		}
+	}
 	action, err := r.typingAction(ctx, userID, peer, req.Action)
 	if err != nil {
 		return false, err
+	}
+	if handled, ok, err := r.messageDraftTyping(ctx, userID, peer, topMsgID, action); handled {
+		return ok, err
 	}
 	if peer.Type != domain.PeerTypeUser || peer.ID == 0 || peer.ID == userID {
 		if peer.Type == domain.PeerTypeChannel && peer.ID != 0 && r.deps.Channels != nil {
@@ -650,6 +662,15 @@ func (r *Router) checkedDomainPeerFromInputPeer(ctx context.Context, userID int6
 	out, ok := r.domainPeerFromInputPeer(userID, peer)
 	if !ok || out.ID == 0 {
 		return domain.Peer{}, peerIDInvalidErr()
+	}
+	if input, ok := peer.(*tg.InputPeerUser); ok && r.deps.Users != nil {
+		_, found, err := r.userFromInput(ctx, userID, &tg.InputUser{UserID: input.UserID, AccessHash: input.AccessHash})
+		if err != nil {
+			return domain.Peer{}, internalErr()
+		}
+		if !found {
+			return domain.Peer{}, peerIDInvalidErr()
+		}
 	}
 	if out.Type == domain.PeerTypeChannel {
 		if err := r.validateInputPeerChannelAccess(ctx, userID, peer, out.ID); err != nil {

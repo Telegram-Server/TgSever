@@ -2,13 +2,19 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 
+	"telesrv/internal/botapi"
 	"telesrv/internal/domain"
 )
 
@@ -140,27 +146,38 @@ func TestPrivateMediaEditsReachBotAPIQueueRPC(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			events, err := f.router.BotAPIUpdates(f.ctx, f.bot.ID, 0)
-			if err != nil || len(events) != 1 || events[0].Type != domain.UpdateEventEditMessage {
-				t.Fatalf("edited_message = %+v, %v", events, err)
-			}
-			media := events[0].Message.Media
+			message := editedMediaHTTPMessage(t, f)
 			switch operation {
 			case "location":
-				if media.GeoLive.Geo.Lat != 42 {
-					t.Fatalf("location = %+v", media)
+				location, ok := message["location"].(map[string]any)
+				if !ok || location["latitude"] != float64(42) || location["longitude"] != float64(43) {
+					t.Fatalf("edited location = %+v", message)
 				}
-			case "complete":
-				if len(media.Todo.Completions) != 1 || media.Todo.Completions[0].ID != 1 {
-					t.Fatalf("completion = %+v", media)
+			default:
+				checklist, ok := message["checklist"].(map[string]any)
+				if !ok {
+					t.Fatalf("edited checklist = %+v", message)
 				}
-			case "append":
-				if len(media.Todo.Items) != 3 || media.Todo.Items[2].ID != 3 {
-					t.Fatalf("append = %+v", media)
-				}
-			case "replace":
-				if media.Todo.Title != "replaced" || media.Todo.Items[0].ID != 4 {
-					t.Fatalf("replacement = %+v", media)
+				tasks := checklist["tasks"].([]any)
+				switch operation {
+				case "complete":
+					if len(tasks) != 2 {
+						t.Fatalf("completed checklist tasks = %+v", tasks)
+					}
+					task := tasks[0].(map[string]any)
+					who, completed := task["completed_by_user"].(map[string]any)
+					date, _ := task["completion_date"].(float64)
+					if task["id"] != float64(1) || !completed || who["id"] != float64(f.owner.ID) || date <= 0 {
+						t.Fatalf("completed task = %+v", task)
+					}
+				case "append":
+					if len(tasks) != 3 || tasks[2].(map[string]any)["id"] != float64(3) || tasks[2].(map[string]any)["text"] != "eggs" {
+						t.Fatalf("appended tasks = %+v", tasks)
+					}
+				case "replace":
+					if checklist["title"] != "replaced" || len(tasks) != 1 || tasks[0].(map[string]any)["id"] != float64(4) || tasks[0].(map[string]any)["text"] != "tea" {
+						t.Fatalf("replacement = %+v", checklist)
+					}
 				}
 			}
 		})
@@ -299,15 +316,24 @@ func TestTodoParticipantEditsNotifyAuthorBotRPC(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			events, err := f.router.BotAPIUpdates(f.ctx, f.bot.ID, 0)
-			if err != nil || len(events) != 1 || events[0].Type != domain.UpdateEventEditMessage || events[0].Message.ID != sent.ID {
-				t.Fatalf("author bot edit = %+v, %v", events, err)
+			message := editedMediaHTTPMessage(t, f)
+			if message["message_id"] != float64(sent.ID) {
+				t.Fatalf("author bot edit = %+v", message)
 			}
-			if operation == "complete" && events[0].Message.Media.Todo.Completions[0].CompletedBy != f.owner.ID {
-				t.Fatalf("completion = %+v", events[0])
-			}
-			if operation == "append" && events[0].Message.Media.Todo.Items[2].ID != 3 {
-				t.Fatalf("append = %+v", events[0])
+			checklist := message["checklist"].(map[string]any)
+			tasks := checklist["tasks"].([]any)
+			if operation == "complete" {
+				if len(tasks) != 2 {
+					t.Fatalf("participant checklist tasks = %+v", tasks)
+				}
+				task := tasks[0].(map[string]any)
+				who, completed := task["completed_by_user"].(map[string]any)
+				date, _ := task["completion_date"].(float64)
+				if task["id"] != float64(1) || !completed || who["id"] != float64(f.owner.ID) || date <= 0 {
+					t.Fatalf("participant completion = %+v", task)
+				}
+			} else if len(tasks) != 3 || tasks[2].(map[string]any)["id"] != float64(3) || tasks[2].(map[string]any)["text"] != "eggs" {
+				t.Fatalf("participant append = %+v", tasks)
 			}
 		})
 	}
@@ -379,14 +405,21 @@ func TestTodoReplacementPreservesParticipantCompletionAndBotEditRPC(t *testing.T
 			if who, ok := completions[0].CompletedBy.(*tg.PeerUser); !ok || who.UserID != f.bot.ID {
 				t.Fatalf("replacement completed_by = %#v", completions[0].CompletedBy)
 			}
-			events, err := f.router.BotAPIUpdates(f.ctx, f.bot.ID, 0)
-			if err != nil || len(events) != 1 || events[0].Type != domain.UpdateEventEditMessage {
-				t.Fatalf("bot edited_message = %+v, %v", events, err)
+			message := editedMediaHTTPMessage(t, f)
+			checklist := message["checklist"].(map[string]any)
+			tasks := checklist["tasks"].([]any)
+			if checklist["title"] != "corrected list" || len(tasks) != 2 {
+				t.Fatalf("replacement checklist = %+v", checklist)
+			}
+			first, second := tasks[0].(map[string]any), tasks[1].(map[string]any)
+			who, completed := first["completed_by_user"].(map[string]any)
+			if first["id"] != float64(1) || first["text"] != "corrected item" || !completed || who["id"] != float64(f.bot.ID) || first["completion_date"] != float64(1700000010) || second["id"] != float64(3) || second["text"] != "new item" {
+				t.Fatalf("replacement task transitions = %+v", tasks)
+			}
+			if _, completed := second["completion_date"]; completed {
+				t.Fatalf("new task inherited deleted completion: %+v", second)
 			}
 			want := []domain.MessageTodoCompletion{{ID: 1, CompletedBy: f.bot.ID, Date: 1700000010}}
-			if todo := events[0].Message.Media.Todo; todo.Title != "corrected list" || !slices.Equal(todo.Completions, want) {
-				t.Fatalf("bot replacement lost completion: %+v", todo)
-			}
 			// Appending must not discard completions, and toggling must still clear
 			// them rather than being mistaken for a definition replacement.
 			if _, err := f.router.onMessagesAppendTodoList(WithUserID(f.ctx, f.bot.ID), &tg.MessagesAppendTodoListRequest{
@@ -413,4 +446,31 @@ func TestTodoReplacementPreservesParticipantCompletionAndBotEditRPC(t *testing.T
 			}
 		})
 	}
+}
+
+func editedMediaHTTPMessage(t *testing.T, f botAPIReceiveFixture) map[string]any {
+	t.Helper()
+	ctx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	server, err := botapi.Start(ctx, "127.0.0.1:0", f.router.deps.Bots.(botapi.BotsService), nil, nil, nil, f.router, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/bot%d:secret/getUpdates", f.bot.ID), strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, request)
+	var body struct {
+		OK     bool             `json:"ok"`
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || !body.OK || len(body.Result) != 1 {
+		t.Fatalf("HTTP getUpdates = %s, err=%v", response.Body.String(), err)
+	}
+	message, ok := body.Result[0]["edited_message"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing edited_message = %+v", body.Result[0])
+	}
+	return message
 }

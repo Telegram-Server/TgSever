@@ -36,8 +36,19 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 	date := int(r.clock.Now().Unix())
 	addToRecent := req.GetAddToRecent() && !r.userIsBot(ctx, userID)
 	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
+		actor := domain.Peer{Type: domain.PeerTypeUser, ID: userID}
+		if !r.userIsBot(ctx, userID) {
+			sendAs, err := r.resolveSendAsPeer(ctx, userID, peer, nil)
+			if err != nil {
+				return nil, err
+			}
+			if sendAs != nil {
+				actor = *sendAs
+			}
+		}
 		res, err := r.deps.Channels.SetMessageReactions(ctx, userID, domain.SetChannelMessageReactionsRequest{
 			UserID:              userID,
+			Actor:               actor,
 			ChannelID:           peer.ID,
 			MessageID:           req.MsgID,
 			Reactions:           reactions,

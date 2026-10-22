@@ -312,6 +312,7 @@ func (r *Router) inlineEditMedia(ctx context.Context, userID int64, current *dom
 	if !inlineEditMediaAllowed(media) {
 		return nil, mediaInvalidErr()
 	}
+	media.InvertMedia = req.InvertMedia
 	return media, nil
 }
 

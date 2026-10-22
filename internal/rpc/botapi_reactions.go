@@ -19,7 +19,7 @@ func (r *Router) deliverBotReaction(ctx context.Context, botID int64, kind domai
 		for _, reaction := range payload.NewReactions {
 			next = append(next, tgMessageReaction(reaction))
 		}
-		r.pushUserUpdates(ctx, botID, &tg.Updates{Date: payload.Date, Updates: []tg.UpdateClass{&tg.UpdateBotMessageReaction{Peer: tgPeer(payload.Chat), MsgID: payload.MessageID, Date: payload.Date, Actor: &tg.PeerUser{UserID: payload.ActorUserID}, OldReactions: old, NewReactions: next}}})
+		r.pushUserUpdates(ctx, botID, &tg.Updates{Date: payload.Date, Updates: []tg.UpdateClass{&tg.UpdateBotMessageReaction{Peer: tgPeer(payload.Chat), MsgID: payload.MessageID, Date: payload.Date, Actor: tgPeer(payload.Actor()), OldReactions: old, NewReactions: next}}})
 	} else {
 		counts := make([]tg.ReactionCount, 0, len(payload.Counts))
 		for _, count := range payload.Counts {
@@ -59,7 +59,7 @@ func (r *Router) enqueueChannelBotReactions(ctx context.Context, channel domain.
 			kind = domain.BotAPIUpdateMessageReactionCount
 		}
 		for _, payload := range snapshots {
-			if kind == domain.BotAPIUpdateMessageReaction && r.userIsBot(jobCtx, payload.ActorUserID) {
+			if kind == domain.BotAPIUpdateMessageReaction && payload.ActorUserID > 0 && r.userIsBot(jobCtx, payload.ActorUserID) {
 				continue
 			}
 			for _, admin := range admins {

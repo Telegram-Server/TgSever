@@ -48,6 +48,9 @@ func (s *ChannelStore) ToggleSuggestedPostApproval(ctx context.Context, req doma
 		}
 	}()
 
+	if err := lockSuggestedPostMonoforumTx(ctx, tx, req.MonoforumID); err != nil {
+		return domain.ToggleSuggestedPostApprovalResult{}, err
+	}
 	mono, err := getChannelByID(ctx, tx, req.MonoforumID)
 	if err != nil {
 		if errors.Is(err, domain.ErrChannelInvalid) {
@@ -112,6 +115,9 @@ func (s *ChannelStore) ToggleSuggestedPostApproval(ctx context.Context, req doma
 	}
 
 	if found && existing.state != domain.SuggestedPostStateBalanceLow {
+		if req.Reject != (existing.state == domain.SuggestedPostStateRejected) {
+			return domain.ToggleSuggestedPostApprovalResult{}, domain.ErrSuggestedPostAlreadyHandled
+		}
 		result, err := s.loadSuggestedPostResultTx(ctx, tx, existing, true)
 		if err != nil {
 			return domain.ToggleSuggestedPostApprovalResult{}, err
@@ -223,18 +229,20 @@ func (s *ChannelStore) ToggleSuggestedPostApproval(ctx context.Context, req doma
 			}
 		}
 	}
+	// Snapshot while the monoforum lock is still held. A concurrent channel
+	// deletion after commit must not turn a committed approval into an error.
+	result.Monoforum, err = getChannelByID(ctx, tx, mono.ID)
+	if err != nil {
+		return domain.ToggleSuggestedPostApprovalResult{}, err
+	}
+	result.Parent, err = getChannelByID(ctx, tx, parent.ID)
+	if err != nil {
+		return domain.ToggleSuggestedPostApprovalResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ToggleSuggestedPostApprovalResult{}, fmt.Errorf("commit toggle suggested post: %w", err)
 	}
 	committed = true
-	result.Monoforum, err = getChannelByID(ctx, s.db, mono.ID)
-	if err != nil {
-		return domain.ToggleSuggestedPostApprovalResult{}, fmt.Errorf("reload suggested post monoforum after commit: %w", err)
-	}
-	result.Parent, err = getChannelByID(ctx, s.db, parent.ID)
-	if err != nil {
-		return domain.ToggleSuggestedPostApprovalResult{}, fmt.Errorf("reload suggested post parent after commit: %w", err)
-	}
 	return result, nil
 }
 
@@ -551,9 +559,6 @@ LIMIT $2`, req.Now, req.Limit)
 		}
 		result, changed, err := s.processSuggestedPostLifecycleOne(ctx, k.mono, k.message, req.Now)
 		if changed {
-			// A post-commit reload can fail after the durable transition already
-			// succeeded. Preserve that result so its committed updates still reach
-			// the fanout layer; only pre-commit failures need retry metadata.
 			out = append(out, result)
 		}
 		if err != nil {
@@ -626,6 +631,9 @@ func (s *ChannelStore) processSuggestedPostLifecycleOne(ctx context.Context, mon
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	if err := lockSuggestedPostMonoforumTx(ctx, tx, monoID); err != nil {
+		return domain.ToggleSuggestedPostApprovalResult{}, false, err
+	}
 	row, found, err := loadSuggestedPostApprovalTx(ctx, tx, monoID, messageID, true)
 	if err != nil {
 		return domain.ToggleSuggestedPostApprovalResult{}, false, err
@@ -715,7 +723,9 @@ func (s *ChannelStore) processSuggestedPostLifecycleOne(ctx context.Context, mon
 			if err := settleSuggestedPostPaymentTx(ctx, tx, row.actorID, row.payerID, row.parentID, row.price, now); err != nil {
 				return result, false, err
 			}
-			service, event, err := s.insertSuggestedPostServiceTx(ctx, tx, mono, parent, row.actorID, true, row.savedPeer(), row.messageID, now, domain.ChannelMessageAction{Type: domain.ChannelActionSuggestedPostSuccess, SuggestedPostPrice: cloneSuggestedPricePG(row.price)})
+			received := cloneSuggestedPricePG(row.price)
+			received.Amount = received.Amount * paidMessageChannelCommissionPermille / 1000
+			service, event, err := s.insertSuggestedPostServiceTx(ctx, tx, mono, parent, row.actorID, true, row.savedPeer(), row.messageID, now, domain.ChannelMessageAction{Type: domain.ChannelActionSuggestedPostSuccess, SuggestedPostPrice: received})
 			if err != nil {
 				return result, false, err
 			}
@@ -743,20 +753,18 @@ WHERE monoforum_id=$1 AND suggestion_message_id=$2`, row.monoforumID, row.messag
 	if err := upsertSuggestedPostApprovalTx(ctx, tx, row, now); err != nil {
 		return result, false, err
 	}
+	result.Monoforum, err = getChannelByID(ctx, tx, row.monoforumID)
+	if err != nil {
+		return result, false, err
+	}
+	result.Parent, err = getChannelByID(ctx, tx, row.parentID)
+	if err != nil {
+		return result, false, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return result, false, err
 	}
 	committed = true
-	reloadedMonoforum, err := getChannelByID(ctx, s.db, row.monoforumID)
-	if err != nil {
-		return result, true, fmt.Errorf("reload lifecycle monoforum after commit: %w", err)
-	}
-	result.Monoforum = reloadedMonoforum
-	reloadedParent, err := getChannelByID(ctx, s.db, row.parentID)
-	if err != nil {
-		return result, true, fmt.Errorf("reload lifecycle parent after commit: %w", err)
-	}
-	result.Parent = reloadedParent
 	return result, true, nil
 }
 

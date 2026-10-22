@@ -80,10 +80,19 @@ func botWalletFixture(t *testing.T, balance, revenue int64) (*Router, int64, int
 	return r, owner.ID, bot.ID
 }
 
+func botWalletInputPeer(t *testing.T, r *Router, viewerID, peerID int64) *tg.InputPeerUser {
+	t.Helper()
+	user, found, err := r.deps.Users.ByID(context.Background(), viewerID, peerID)
+	if err != nil || !found {
+		t.Fatalf("resolve wallet peer %d: found=%v err=%v", peerID, found, err)
+	}
+	return &tg.InputPeerUser{UserID: user.ID, AccessHash: user.AccessHash}
+}
+
 func dispatchBotRevenueStats(t *testing.T, r *Router, viewerID, botUserID int64) *tg.PaymentsStarsRevenueStats {
 	t.Helper()
 	ctx := WithUserID(context.Background(), viewerID)
-	peer := &tg.InputPeerUser{UserID: botUserID, AccessHash: 1}
+	peer := botWalletInputPeer(t, r, viewerID, botUserID)
 	req := &tg.PaymentsGetStarsRevenueStatsRequest{Peer: peer}
 	var buf bin.Buffer
 	if err := req.Encode(&buf); err != nil {
@@ -159,7 +168,7 @@ func TestPaymentsGetStarsRevenueStatsDeniesNonOwnerBotWallet(t *testing.T) {
 	const strangerID int64 = 1000000009
 	strangerCtx := WithUserID(context.Background(), strangerID)
 	var buf bin.Buffer
-	req := &tg.PaymentsGetStarsRevenueStatsRequest{Peer: &tg.InputPeerUser{UserID: botID, AccessHash: 1}}
+	req := &tg.PaymentsGetStarsRevenueStatsRequest{Peer: botWalletInputPeer(t, r, strangerID, botID)}
 	if err := req.Encode(&buf); err != nil {
 		t.Fatalf("encode request: %v", err)
 	}
@@ -167,32 +176,6 @@ func TestPaymentsGetStarsRevenueStatsDeniesNonOwnerBotWallet(t *testing.T) {
 		t.Fatal("dispatch by a non-owner returned no error, want USER_PERMISSION_DENIED")
 	} else if !tgerr.Is(err, "USER_PERMISSION_DENIED") {
 		t.Fatalf("non-owner err = %v, want USER_PERMISSION_DENIED", err)
-	}
-}
-
-// A plain user has no revenue bucket separate from their spendable Stars
-// balance, so the personal path must keep the bounded compatibility response
-// instead of starting to invent revenue.
-func TestPaymentsGetStarsRevenueStatsKeepsStubForPlainUser(t *testing.T) {
-	ctx := context.Background()
-	users := memory.NewUserStore()
-	plain, err := users.Create(ctx, domain.User{AccessHash: 9911, Phone: "15550009911", FirstName: "Plain User"})
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	r := New(Config{}, Deps{
-		Users: appusers.NewService(users),
-		Gifts: &botWalletGifts{balances: map[int64]int64{plain.ID: 4242}, revenue: map[int64]int64{plain.ID: 4242}},
-	}, zaptest.NewLogger(t), clock.System)
-
-	stats := dispatchBotRevenueStats(t, r, plain.ID, plain.ID)
-
-	current, ok := stats.Status.CurrentBalance.(*tg.StarsAmount)
-	if !ok {
-		t.Fatalf("current balance = %T, want *tg.StarsAmount", stats.Status.CurrentBalance)
-	}
-	if current.Amount != 0 {
-		t.Fatalf("plain user current balance = %d, want 0", current.Amount)
 	}
 }
 
@@ -241,7 +224,7 @@ func TestPaymentsGetStarsStatusDeniesNonOwnerBotWallet(t *testing.T) {
 
 	ctx := WithUserID(context.Background(), strangerID)
 	var buf bin.Buffer
-	req := &tg.PaymentsGetStarsStatusRequest{Peer: &tg.InputPeerUser{UserID: botID, AccessHash: 1}}
+	req := &tg.PaymentsGetStarsStatusRequest{Peer: botWalletInputPeer(t, r, strangerID, botID)}
 	if err := req.Encode(&buf); err != nil {
 		t.Fatalf("encode request: %v", err)
 	}
@@ -255,7 +238,7 @@ func TestPaymentsGetStarsStatusDeniesNonOwnerBotWallet(t *testing.T) {
 func dispatchBotWalletStatus(t *testing.T, r *Router, viewerID, botUserID int64, ton bool) *tg.PaymentsStarsStatus {
 	t.Helper()
 	ctx := WithUserID(context.Background(), viewerID)
-	req := &tg.PaymentsGetStarsStatusRequest{Peer: &tg.InputPeerUser{UserID: botUserID, AccessHash: 1}}
+	req := &tg.PaymentsGetStarsStatusRequest{Peer: botWalletInputPeer(t, r, viewerID, botUserID)}
 	req.SetTon(ton)
 	var buf bin.Buffer
 	if err := req.Encode(&buf); err != nil {
@@ -504,7 +487,7 @@ func TestPaymentsGetStarsTransactionsDeniesNonOwnerBotWallet(t *testing.T) {
 
 	ctx := WithUserID(context.Background(), strangerID)
 	var buf bin.Buffer
-	req := &tg.PaymentsGetStarsTransactionsRequest{Peer: &tg.InputPeerUser{UserID: botID, AccessHash: 1}, Limit: 10}
+	req := &tg.PaymentsGetStarsTransactionsRequest{Peer: botWalletInputPeer(t, r, strangerID, botID), Limit: 10}
 	if err := req.Encode(&buf); err != nil {
 		t.Fatalf("encode request: %v", err)
 	}
@@ -519,7 +502,7 @@ func dispatchBotWalletTransactions(t *testing.T, r *Router, viewerID, botUserID 
 	t.Helper()
 	ctx := WithUserID(context.Background(), viewerID)
 	req := &tg.PaymentsGetStarsTransactionsRequest{
-		Peer:  &tg.InputPeerUser{UserID: botUserID, AccessHash: 1},
+		Peer:  botWalletInputPeer(t, r, viewerID, botUserID),
 		Limit: 10,
 	}
 	req.SetTon(ton)

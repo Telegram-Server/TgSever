@@ -44,9 +44,12 @@ func (s *MessageStore) Create(_ context.Context, msg domain.Message) (domain.Mes
 	return msg, nil
 }
 
-func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
+func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
 	if !req.HasContent() {
 		return domain.SendPrivateTextResult{}, domain.ErrMessageEmpty
+	}
+	if _, broadcast := store.BotBroadcastFromContext(ctx); broadcast && req.RecipientBlocked {
+		return domain.SendPrivateTextResult{}, domain.ErrBotBroadcastRecipientBlocked
 	}
 	fingerprint, err := store.PrivateSendFingerprint(req)
 	if err != nil {
@@ -58,16 +61,38 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 		s.noForwardsMu.Lock()
 		defer s.noForwardsMu.Unlock()
 	}
+	commerce, broadcast, err := lockMemoryBroadcast(ctx)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	if commerce != nil {
+		defer commerce.mu.Unlock()
+		if commerce.messages != s {
+			return domain.SendPrivateTextResult{}, domain.ErrBotBroadcastReservation
+		}
+	}
+	if req.ReplyTo != nil && req.ReplyTo.Peer.Type == domain.PeerTypeChannel {
+		if s.replyChannels == nil {
+			return domain.SendPrivateTextResult{}, domain.ErrReplyMessageIDInvalid
+		}
+		s.replyChannels.mu.RLock()
+		defer s.replyChannels.mu.RUnlock()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sendPrivateTextLocked(req, fingerprint, nil)
+	res, err := s.sendPrivateTextLocked(req, fingerprint, nil)
+	if err == nil && commerce != nil {
+		commerce.commitBroadcastLocked(broadcast, &res.SenderMessage, nil, res.Duplicate)
+	}
+	return res, err
 }
 
 // A prefix stages related state events before the message. apply is infallible
 // and only runs after all validation and receipt encoding have succeeded.
 type memoryPrivateSendPrefix struct {
-	events []domain.UpdateEvent
-	apply  func([]domain.UpdateEvent)
+	events      []domain.UpdateEvent
+	beforeApply func(sender, recipient domain.Message) error
+	apply       func([]domain.UpdateEvent)
 }
 
 // Caller holds s.mu; this helper owns the dialog/event locks through commit.
@@ -79,6 +104,20 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 		IdempotencyFingerprint: fingerprint,
 	}); err != nil || found {
 		return replay, err
+	}
+	commitPassport, releasePassport, err := s.preparePassportAuthorization(req)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	if releasePassport != nil {
+		defer releasePassport()
+	}
+	commitGame, releaseGame, err := s.prepareBusinessGameMessage(req)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	if releaseGame != nil {
+		defer releaseGame()
 	}
 	if req.Date == 0 {
 		req.Date = int(time.Now().Unix())
@@ -117,29 +156,34 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 	}
 	uid := s.nextUID
 	sender := domain.Message{
-		ID:          s.nextBox[req.SenderUserID] + 1,
-		UID:         uid,
-		RandomID:    req.RandomID,
-		OwnerUserID: req.SenderUserID,
-		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID},
-		From:        domain.Peer{Type: domain.PeerTypeUser, ID: req.SenderUserID},
-		Date:        req.Date,
-		Out:         true,
-		Silent:      req.Silent,
-		NoForwards:  req.NoForwards,
-		Body:        req.Message,
-		Entities:    append([]domain.MessageEntity(nil), req.Entities...),
-		Media:       cloneRequestedPeerMedia(req.Media),
-		ViaBotID:    req.ViaBotID,
-		GroupedID:   req.GroupedID,
-		Effect:      req.Effect,
-		ReplyMarkup: cloneReplyMarkup(req.ReplyMarkup),
-		RichMessage: cloneRichMessage(req.RichMessage),
-		ReplyTo:     cloneMessageReply(senderReply),
-		Forward:     cloneMessageForward(req.Forward),
-		Pts:         nextPTS(req.SenderUserID),
+		ID:                   s.nextBox[req.SenderUserID] + 1,
+		UID:                  uid,
+		RandomID:             req.RandomID,
+		OwnerUserID:          req.SenderUserID,
+		Peer:                 domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID},
+		From:                 domain.Peer{Type: domain.PeerTypeUser, ID: domain.GuestSenderUserID(req.SenderUserID, req.GuestBotID)},
+		Date:                 req.Date,
+		Out:                  true,
+		Silent:               req.Silent,
+		NoForwards:           req.NoForwards,
+		Body:                 req.Message,
+		Entities:             append([]domain.MessageEntity(nil), req.Entities...),
+		Media:                cloneRequestedPeerMedia(req.Media),
+		ViaBotID:             req.ViaBotID,
+		BusinessConnectionID: req.BusinessConnectionID,
+		BusinessBotID:        req.BusinessBotID,
+		GroupedID:            req.GroupedID,
+		Effect:               req.Effect,
+		ReplyMarkup:          cloneReplyMarkup(req.ReplyMarkup),
+		RichMessage:          domain.CloneRichMessage(req.RichMessage),
+		ReplyTo:              cloneMessageReply(senderReply),
+		Forward:              cloneMessageForward(req.Forward),
+		Pts:                  nextPTS(req.SenderUserID),
 		// voice/round 在发送者副本上同样保持"未听"，由对端内容已读清除。
 		MediaUnread: req.Media.HasUnreadPayload() && req.SenderUserID != req.RecipientUserID,
+	}
+	if req.GuestBotID != 0 {
+		sender.GuestChatViaFrom = domain.GuestChatPeer(req.SenderUserID)
 	}
 	if req.SenderUserID == req.RecipientUserID {
 		sender.SavedPeer = domain.SavedPeerForSelfChat(req.SenderUserID, req.Forward)
@@ -159,7 +203,7 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 		// recipient = sender 是值拷贝，共享 sender.ReplyMarkup 指针/Data 切片——深拷
 		// 让双盒各持独立快照（与 postgres 每盒独立 decode 对齐，I3/I2）。
 		recipient.ReplyMarkup = cloneReplyMarkup(sender.ReplyMarkup)
-		recipient.RichMessage = cloneRichMessage(sender.RichMessage)
+		recipient.RichMessage = domain.CloneRichMessage(sender.RichMessage)
 		recipient.Pts = nextPTS(req.RecipientUserID)
 		recipient.MediaUnread = req.Media.HasUnreadPayload()
 	}
@@ -167,6 +211,11 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 	if req.RandomID != 0 {
 		senderSnapshot, err = store.EncodePrivateSendSnapshot(sender)
 		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+	}
+	if prefix != nil && prefix.beforeApply != nil {
+		if err := prefix.beforeApply(sender, recipient); err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
 	}
@@ -223,6 +272,12 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 			recipientExcludeAuthKeyID, recipientExcludeSessionID = req.OriginAuthKeyID, req.OriginSessionID
 		}
 		appendMemorySendEventLocked(events, req.RecipientUserID, newMessageEvent(recipient), recipientExcludeAuthKeyID, recipientExcludeSessionID)
+	}
+	if commitPassport != nil {
+		commitPassport()
+	}
+	if commitGame != nil {
+		commitGame()
 	}
 	return domain.SendPrivateTextResult{
 		SenderMessage:    cloneMessage(sender),
@@ -333,6 +388,12 @@ func (s *MessageStore) resolveMemoryReplyLocked(req domain.SendPrivateTextReques
 	if err := domain.ValidateMessageReplyBounds(req.ReplyTo); err != nil {
 		return nil, nil, err
 	}
+	if (req.ReplyTo.ForumTopic || req.ReplyTo.TopMessageID > 0) && req.ReplyTo.Peer.ID != 0 && req.ReplyTo.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID}) {
+		return s.resolvePrivateForumExternalReplyLocked(req)
+	}
+	if (req.ReplyTo.ForumTopic || req.ReplyTo.TopMessageID > 0) && (req.ReplyTo.Peer.ID == 0 || req.ReplyTo.Peer.Type == domain.PeerTypeUser) {
+		return s.resolvePrivateForumReplyLocked(req)
+	}
 	if req.ReplyTo.StoryID > 0 {
 		// story 回复（评论）：无源消息可查；story 作者就是会话对端，双盒同持。
 		reply := &domain.MessageReply{
@@ -345,6 +406,13 @@ func (s *MessageStore) resolveMemoryReplyLocked(req domain.SendPrivateTextReques
 	if peer.ID == 0 {
 		peer = domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID}
 	}
+	if peer.Type == domain.PeerTypeChannel {
+		if s.replyChannels == nil {
+			return nil, nil, domain.ErrReplyMessageIDInvalid
+		}
+		reply, err := s.replyChannels.externalChannelReplyLocked(req.SenderUserID, req.ReplyTo)
+		return reply, domain.CloneMessageReply(reply), err
+	}
 	if peer.Type != domain.PeerTypeUser || req.ReplyTo.External != nil {
 		return nil, nil, domain.ErrReplyMessageIDInvalid
 	}
@@ -355,21 +423,39 @@ func (s *MessageStore) resolveMemoryReplyLocked(req domain.SendPrivateTextReques
 			break
 		}
 	}
-	if target.ID == 0 {
+	if target.ID == 0 || target.Deleted {
+		if req.ReplyTo.AllowMissing && peer.ID == req.RecipientUserID && req.ReplyTo.TopMessageID == 0 && !req.ReplyTo.ForumTopic {
+			return nil, nil, nil
+		}
 		return nil, nil, domain.ErrReplyMessageIDInvalid
+	}
+	if err := domain.ValidateBotAPIReplySource(req.ReplyTo, target); err != nil {
+		return nil, nil, err
+	}
+	topicID := domain.PrivateForumMessageTopic(target)
+	if peer.ID == req.RecipientUserID && topicID == 0 {
+		if _, err := s.resolvePrivateForumTopicLocked(req.SenderUserID, req.RecipientUserID, target.ID); err == nil {
+			topicID = target.ID
+		}
+	}
+	if peer.ID == req.RecipientUserID && topicID > 0 {
+		req.ReplyTo = cloneMessageReply(req.ReplyTo)
+		req.ReplyTo.TopMessageID = topicID
+		req.ReplyTo.ForumTopic = true
+		return s.resolvePrivateForumReplyLocked(req)
 	}
 	senderReply := cloneMessageReply(req.ReplyTo)
 	senderReply.MessageID = target.ID
 	senderReply.Peer = peer
 	if peer.ID != req.RecipientUserID {
-		protected := target.NoForwards || (target.Media != nil && target.Media.TTLSeconds > 0)
+		protected := target.NoForwards || (target.Media != nil && (target.Media.TTLSeconds > 0 || target.Media.PaidMedia != nil))
 		if pair, ok := noForwardsPair(req.SenderUserID, peer.ID); ok {
 			protected = protected || s.privateNoForwards[pair].Enabled()
 		}
 		if protected {
 			return nil, nil, domain.ErrChatForwardsRestricted
 		}
-		if err := domain.ValidateExternalReplyQuote(req.ReplyTo, target.Body); err != nil {
+		if err := domain.ValidateBotAPIReplySource(req.ReplyTo, target); err != nil {
 			return nil, nil, err
 		}
 		var err error

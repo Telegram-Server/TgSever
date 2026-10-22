@@ -89,7 +89,7 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 					msg.ReplyMarkup = cloneReplyMarkup(req.ReplyMarkup)
 				}
 				if req.SetRichMessage {
-					msg.RichMessage = cloneRichMessage(req.RichMessage)
+					msg.RichMessage = domain.CloneRichMessage(req.RichMessage)
 				}
 				msg.EditDate = req.EditDate
 				msg.HideEdited = req.HideEdited

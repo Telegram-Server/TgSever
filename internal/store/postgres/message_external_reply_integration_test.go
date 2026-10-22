@@ -69,7 +69,7 @@ func TestPrivateExternalReplyAllReadPathsAndReplay(t *testing.T) {
 	if collision.SenderMessage.ID != source.SenderMessage.ID {
 		t.Fatal("fixture must exercise owner-local ID collision")
 	}
-	req := domain.SendPrivateTextRequest{SenderUserID: a.ID, RecipientUserID: b.ID, RandomID: 2, Message: "external reply", Date: 1700000001, ReplyTo: &domain.MessageReply{Peer: domain.Peer{Type: domain.PeerTypeUser, ID: a.ID}, MessageID: source.SenderMessage.ID, QuoteText: "quote", QuoteOffset: 4}}
+	req := domain.SendPrivateTextRequest{SenderUserID: a.ID, RecipientUserID: b.ID, RandomID: 2, Message: "external reply", Date: 1700000001, ReplyTo: &domain.MessageReply{Peer: domain.Peer{Type: domain.PeerTypeUser, ID: a.ID}, MessageID: source.SenderMessage.ID, QuoteText: "quote", QuoteOffset: 4, QuoteEntities: []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 5}}}}
 	res, err := messages.SendPrivateText(ctx, req)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestPrivateExternalReplyAllReadPathsAndReplay(t *testing.T) {
 	}
 	assertMessage := func(label string, m domain.Message) {
 		t.Helper()
-		if m.ReplyTo == nil || !reflect.DeepEqual(m.ReplyTo.External, want) || m.ReplyTo.QuoteText != "quote" || m.ReplyTo.QuoteOffset != 4 {
+		if m.ReplyTo == nil || !reflect.DeepEqual(m.ReplyTo.External, want) || m.ReplyTo.QuoteText != "quote" || m.ReplyTo.QuoteOffset != 4 || !reflect.DeepEqual(m.ReplyTo.QuoteEntities, req.ReplyTo.QuoteEntities) {
 			t.Fatalf("%s lost snapshot: %+v", label, m.ReplyTo)
 		}
 		expectedID := source.SenderMessage.ID
@@ -158,7 +158,7 @@ func TestPrivateExternalReplyAllReadPathsAndReplay(t *testing.T) {
 	}
 	// Corruption must fail all reconstruction boundaries, never silently erase
 	// the reply. The isolated test repairs its deliberately corrupted row.
-	encoded, err := domain.EncodeMessageReplyExternal(want)
+	encoded, err := domain.EncodeMessageReplyDetails(&domain.MessageReply{External: want})
 	if err != nil {
 		t.Fatal(err)
 	}

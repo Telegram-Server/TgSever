@@ -18,8 +18,8 @@ type ForwardGateway interface {
 	BotAPIForwardMessages(ctx context.Context, botID, chatID, fromChatID int64, messageIDs []int, silent, protectContent bool) ([]domain.Message, error)
 	// BotAPICopyMessages 复制（不带转发头）；removeCaption 去掉媒体说明文字。
 	BotAPICopyMessages(ctx context.Context, botID, chatID, fromChatID int64, messageIDs []int, removeCaption, silent, protectContent bool) ([]domain.Message, error)
-	// BotAPICopyMessage 复制单条；setCaption 为真时用 caption/entities 替换原说明文字。
-	BotAPICopyMessage(ctx context.Context, botID, chatID, fromChatID int64, messageID int, setCaption bool, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int) (domain.Message, error)
+	// BotAPICopyMessageWithOptions copies one message with the shared reply and send options.
+	BotAPICopyMessageWithOptions(ctx context.Context, botID, chatID, fromChatID int64, messageID int, setCaption bool, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int, options domain.BotAPIMessageOptions) (domain.Message, error)
 }
 
 // maxForwardMessageIDs 是 forwardMessages/copyMessages 一次最多处理的消息数。
@@ -130,13 +130,17 @@ func (h *handler) copyMessage(w http.ResponseWriter, r *http.Request, botID int6
 			return
 		}
 	}
-	replyTo, err := richReplyMessageID(values)
+	options, err := botAPIMessageOptions(values)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	msg, err := g.BotAPICopyMessage(r.Context(), botID, chatID, fromChatID, messageID, setCaption, caption, entities, markup,
-		apiBool(values["disable_notification"]), apiBool(values["protect_content"]), replyTo)
+	replyTo := 0
+	if options.ReplyParameters != nil {
+		replyTo = options.ReplyParameters.MessageID
+	}
+	msg, err := g.BotAPICopyMessageWithOptions(r.Context(), botID, chatID, fromChatID, messageID, setCaption, caption, entities, markup,
+		apiBool(values["disable_notification"]), options.ProtectContent, replyTo, options)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return

@@ -62,6 +62,7 @@ func (r *Router) onMessagesSendVote(ctx context.Context, req *tg.MessagesSendVot
 			return nil, pollMutationErr(err)
 		}
 		r.logPollOutcome("sendVote applied", userID, res.PollID, res.Message.Media)
+		r.enqueueBotAPIChannelPollMutation(ctx, userID, res, &req.Options)
 		return r.channelPollUpdates(ctx, userID, peer, req.MsgID, res, true), nil
 	case domain.PeerTypeUser:
 		if r.deps.Messages == nil {
@@ -83,6 +84,7 @@ func (r *Router) onMessagesSendVote(ctx context.Context, req *tg.MessagesSendVot
 				r.logPollOutcome("sendVote applied", userID, res.PollID, msg.Media)
 			}
 		}
+		r.enqueueBotAPIPrivatePollMutation(ctx, userID, res, &req.Options)
 		return r.privatePollUpdates(ctx, userID, res), nil
 	default:
 		return nil, peerIDInvalidErr()

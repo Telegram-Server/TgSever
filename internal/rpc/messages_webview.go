@@ -97,6 +97,9 @@ func (r *Router) onMessagesRequestSimpleWebView(ctx context.Context, req *tg.Mes
 	if !found || !bot.Bot {
 		return nil, botInvalidErr()
 	}
+	if err := r.ensureBotAccess(ctx, bot.ID, userID); err != nil {
+		return nil, err
+	}
 	urlValue, ok := req.GetURL()
 	if !ok || validateInlineWebURL(urlValue, true) != nil {
 		return nil, urlInvalidErr()
@@ -339,8 +342,8 @@ func (r *Router) AnswerWebAppQueryFromBotAPI(ctx context.Context, botID int64, b
 	} else if !found {
 		return "", userBotRequiredErr()
 	}
-	if err := r.prepareTelegramLoginMarkup(ctx, botID, result.ReplyMarkup); err != nil {
-		return "", replyMarkupErr(err)
+	if err := r.validateBotAPIInlineResult(ctx, botID, &result); err != nil {
+		return "", err
 	}
 	if err := r.sendWebViewDomainResultMessage(ctx, botID, botQueryID, result); err != nil {
 		return "", err
@@ -368,8 +371,8 @@ func (r *Router) SavePreparedInlineMessageFromBotAPI(ctx context.Context, botID,
 	} else if !found {
 		return "", 0, userIDInvalidErr()
 	}
-	if err := r.prepareTelegramLoginMarkup(ctx, botID, result.ReplyMarkup); err != nil {
-		return "", 0, replyMarkupErr(err)
+	if err := r.validateBotAPIInlineResult(ctx, botID, &result); err != nil {
+		return "", 0, err
 	}
 	id, expireDate := r.inlines.savePreparedInlineContext(ctx, r.clock.Now(), botID, userID, result, peerTypes)
 	return id, expireDate, nil
@@ -380,6 +383,9 @@ func (r *Router) sendWebViewDomainResultMessage(ctx context.Context, botID int64
 	session, ok := r.webviews.sessionForBotQueryContext(ctx, now, botID, botQueryID)
 	if !ok {
 		return queryIDInvalidErr()
+	}
+	if err := r.ensureBotAccess(ctx, botID, session.UserID); err != nil {
+		return err
 	}
 	if err := r.checkSendRateLimit(ctx, session.UserID, 1); err != nil {
 		return err
@@ -401,6 +407,7 @@ func (r *Router) sendWebViewDomainResultMessage(ctx context.Context, botID int64
 		message:      result.Message,
 		entities:     tgMessageEntities(result.Entities),
 		media:        media,
+		richMessage:  result.RichMessage,
 		silent:       session.Silent,
 		replyTo:      session.ReplyTo,
 		replyToReady: true,
@@ -427,6 +434,9 @@ func (r *Router) webViewBotFromInput(ctx context.Context, userID int64, input tg
 	}
 	if !found || !bot.Bot {
 		return domain.User{}, domain.BotProfile{}, botInvalidErr()
+	}
+	if err := r.ensureBotAccess(ctx, bot.ID, userID); err != nil {
+		return domain.User{}, domain.BotProfile{}, err
 	}
 	profile, found, err := r.deps.Bots.BotInfo(ctx, bot.ID)
 	if err != nil {
@@ -487,6 +497,9 @@ func (r *Router) webViewBotAppFromInput(ctx context.Context, userID int64, input
 		if !found || !bot.Bot {
 			return domain.User{}, domain.BotProfile{}, domain.BotApp{}, nil, "", botAppInvalidErr()
 		}
+		if err := r.ensureBotAccess(ctx, bot.ID, userID); err != nil {
+			return domain.User{}, domain.BotProfile{}, domain.BotApp{}, nil, "", err
+		}
 		profile, found, err := r.deps.Bots.BotInfo(ctx, bot.ID)
 		if err != nil {
 			return domain.User{}, domain.BotProfile{}, domain.BotApp{}, nil, "", internalErr()
@@ -532,6 +545,9 @@ func (r *Router) webViewBotAppOwnerFromInput(ctx context.Context, userID int64, 
 	}
 	if !found || !bot.Bot {
 		return domain.User{}, domain.BotProfile{}, botAppBotInvalidErr()
+	}
+	if err := r.ensureBotAccess(ctx, bot.ID, userID); err != nil {
+		return domain.User{}, domain.BotProfile{}, err
 	}
 	profile, found, err := r.deps.Bots.BotInfo(ctx, bot.ID)
 	if err != nil {

@@ -200,7 +200,7 @@ func TestBotAPIReactionBulkClearsBeyondOnePage(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Inspect remaining state directly: all through 10000, never more.
-			remaining, err := f.channels.DeleteParticipantReactions(f.ctx, f.owner.ID, domain.DeleteChannelParticipantReactionsRequest{ChannelID: f.channel.ID, ParticipantUserID: f.member.ID})
+			remaining, err := f.channels.DeleteParticipantReactions(f.ctx, f.owner.ID, domain.DeleteChannelParticipantReactionsRequest{ChannelID: f.channel.ID, Participant: domain.Peer{Type: domain.PeerTypeUser, ID: f.member.ID}})
 			if err != nil || remaining.Deleted != size.remaining {
 				t.Fatalf("remaining=%+v err=%v, want %d", remaining, err, size.remaining)
 			}

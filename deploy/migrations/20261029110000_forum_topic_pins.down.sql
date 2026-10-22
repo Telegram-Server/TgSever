@@ -1,0 +1,1 @@
+DROP INDEX channel_messages_topic_pinned_idx;

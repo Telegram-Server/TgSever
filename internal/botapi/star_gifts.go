@@ -58,5 +58,20 @@ func apiStarGift(gift domain.StarGift) map[string]any {
 		item["total_count"] = gift.AvailabilityTotal
 		item["remaining_count"] = gift.AvailabilityRemains
 	}
+	if gift.RequirePremium {
+		item["is_premium"] = true
+	}
+	if gift.PeerColorAvailable {
+		item["has_colors"] = true
+	}
+	if gift.LimitedPerUser {
+		item["personal_total_count"] = gift.PerUserTotal
+	}
+	if gift.Background != nil {
+		item["background"] = map[string]any{"center_color": gift.Background.CenterColor, "edge_color": gift.Background.EdgeColor, "text_color": gift.Background.TextColor}
+	}
+	if gift.UpgradeVariants > 0 {
+		item["unique_gift_variant_count"] = gift.UpgradeVariants
+	}
 	return item
 }

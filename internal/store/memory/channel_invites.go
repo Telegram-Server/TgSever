@@ -298,6 +298,26 @@ func (s *ChannelStore) ImportInvite(_ context.Context, req domain.ImportChannelI
 	if req.UserID == 0 || strings.TrimSpace(req.Hash) == "" {
 		return domain.CreateChannelResult{}, domain.ErrInviteHashEmpty
 	}
+	if s.commerce != nil {
+		s.commerce.mu.Lock()
+		defer s.commerce.mu.Unlock()
+		for _, offer := range s.commerce.offers {
+			if offer.InviteHash != strings.TrimSpace(req.Hash) {
+				continue
+			}
+			entitled := false
+			for _, sub := range s.commerce.subscriptions {
+				if sub.UserID == req.UserID && sub.ChannelID == offer.ChannelID && sub.Active && sub.Until > req.Date {
+					entitled = true
+					break
+				}
+			}
+			if !entitled {
+				return domain.CreateChannelResult{}, domain.ErrPaidMediaLocked
+			}
+			break
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	invite, ok := s.invites[strings.TrimSpace(req.Hash)]

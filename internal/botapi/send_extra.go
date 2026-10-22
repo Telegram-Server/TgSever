@@ -15,22 +15,23 @@ import (
 // media）。它是匿名 struct 的别名：rpc 侧声明同构的别名，两边就是同一类型，网关接口
 // 不必为此新增 domain 类型；契约测试会在两边漂移时编译失败。
 type InputMediaItem = struct {
-	Kind     string // photo / video / audio / document / animation
-	File     domain.BotAPIFileInput
-	Caption  string
-	Entities []domain.MessageEntity
-	Spoiler  bool
+	Kind          string // photo / video / audio / document / animation
+	File          domain.BotAPIFileInput
+	SecondaryFile domain.BotAPIFileInput
+	Caption       string
+	Entities      []domain.MessageEntity
+	Spoiler       bool
 }
 
 // SendExtraGateway 是 sendMediaGroup / sendPoll / sendDice / sendChatAction 的网关。
 // 可选接口：网关不实现时这些方法回 METHOD_NOT_FOUND。
 type SendExtraGateway interface {
 	// BotAPISendMediaGroup 以一个相册发出 2–10 项媒体，按发送顺序返回各条消息。
-	BotAPISendMediaGroup(ctx context.Context, botID, chatID int64, items []InputMediaItem, silent, protectContent bool, replyToMessageID int) ([]domain.Message, error)
-	BotAPISendDice(ctx context.Context, botID, chatID int64, emoji string, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int) (domain.Message, error)
+	BotAPISendMediaGroupWithOptions(ctx context.Context, botID, chatID int64, items []InputMediaItem, silent, protectContent bool, replyToMessageID int, options domain.BotAPIMessageOptions) ([]domain.Message, error)
+	BotAPISendDiceWithOptions(ctx context.Context, botID, chatID int64, emoji string, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int, options domain.BotAPIMessageOptions) (domain.Message, error)
 	// BotAPISendPoll 发送投票。poll 只用到定义字段（题干、答案文本、匿名/多选/quiz、
 	// 关闭时间与 Closed=is_closed）；quiz 的正确答案下标与解释单独传，它们是机密。
-	BotAPISendPoll(ctx context.Context, botID, chatID int64, poll domain.MessagePoll, correctOptionIDs []int, explanation string, explanationEntities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int) (domain.Message, error)
+	BotAPISendPollWithOptions(ctx context.Context, botID, chatID int64, poll domain.MessagePoll, correctOptionIDs []int, explanation string, explanationEntities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int, options domain.BotAPIMessageOptions) (domain.Message, error)
 	// BotAPISendChatAction 广播一次输入状态；action 已由网关校验为 botAPIChatActions 之一。
 	BotAPISendChatAction(ctx context.Context, botID, chatID int64, action string, messageThreadID int) (bool, error)
 }
@@ -61,34 +62,14 @@ func projectMediaGroupID(msg domain.Message, out map[string]any) {
 
 // inputMediaFromAPI 解析一个 InputMedia 对象；attach://name 从 multipart 文件里取。
 func inputMediaFromAPI(raw json.RawMessage, files map[string]uploadedFile) (InputMediaItem, error) {
-	var media struct {
-		Type            string          `json:"type"`
-		Media           string          `json:"media"`
-		Caption         string          `json:"caption"`
-		ParseMode       string          `json:"parse_mode"`
-		CaptionEntities json.RawMessage `json:"caption_entities"`
-		HasSpoiler      bool            `json:"has_spoiler"`
-		Width           int             `json:"width"`
-		Height          int             `json:"height"`
-		Duration        int             `json:"duration"`
-		Title           string          `json:"title"`
-		Performer       string          `json:"performer"`
-	}
-	if json.Unmarshal(raw, &media) != nil {
-		return InputMediaItem{}, errors.New("MEDIA_INVALID")
-	}
-	file, ok := botAPIFileInput(media.Media, files, "", map[string]string{
-		"width": strconv.Itoa(media.Width), "height": strconv.Itoa(media.Height), "duration": strconv.Itoa(media.Duration),
-		"title": media.Title, "performer": media.Performer,
-	})
-	if !ok {
-		return InputMediaItem{}, errors.New("FILE_ID_INVALID")
-	}
-	caption, entities, err := botAPIFormattedTextRaw(media.Caption, media.ParseMode, string(media.CaptionEntities), domain.MaxEphemeralCaptionLength, false)
-	if err != nil {
+	var input domain.BotAPIEphemeralEditInput
+	if err := parseEphemeralEditMedia(string(raw), &input, files); err != nil {
 		return InputMediaItem{}, err
 	}
-	return InputMediaItem{Kind: media.Type, File: file, Caption: caption, Entities: entities, Spoiler: media.HasSpoiler}, nil
+	if input.MediaKind == "live_photo" && input.File.RemoteURL != "" {
+		return InputMediaItem{}, errors.New("FILE_ID_INVALID")
+	}
+	return InputMediaItem{Kind: input.MediaKind, File: input.File, SecondaryFile: input.SecondaryFile, Caption: input.Fields.Message, Entities: input.Fields.Entities, Spoiler: input.File.HasSpoiler}, nil
 }
 
 // mediaGroupFromAPI 解析 sendMediaGroup 的 media：2–10 项；照片与视频可以混排，
@@ -145,7 +126,7 @@ func (h *handler) sendMediaGroup(w http.ResponseWriter, r *http.Request, botID i
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	msgs, err := g.BotAPISendMediaGroup(r.Context(), botID, common.chatID, items, common.silent, common.protect, common.replyTo)
+	msgs, err := g.BotAPISendMediaGroupWithOptions(r.Context(), botID, common.chatID, items, common.silent, common.protect, common.replyTo, common.options)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
@@ -175,6 +156,7 @@ type sendCommon struct {
 	silent  bool
 	protect bool
 	replyTo int
+	options domain.BotAPIMessageOptions
 }
 
 // parseSendCommon 失败时返回的是 API 错误描述。
@@ -189,8 +171,12 @@ func (h *handler) parseSendCommon(ctx context.Context, botID int64, values map[s
 			return sendCommon{}, err.Error()
 		}
 	}
-	if out.replyTo, err = richReplyMessageID(values); err != nil {
+	out.options, err = botAPIMessageOptions(values)
+	if err != nil {
 		return sendCommon{}, err.Error()
+	}
+	if out.options.ReplyParameters != nil {
+		out.replyTo = out.options.ReplyParameters.MessageID
 	}
 	return out, ""
 }
@@ -296,7 +282,7 @@ func (h *handler) sendPoll(w http.ResponseWriter, r *http.Request, botID int64) 
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	msg, err := g.BotAPISendPoll(r.Context(), botID, common.chatID, poll, correct, explanation, explanationEntities, common.markup, common.silent, common.protect, common.replyTo)
+	msg, err := g.BotAPISendPollWithOptions(r.Context(), botID, common.chatID, poll, correct, explanation, explanationEntities, common.markup, common.silent, common.protect, common.replyTo, common.options)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
@@ -371,7 +357,7 @@ func (h *handler) sendDice(w http.ResponseWriter, r *http.Request, botID int64) 
 	if emoji == "" {
 		emoji = "🎲"
 	}
-	msg, err := g.BotAPISendDice(r.Context(), botID, common.chatID, emoji, common.markup, common.silent, common.protect, common.replyTo)
+	msg, err := g.BotAPISendDiceWithOptions(r.Context(), botID, common.chatID, emoji, common.markup, common.silent, common.protect, common.replyTo, common.options)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return

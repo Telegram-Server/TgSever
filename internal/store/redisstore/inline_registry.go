@@ -104,6 +104,34 @@ func (s *InlineRegistryStore) PutInlineResult(ctx context.Context, results domai
 	return nil
 }
 
+// ClaimInlineResult fences concurrent answers across routers without decoding
+// int64 identities through Lua's floating-point JSON representation.
+func (s *InlineRegistryStore) ClaimInlineResult(ctx context.Context, results domain.BotInlineResults, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		return false, nil
+	}
+	pending, found, err := s.GetInlinePending(ctx, results.QueryID)
+	if err != nil || !found {
+		return false, err
+	}
+	if pending.BotUserID != results.BotUserID || pending.UserID != results.UserID || pending.Peer != results.Peer {
+		return false, nil
+	}
+	expected, err := json.Marshal(pending)
+	if err != nil {
+		return false, err
+	}
+	result, err := json.Marshal(results)
+	if err != nil {
+		return false, err
+	}
+	const claim = `if redis.call('GET',KEYS[1]) ~= ARGV[1] then return 0 end
+if redis.call('SET',KEYS[2],ARGV[2],'NX','PX',ARGV[3]) then return 1 end
+return 0`
+	n, err := s.c.Eval(ctx, claim, []string{inlinePendingKey(results.QueryID), inlineResultKey(results.QueryID)}, string(expected), string(result), ttl.Milliseconds()).Int()
+	return n == 1, err
+}
+
 func (s *InlineRegistryStore) GetInlineResult(ctx context.Context, queryID int64) (domain.BotInlineResults, bool, error) {
 	key := inlineResultKey(queryID)
 	var results domain.BotInlineResults

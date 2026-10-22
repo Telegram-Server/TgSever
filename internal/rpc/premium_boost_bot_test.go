@@ -30,6 +30,9 @@ func TestBotAdminReadsUserBoostsRPC(t *testing.T) {
 	if _, err := f.router.onPremiumGetUserBoosts(botCtx, req); !tgerr.Is(err, "CHAT_ADMIN_REQUIRED") {
 		t.Fatalf("nonadmin bot boost query = %v", err)
 	}
+	if _, _, err := f.router.BotAPIGetUserChatBoosts(ctx, f.bot.ID, -botAPIChannelChatIDBase-channel.ID, f.peer.ID); !tgerr.Is(err, "CHAT_ADMIN_REQUIRED") {
+		t.Fatalf("Bot API nonadmin boost=%v", err)
+	}
 	if _, err := f.router.onChannelsEditAdmin(ownerCtx, &tg.ChannelsEditAdminRequest{Channel: inputChannel(channel), UserID: inputUser(f.bot), AdminRights: tg.ChatAdminRights{ChangeInfo: true}}); err != nil {
 		t.Fatal(err)
 	}
@@ -43,5 +46,9 @@ func TestBotAdminReadsUserBoostsRPC(t *testing.T) {
 	id, ok := list.Boosts[0].GetUserID()
 	if !ok || id != f.peer.ID {
 		t.Fatalf("boost user = %d present=%v", id, ok)
+	}
+	boosts, _, err := f.router.BotAPIGetUserChatBoosts(ctx, f.bot.ID, -botAPIChannelChatIDBase-channel.ID, f.peer.ID)
+	if err != nil || len(boosts) != 1 || boosts[0].UserID != f.peer.ID || boosts[0].Slot != domain.DefaultPremiumBoostSlotID || boosts[0].Expires != now+3600 {
+		t.Fatalf("Bot API user boosts=%+v %v", boosts, err)
 	}
 }

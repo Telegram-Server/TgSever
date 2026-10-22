@@ -161,9 +161,25 @@ func (r *Router) onUploadGetFile(ctx context.Context, req *tg.UploadGetFileReque
 // authenticated caller who learned or guessed an id download ciphertext which was never
 // delivered to that caller.
 func (r *Router) authorizedFileLocationKey(ctx context.Context, location tg.InputFileLocationClass) (string, bool, error) {
+	if secure, ok := location.(*tg.InputSecureFileLocation); ok {
+		return r.passportFileLocation(ctx, secure)
+	}
 	loc, encrypted := location.(*tg.InputEncryptedFileLocation)
 	if !encrypted {
 		key, ok := fileLocationKey(location)
+		if ok && r.deps.BotCommerce != nil {
+			userID, _, err := r.currentUserID(ctx)
+			if err != nil {
+				return "", false, err
+			}
+			allowed, err := r.deps.BotCommerce.CanReadPaidFile(ctx, userID, key)
+			if err != nil {
+				return "", false, internalErr()
+			}
+			if !allowed {
+				return "", false, locationInvalidErr()
+			}
+		}
 		return key, ok, nil
 	}
 	if loc.ID == 0 || loc.AccessHash == 0 || r.deps.SecretChats == nil {

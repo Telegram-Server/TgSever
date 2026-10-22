@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 
 	"github.com/iamxvbaba/td/tg"
+	"telesrv/internal/botapi"
 
 	"telesrv/internal/domain"
 )
@@ -169,6 +170,13 @@ func (r *Router) pushInlineBotSendFeedback(ctx context.Context, userID int64, re
 	if results.BotUserID == 0 || result.ID == "" {
 		return
 	}
+	if r.ensureBotAccess(ctx, results.BotUserID, userID) != nil || r.deps.BotInlineFeedback == nil {
+		return
+	}
+	percentage, err := r.deps.BotInlineFeedback.GetInlineFeedback(ctx, results.BotUserID)
+	if err != nil || percentage <= 0 || int(uint64(randomNonZeroInt64())%100) >= percentage {
+		return
+	}
 	update := &tg.UpdateBotInlineSend{
 		UserID: userID,
 		Query:  results.Query,
@@ -188,4 +196,14 @@ func (r *Router) pushInlineBotSendFeedback(ctx context.Context, userID int64, re
 		Updates: []tg.UpdateClass{update},
 		Date:    int(r.clock.Now().Unix()),
 	})
+	payload := map[string]any{"result_id": result.ID, "from": r.inlineUserObject(ctx, userID), "query": results.Query}
+	if results.Geo != nil {
+		payload["location"] = inlineLocationObject(results.Geo)
+	}
+	if id, ok := inlineDomainMessageID(update.MsgID); ok {
+		if token, valid := botapi.EncodeInlineMessageID(id); valid {
+			payload["inline_message_id"] = token
+		}
+	}
+	r.enqueueBotAPIObject(ctx, results.BotUserID, domain.BotAPIUpdateKind("chosen_inline_result"), payload)
 }

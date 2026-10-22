@@ -124,6 +124,7 @@ type UpdateEvent struct {
 	BotChatMember  *BotChatMemberUpdated
 	BotReaction    *BotMessageReactionUpdated
 	BotJoinRequest *BotChatJoinRequest
+	BotAPIObject   *BotAPIObject
 	// BotAPIUpdateID is the HTTP Bot API update_id. It is intentionally separate
 	// from MTProto Pts: Bot API ephemeral envelopes never advance account state.
 	BotAPIUpdateID   int64

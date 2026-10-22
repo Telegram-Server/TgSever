@@ -154,6 +154,10 @@ type Service struct {
 	donations             donationsSource
 	gramsrvAdmin          gramsrvFreezeAdmin
 	gramsrvAdminChatIDs   map[int64]struct{}
+	gamesPassport         store.BotGamesPassportStore
+	guestQueries          store.BotGuestQueryStore
+	paidBroadcast         store.BotBroadcastStore
+	inlineFeedback        store.BotInlineFeedbackStore
 	// dialogLimiter bounds how often one applicant can drive a service-bot dialog.
 	// The verification service already rate-limits application creation; this is the
 	// separate bound on dialog traffic itself, so a script cannot spin the state
@@ -508,7 +512,17 @@ func (s *Service) loadBotProfiles(ctx context.Context, botUserIDs []int64) (map[
 
 // BotInfo 返回 bot 的元数据（userFull.bot_info hydrate 用）。
 func (s *Service) BotInfo(ctx context.Context, botUserID int64) (domain.BotProfile, bool, error) {
-	return s.botProfile(ctx, botUserID)
+	profile, found, err := s.botProfile(ctx, botUserID)
+	if err != nil || !found {
+		return profile, found, err
+	}
+	if s.guestQueries != nil {
+		profile.GuestChat, err = s.guestQueries.GuestBotEnabled(ctx, botUserID)
+		if err != nil {
+			return domain.BotProfile{}, false, err
+		}
+	}
+	return profile, true, nil
 }
 
 type botBatchStore interface {
@@ -517,7 +531,20 @@ type botBatchStore interface {
 
 // BotInfos 批量返回 bot 元数据，供频道 full info / participants 这类高频富化路径避免逐 bot 点查。
 func (s *Service) BotInfos(ctx context.Context, botUserIDs []int64) (map[int64]domain.BotProfile, error) {
-	return s.botProfiles(ctx, botUserIDs)
+	profiles, err := s.botProfiles(ctx, botUserIDs)
+	if err != nil {
+		return nil, err
+	}
+	if s.guestQueries != nil {
+		for id, profile := range profiles {
+			profile.GuestChat, err = s.guestQueries.GuestBotEnabled(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			profiles[id] = profile
+		}
+	}
+	return profiles, nil
 }
 
 func uniqueBotUserIDs(ids []int64) []int64 {
@@ -566,6 +593,10 @@ func (s *Service) CheckUsername(ctx context.Context, ownerUserID int64, username
 // CreateBot 创建一个新 bot 账号：users 行（is_bot, bot_info_version=1, 无 phone）+
 // bots 行（owner、token）。返回新账号与完整 token（唯一一次返回明文的途径之一）。
 func (s *Service) CreateBot(ctx context.Context, ownerUserID int64, name, username string) (domain.User, string, error) {
+	return s.createBot(ctx, ownerUserID, 0, name, username)
+}
+
+func (s *Service) createBot(ctx context.Context, ownerUserID, managerID int64, name, username string) (domain.User, string, error) {
 	if s == nil || s.users == nil || s.bots == nil || ownerUserID == 0 {
 		return domain.User{}, "", domain.ErrBotNameInvalid
 	}
@@ -599,7 +630,19 @@ func (s *Service) CreateBot(ctx context.Context, ownerUserID int64, name, userna
 	if err != nil {
 		return domain.User{}, "", err
 	}
-	u, profile, err := s.bots.CreateBotAccount(ctx, domain.User{
+	create := s.bots.CreateBotAccount
+	if managerID != 0 {
+		managed, ok := s.bots.(interface {
+			CreateManagedBotAccount(context.Context, domain.User, domain.BotProfile, int64) (domain.User, domain.BotProfile, error)
+		})
+		if !ok {
+			return domain.User{}, "", domain.ErrBotManagerInvalid
+		}
+		create = func(ctx context.Context, u domain.User, p domain.BotProfile) (domain.User, domain.BotProfile, error) {
+			return managed.CreateManagedBotAccount(ctx, u, p, managerID)
+		}
+	}
+	u, profile, err := create(ctx, domain.User{
 		AccessHash:     accessHash,
 		FirstName:      name,
 		Username:       username,

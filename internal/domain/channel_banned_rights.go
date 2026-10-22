@@ -74,7 +74,7 @@ func channelBannedRightsBlockMediaKind(rights ChannelBannedRights, media *Messag
 		return channelBannedRightsBlockDocument(rights, media)
 	case MessageMediaKindPoll:
 		return rights.SendPolls
-	case MessageMediaKindDice:
+	case MessageMediaKindDice, MessageMediaKindGame:
 		return rights.SendGames
 	case MessageMediaKindWebPage:
 		return rights.EmbedLinks

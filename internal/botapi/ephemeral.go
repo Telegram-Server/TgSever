@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,40 +14,73 @@ import (
 )
 
 type ephemeralSendTarget struct {
-	receiverUserID     int64
-	callbackQueryID    int64
-	replyToEphemeralID int
-	topMessageID       int
+	receiverUserID              int64
+	callbackQueryID             int64
+	replyToEphemeralID          int
+	replaceCallbackQueryMessage bool
+	topMessageID                int
 }
 
 func parseEphemeralSendTarget(values map[string]string) (ephemeralSendTarget, bool, error) {
 	var result ephemeralSendTarget
-	receiverRaw := strings.TrimSpace(values["receiver_user_id"])
-	callbackRaw := strings.TrimSpace(values["callback_query_id"])
-	var reply struct {
-		MessageID          int `json:"message_id"`
-		EphemeralMessageID int `json:"ephemeral_message_id"`
-	}
-	if raw := strings.TrimSpace(values["reply_parameters"]); raw != "" {
-		if json.Unmarshal([]byte(raw), &reply) != nil || reply.MessageID < 0 || reply.EphemeralMessageID < 0 ||
-			(reply.MessageID != 0 && reply.EphemeralMessageID != 0) {
-			return result, false, errors.New("REPLY_PARAMETERS_INVALID")
+	for _, legacy := range []string{"receiver_user_id", "callback_query_id", "replace_callback_query_message"} {
+		if _, present := values[legacy]; present {
+			return result, false, errors.New("EPHEMERAL_MESSAGE_PARAMETERS_INVALID")
 		}
 	}
-	if receiverRaw == "" {
-		if callbackRaw != "" || reply.EphemeralMessageID != 0 {
-			return result, false, errors.New("USER_ID_INVALID")
+	rawParameters, present := values["ephemeral_message_parameters"]
+	if !present {
+		var reply map[string]json.RawMessage
+		if raw := values["reply_parameters"]; raw != "" {
+			if json.Unmarshal([]byte(raw), &reply) != nil {
+				return result, false, errors.New("REPLY_PARAMETERS_INVALID")
+			}
+			if _, exists := reply["ephemeral_message_id"]; exists {
+				return result, false, errors.New("EPHEMERAL_MESSAGE_PARAMETERS_INVALID")
+			}
 		}
 		return result, false, nil
 	}
-	receiver, err := strconv.ParseInt(receiverRaw, 10, 64)
-	if err != nil || receiver <= 0 {
-		return result, false, errors.New("USER_ID_INVALID")
+	var parameters struct {
+		ReceiverUserID              int64  `json:"receiver_user_id"`
+		CallbackQueryID             string `json:"callback_query_id"`
+		ReplaceCallbackQueryMessage bool   `json:"replace_callback_query_message"`
 	}
-	result.receiverUserID = receiver
-	result.replyToEphemeralID = reply.EphemeralMessageID
-	if reply.MessageID != 0 {
-		return result, false, errors.New("REPLY_PARAMETERS_INVALID")
+	decoder := json.NewDecoder(strings.NewReader(rawParameters))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&parameters) != nil || decoder.Decode(new(any)) != io.EOF || parameters.ReceiverUserID <= 0 {
+		return result, false, errors.New("EPHEMERAL_MESSAGE_PARAMETERS_INVALID")
+	}
+	var parameterFields map[string]json.RawMessage
+	if json.Unmarshal([]byte(rawParameters), &parameterFields) != nil {
+		return result, false, errors.New("EPHEMERAL_MESSAGE_PARAMETERS_INVALID")
+	}
+	for _, value := range parameterFields {
+		if strings.TrimSpace(string(value)) == "null" {
+			return result, false, errors.New("EPHEMERAL_MESSAGE_PARAMETERS_INVALID")
+		}
+	}
+	if strings.TrimSpace(values["business_connection_id"]) != "" {
+		return result, false, errors.New("BUSINESS_CONNECTION_INVALID")
+	}
+	if _, present := values["direct_messages_topic_id"]; present {
+		return result, false, errors.New("DIRECT_MESSAGES_TOPIC_ID_INVALID")
+	}
+	if _, present := values["suggested_post_parameters"]; present {
+		return result, false, errors.New("SUGGESTED_POST_PARAMETERS_INVALID")
+	}
+	result.receiverUserID = parameters.ReceiverUserID
+	result.replaceCallbackQueryMessage = parameters.ReplaceCallbackQueryMessage
+	callbackRaw := parameters.CallbackQueryID
+	reply, err := parseBotAPIReplyParameters(values)
+	if err != nil {
+		return result, false, err
+	}
+	if reply != nil {
+		if reply.MessageID != 0 || reply.ChatID != "" || reply.AllowSendingWithoutReply || reply.ChecklistTaskID != 0 || reply.PollOptionID != "" {
+			return result, false, errors.New("REPLY_PARAMETERS_INVALID")
+		}
+		result.replyToEphemeralID = reply.EphemeralMessageID
 	}
 	if callbackRaw != "" {
 		result.callbackQueryID, err = strconv.ParseInt(callbackRaw, 10, 64)
@@ -53,10 +88,13 @@ func parseEphemeralSendTarget(values map[string]string) (ephemeralSendTarget, bo
 			return result, false, errors.New("QUERY_ID_INVALID")
 		}
 	}
-	if result.callbackQueryID != 0 && result.replyToEphemeralID != 0 {
+	if result.replaceCallbackQueryMessage && result.callbackQueryID == 0 {
+		return result, false, errors.New("QUERY_ID_INVALID")
+	}
+	if (result.callbackQueryID != 0 && result.replyToEphemeralID != 0) || strings.TrimSpace(values["reply_to_message_id"]) != "" {
 		return result, false, errors.New("REPLY_PARAMETERS_INVALID")
 	}
-	if raw := strings.TrimSpace(values["message_thread_id"]); raw != "" {
+	if raw, present := values["message_thread_id"]; present {
 		result.topMessageID, err = strconv.Atoi(raw)
 		if err != nil || result.topMessageID <= 0 || result.topMessageID > domain.MaxMessageBoxID {
 			return result, false, errors.New("MESSAGE_THREAD_ID_INVALID")
@@ -65,16 +103,111 @@ func parseEphemeralSendTarget(values map[string]string) (ephemeralSendTarget, bo
 	return result, true, nil
 }
 
+func botAPIMessageOptions(values map[string]string) (domain.BotAPIMessageOptions, error) {
+	options := domain.BotAPIMessageOptions{BusinessConnectionID: strings.TrimSpace(values["business_connection_id"])}
+	if raw, present := values["direct_messages_topic_id"]; present {
+		id, err := strconv.Atoi(raw)
+		if err != nil || id <= 0 || id > domain.MaxMessageBoxID {
+			return options, errors.New("DIRECT_MESSAGES_TOPIC_ID_INVALID")
+		}
+		options.DirectMessagesTopicID = id
+	}
+	if raw, present := values["suggested_post_parameters"]; present {
+		post, err := parseBotAPISuggestedPost(raw)
+		if err != nil {
+			return options, err
+		}
+		options.SuggestedPost = post
+	}
+	if raw, present := values["message_thread_id"]; present {
+		threadID, err := strconv.Atoi(raw)
+		if err != nil || threadID <= 0 || threadID > domain.MaxMessageBoxID {
+			return options, errors.New("MESSAGE_THREAD_ID_INVALID")
+		}
+		options.MessageThreadID = threadID
+	}
+	if raw, present := values["allow_paid_broadcast"]; present {
+		if raw != "true" && raw != "false" {
+			return options, errors.New("ALLOW_PAID_BROADCAST_INVALID")
+		}
+		options.AllowPaidBroadcast = raw == "true"
+	}
+	if raw, present := values["protect_content"]; present {
+		if raw != "true" && raw != "false" {
+			return options, errors.New("PROTECT_CONTENT_INVALID")
+		}
+		options.ProtectContent = raw == "true"
+	}
+	var err error
+	options.EffectID, err = apiInt64(values["message_effect_id"])
+	if err != nil {
+		return options, errors.New("EFFECT_ID_INVALID")
+	}
+	options.ReplyParameters, err = parseBotAPIReplyParameters(values)
+	if err != nil {
+		return options, err
+	}
+	if reply := options.ReplyParameters; reply != nil {
+		if reply.EphemeralMessageID != 0 || (options.BusinessConnectionID != "" && reply.ChatID != "") {
+			return options, errors.New("REPLY_PARAMETERS_INVALID")
+		}
+	}
+	return options, nil
+}
+
 func botAPIFileInput(raw string, files map[string]uploadedFile, field string, values map[string]string) (domain.BotAPIFileInput, bool) {
 	locationKey, remoteURL, fileName, mimeType, fileBytes, ok := mediaInput(raw, files, field)
 	if !ok {
 		return domain.BotAPIFileInput{}, false
 	}
-	return domain.BotAPIFileInput{
+	result := domain.BotAPIFileInput{
 		LocationKey: locationKey, RemoteURL: remoteURL, FileName: fileName, MimeType: mimeType, Bytes: fileBytes,
-		Width: apiInt(values["width"], 0), Height: apiInt(values["height"], 0), Duration: apiInt(values["duration"], 0),
 		Title: values["title"], Performer: values["performer"], Emoji: values["emoji"],
-	}, true
+	}
+	for field, output := range map[string]*int{"width": &result.Width, "height": &result.Height, "duration": &result.Duration} {
+		if raw, present := values[field]; present {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 0 {
+				return domain.BotAPIFileInput{}, false
+			}
+			*output = n
+		}
+	}
+	if raw, present := values["length"]; present {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			return domain.BotAPIFileInput{}, false
+		}
+		result.Width, result.Height = n, n
+	}
+	for field, output := range map[string]*bool{
+		"has_spoiler": &result.HasSpoiler, "show_caption_above_media": &result.ShowCaptionAboveMedia,
+		"supports_streaming": &result.SupportsStreaming, "disable_content_type_detection": &result.DisableContentTypeDetection,
+	} {
+		if raw, present := values[field]; present {
+			if raw != "true" && raw != "false" {
+				return domain.BotAPIFileInput{}, false
+			}
+			*output = raw == "true"
+		}
+	}
+	if raw, present := values["start_timestamp"]; present {
+		value, err := strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return domain.BotAPIFileInput{}, false
+		}
+		result.StartTimestamp = value
+	}
+	for field, output := range map[string]**domain.BotAPIFileInput{"thumbnail": &result.Thumbnail, "cover": &result.VideoCover} {
+		if raw := values[field]; raw != "" {
+			file, ok := botAPIFileInput(raw, files, field, nil)
+			if !ok || (field == "thumbnail" && len(file.Bytes) == 0) {
+				return domain.BotAPIFileInput{}, false
+			}
+			*output = &file
+		}
+	}
+	return result, true
 }
 
 func (h *handler) writeEphemeralMessage(w http.ResponseWriter, r *http.Request, botID int64, message domain.EphemeralMessage) {
@@ -96,45 +229,13 @@ func (h *handler) sendEphemeralContact(w http.ResponseWriter, r *http.Request, b
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	target, ephemeral, err := parseEphemeralSendTarget(values)
-	if err != nil || !ephemeral {
-		if err == nil {
-			err = errors.New("EPHEMERAL_TARGET_REQUIRED")
-		}
-		writeAPIError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	chatID, description := h.ephemeralChatID(r.Context(), botID, values["chat_id"], "MEDIA_INVALID")
-	if description != "" {
-		writeAPIError(w, http.StatusBadRequest, description)
-		return
-	}
 	if strings.TrimSpace(values["phone_number"]) == "" || strings.TrimSpace(values["first_name"]) == "" || len(values["vcard"]) > 2048 {
 		writeAPIError(w, http.StatusBadRequest, "MEDIA_INVALID")
 		return
 	}
-	markup, _, err := optionalInlineReplyMarkup(values)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	gateway, ok := h.gateway.(EphemeralGatewayService)
-	if !ok {
-		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
-		return
-	}
-	message, err := gateway.BotAPISendEphemeral(r.Context(), domain.BotAPIEphemeralSendInput{
-		BotUserID: botID, ChatID: chatID, ReceiverUserID: target.receiverUserID,
-		CallbackQueryID: target.callbackQueryID, ReplyToEphemeralID: target.replyToEphemeralID, TopMessageID: target.topMessageID,
-		Kind: "contact", ReplyMarkup: markup, DirectMedia: &domain.MessageMedia{Kind: domain.MessageMediaKindContact, Contact: &domain.MessageContact{
-			PhoneNumber: values["phone_number"], FirstName: values["first_name"], LastName: values["last_name"], Vcard: values["vcard"],
-		}},
-	})
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
-		return
-	}
-	h.writeEphemeralMessage(w, r, botID, message)
+	h.sendDirectMedia(w, r, botID, values, "contact", &domain.MessageMedia{Kind: domain.MessageMediaKindContact, Contact: &domain.MessageContact{
+		PhoneNumber: values["phone_number"], FirstName: values["first_name"], LastName: values["last_name"], Vcard: values["vcard"],
+	}})
 }
 
 func (h *handler) sendEphemeralLocation(w http.ResponseWriter, r *http.Request, botID int64, venue bool) {
@@ -143,29 +244,11 @@ func (h *handler) sendEphemeralLocation(w http.ResponseWriter, r *http.Request, 
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	target, ephemeral, err := parseEphemeralSendTarget(values)
-	if err != nil || !ephemeral {
-		if err == nil {
-			err = errors.New("EPHEMERAL_TARGET_REQUIRED")
-		}
-		writeAPIError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	chatID, description := h.ephemeralChatID(r.Context(), botID, values["chat_id"], "MEDIA_INVALID")
-	if description != "" {
-		writeAPIError(w, http.StatusBadRequest, description)
-		return
-	}
 	latitude, latErr := strconv.ParseFloat(strings.TrimSpace(values["latitude"]), 64)
 	longitude, longErr := strconv.ParseFloat(strings.TrimSpace(values["longitude"]), 64)
 	accuracy, accuracyErr := strconv.ParseFloat(defaultString(values["horizontal_accuracy"], "0"), 64)
-	if latErr != nil || longErr != nil || accuracyErr != nil || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 || accuracy < 0 || accuracy > 1500 || apiInt(values["live_period"], 0) != 0 {
+	if latErr != nil || longErr != nil || accuracyErr != nil || math.IsNaN(latitude) || math.IsNaN(longitude) || math.IsNaN(accuracy) || math.IsInf(latitude, 0) || math.IsInf(longitude, 0) || math.IsInf(accuracy, 0) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 || accuracy < 0 || accuracy > 1500 {
 		writeAPIError(w, http.StatusBadRequest, "MEDIA_INVALID")
-		return
-	}
-	markup, _, err := optionalInlineReplyMarkup(values)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	geo := domain.MessageGeoPoint{Lat: latitude, Long: longitude, AccuracyRadius: int(accuracy)}
@@ -185,25 +268,100 @@ func (h *handler) sendEphemeralLocation(w http.ResponseWriter, r *http.Request, 
 			Geo: geo, Title: values["title"], Address: values["address"], Provider: provider, VenueID: venueID, VenueType: venueType,
 		}}
 	}
-	gateway, ok := h.gateway.(EphemeralGatewayService)
-	if !ok {
+	if !venue {
+		period, heading, radius := 0, 0, 0
+		for field, output := range map[string]*int{"live_period": &period, "heading": &heading, "proximity_alert_radius": &radius} {
+			if raw, present := values[field]; present {
+				value, err := strconv.Atoi(raw)
+				if err != nil {
+					writeAPIError(w, http.StatusBadRequest, "MEDIA_INVALID")
+					return
+				}
+				*output = value
+			}
+		}
+		if (period != 0 && period != 2147483647 && (period < 60 || period > 86400)) || heading < 0 || heading > 360 || radius < 0 || radius > 100000 || (period == 0 && (heading != 0 || radius != 0)) {
+			writeAPIError(w, http.StatusBadRequest, "MEDIA_INVALID")
+			return
+		}
+		if period != 0 {
+			media = &domain.MessageMedia{Kind: domain.MessageMediaKindGeoLive, GeoLive: &domain.MessageGeoLive{Geo: geo, Period: period, Heading: heading, ProximityNotificationRadius: radius}}
+		}
+	}
+	h.sendDirectMedia(w, r, botID, values, "location", media)
+}
+
+func (h *handler) sendDirectMedia(w http.ResponseWriter, r *http.Request, botID int64, values map[string]string, kind string, media *domain.MessageMedia) {
+	if h.gateway == nil {
 		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
 		return
 	}
-	message, err := gateway.BotAPISendEphemeral(r.Context(), domain.BotAPIEphemeralSendInput{
+	target, ephemeral, err := parseEphemeralSendTarget(values)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	chatID, description := h.ephemeralChatID(r.Context(), botID, values["chat_id"], "MEDIA_INVALID")
+	if description != "" {
+		writeAPIError(w, http.StatusBadRequest, description)
+		return
+	}
+	var markup *domain.MessageReplyMarkup
+	if raw := values["reply_markup"]; raw != "" {
+		markup, err = replyMarkupFromAPI(json.RawMessage(raw))
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	input := domain.BotAPIEphemeralSendInput{
 		BotUserID: botID, ChatID: chatID, ReceiverUserID: target.receiverUserID,
-		CallbackQueryID: target.callbackQueryID, ReplyToEphemeralID: target.replyToEphemeralID, TopMessageID: target.topMessageID,
-		Kind: "location", ReplyMarkup: markup, DirectMedia: media,
-	})
+		CallbackQueryID: target.callbackQueryID, ReplaceCallbackQueryMessage: target.replaceCallbackQueryMessage,
+		ReplyToEphemeralID: target.replyToEphemeralID, TopMessageID: target.topMessageID,
+		Kind: kind, ReplyMarkup: markup, DirectMedia: media,
+	}
+	if ephemeral {
+		if markup != nil && !markup.IsZero() && markup.Kind() != domain.MessageReplyMarkupInline {
+			writeAPIError(w, http.StatusBadRequest, "BUTTON_TYPE_INVALID")
+			return
+		}
+		gateway, ok := h.gateway.(EphemeralGatewayService)
+		if !ok {
+			writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
+			return
+		}
+		message, err := gateway.BotAPISendEphemeral(r.Context(), input)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+			return
+		}
+		h.writeEphemeralMessage(w, r, botID, message)
+		return
+	}
+	options, err := botAPIMessageOptions(values)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if options.ReplyParameters != nil {
+		input.ReplyToMessageID = options.ReplyParameters.MessageID
+	}
+	input.Silent, input.ProtectContent = apiBool(values["disable_notification"]), options.ProtectContent
+	input.EffectID = options.EffectID
+	message, err := h.gateway.BotAPISendOrdinary(r.Context(), input, options)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
 	}
-	h.writeEphemeralMessage(w, r, botID, message)
+	users := []domain.User(nil)
+	if self, err := h.gateway.BotAPISelf(r.Context(), botID); err == nil && self.ID != 0 {
+		users = append(users, self)
+	}
+	writeAPIOK(w, apiMessage(message, users))
 }
 
 func (h *handler) editEphemeralMessage(w http.ResponseWriter, r *http.Request, botID int64, mode string) {
-	values, err := requestValues(r)
+	values, files, err := requestValuesWithFiles(r)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
@@ -247,7 +405,7 @@ func (h *handler) editEphemeralMessage(w http.ResponseWriter, r *http.Request, b
 	case "reply_markup":
 		input.Fields.SetReplyMarkup = true
 	case "media":
-		if err := parseEphemeralEditMedia(values["media"], &input); err != nil {
+		if err := parseEphemeralEditMedia(values["media"], &input, files); err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -268,47 +426,59 @@ func (h *handler) editEphemeralMessage(w http.ResponseWriter, r *http.Request, b
 	writeAPIOK(w, result)
 }
 
-func parseEphemeralEditMedia(raw string, input *domain.BotAPIEphemeralEditInput) error {
-	var media struct {
-		Type            string          `json:"type"`
-		Media           string          `json:"media"`
-		Photo           string          `json:"photo"`
-		Caption         string          `json:"caption"`
-		ParseMode       string          `json:"parse_mode"`
-		CaptionEntities json.RawMessage `json:"caption_entities"`
-		Width           int             `json:"width"`
-		Height          int             `json:"height"`
-		Duration        int             `json:"duration"`
-		Title           string          `json:"title"`
-		Performer       string          `json:"performer"`
-	}
-	if input == nil || json.Unmarshal([]byte(raw), &media) != nil || media.Type == "" {
+func parseEphemeralEditMedia(raw string, input *domain.BotAPIEphemeralEditInput, files map[string]uploadedFile) error {
+	var fields map[string]json.RawMessage
+	if input == nil || json.Unmarshal([]byte(raw), &fields) != nil || fields == nil {
 		return errors.New("MEDIA_INVALID")
 	}
-	allowed := map[string]bool{"animation": true, "audio": true, "document": true, "live_photo": true, "photo": true, "video": true}
-	if !allowed[media.Type] {
+	allowedFields := map[string]bool{
+		"type": true, "media": true, "photo": true, "caption": true, "parse_mode": true, "caption_entities": true,
+		"width": true, "height": true, "duration": true, "title": true, "performer": true, "thumbnail": true,
+		"has_spoiler": true, "show_caption_above_media": true, "supports_streaming": true,
+		"disable_content_type_detection": true, "cover": true, "start_timestamp": true,
+	}
+	values := make(map[string]string, len(fields))
+	for field, value := range fields {
+		if !allowedFields[field] || string(value) == "null" {
+			return errors.New("MEDIA_INVALID")
+		}
+		switch field {
+		case "type", "media", "photo", "caption", "parse_mode", "title", "performer", "thumbnail", "cover":
+			if len(value) == 0 || value[0] != '"' {
+				return errors.New("MEDIA_INVALID")
+			}
+		}
+		if len(value) != 0 && value[0] == '"' {
+			var text string
+			if json.Unmarshal(value, &text) != nil {
+				return errors.New("MEDIA_INVALID")
+			}
+			values[field] = text
+		} else {
+			values[field] = string(value)
+		}
+	}
+	kind := values["type"]
+	if !map[string]bool{"animation": true, "audio": true, "document": true, "live_photo": true, "photo": true, "video": true}[kind] {
 		return errors.New("MEDIA_INVALID")
 	}
-	primaryRaw := media.Media
-	if media.Type == "live_photo" {
-		primaryRaw = media.Photo
+	primaryRaw := values["media"]
+	if kind == "live_photo" {
+		primaryRaw = values["photo"]
 	}
-	primary, ok := botAPIFileInput(primaryRaw, nil, "", map[string]string{
-		"width": strconv.Itoa(media.Width), "height": strconv.Itoa(media.Height), "duration": strconv.Itoa(media.Duration),
-		"title": media.Title, "performer": media.Performer,
-	})
-	if !ok || len(primary.Bytes) != 0 {
+	primary, ok := botAPIFileInput(primaryRaw, files, "", values)
+	if !ok {
 		return errors.New("FILE_ID_INVALID")
 	}
-	input.MediaKind, input.File = media.Type, primary
-	if media.Type == "live_photo" {
-		secondary, ok := botAPIFileInput(media.Media, nil, "", map[string]string{"duration": strconv.Itoa(media.Duration)})
-		if !ok || len(secondary.Bytes) != 0 {
+	input.MediaKind, input.File = kind, primary
+	if kind == "live_photo" {
+		secondary, ok := botAPIFileInput(values["media"], files, "", values)
+		if !ok || secondary.RemoteURL != "" {
 			return errors.New("FILE_ID_INVALID")
 		}
 		input.SecondaryFile = secondary
 	}
-	caption, entities, err := botAPIFormattedTextRaw(media.Caption, media.ParseMode, string(media.CaptionEntities), domain.MaxEphemeralCaptionLength, false)
+	caption, entities, err := botAPIFormattedTextRaw(values["caption"], values["parse_mode"], values["caption_entities"], domain.MaxEphemeralCaptionLength, false)
 	if err != nil {
 		return err
 	}

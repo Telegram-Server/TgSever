@@ -242,15 +242,31 @@ func (r *Router) onBotsCreateBot(ctx context.Context, req *tg.BotsCreateBotReque
 	if err != nil {
 		return nil, internalErr()
 	}
-	if r.deps.Bots == nil {
+	if req == nil || r.deps.Bots == nil {
 		return nil, internalErr()
 	}
 	if err := r.validateBotManager(ctx, userID, req.ManagerID); err != nil {
 		return nil, err
 	}
-	u, _, err := r.deps.Bots.CreateBot(ctx, userID, req.Name, req.Username)
+	manager, found, err := r.userFromInput(ctx, userID, req.ManagerID)
+	if err != nil || !found {
+		return nil, managerPermissionMissingErr()
+	}
+	managed, ok := r.deps.Bots.(interface {
+		CreateManagedBot(context.Context, int64, int64, string, string) (domain.User, string, error)
+	})
+	if !ok {
+		return nil, managerPermissionMissingErr()
+	}
+	u, _, err := managed.CreateManagedBot(ctx, userID, manager.ID, req.Name, req.Username)
 	if err != nil {
+		if errors.Is(err, domain.ErrBotManagerInvalid) {
+			return nil, managerPermissionMissingErr()
+		}
 		return nil, createBotErr(err)
+	}
+	if owner, found, err := r.deps.Users.ByID(ctx, userID, userID); err == nil && found {
+		r.enqueueBotAPIObject(ctx, manager.ID, domain.BotAPIUpdateKind("managed_bot"), map[string]any{"user": botAPIManagedPublicUser(owner), "bot": botAPIManagedPublicUser(u)})
 	}
 	return r.tgUser(u), nil
 }

@@ -118,7 +118,13 @@ func TestMessagesDeleteMessagesRecordsTheDeletingSession(t *testing.T) {
 func TestBotAPIDeleteMessageRecordsTheBot(t *testing.T) {
 	f := newDeletionLogFixture(t)
 	bot := f.bob
-	sent := f.send(t, bot, f.alice, 310_003, "stale menu")
+	sent, err := f.messages.SendPrivateText(f.ctx, domain.SendPrivateTextRequest{
+		SenderUserID: bot.ID, RecipientUserID: f.alice.ID, RandomID: 310_003,
+		Message: "stale menu", Date: int(f.router.clock.Now().Unix()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if ok, err := f.router.BotAPIDeleteMessage(f.ctx, bot.ID, f.alice.ID, sent.SenderMessage.ID); err != nil || !ok {
 		t.Fatalf("BotAPIDeleteMessage = %v, %v", ok, err)
@@ -139,7 +145,14 @@ func TestBotAPIDeleteMessageRecordsTheBot(t *testing.T) {
 func TestBotAPIDeleteChannelMessageRecordsTheBot(t *testing.T) {
 	f := newChannelDeletionLogFixture(t)
 	bot := f.member
-	msg := f.send(t, bot, 320_103, "stale group menu")
+	sent, err := f.store.SendChannelMessage(f.ctx, domain.SendChannelMessageRequest{
+		UserID: bot, ChannelID: f.channel.ID, RandomID: 320_103,
+		Message: "stale group menu", Date: int(f.router.clock.Now().Unix()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := sent.Message
 
 	chatID := -botAPIChannelChatIDBase - f.channel.ID
 	if ok, err := f.router.BotAPIDeleteMessage(f.ctx, bot, chatID, msg.ID); err != nil || !ok {

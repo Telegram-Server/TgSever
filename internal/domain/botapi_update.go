@@ -165,6 +165,8 @@ type BotCallbackQuery struct {
 	MessageID     int
 	ChatInstance  int64
 	Data          []byte
+	GameShortName string
+	TopMessageID  int `json:"-"`
 	InlineMessage *BotInlineMessageID
 	// ClientSession is available only to an in-process service bot. It must not
 	// become part of a durable/public Bot API CallbackQuery payload.
@@ -304,6 +306,7 @@ type BotAPIUpdate struct {
 	ChatMember  *BotChatMemberUpdated
 	Reaction    *BotMessageReactionUpdated
 	JoinRequest *BotChatJoinRequest
+	Object      *BotAPIObject
 }
 
 // EnqueueBotAPIUpdateRequest describes a message-like update that should be
@@ -322,4 +325,5 @@ type EnqueueBotAPIUpdateRequest struct {
 	ChatMember  *BotChatMemberUpdated
 	Reaction    *BotMessageReactionUpdated
 	JoinRequest *BotChatJoinRequest
+	Object      *BotAPIObject
 }

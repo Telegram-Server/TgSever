@@ -67,6 +67,7 @@ func newInvoiceChain(t *testing.T) *invoiceChain {
 	stars := appstars.NewService(postgres.NewStarsStore(pool), appstars.WithStartingGrant(5000))
 	gifts := postgres.NewStarGiftLifecycleStore(pool, msgStore, 0)
 	updates := postgres.NewBotAPIUpdateStore(pool)
+	commerce := postgres.NewBotCommerceStore(pool)
 	r := New(Config{}, Deps{
 		Users:         appusers.NewService(users),
 		Bots:          bots,
@@ -74,6 +75,8 @@ func newInvoiceChain(t *testing.T) *invoiceChain {
 		Stars:         stars,
 		Gifts:         appgifts.NewService(postgres.NewStarGiftStore(pool), nil, 2, appgifts.WithLifecycleStore(gifts)),
 		BotAPIUpdates: updates,
+		BotCommerce:   commerce,
+		BotBroadcast:  commerce,
 	}, zaptest.NewLogger(t), clock.System)
 
 	third, err := users.Create(ctx, domain.User{Phone: fmt.Sprintf("1556%d", suffix), AccessHash: 5503, FirstName: "Third"})
@@ -103,6 +106,17 @@ func newInvoiceChain(t *testing.T) *invoiceChain {
 		t.Fatalf("create second bot: %v", err)
 	}
 	return &invoiceChain{pool, r, msgStore, stars, gifts, updates, bot.ID, other.ID, buyer.ID}
+}
+
+func (c *invoiceChain) inputInvoice(t *testing.T, messageID int) *tg.InputInvoiceMessage {
+	t.Helper()
+	bot, found, err := c.router.deps.Users.ByID(context.Background(), c.buyerID, c.botID)
+	if err != nil || !found {
+		t.Fatalf("resolve invoice bot: found=%v err=%v", found, err)
+	}
+	return &tg.InputInvoiceMessage{
+		Peer: &tg.InputPeerUser{UserID: bot.ID, AccessHash: bot.AccessHash}, MsgID: messageID,
+	}
 }
 
 // buyerInvoiceID finds the invoice as the buyer sees it, by scanning their own
@@ -151,7 +165,7 @@ func TestBotInvoicePaymentChainFromSendToCredit(t *testing.T) {
 	chain := newInvoiceChain(t)
 
 	msg, err := chain.router.BotAPISendInvoice(context.Background(),
-		chain.botID, chain.buyerID, "Тестовый товар", "Оплата 100 звёздами", "test-item-1", 100)
+		chain.botID, chain.buyerID, "Тестовый товар", "Оплата 100 звёздами", "test-item-1", 100, false)
 	if err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}
@@ -172,7 +186,7 @@ func TestBotInvoicePaymentChainFromSendToCredit(t *testing.T) {
 		t.Fatalf("stored invoice = %+v, want 100 XTR", stored)
 	}
 
-	invoice := &tg.InputInvoiceMessage{Peer: &tg.InputPeerUser{UserID: chain.botID, AccessHash: 1}, MsgID: payerID}
+	invoice := chain.inputInvoice(t, payerID)
 	form := chain.dispatch(t, chain.buyerID, &tg.PaymentsGetPaymentFormRequest{Invoice: invoice})
 	starsForm, ok := form.(*tg.PaymentsPaymentFormStars)
 	if !ok {
@@ -213,11 +227,11 @@ func TestBotInvoicePaymentChainFromSendToCredit(t *testing.T) {
 func (c *invoiceChain) payViaStarsForm(t *testing.T, amount int64) {
 	t.Helper()
 	if _, err := c.router.BotAPISendInvoice(context.Background(),
-		c.botID, c.buyerID, "Второй товар", "Оплата звёздами", "test-item-2", amount); err != nil {
+		c.botID, c.buyerID, "Второй товар", "Оплата звёздами", "test-item-2", amount, false); err != nil {
 		t.Fatalf("second sendInvoice: %v", err)
 	}
 	payerID := c.newestInvoiceID(t)
-	inv := &tg.InputInvoiceMessage{Peer: &tg.InputPeerUser{UserID: c.botID, AccessHash: 1}, MsgID: payerID}
+	inv := c.inputInvoice(t, payerID)
 	stored, found, err := c.router.deps.Bots.BotInvoiceByMessage(context.Background(), c.botID, c.buyerID, payerID)
 	if err != nil || !found {
 		t.Fatalf("second invoice lookup: %v found=%v", err, found)
@@ -287,11 +301,11 @@ func TestBotInvoiceRefundChain(t *testing.T) {
 	chain := newInvoiceChain(t)
 
 	if _, err := chain.router.BotAPISendInvoice(context.Background(),
-		chain.botID, chain.buyerID, "Товар", "Оплата 100 звёздами", "refund-1", 100); err != nil {
+		chain.botID, chain.buyerID, "Товар", "Оплата 100 звёздами", "refund-1", 100, false); err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}
 	payerID := chain.newestInvoiceID(t)
-	invoice := &tg.InputInvoiceMessage{Peer: &tg.InputPeerUser{UserID: chain.botID, AccessHash: 1}, MsgID: payerID}
+	invoice := chain.inputInvoice(t, payerID)
 	stored, found, err := chain.router.deps.Bots.BotInvoiceByMessage(context.Background(), chain.botID, chain.buyerID, payerID)
 	if err != nil || !found {
 		t.Fatalf("invoice lookup: %v found=%v", err, found)
@@ -344,11 +358,11 @@ func TestBotInvoicePaidNotifiesBotWithChargeID(t *testing.T) {
 	chain := newInvoiceChain(t)
 
 	if _, err := chain.router.BotAPISendInvoice(context.Background(),
-		chain.botID, chain.buyerID, "Товар", "Оплата 100 звёздами", "notify-1", 100); err != nil {
+		chain.botID, chain.buyerID, "Товар", "Оплата 100 звёздами", "notify-1", 100, false); err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}
 	payerID := chain.newestInvoiceID(t)
-	invoice := &tg.InputInvoiceMessage{Peer: &tg.InputPeerUser{UserID: chain.botID, AccessHash: 1}, MsgID: payerID}
+	invoice := chain.inputInvoice(t, payerID)
 	stored, _, err := chain.router.deps.Bots.BotInvoiceByMessage(context.Background(), chain.botID, chain.buyerID, payerID)
 	if err != nil {
 		t.Fatalf("lookup: %v", err)

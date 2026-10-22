@@ -19,6 +19,7 @@ import (
 // registerPayments 注册 payments.* RPC：Stars 本地账本（余额/流水真实化）+ 其余
 // gift/auction/revenue 第一阶段兼容桩。
 func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
+	r.registerCommercePayments(d)
 	registerRPC[*tg.PaymentsCanPurchaseStoreRequest](d, tlprofile.SemanticMethodPaymentsCanPurchaseStore, func(ctx context.Context, req *tg.PaymentsCanPurchaseStoreRequest) (any, error) {
 		return r.onPaymentsCanPurchaseStore(ctx, req)
 	})
@@ -325,11 +326,19 @@ func (r *Router) botStarsRevenueStats(ctx context.Context, viewerID, botUserID i
 	if err != nil {
 		return nil, internalErr()
 	}
+	balanceNanos := 0
+	if r.deps.BotBroadcast != nil && !ton {
+		exact, err := r.deps.BotBroadcast.BotStarsBalanceExact(ctx, botUserID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		balance, balanceNanos = exact.Amount, int(exact.Nanos)
+	}
 	overallRevenue, err := ledger.BotStarsOverallRevenue(ctx, botUserID)
 	if err != nil {
 		return nil, internalErr()
 	}
-	amount := tg.StarsAmountClass(&tg.StarsAmount{Amount: balance})
+	amount := tg.StarsAmountClass(&tg.StarsAmount{Amount: balance, Nanos: balanceNanos})
 	overallAmount := tg.StarsAmountClass(&tg.StarsAmount{Amount: overallRevenue})
 	if ton {
 		amount = &tg.StarsTonAmount{Amount: balance}
@@ -486,7 +495,15 @@ func (r *Router) botStarsWalletStatus(ctx context.Context, req *tg.PaymentsGetSt
 	if err != nil {
 		return nil, true, internalErr()
 	}
-	out := emptyStarsStatus(&tg.StarsAmount{Amount: balance})
+	balanceNanos := 0
+	if r.deps.BotBroadcast != nil {
+		exact, err := r.deps.BotBroadcast.BotStarsBalanceExact(ctx, botID)
+		if err != nil {
+			return nil, true, internalErr()
+		}
+		balance, balanceNanos = exact.Amount, int(exact.Nanos)
+	}
+	out := emptyStarsStatus(&tg.StarsAmount{Amount: balance, Nanos: balanceNanos})
 	// The wallet belongs to a bot, so hand the viewer that user object; the
 	// client renders the balance next to the bot it is showing.
 	if bot, found, err := r.deps.Users.ByID(ctx, userID, botID); err == nil && found {
@@ -541,7 +558,7 @@ func (r *Router) botStarsWalletTransactions(ctx context.Context, req *tg.Payment
 	if err != nil {
 		return nil, true, internalErr()
 	}
-	out := emptyStarsStatus(&tg.StarsAmount{Amount: page.Balance})
+	out := emptyStarsStatus(&tg.StarsAmount{Amount: page.Balance, Nanos: int(page.BalanceNanos)})
 	if txns := tgStarsTransactions(page.Transactions); len(txns) > 0 {
 		out.SetHistory(txns)
 	}
@@ -813,29 +830,9 @@ func (r *Router) onPaymentsGetStarsStatus(ctx context.Context, req *tg.PaymentsG
 	return emptyStarsStatus(&tg.StarsAmount{Amount: bal.Balance}), nil
 }
 
-// onPaymentsGetStarsSubscriptions returns the authoritative current balance
-// with an empty subscription page. telesrv does not create recurring Stars
-// subscriptions yet; returning a well-shaped terminal page lets both official
-// clients finish loading the Stars screen without inventing subscription state.
+// onPaymentsGetStarsSubscriptions projects the persisted recurring entitlements.
 func (r *Router) onPaymentsGetStarsSubscriptions(ctx context.Context, req *tg.PaymentsGetStarsSubscriptionsRequest) (*tg.PaymentsStarsStatus, error) {
-	if req == nil || len(req.Offset) > domain.MaxStarsTransactionsOffsetBytes {
-		return nil, inputRequestInvalidErr()
-	}
-	userID, owner, err := r.starGiftLedgerOwnerForPeer(ctx, req.Peer)
-	if err != nil {
-		return nil, err
-	}
-	if owner.Type != domain.PeerTypeUser || owner.ID != userID {
-		return nil, peerIDInvalidErr()
-	}
-	if r.deps.Stars == nil {
-		return emptyStarsStatus(&tg.StarsAmount{}), nil
-	}
-	balance, err := r.deps.Stars.GetBalance(ctx, userID)
-	if err != nil {
-		return nil, starsErr(err)
-	}
-	return emptyStarsStatus(&tg.StarsAmount{Amount: balance.Balance}), nil
+	return r.commerceSubscriptionsStatus(ctx, req)
 }
 
 // onPaymentsGetStarsTransactions 返回 keyset 分页的 Stars 流水（同 starsStatus 信封）。
@@ -1053,7 +1050,7 @@ func tgStarsTransactions(in []domain.StarsTransaction) []tg.StarsTransaction {
 	for _, t := range in {
 		item := tg.StarsTransaction{
 			ID:     strconv.FormatInt(t.ID, 10),
-			Amount: &tg.StarsAmount{Amount: t.Amount},
+			Amount: &tg.StarsAmount{Amount: t.Amount, Nanos: int(t.Nanos)},
 			Date:   t.Date,
 			Peer:   tgStarsTransactionPeer(t),
 		}

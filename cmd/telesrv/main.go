@@ -856,6 +856,8 @@ func run(logger *zap.Logger) error {
 	defer bootstrapUpdateStore.Close()
 	botAPIUpdateStore := postgres.NewBotAPIUpdateStore(pool)
 	botCallbackStore := redisstore.NewBotCallbackRegistryStore(rdb)
+	botGuestQueryStore := postgres.NewBotGuestQueryStore(pool)
+	messageDraftStore := redisstore.NewMessageDraftStore(rdb)
 	ephemeralStore := redisstore.NewEphemeralMessageStore(rdb)
 	ephemeralReportStore := postgres.NewEphemeralReportStore(pool)
 	welcomeMessageStore := postgres.NewWelcomeMessageStore(pool)
@@ -1095,7 +1097,7 @@ func run(logger *zap.Logger) error {
 		readModelVersionStore,
 		cfg.UserProjectionFactCacheMaxEntries,
 	)
-	go maintenance.NewRetentionWorker(dispatchOutboxStore, tempAuthKeyStore, logger.Named("maintenance").Named("retention"),
+	retentionWorker := maintenance.NewRetentionWorker(dispatchOutboxStore, tempAuthKeyStore, logger.Named("maintenance").Named("retention"),
 		cfg.UpdateEventRetention,
 		cfg.RetentionInterval,
 		cfg.RetentionBatch,
@@ -1108,8 +1110,7 @@ func run(logger *zap.Logger) error {
 		WithModerationRetention(moderationReportStore).
 		WithUserUpdateRetention(updateEventStore).
 		WithChannelUpdateRetention(channelStore).
-		WithOrphanAuthKeyRetention(authKeyStore, activeSessions, cfg.OrphanAuthKeyRetention).
-		Run(ctx)
+		WithOrphanAuthKeyRetention(authKeyStore, activeSessions, cfg.OrphanAuthKeyRetention)
 	go filesapp.NewUploadPartGCWorker(filesService, logger.Named("files").Named("upload_gc"),
 		cfg.UploadPartTTL,
 		cfg.UploadPartGCInterval,
@@ -1141,6 +1142,8 @@ func run(logger *zap.Logger) error {
 	}
 
 	botStore := postgres.NewBotStore(pool)
+	gamesPassportStore := postgres.NewGamesPassportStore(pool)
+	botCommerceStore := postgres.NewBotCommerceStore(pool)
 	// userCache 与 users 服务共享同一实例：bot 元数据写入（version bump）后必须
 	// 失效缓存，否则 TTL 内 getUsers 回旧 first_name/旧 bot_info_version。
 	userCache := redisstore.NewUserCache(rdb, redisstore.DefaultUserCacheTTL)
@@ -1214,6 +1217,10 @@ func run(logger *zap.Logger) error {
 		botsapp.WithStickerSetCreator(filesService),
 		botsapp.WithGifCatalog(filesService),
 		botsapp.WithUserStickerSets(accountService),
+		botsapp.WithGamesPassportStore(gamesPassportStore),
+		botsapp.WithGuestQueries(botGuestQueryStore),
+		botsapp.WithInlineFeedback(botGuestQueryStore),
+		botsapp.WithPaidBroadcast(botCommerceStore),
 		botsapp.WithTelegramLogin(telegramLoginService),
 		botsapp.WithGramsrvOperatorBot(cfg.GramsrvBotChatIDs, adminService),
 		botsapp.WithDialogRateLimiter(rateLimiter, cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow),
@@ -1644,9 +1651,8 @@ func run(logger *zap.Logger) error {
 		messageapp.WithReadModelVersions(readModelVersionStore),
 		messageapp.WithBotResponder(botsService),
 		messageapp.WithSendPermissionChecker(adminService),
-		// The recipient probe only needs the unprojected row, so the users
-		// service reads the tombstone without viewer projection.
-		messageapp.WithRecipientUserReader(userStore),
+		// Access settings are read live; the recipient probe also rejects tombstones.
+		messageapp.WithBotAccessChecker(botsService, userStore),
 		messageapp.WithBusinessAutomation(passwordStore, businessAutomationOptions...),
 	)
 	moderationService := moderationapp.NewService(
@@ -2001,6 +2007,7 @@ func run(logger *zap.Logger) error {
 		AICompose:                    aiComposeService,
 		Ephemeral:                    ephemeralService,
 		EphemeralPush:                ephemeralStore,
+		MessageDrafts:                messageDraftStore,
 		WelcomeMessages:              welcomeMessageService,
 		Moderation:                   moderationService,
 		Users:                        usersService,
@@ -2013,6 +2020,11 @@ func run(logger *zap.Logger) error {
 		BootstrapUpdates:             bootstrapUpdateStore,
 		BotAPIUpdates:                botAPIUpdateStore,
 		BotCallbacks:                 botCallbackStore,
+		GamesPassport:                gamesPassportStore,
+		BotCommerce:                  botCommerceStore,
+		BotBroadcast:                 botCommerceStore,
+		BotGuestQueries:              botGuestQueryStore,
+		BotInlineFeedback:            botGuestQueryStore,
 		PushDevices:                  pushDeviceStore,
 		Contacts:                     contactsService,
 		Dialogs:                      dialogsService,
@@ -2260,12 +2272,14 @@ func run(logger *zap.Logger) error {
 		rpc.WithOutboxUpdateBuilder(router.BuildOutboxUpdates),
 		rpc.WithOutboxDeliveryObserver(pushObserver),
 	).Run(ctx)
+	go retentionWorker.WithBotSubscriptions(router).Run(ctx)
 	go rpc.NewBootstrapUpdateDispatcher(router, logger.Named("rpc").Named("bootstrap")).Run(ctx)
 	go rpc.NewWelcomeDeliveryDispatcher(router, welcomeMessageStore, logger.Named("rpc").Named("welcome-delivery")).Run(ctx)
 	go rpc.NewScheduledDispatcher(router, logger.Named("rpc").Named("scheduled")).Run(ctx)
 	go rpc.NewSuggestedPostDispatcher(router, logger.Named("rpc").Named("suggested-post")).Run(ctx)
 	go rpc.NewExpiryDispatcher(router, logger.Named("rpc").Named("expiry")).Run(ctx)
 	go rpc.NewPhoneExpiryDispatcher(router, logger.Named("rpc").Named("phone-expiry"), cfg.CallExpiryInterval).Run(ctx)
+	go rpc.NewChatJoinQueryExpiryDispatcher(router, logger.Named("rpc").Named("chat-join-expiry")).Run(ctx)
 	go rpc.NewGroupCallSweepDispatcher(router, logger.Named("rpc").Named("groupcall-sweep"), cfg.GroupCallSweepInterval, cfg.GroupCallCheckTTL).Run(ctx)
 	go router.RunChannelFanout(ctx)
 	go router.RunBotAPIEnqueue(ctx)
@@ -2382,6 +2396,7 @@ func run(logger *zap.Logger) error {
 		CustomFragment:     customFragmentService,
 		GiftClaim:          giftClaimService,
 		GiftClaimTest:      giftClaimTestService,
+		InvoiceLinks:       web.NewInvoiceLinkHandler(botCommerceStore, cfg.PublicAppScheme),
 		MiniApps: web.NewConfiguredMiniAppsHandler(web.MiniAppsConfig{
 			AppName:  cfg.PublicAppName,
 			Bots:     botsService,

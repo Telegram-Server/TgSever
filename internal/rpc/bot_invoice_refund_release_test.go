@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"github.com/iamxvbaba/td/tg"
 	"telesrv/internal/domain"
 	"testing"
 )
@@ -10,7 +9,7 @@ import (
 func TestBotInvoiceRefundFailureRollsBackAndCanRetry(t *testing.T) {
 	c := newInvoiceChain(t)
 	ctx := context.Background()
-	if _, err := c.router.BotAPISendInvoice(ctx, c.botID, c.buyerID, "Item", "Description", "refund-fail", 100); err != nil {
+	if _, err := c.router.BotAPISendInvoice(ctx, c.botID, c.buyerID, "Item", "Description", "refund-fail", 100, false); err != nil {
 		t.Fatal(err)
 	}
 	id := c.newestInvoiceID(t)
@@ -18,7 +17,7 @@ func TestBotInvoiceRefundFailureRollsBackAndCanRetry(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("invoice: %v %v", found, err)
 	}
-	c.pay(t, stored.ID, &tg.InputInvoiceMessage{Peer: &tg.InputPeerUser{UserID: c.botID, AccessHash: 1}, MsgID: id})
+	c.pay(t, stored.ID, c.inputInvoice(t, id))
 	charge := botInvoiceChargeID(stored)
 	credit := domain.BotStarsCredit{BotUserID: c.botID, PayerUserID: c.buyerID, Amount: -100, Reason: domain.StarsReasonBotRefund, InvoiceKey: charge + "-spend", Date: 1700000001}
 	if _, _, err := c.gifts.CreditBotStarsWallet(ctx, credit); err != nil {

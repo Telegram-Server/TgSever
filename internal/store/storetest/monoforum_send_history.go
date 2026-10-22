@@ -104,6 +104,76 @@ func MonoforumSendAndHistory(t *testing.T, newFixture func(t *testing.T) Monofor
 	t.Helper()
 	ctx := context.Background()
 
+	t.Run("rich-only content and markup survive monoforum storage", func(t *testing.T) {
+		e := newMonoforumEnv(t, newFixture(t), false)
+		rich := &domain.MessageRichMessage{Blocks: []byte{0x15, 0xc4, 0xb5, 0x1c, 1, 0, 0, 0, 0x8a, 0x7e, 0x56, 0x13}}
+		markup := &domain.MessageReplyMarkup{Inline: [][]domain.MarkupButton{{{Type: domain.MarkupButtonCallback, Text: "Open", Data: []byte("open")}}}}
+		req := domain.SendMonoforumMessageRequest{MonoforumID: e.monoID, SenderUserID: e.Owner, SavedPeer: e.subPeer, RandomID: 87101, RichMessage: rich, ReplyMarkup: markup, Date: monoforumBaseDate + 10}
+		sent := e.send(t, req)
+		history, err := e.Channels.ListMonoforumHistory(ctx, domain.MonoforumHistoryFilter{MonoforumID: e.monoID, SavedPeer: e.subPeer, Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, message := range history.Messages {
+			if message.ID != sent.Message.ID {
+				continue
+			}
+			found = true
+			if message.RichMessage == nil || !slices.Equal(message.RichMessage.Blocks, rich.Blocks) || message.ReplyMarkup == nil || len(message.ReplyMarkup.Inline) != 1 || string(message.ReplyMarkup.Inline[0][0].Data) != "open" {
+				t.Fatalf("persisted rich/markup=%+v", message)
+			}
+		}
+		if !found {
+			t.Fatal("rich-only monoforum message missing from subscriber history")
+		}
+		replay := e.send(t, req)
+		if !replay.Duplicate || replay.Message.ID != sent.Message.ID {
+			t.Fatalf("rich replay=%+v", replay)
+		}
+		req.ReplyMarkup = &domain.MessageReplyMarkup{Inline: [][]domain.MarkupButton{{{Type: domain.MarkupButtonCallback, Text: "Changed", Data: []byte("changed")}}}}
+		if _, err := e.Channels.SendMonoforumMessage(ctx, req); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+			t.Fatalf("changed markup reused receipt: %v", err)
+		}
+		req.ReplyMarkup = markup
+		req.RichMessage = &domain.MessageRichMessage{Blocks: rich.Blocks, Rtl: true}
+		if _, err := e.Channels.SendMonoforumMessage(ctx, req); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+			t.Fatalf("changed rich payload reused receipt: %v", err)
+		}
+	})
+
+	t.Run("reply intent missing fallback cannot cross subscriber topics", func(t *testing.T) {
+		e := newMonoforumEnv(t, newFixture(t), true)
+		req := domain.SendMonoforumMessageRequest{MonoforumID: e.monoID, SenderUserID: e.Owner, SavedPeer: e.subPeer, RandomID: 87201, Message: "missing reply fallback", ReplyTo: &domain.MessageReply{Peer: e.monoPeer(), MessageID: 999999, AllowMissing: true}, Date: monoforumBaseDate + 10}
+		sent := e.send(t, req)
+		if sent.Message.ReplyTo != nil {
+			t.Fatalf("missing reply persisted: %+v", sent.Message.ReplyTo)
+		}
+		replay := e.send(t, req)
+		if !replay.Duplicate || replay.Message.ID != sent.Message.ID {
+			t.Fatalf("fallback replay=%+v", replay)
+		}
+		req.ReplyTo = domain.CloneMessageReply(req.ReplyTo)
+		req.ReplyTo.AllowMissing = false
+		if _, err := e.Channels.SendMonoforumMessage(ctx, req); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+			t.Fatalf("changed missing-reply policy reused receipt: %v", err)
+		}
+		req.RandomID++
+		req.ReplyTo = &domain.MessageReply{Peer: e.monoPeer(), MessageID: e.otherMessage.Message.ID, AllowMissing: true}
+		if _, err := e.Channels.SendMonoforumMessage(ctx, req); !errors.Is(err, domain.ErrReplyMessageIDInvalid) {
+			t.Fatalf("cross-topic reply became missing fallback: %v", err)
+		}
+		req.ReplyTo = &domain.MessageReply{Peer: e.monoPeer(), MessageID: e.m1.Message.ID, QuoteText: "wrong"}
+		if _, err := e.Channels.SendMonoforumMessage(ctx, req); !errors.Is(err, domain.ErrQuoteTextInvalid) {
+			t.Fatalf("false quote persisted: %v", err)
+		}
+		req.ReplyTo.QuoteText = "hi"
+		valid := e.send(t, req)
+		if valid.Message.ReplyTo == nil || valid.Message.ReplyTo.QuoteText != "hi" {
+			t.Fatalf("valid quote lost: %+v", valid.Message.ReplyTo)
+		}
+	})
+
 	t.Run("send and recipients", func(t *testing.T) {
 		e := newMonoforumEnv(t, newFixture(t), false)
 		if _, err := e.Channels.GetChannel(ctx, e.Sub, e.monoID); err != nil {

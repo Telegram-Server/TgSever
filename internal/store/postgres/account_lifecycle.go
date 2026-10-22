@@ -161,9 +161,8 @@ func (s *AccountLifecycleStore) ExecuteAccountDeletion(ctx context.Context, user
 	// Human account deletion is deliberately a short logical tombstone boundary.
 	// Relationships, history, memberships, settings and financial rows remain
 	// attached to the stable user id; reads project that id as Deleted Account.
-	// Identities are the exception, because a name outlives its owner: the
-	// username is retired permanently, NFT usernames go back to storage, and the
-	// avatar leaves with the account.
+	// Identities and delegated business capabilities are exceptions: usernames,
+	// avatars and active/archived bot connections leave with their owner.
 	// The physical cleanup helpers remain available only to the separate bot-
 	// deletion boundary, whose lifecycle semantics are intentionally different.
 	revoked, err := revokeByUserExceptTx(ctx, tx, userID, 0)
@@ -193,6 +192,9 @@ WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND active`, userID); err 
 	// login_passwords 的外键级联不会发生，必须在同一个事务里显式删掉。
 	if _, err := sqlcgen.New(tx).DeleteLoginPassword(ctx, userID); err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("delete deleted account login password: %w", err)
+	}
+	if err := NewPasswordStore(tx).DeleteBusinessConnectionsForUser(ctx, userID); err != nil {
+		return domain.AccountDeletionResult{}, fmt.Errorf("delete deleted account business connections: %w", err)
 	}
 	// 设备绑定名单（#112）同理：退出登录、撤销授权都不删它，只有注销在这里一起删掉。
 	if _, err := sqlcgen.New(tx).DeleteDeviceBindingsByUser(ctx, userID); err != nil {
@@ -488,6 +490,9 @@ func purgeDeletedBotPrivateState(ctx context.Context, tx pgx.Tx, userID int64, n
 	// undiscoverable during the account lifecycle transition.
 	if err := lockDispatchOutboxLanesExclusive(ctx, tx, []int64{userID}); err != nil {
 		return fmt.Errorf("lock deleted bot dispatch lane: %w", err)
+	}
+	if err := NewPasswordStore(tx).DeleteBusinessConnectionsForUser(ctx, userID); err != nil {
+		return fmt.Errorf("delete deleted bot business connections: %w", err)
 	}
 	statements := []string{
 		`DELETE FROM account_privacy_rules WHERE owner_user_id = $1`,

@@ -121,6 +121,8 @@ func canonicalStickerMaterialMime(mimeType string) string {
 		return stickerMaterialMimeTGS
 	case stickerMaterialMimeWebP:
 		return stickerMaterialMimeWebP
+	case "image/png":
+		return "image/png"
 	case stickerMaterialMimeWebM:
 		return stickerMaterialMimeWebM
 	case stickerMaterialMimeMP4:

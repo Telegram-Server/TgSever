@@ -30,7 +30,8 @@ func TestBotInvoiceChainPostgres(t *testing.T) {
 	users := postgres.NewUserStore(pool)
 	dialogs := postgres.NewDialogStore(pool)
 	msgStore := postgres.NewMessageStore(pool)
-	bots := appbots.NewService(users, postgres.NewBotStore(pool), msgStore)
+	commerce := postgres.NewBotCommerceStore(pool)
+	bots := appbots.NewService(users, postgres.NewBotStore(pool), msgStore, appbots.WithPaidBroadcast(commerce))
 
 	// The phone is unique per user, so a rerun against the same database needs a
 	// fresh one rather than colliding with the previous run.
@@ -62,6 +63,8 @@ func TestBotInvoiceChainPostgres(t *testing.T) {
 		Stars:         stars,
 		Gifts:         appgifts.NewService(postgres.NewStarGiftStore(pool), nil, 2, appgifts.WithLifecycleStore(gifts)),
 		BotAPIUpdates: postgres.NewBotAPIUpdateStore(pool),
+		BotCommerce:   commerce,
+		BotBroadcast:  commerce,
 	}, zaptest.NewLogger(t), clock.System)
 
 	// Box ids are per user, not per chat. Create allocates in the buyer's box
@@ -82,7 +85,7 @@ func TestBotInvoiceChainPostgres(t *testing.T) {
 		t.Fatalf("buyer message: %v", err)
 	}
 
-	msg, err := r.BotAPISendInvoice(ctx, bot.ID, buyer.ID, "Товар", "Оплата 100 звёздами", "pg-item-1", 100)
+	msg, err := r.BotAPISendInvoice(ctx, bot.ID, buyer.ID, "Товар", "Оплата 100 звёздами", "pg-item-1", 100, false)
 	if err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}

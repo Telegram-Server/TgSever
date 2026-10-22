@@ -112,17 +112,19 @@ type PasswordCheck struct {
 
 // PasswordInputSettings 是 account.passwordInputSettings 的业务层表达。
 type PasswordInputSettings struct {
-	NewAlgo         *PasswordKDFAlgo
-	NewPasswordHash []byte
-	Hint            string
-	HasHint         bool
-	Email           string
-	HasEmail        bool
+	NewAlgo           *PasswordKDFAlgo
+	NewPasswordHash   []byte
+	Hint              string
+	HasHint           bool
+	Email             string
+	HasEmail          bool
+	NewSecureSettings *PassportSecret
 }
 
 // PrivatePasswordSettings 是 account.passwordSettings 的业务层表达。
 type PrivatePasswordSettings struct {
-	Email string
+	Email          string
+	SecureSettings *PassportSecret
 }
 
 type PasswordResetKind string
@@ -157,6 +159,7 @@ type PasswordSettings struct {
 	NewAlgo           PasswordKDFAlgo
 	NewSecureAlgo     SecurePasswordKDFAlgo
 	SecureRandom      []byte
+	SecureSettings    *PassportSecret
 	PendingResetDate  int
 
 	// Server-only SRP fields. They are persisted but never exposed to rpc/tg conversion.

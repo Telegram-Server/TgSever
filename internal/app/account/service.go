@@ -1,6 +1,7 @@
 package account
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -357,7 +358,7 @@ func (s *Service) GetPasswordSettings(ctx context.Context, userID int64, check d
 	if err := checkSRP(settings, check); err != nil {
 		return domain.PrivatePasswordSettings{}, err
 	}
-	return domain.PrivatePasswordSettings{Email: settings.RecoveryEmail}, nil
+	return domain.PrivatePasswordSettings{Email: settings.RecoveryEmail, SecureSettings: settings.SecureSettings}, nil
 }
 
 // UpdatePasswordSettings sets, changes, clears, or updates the recovery email for 2FA.
@@ -372,12 +373,15 @@ func (s *Service) UpdatePasswordSettings(ctx context.Context, userID int64, chec
 	if err := checkSRP(settings, check); err != nil {
 		return err
 	}
-	if len(input.NewPasswordHash) == 0 && !input.HasEmail {
+	if len(input.NewPasswordHash) == 0 && !input.HasEmail && input.NewSecureSettings == nil {
 		settings = defaultPasswordSettings()
 		settings.SecureRandom = randomBytesOrDefault(passwordHashSize, settings.SecureRandom)
 		return s.passwords.Save(ctx, userID, settings)
 	}
 	if len(input.NewPasswordHash) > 0 {
+		if settings.SecureSettings != nil && input.NewSecureSettings == nil {
+			return domain.ErrNewSettingsInvalid
+		}
 		if err := validateNewPasswordSettings(input); err != nil {
 			return err
 		}
@@ -412,6 +416,19 @@ func (s *Service) UpdatePasswordSettings(ctx context.Context, userID int64, chec
 		settings.RecoveryEmail = email
 		settings.HasRecovery = email != ""
 		settings.EmailUnconfirmedPattern = ""
+	}
+	if input.NewSecureSettings != nil {
+		if !settings.HasPassword {
+			return domain.ErrPasswordHashInvalid
+		}
+		secret := *input.NewSecureSettings
+		salt := settings.NewSecureAlgo.Salt
+		if secret.Algo != "pbkdf2_hmac_sha512_iter100000" || len(secret.Secret) != 32 || secret.ID == 0 || len(secret.Salt) != len(salt)+32 || !bytes.Equal(secret.Salt[:len(salt)], salt) {
+			return domain.ErrNewSettingsInvalid
+		}
+		secret.Salt = append([]byte(nil), secret.Salt...)
+		secret.Secret = append([]byte(nil), secret.Secret...)
+		settings.SecureSettings = &secret
 	}
 	settings.SecureRandom = randomBytesOrDefault(passwordHashSize, settings.SecureRandom)
 	return s.passwords.Save(ctx, userID, normalizePasswordSettings(settings))

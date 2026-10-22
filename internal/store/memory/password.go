@@ -27,6 +27,7 @@ type PasswordStore struct {
 	businessDeliveries             map[businessAutomationDeliveryKey]domain.BusinessAutomationDelivery
 	connectedBusinessBots          map[int64]domain.ConnectedBusinessBot
 	connectedBusinessBotPeerStates map[connectedBusinessBotPeerKey]domain.ConnectedBusinessBotPeerState
+	businessBotConnections         map[string]domain.ConnectedBusinessBot
 	nextQuickReplyID               map[int64]int
 	nextQuickReplyMessageID        map[int64]int
 }
@@ -62,6 +63,7 @@ func NewPasswordStore() *PasswordStore {
 		businessDeliveries:             make(map[businessAutomationDeliveryKey]domain.BusinessAutomationDelivery),
 		connectedBusinessBots:          make(map[int64]domain.ConnectedBusinessBot),
 		connectedBusinessBotPeerStates: make(map[connectedBusinessBotPeerKey]domain.ConnectedBusinessBotPeerState),
+		businessBotConnections:         make(map[string]domain.ConnectedBusinessBot),
 		nextQuickReplyID:               make(map[int64]int),
 		nextQuickReplyMessageID:        make(map[int64]int),
 	}
@@ -112,6 +114,12 @@ func normalizeLoginEmail(email string) string {
 
 func clonePasswordSettings(in domain.PasswordSettings) domain.PasswordSettings {
 	out := in
+	if in.SecureSettings != nil {
+		secret := *in.SecureSettings
+		secret.Salt = append([]byte(nil), secret.Salt...)
+		secret.Secret = append([]byte(nil), secret.Secret...)
+		out.SecureSettings = &secret
+	}
 	if in.CurrentAlgo != nil {
 		algo := *in.CurrentAlgo
 		algo.Salt1 = append([]byte(nil), algo.Salt1...)
@@ -562,11 +570,7 @@ func removeSavedMusicDocument(in []domain.Document, id int64) []domain.Document 
 }
 
 func cloneDocument(in domain.Document) domain.Document {
-	out := in
-	out.FileReference = append([]byte(nil), in.FileReference...)
-	out.Attributes = append([]domain.DocumentAttribute(nil), in.Attributes...)
-	out.Thumbs = append([]domain.PhotoSize(nil), in.Thumbs...)
-	return out
+	return *domain.CloneDocumentPtr(&in)
 }
 
 func cloneDocuments(in []domain.Document) []domain.Document {

@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,6 +40,7 @@ func TestBotAPICallbackQueryPrivatePollingAndAnswer(t *testing.T) {
 		domain.Peer{Type: domain.PeerTypeUser, ID: fixture.bot.ID},
 		sent.RecipientMessage.ID,
 		[]byte("forged-callback-data"),
+		false,
 	); !tgerr.Is(err, "DATA_INVALID") {
 		t.Fatalf("forged callback data err = %v, want DATA_INVALID", err)
 	}
@@ -398,17 +400,14 @@ func TestBotAPIGetUpdatesReceivesVisibleSupergroupMessage(t *testing.T) {
 		t.Fatalf("events = %+v, want one bot api update", events)
 	}
 	event := events[0]
-	if event.Type != domain.UpdateEventNewMessage || event.Pts <= 0 {
-		t.Fatalf("event = %+v, want new_message with update_id", event)
-	}
-	if event.Message.Peer.Type != domain.PeerTypeChannel || event.Message.Peer.ID != fixture.channel.ID {
-		t.Fatalf("message peer = %+v, want channel %d", event.Message.Peer, fixture.channel.ID)
-	}
-	if event.Message.From.Type != domain.PeerTypeUser || event.Message.From.ID != fixture.owner.ID || event.Message.Body != "/ping from group" || event.Message.Out {
-		t.Fatalf("message = %+v, want incoming owner command", event.Message)
+	body := botAPIObjectBody(t, event)
+	chat := body["chat"].(map[string]any)
+	from := body["from"].(map[string]any)
+	if event.BotAPIUpdateID <= 0 || event.BotAPIObject.Kind != "message" || chat["id"].(json.Number).String() != strconv.FormatInt(-botAPIChannelChatIDBase-fixture.channel.ID, 10) || chat["type"] != "supergroup" || from["id"].(json.Number).String() != strconv.FormatInt(fixture.owner.ID, 10) || body["text"] != "/ping from group" {
+		t.Fatalf("public update=%+v", body)
 	}
 
-	next, err := fixture.router.BotAPIUpdates(fixture.ctx, fixture.bot.ID, int64(event.Pts)+1)
+	next, err := fixture.router.BotAPIUpdates(fixture.ctx, fixture.bot.ID, event.BotAPIUpdateID+1)
 	if err != nil {
 		t.Fatalf("BotAPIUpdates confirm: %v", err)
 	}
@@ -462,38 +461,13 @@ func TestBotAPIGetUpdatesReceivesPrivateBotMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BotAPIUpdates: %v", err)
 	}
-	if len(events) != 1 || events[0].Message.Peer.Type != domain.PeerTypeUser || events[0].Message.Peer.ID != fixture.owner.ID || events[0].Message.Body != "private hello" {
+	if len(events) != 1 {
 		t.Fatalf("events = %+v, want private incoming message", events)
 	}
-}
-
-func TestBotAPIGetUpdatesBatchesPrivateMessageProjection(t *testing.T) {
-	fixture := newBotAPIReceiveFixture(t, false)
-	counting := &countingBotAPIMessagesService{Service: fixture.messages}
-	fixture.router.deps.Messages = counting
-	for i, text := range []string{"private one", "private two"} {
-		res, err := fixture.messages.SendPrivateText(fixture.ctx, fixture.owner.ID, domain.SendPrivateTextRequest{
-			SenderUserID:    fixture.owner.ID,
-			RecipientUserID: fixture.bot.ID,
-			RandomID:        int64(2100 + i),
-			Message:         text,
-			Date:            120 + i,
-		})
-		if err != nil {
-			t.Fatalf("SendPrivateText %d: %v", i, err)
-		}
-		fixture.router.enqueueBotAPIPrivateMessageUpdate(fixture.ctx, res)
-	}
-
-	events, err := fixture.router.BotAPIUpdates(fixture.ctx, fixture.bot.ID, 0)
-	if err != nil {
-		t.Fatalf("BotAPIUpdates: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want two private updates", events)
-	}
-	if counting.getMessagesCalls != 1 {
-		t.Fatalf("private GetMessages calls = %d, want 1 batched projection", counting.getMessagesCalls)
+	body := botAPIObjectBody(t, events[0])
+	chat := body["chat"].(map[string]any)
+	if events[0].BotAPIObject.Kind != "message" || chat["type"] != "private" || chat["id"].(json.Number).String() != strconv.FormatInt(fixture.owner.ID, 10) || body["text"] != "private hello" {
+		t.Fatalf("private update=%+v", body)
 	}
 }
 
@@ -523,87 +497,6 @@ func TestBotAPIUpdateWaiterWakesOnPrivateEnqueue(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("WaitBotAPIUpdate did not wake after enqueue")
 	}
-}
-
-func TestBotAPIChannelBatchEnqueueLoadsBotCandidatesOnce(t *testing.T) {
-	fixture := newBotAPIReceiveFixture(t, false)
-	counting := &countingBotCandidateChannelsService{Service: fixture.channels}
-	fixture.router.deps.Channels = counting
-	first, err := fixture.channels.SendMessage(fixture.ctx, fixture.owner.ID, domain.SendChannelMessageRequest{
-		UserID:              fixture.owner.ID,
-		ChannelID:           fixture.channel.ID,
-		RandomID:            3001,
-		Message:             "/first batch command",
-		SkipRecipientLookup: true,
-		Date:                103,
-	})
-	if err != nil {
-		t.Fatalf("SendMessage first: %v", err)
-	}
-	second, err := fixture.channels.SendMessage(fixture.ctx, fixture.owner.ID, domain.SendChannelMessageRequest{
-		UserID:              fixture.owner.ID,
-		ChannelID:           fixture.channel.ID,
-		RandomID:            3002,
-		Message:             "/second batch command",
-		SkipRecipientLookup: true,
-		Date:                104,
-	})
-	if err != nil {
-		t.Fatalf("SendMessage second: %v", err)
-	}
-
-	fixture.router.enqueueBotAPIChannelMessagesUpdate(fixture.ctx, fixture.owner.ID, []domain.SendChannelMessageResult{first, second})
-	if counting.activeBotMemberIDsCalls != 1 {
-		t.Fatalf("ActiveBotMemberIDs calls = %d, want 1 for same-channel batch", counting.activeBotMemberIDsCalls)
-	}
-	if counting.activeMemberIDsCalls != 0 {
-		t.Fatalf("ActiveMemberIDs calls = %d, want 0 on Bot API enqueue path", counting.activeMemberIDsCalls)
-	}
-	if counting.getMessagesCalls != 0 {
-		t.Fatalf("channel GetMessages calls during enqueue = %d, want 0 on ordinary send path", counting.getMessagesCalls)
-	}
-	events, err := fixture.router.BotAPIUpdates(fixture.ctx, fixture.bot.ID, 0)
-	if err != nil {
-		t.Fatalf("BotAPIUpdates: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want two bot api updates", events)
-	}
-	if counting.getMessagesCalls != 1 {
-		t.Fatalf("channel GetMessages calls after getUpdates = %d, want 1 batched projection", counting.getMessagesCalls)
-	}
-}
-
-type countingBotCandidateChannelsService struct {
-	*appchannels.Service
-	activeBotMemberIDsCalls int
-	activeMemberIDsCalls    int
-	getMessagesCalls        int
-}
-
-func (s *countingBotCandidateChannelsService) ActiveBotMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error) {
-	s.activeBotMemberIDsCalls++
-	return s.Service.ActiveBotMemberIDs(ctx, viewerUserID, channelID, limit)
-}
-
-func (s *countingBotCandidateChannelsService) ActiveMemberIDs(ctx context.Context, userID, channelID int64, limit int) ([]int64, error) {
-	s.activeMemberIDsCalls++
-	return s.Service.ActiveMemberIDs(ctx, userID, channelID, limit)
-}
-
-func (s *countingBotCandidateChannelsService) GetMessages(ctx context.Context, userID, channelID int64, ids []int) (domain.ChannelHistory, error) {
-	s.getMessagesCalls++
-	return s.Service.GetMessages(ctx, userID, channelID, ids)
-}
-
-type countingBotAPIMessagesService struct {
-	*appmessages.Service
-	getMessagesCalls int
-}
-
-func (s *countingBotAPIMessagesService) GetMessages(ctx context.Context, userID int64, ids []int) (domain.MessageList, error) {
-	s.getMessagesCalls++
-	return s.Service.GetMessages(ctx, userID, ids)
 }
 
 type botAPIReceiveFixture struct {

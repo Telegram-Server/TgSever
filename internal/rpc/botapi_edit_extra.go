@@ -101,11 +101,19 @@ func (r *Router) botAPIEditStored(ctx context.Context, botID, chatID int64, mess
 	}
 	text, entities := current.Body, current.Entities
 	if edit.media != nil {
-		// 只有照片/文档类消息可以换媒体；文本、投票、骰子等保持原样。
-		if current.Media == nil || (current.Media.Kind != domain.MessageMediaKindPhoto && current.Media.Kind != domain.MessageMediaKindDocument) {
-			return domain.Message{}, errors.New("MEDIA_PREV_INVALID")
+		if err := botAPIValidateMediaReplacement(current, edit.media); err != nil {
+			return domain.Message{}, err
 		}
 		text, entities = edit.caption, r.augmentBotAPIAutoEntities(edit.caption, edit.entities)
+	}
+	if edit.setReplyMarkup {
+		media := current.Media
+		if edit.media != nil {
+			media = edit.media
+		}
+		if err := domain.ValidateReplyMarkupMedia(edit.replyMarkup, media); err != nil {
+			return domain.Message{}, replyMarkupErr(err)
+		}
 	}
 	now := int(r.clock.Now().Unix())
 	if peer.Type == domain.PeerTypeChannel {
@@ -166,7 +174,7 @@ func (r *Router) BotAPIEditMessageMedia(ctx context.Context, botID, chatID int64
 	if r == nil || botID == 0 || r.deps.Files == nil {
 		return domain.Message{}, errors.New("BOT_INVALID")
 	}
-	media, err := r.botAPIEphemeralMedia(ctx, botID, item.Kind, item.File, domain.BotAPIFileInput{})
+	media, err := r.botAPIEphemeralMedia(ctx, botID, item.Kind, item.File, item.SecondaryFile)
 	if err != nil {
 		return domain.Message{}, err
 	}
@@ -183,11 +191,15 @@ func (r *Router) BotAPIEditInlineMessageMedia(ctx context.Context, botID int64, 
 	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
 		return false, errors.New("BOT_INVALID")
 	}
+	if len(item.File.Bytes) > 0 || len(item.SecondaryFile.Bytes) > 0 {
+		return false, errors.New("FILE_ID_INVALID")
+	}
 	media, err := r.botAPIStoredInputMedia(ctx, botID, item)
 	if err != nil {
 		return false, err
 	}
 	req := &tg.MessagesEditInlineBotMessageRequest{ID: tgInputBotInlineMessageID(inlineMessageID)}
+	req.InvertMedia = item.File.ShowCaptionAboveMedia
 	req.SetMedia(media)
 	req.SetMessage(item.Caption)
 	if len(item.Entities) > 0 {
@@ -253,4 +265,42 @@ func (r *Router) BotAPIEditInlineMessageCaption(ctx context.Context, botID int64
 		req.SetReplyMarkup(wire)
 	}
 	return r.onMessagesEditInlineBotMessage(WithUserID(ctx, botID), req)
+}
+
+func botAPIValidateMediaReplacement(current domain.Message, next *domain.MessageMedia) error {
+	if current.Media != nil && !current.Media.IsZero() && current.Media.Kind != domain.MessageMediaKindPhoto && current.Media.Kind != domain.MessageMediaKindDocument && current.Media.Kind != domain.MessageMediaKindWebPage {
+		return errors.New("MEDIA_PREV_INVALID")
+	}
+	if current.GroupedID == 0 {
+		return nil
+	}
+	kind := func(media *domain.MessageMedia) string {
+		if media == nil {
+			return ""
+		}
+		if media.Photo != nil {
+			return "visual"
+		}
+		if media.Document != nil {
+			for _, attribute := range media.Document.Attributes {
+				if attribute.Kind == domain.DocAttrAnimated {
+					return "animation"
+				}
+			}
+			for _, attribute := range media.Document.Attributes {
+				if attribute.Kind == domain.DocAttrAudio && !attribute.Voice {
+					return "audio"
+				}
+				if attribute.Kind == domain.DocAttrVideo && !attribute.RoundMessage {
+					return "visual"
+				}
+			}
+			return "document"
+		}
+		return ""
+	}
+	if previous, replacement := kind(current.Media), kind(next); previous != replacement || replacement == "animation" {
+		return errors.New("MEDIA_GROUP_INVALID")
+	}
+	return nil
 }

@@ -60,6 +60,9 @@ func (r *Router) onMessagesGetInlineBotResults(ctx context.Context, req *tg.Mess
 	if !found || !bot.Bot {
 		return nil, botInvalidErr()
 	}
+	if err := r.ensureBotAccess(ctx, bot.ID, userID); err != nil {
+		return nil, err
+	}
 	profile, found, err := r.deps.Bots.BotInfo(ctx, bot.ID)
 	if err != nil {
 		return nil, internalErr()
@@ -147,6 +150,7 @@ func (r *Router) onMessagesGetInlineBotResults(ctx context.Context, req *tg.Mess
 		push.Geo = &geo
 	}
 	r.publishInlineBotQuery(ctx, push)
+	r.enqueueInlineQueryObject(ctx, bot.ID, userID, queryID, req.Query, req.Offset, push.PeerType, queryGeo)
 
 	waitCtx, cancel := context.WithTimeout(ctx, botInlineQueryTTL)
 	defer cancel()
@@ -215,6 +219,9 @@ func (r *Router) onMessagesSendInlineBotResult(ctx context.Context, req *tg.Mess
 	if !ok {
 		return nil, inlineResultExpiredErr()
 	}
+	if err := r.ensureBotAccess(ctx, results.BotUserID, userID); err != nil {
+		return nil, err
+	}
 	if !r.inlineResultsAllowPeer(ctx, userID, results, peer) {
 		return nil, peerIDInvalidErr()
 	}
@@ -231,6 +238,7 @@ func (r *Router) onMessagesSendInlineBotResult(ctx context.Context, req *tg.Mess
 		message:      result.Message,
 		entities:     tgMessageEntities(result.Entities),
 		media:        media,
+		richMessage:  result.RichMessage,
 		silent:       req.Silent,
 		replyToInput: req.ReplyTo,
 		sendAsInput:  req.SendAs,
@@ -393,6 +401,30 @@ func validInlineStartParam(in string) bool {
 
 func (r *Router) domainInlineResultFromTG(ctx context.Context, botID int64, raw tg.InputBotInlineResultClass) (domain.BotInlineResult, error) {
 	switch result := raw.(type) {
+	case *tg.InputBotInlineResultGame:
+		if result.ID == "" {
+			return domain.BotInlineResult{}, resultIDEmptyErr()
+		}
+		if len(result.ID) > domain.MaxBotInlineResultIDLen {
+			return domain.BotInlineResult{}, resultIDInvalidErr()
+		}
+		message, ok := result.SendMessage.(*tg.InputBotInlineMessageGame)
+		if !ok {
+			return domain.BotInlineResult{}, sendMessageTypeInvalidErr()
+		}
+		media, err := r.resolveBotAPIInlineGame(ctx, botID, result.ShortName)
+		if err != nil {
+			return domain.BotInlineResult{}, err
+		}
+		markup, err := domainReplyMarkupForSender(message.ReplyMarkup, true)
+		if err != nil {
+			return domain.BotInlineResult{}, err
+		}
+		markup, err = gameReplyMarkup(*media.Game, markup)
+		if err != nil {
+			return domain.BotInlineResult{}, err
+		}
+		return domain.BotInlineResult{ID: result.ID, Type: "game", Title: media.Game.Title, Description: media.Game.Description, Media: media, ReplyMarkup: markup}, nil
 	case *tg.InputBotInlineResult:
 		if result.ID == "" {
 			return domain.BotInlineResult{}, resultIDEmptyErr()
@@ -404,6 +436,23 @@ func (r *Router) domainInlineResultFromTG(ctx context.Context, botID int64, raw 
 			return domain.BotInlineResult{}, resultTypeInvalidErr()
 		}
 		switch msg := result.SendMessage.(type) {
+		case *tg.InputBotInlineMessageRichMessage:
+			rich, err := r.domainRichMessageFromInput(ctx, msg.RichMessage)
+			if err != nil {
+				return domain.BotInlineResult{}, err
+			}
+			if rich.IsZero() {
+				return domain.BotInlineResult{}, messageEmptyErr()
+			}
+			markup, err := domainReplyMarkupForSender(msg.ReplyMarkup, true)
+			if err != nil {
+				return domain.BotInlineResult{}, err
+			}
+			resultURL, thumb, content, err := domainInlineResultWebPreview(result)
+			if err != nil {
+				return domain.BotInlineResult{}, err
+			}
+			return domain.BotInlineResult{ID: result.ID, Type: result.Type, Title: result.Title, Description: result.Description, URL: resultURL, Thumb: thumb, Content: content, ReplyMarkup: markup, RichMessage: rich}, nil
 		case *tg.InputBotInlineMessageText:
 			if result.Type != "article" {
 				return domain.BotInlineResult{}, resultTypeInvalidErr()
@@ -863,14 +912,16 @@ func (r *Router) domainInlineExternalContentMedia(ctx context.Context, result do
 		if err != nil {
 			return nil, photoInvalidErr()
 		}
-		return &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &photo}, nil
+		return &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &photo, InvertMedia: result.InvertMedia}, nil
 	}
 	spec := inlineExternalContentDocumentSpec(result.Type, document)
 	doc, err := r.deps.Files.CreateDocumentFromBytes(ctx, data, spec)
 	if err != nil {
 		return nil, documentInvalidErr()
 	}
-	return messageMediaFromDocument(doc, false, 0), nil
+	media := messageMediaFromDocument(doc, false, 0)
+	media.InvertMedia = result.InvertMedia
+	return media, nil
 }
 
 func inlineExternalContentMimeAllowed(resultType, mime string) bool {
@@ -1061,6 +1112,19 @@ func (r *Router) tgBotInlineResults(ctx context.Context, viewerUserID int64, in 
 }
 
 func tgBotInlineResult(in domain.BotInlineResult) tg.BotInlineResultClass {
+	if message, special := inlineSpecialMessage(in); special {
+		out := &tg.BotInlineResult{ID: in.ID, Type: in.Type, Title: in.Title, Description: in.Description, SendMessage: message}
+		if in.URL != "" {
+			out.SetURL(in.URL)
+		}
+		if in.Thumb != nil {
+			out.SetThumb(tgInlineWebDocument(*in.Thumb))
+		}
+		if in.Content != nil {
+			out.SetContent(tgInlineWebDocument(*in.Content))
+		}
+		return out
+	}
 	if in.Media != nil && !in.Media.IsZero() {
 		msg := tgBotInlineMediaMessage(in)
 		out := &tg.BotInlineResult{
@@ -1077,8 +1141,9 @@ func tgBotInlineResult(in domain.BotInlineResult) tg.BotInlineResultClass {
 			return out
 		}
 		mediaMsg := &tg.BotInlineMessageMediaAuto{
-			Message:  in.Message,
-			Entities: tgMessageEntities(in.Entities),
+			Message:     in.Message,
+			Entities:    tgMessageEntities(in.Entities),
+			InvertMedia: in.InvertMedia,
 		}
 		if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {
 			mediaMsg.SetReplyMarkup(markup)
@@ -1096,12 +1161,19 @@ func tgBotInlineResult(in domain.BotInlineResult) tg.BotInlineResultClass {
 		if in.Media.Kind == domain.MessageMediaKindDocument && in.Media.Document != nil {
 			mediaOut.SetDocument(tgDocument(*in.Media.Document))
 		}
+		if in.Media.Kind == domain.MessageMediaKindGame && in.Media.Game != nil {
+			mediaOut.SetPhoto(tgPhoto(in.Media.Game.Photo))
+			if in.Media.Game.Animation != nil {
+				mediaOut.SetDocument(tgDocument(*in.Media.Game.Animation))
+			}
+		}
 		return mediaOut
 	}
 	if in.MediaAuto {
 		msg := &tg.BotInlineMessageMediaAuto{
-			Message:  in.Message,
-			Entities: tgMessageEntities(in.Entities),
+			Message:     in.Message,
+			Entities:    tgMessageEntities(in.Entities),
+			InvertMedia: in.InvertMedia,
 		}
 		if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {
 			msg.SetReplyMarkup(markup)
@@ -1125,9 +1197,10 @@ func tgBotInlineResult(in domain.BotInlineResult) tg.BotInlineResultClass {
 		return out
 	}
 	msg := &tg.BotInlineMessageText{
-		NoWebpage: in.NoWebpage,
-		Message:   in.Message,
-		Entities:  tgMessageEntities(in.Entities),
+		NoWebpage:   in.NoWebpage,
+		InvertMedia: in.InvertMedia,
+		Message:     in.Message,
+		Entities:    tgMessageEntities(in.Entities),
 	}
 	if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {
 		msg.SetReplyMarkup(markup)
@@ -1163,6 +1236,12 @@ func tgInlineWebDocument(in domain.BotInlineWebDocument) tg.WebDocumentClass {
 
 func tgBotInlineMediaMessage(in domain.BotInlineResult) tg.BotInlineMessageClass {
 	switch {
+	case in.Media.Kind == domain.MessageMediaKindGame && in.Media.Game != nil:
+		msg := &tg.BotInlineMessageMediaAuto{Message: in.Message, Entities: tgMessageEntities(in.Entities)}
+		if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {
+			msg.SetReplyMarkup(markup)
+		}
+		return msg
 	case in.Media.Kind == domain.MessageMediaKindGeoLive && in.Media.GeoLive != nil:
 		live := in.Media.GeoLive
 		msg := &tg.BotInlineMessageMediaGeo{Geo: tgGeoPoint(live.Geo)}

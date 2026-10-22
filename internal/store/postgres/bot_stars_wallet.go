@@ -53,8 +53,9 @@ func (s *StarGiftLifecycleStore) BotStarsTransactions(ctx context.Context, botUs
 	if err != nil {
 		return domain.StarsTransactionPage{}, err
 	}
-	where, order, args := starsTransactionQueryParts("bot_user_id", "amount", botUserID, query)
-	rows, err := s.db.Query(ctx, `SELECT id,bot_user_id,COALESCE(peer_type,''),COALESCE(peer_id,0),amount,date,reason
+	// A fractional-only debit has amount=0; use its exact sign before LIMIT.
+	where, order, args := starsTransactionQueryParts("bot_user_id", "(CASE WHEN amount=0 THEN nanos::bigint ELSE amount END)", botUserID, query)
+	rows, err := s.db.Query(ctx, `SELECT id,bot_user_id,COALESCE(peer_type,''),COALESCE(peer_id,0),amount,nanos,date,reason
 FROM bot_stars_transactions WHERE `+where+` ORDER BY id `+order+` LIMIT $2`, args...)
 	if err != nil {
 		return domain.StarsTransactionPage{}, err
@@ -64,7 +65,7 @@ FROM bot_stars_transactions WHERE `+where+` ORDER BY id `+order+` LIMIT $2`, arg
 	for rows.Next() {
 		var item domain.StarsTransaction
 		var peerType string
-		if err := rows.Scan(&item.ID, &item.UserID, &peerType, &item.Peer.ID, &item.Amount, &item.Date, &item.Reason); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &peerType, &item.Peer.ID, &item.Amount, &item.Nanos, &item.Date, &item.Reason); err != nil {
 			return domain.StarsTransactionPage{}, err
 		}
 		item.Peer.Type = domain.PeerType(peerType)
@@ -79,7 +80,8 @@ FROM bot_stars_transactions WHERE `+where+` ORDER BY id `+order+` LIMIT $2`, arg
 		page.NextOffset = domain.EncodeStarsCursor(items[len(items)-1].ID)
 	}
 	page.Transactions = items
-	page.Balance, err = s.BotStarsBalance(ctx, botUserID)
+	balance, balanceErr := NewBotCommerceStore(s.db).BotStarsBalanceExact(ctx, botUserID)
+	page.Balance, page.BalanceNanos, err = balance.Amount, balance.Nanos, balanceErr
 	return page, err
 }
 

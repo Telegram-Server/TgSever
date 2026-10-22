@@ -921,7 +921,7 @@ func cloneDialogDraft(draft domain.DialogDraft) domain.DialogDraft {
 		webpage := *draft.WebPage
 		draft.WebPage = &webpage
 	}
-	draft.RichMessage = cloneRichMessage(draft.RichMessage)
+	draft.RichMessage = domain.CloneRichMessage(draft.RichMessage)
 	if draft.SuggestedPost != nil {
 		suggested := *draft.SuggestedPost
 		if suggested.Price != nil {

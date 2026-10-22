@@ -24,6 +24,31 @@ type EditExtraGateway interface {
 	BotAPIStopPoll(ctx context.Context, botID, chatID int64, messageID int, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup) (domain.MessagePoll, error)
 }
 
+type BusinessEditExtraGateway interface {
+	BotAPIEditMessageCaptionWithOptions(context.Context, int64, int64, int, string, []domain.MessageEntity, bool, *domain.MessageReplyMarkup, domain.BotAPIMessageOptions) (domain.Message, error)
+	BotAPIEditMessageReplyMarkupWithOptions(context.Context, int64, int64, int, *domain.MessageReplyMarkup, domain.BotAPIMessageOptions) (domain.Message, error)
+	BotAPIEditMessageMediaWithOptions(context.Context, int64, int64, int, InputMediaItem, bool, *domain.MessageReplyMarkup, domain.BotAPIMessageOptions) (domain.Message, error)
+	BotAPIStopPollWithOptions(context.Context, int64, int64, int, bool, *domain.MessageReplyMarkup, domain.BotAPIMessageOptions) (domain.MessagePoll, error)
+}
+
+func (h *handler) businessEditGateway(w http.ResponseWriter, values map[string]string) (BusinessEditExtraGateway, domain.BotAPIMessageOptions, bool) {
+	g, ok := h.gateway.(BusinessEditExtraGateway)
+	if !ok {
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
+		return nil, domain.BotAPIMessageOptions{}, false
+	}
+	options, err := botAPIMessageOptions(values)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return nil, options, false
+	}
+	if values["inline_message_id"] != "" {
+		writeAPIError(w, http.StatusBadRequest, "MESSAGE_IDENTIFIER_INVALID")
+		return nil, options, false
+	}
+	return g, options, true
+}
+
 func init() {
 	registerMethods(map[string]methodFunc{
 		"editMessageCaption":     (*handler).editMessageCaption,
@@ -35,7 +60,7 @@ func init() {
 }
 
 // editMessageMediaKinds 是 editMessageMedia 接受的 InputMedia 类型。
-var editMessageMediaKinds = map[string]bool{"animation": true, "audio": true, "document": true, "photo": true, "video": true}
+var editMessageMediaKinds = map[string]bool{"animation": true, "audio": true, "document": true, "photo": true, "video": true, "live_photo": true}
 
 func (h *handler) editMessageReplyMarkup(w http.ResponseWriter, r *http.Request, botID int64) {
 	g, ok := h.editExtraGateway(w)
@@ -61,7 +86,13 @@ func (h *handler) editMessageReplyMarkup(w http.ResponseWriter, r *http.Request,
 		msg    domain.Message
 		result bool
 	)
-	if target.inline {
+	if values["business_connection_id"] != "" {
+		business, options, ok := h.businessEditGateway(w, values)
+		if !ok {
+			return
+		}
+		msg, err = business.BotAPIEditMessageReplyMarkupWithOptions(r.Context(), botID, target.chatID, target.messageID, markup, options)
+	} else if target.inline {
 		result, err = g.BotAPIEditInlineMessageReplyMarkup(r.Context(), botID, target.inlineID, markup)
 	} else {
 		msg, err = g.BotAPIEditMessageReplyMarkup(r.Context(), botID, target.chatID, target.messageID, markup)
@@ -106,7 +137,13 @@ func (h *handler) editMessageMedia(w http.ResponseWriter, r *http.Request, botID
 		msg    domain.Message
 		result bool
 	)
-	if target.inline {
+	if values["business_connection_id"] != "" {
+		business, options, ok := h.businessEditGateway(w, values)
+		if !ok {
+			return
+		}
+		msg, err = business.BotAPIEditMessageMediaWithOptions(r.Context(), botID, target.chatID, target.messageID, item, setMarkup, markup, options)
+	} else if target.inline {
 		result, err = g.BotAPIEditInlineMessageMedia(r.Context(), botID, target.inlineID, item, setMarkup, markup)
 	} else {
 		msg, err = g.BotAPIEditMessageMedia(r.Context(), botID, target.chatID, target.messageID, item, setMarkup, markup)
@@ -136,7 +173,16 @@ func (h *handler) stopPoll(w http.ResponseWriter, r *http.Request, botID int64) 
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	poll, err := g.BotAPIStopPoll(r.Context(), botID, target.chatID, target.messageID, setMarkup, markup)
+	var poll domain.MessagePoll
+	if values["business_connection_id"] != "" {
+		business, options, ok := h.businessEditGateway(w, values)
+		if !ok {
+			return
+		}
+		poll, err = business.BotAPIStopPollWithOptions(r.Context(), botID, target.chatID, target.messageID, setMarkup, markup, options)
+	} else {
+		poll, err = g.BotAPIStopPoll(r.Context(), botID, target.chatID, target.messageID, setMarkup, markup)
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
@@ -226,7 +272,13 @@ func (h *handler) editMessageCaption(w http.ResponseWriter, r *http.Request, bot
 		msg    domain.Message
 		result bool
 	)
-	if target.inline {
+	if values["business_connection_id"] != "" {
+		business, options, ok := h.businessEditGateway(w, values)
+		if !ok {
+			return
+		}
+		msg, err = business.BotAPIEditMessageCaptionWithOptions(r.Context(), botID, target.chatID, target.messageID, caption, entities, setMarkup, markup, options)
+	} else if target.inline {
 		result, err = g.BotAPIEditInlineMessageCaption(r.Context(), botID, target.inlineID, caption, entities, setMarkup, markup)
 	} else {
 		msg, err = g.BotAPIEditMessageCaption(r.Context(), botID, target.chatID, target.messageID, caption, entities, setMarkup, markup)

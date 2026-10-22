@@ -1194,6 +1194,12 @@ type SavedStarGiftFilter struct {
 	CollectionID       int
 	Offset             string
 	Limit              int
+	// BotAPI applies the official regular-gift categories and send-date order,
+	// independently of the older MTProto upgrade filters/profile pin ordering.
+	BotAPI                      bool
+	ExcludeLimitedUpgradable    bool
+	ExcludeLimitedNonUpgradable bool
+	ExcludeFromBlockchain       bool
 }
 
 // Star gift 边界常量。

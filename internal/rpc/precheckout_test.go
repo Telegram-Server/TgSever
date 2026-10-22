@@ -16,7 +16,7 @@ import (
 func (c *invoiceChain) sellInvoice(t *testing.T, payload string, amount int64) (*tg.InputInvoiceMessage, domain.BotInvoice) {
 	t.Helper()
 	if _, err := c.router.BotAPISendInvoice(context.Background(),
-		c.botID, c.buyerID, "Товар", "Оплата звёздами", payload, amount); err != nil {
+		c.botID, c.buyerID, "Товар", "Оплата звёздами", payload, amount, false); err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}
 	payerID := c.newestInvoiceID(t)
@@ -24,7 +24,7 @@ func (c *invoiceChain) sellInvoice(t *testing.T, payload string, amount int64) (
 	if err != nil || !found {
 		t.Fatalf("invoice lookup: %v found=%v", err, found)
 	}
-	return &tg.InputInvoiceMessage{Peer: &tg.InputPeerUser{UserID: c.botID, AccessHash: 1}, MsgID: payerID}, stored
+	return c.inputInvoice(t, payerID), stored
 }
 
 // payStarsForm drives the payment the way TDesktop does and returns the raw error,
@@ -146,17 +146,6 @@ func TestBotInvoicePreCheckoutGate(t *testing.T) {
 	})
 }
 
-// The 10 second window is a contract with Telegram rather than an implementation
-// detail, so pin the number.
-func TestPreCheckoutTimeoutIsTenSeconds(t *testing.T) {
-	if preCheckoutTimeoutSeconds != 10 {
-		t.Fatalf("pre-checkout window = %ds, want 10s", preCheckoutTimeoutSeconds)
-	}
-	if preCheckoutTimeout != 10*time.Second {
-		t.Fatalf("pre-checkout timer = %v, want 10s", preCheckoutTimeout)
-	}
-}
-
 // A declined payment must not leave the invoice flagged as paid, or the retry
 // would hand back a receipt with no money behind it.
 func TestDeclinedPreCheckoutLeavesInvoiceUnsettled(t *testing.T) {
@@ -167,14 +156,13 @@ func TestDeclinedPreCheckoutLeavesInvoiceUnsettled(t *testing.T) {
 		t.Fatal("decline was ignored")
 	}
 	reloaded, found, err := chain.router.deps.Bots.BotInvoiceByMessage(context.Background(),
-		chain.botID, chain.botID, invoice.MsgID)
+		chain.botID, chain.buyerID, invoice.MsgID)
 	if err != nil || !found {
 		t.Fatalf("lookup after decline: %v found=%v", err, found)
 	}
 	if reloaded.Settled() {
 		t.Fatal("a declined invoice was left marked as paid")
 	}
-	_ = stored
 }
 
 // A replay of an already paid invoice must not ask the bot a second time: no

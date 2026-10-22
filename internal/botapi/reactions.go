@@ -14,7 +14,7 @@ func apiReaction(reaction domain.MessageReaction) map[string]any {
 
 func apiReactionUpdated(event domain.UpdateEvent) (map[string]any, string, bool) {
 	u := event.BotReaction
-	if u == nil || u.MessageID <= 0 || u.Chat.ID <= 0 || u.Date <= 0 || u.ActorUserID <= 0 {
+	if u == nil || u.MessageID <= 0 || u.Chat.ID <= 0 || u.Date <= 0 || !domain.ReactionActorValid(u.Actor()) {
 		return nil, "", false
 	}
 	users := make(map[int64]domain.User, len(event.Users))
@@ -37,11 +37,22 @@ func apiReactionUpdated(event domain.UpdateEvent) (map[string]any, string, bool)
 		out["reactions"] = counts
 		return out, string(domain.BotAPIUpdateMessageReactionCount), true
 	}
-	actor := users[u.ActorUserID]
-	if actor.ID == 0 {
-		actor.ID = u.ActorUserID
+	if u.ActorChatID > 0 {
+		actorChat := apiChat(domain.Peer{Type: domain.PeerTypeChannel, ID: u.ActorChatID}, users)
+		for _, channel := range event.Channels {
+			if channel.ID == u.ActorChatID {
+				describeChannelChat(actorChat, channel)
+				break
+			}
+		}
+		out["actor_chat"] = actorChat
+	} else {
+		actor := users[u.ActorUserID]
+		if actor.ID == 0 {
+			actor.ID = u.ActorUserID
+		}
+		out["user"] = apiUser(actor)
 	}
-	out["user"] = apiUser(actor)
 	old, next := make([]map[string]any, 0, len(u.OldReactions)), make([]map[string]any, 0, len(u.NewReactions))
 	for _, reaction := range u.OldReactions {
 		old = append(old, apiReaction(reaction))

@@ -38,7 +38,7 @@ func TestInvitePermanentIdentityMigrationPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	down, err := deploy.Migrations.ReadFile("migrations/20261024010000_invite_permanent_identity.down.sql")
+	down, err := deploy.Migrations.ReadFile("migrations/20261028010100_invite_permanent_identity.down.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestInvitePermanentIdentityMigrationPostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE channel_invites SET permanent=true, revoked=(invite_id=$2) WHERE channel_id=$1`, id, second.Invite.InviteID); err != nil {
 		t.Fatal(err)
 	}
-	up, err := deploy.Migrations.ReadFile("migrations/20261024010000_invite_permanent_identity.up.sql")
+	up, err := deploy.Migrations.ReadFile("migrations/20261028010100_invite_permanent_identity.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

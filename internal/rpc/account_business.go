@@ -299,9 +299,17 @@ func (r *Router) onAccountUpdateConnectedBot(ctx context.Context, req *tg.Accoun
 	if !found {
 		return nil, botBusinessMissingErr()
 	}
+	previous, hadPrevious, err := svc.GetConnectedBusinessBot(ctx, userID)
+	if err != nil {
+		return nil, internalErr()
+	}
 	if req.Deleted {
 		if _, err := svc.DeleteConnectedBusinessBot(ctx, userID, botUser.ID); err != nil {
 			return nil, businessAutomationErr(err)
+		}
+		if hadPrevious && previous.BotUserID == botUser.ID {
+			previous.Disabled = true
+			r.enqueueBusinessConnection(ctx, previous)
 		}
 		r.invalidateRPCProjectionForViewer(userID)
 		return r.connectedBusinessBotEmptyUpdates(ctx, userID, botUser), nil
@@ -318,6 +326,11 @@ func (r *Router) onAccountUpdateConnectedBot(ctx context.Context, req *tg.Accoun
 	if err != nil {
 		return nil, businessAutomationErr(err)
 	}
+	if hadPrevious && previous.ConnectionID != saved.ConnectionID {
+		previous.Disabled = true
+		r.enqueueBusinessConnection(ctx, previous)
+	}
+	r.enqueueBusinessConnection(ctx, saved)
 	r.invalidateRPCProjectionForViewer(userID)
 	return r.connectedBusinessBotEmptyUpdates(ctx, userID, botUser, tgConnectedBot(saved)), nil
 }
@@ -410,7 +423,7 @@ func (r *Router) connectedBusinessBotFromInput(ctx context.Context, currentUserI
 }
 
 func connectedBusinessBotUsable(u domain.User) bool {
-	return u.Bot && u.ID != 0 && u.ID != domain.BotFatherUserID
+	return u.Bot && !u.Deleted && u.ID != 0 && u.ID != domain.BotFatherUserID
 }
 
 func (r *Router) connectedBusinessBotEmptyUpdates(ctx context.Context, viewerUserID int64, botUser domain.User, bots ...tg.ConnectedBot) *tg.Updates {

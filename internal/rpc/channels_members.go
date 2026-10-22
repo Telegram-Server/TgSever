@@ -87,7 +87,26 @@ func (r *Router) onChannelsToggleJoinToSend(ctx context.Context, req *tg.Channel
 
 func (r *Router) onChannelsToggleJoinRequest(ctx context.Context, req *tg.ChannelsToggleJoinRequestRequest) (tg.UpdatesClass, error) {
 	return r.applyChannelAdminStateMutation(ctx, req.Channel, func(ctx context.Context, userID, channelID int64) (domain.Channel, error) {
-		return r.deps.Channels.SetJoinRequest(ctx, userID, channelID, req.Enabled)
+		var botID int64
+		if input, has := req.GetGuardBot(); has {
+			if _, empty := input.(*tg.InputUserEmpty); !empty {
+				bot, found, err := r.userFromInput(ctx, userID, input)
+				if err != nil {
+					return domain.Channel{}, err
+				}
+				if !found || !bot.Bot {
+					return domain.Channel{}, botInvalidErr()
+				}
+				botID = bot.ID
+			}
+		} else if req.Enabled {
+			var err error
+			botID, err = r.deps.Channels.GetChannelGuardBot(ctx, channelID)
+			if err != nil {
+				return domain.Channel{}, err
+			}
+		}
+		return r.deps.Channels.SetChannelGuardBot(ctx, userID, channelID, botID, req.Enabled)
 	})
 }
 
@@ -424,6 +443,11 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 	res, err := r.deps.Channels.JoinChannel(ctx, userID, ref.ID, date)
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
+			if result, queryErr := r.startChatJoinQuery(ctx, res); queryErr != nil {
+				return nil, queryErr
+			} else if result != nil {
+				return result, nil
+			}
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
 			r.deliverChatJoinRequest(ctx, res)
 		}

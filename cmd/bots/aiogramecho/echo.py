@@ -11,6 +11,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ButtonStyle
 from aiogram.filters import Command, CommandStart
+from aiogram.methods import SendMessage
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -180,11 +181,14 @@ async def send_echo(message: Message, prefix: str, ephemeral_prefix: str):
     if message.from_user is None:
         LOG.warning("ignored ephemeral message without from_user ephemeral_message_id=%s", transient_id)
         return None
-    return await message.bot.send_message(
-        chat_id=message.chat.id,
-        text=ephemeral_prefix + text,
-        receiver_user_id=message.from_user.id,
-        reply_parameters=ReplyParameters(ephemeral_message_id=transient_id),
+    # aiogram 3.30's convenience wrapper predates the nested Bot API 10.3 field.
+    return await message.bot(
+        SendMessage(
+            chat_id=message.chat.id,
+            text=ephemeral_prefix + text,
+            ephemeral_message_parameters={"receiver_user_id": message.from_user.id},
+            reply_parameters=ReplyParameters(ephemeral_message_id=transient_id),
+        )
     )
 
 

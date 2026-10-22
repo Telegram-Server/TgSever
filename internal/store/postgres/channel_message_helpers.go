@@ -40,10 +40,14 @@ func scanChannelMessage(row rowScanner) (domain.ChannelMessage, error) {
 		&msg.Body, &entities, &reply, &replyMsgID, &replyPeerType, &replyPeerID, &replyTopID,
 		&forward, &discussionChannelID, &discussionMessageID, &action, &msg.Pts, &msg.Deleted, &mediaJSON,
 		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON, &msg.ShowMessageSender,
+		&msg.GuestChatViaFrom.ID,
 	); err != nil {
 		return domain.ChannelMessage{}, err
 	}
 	msg.From.Type = domain.PeerType(fromType)
+	if msg.GuestChatViaFrom.ID != 0 {
+		msg.GuestChatViaFrom.Type = domain.PeerTypeUser
+	}
 	msg.SavedPeer = domain.Peer{Type: domain.PeerType(savedPeerType), ID: savedPeerID}
 	msg.SuggestedPost = decodeJSONPtr[domain.SuggestedPost](suggestedPostJSON)
 	if sendAsType.Valid && sendAsID.Valid {
@@ -98,11 +102,14 @@ func scanChannelMessageWithCount(row rowScanner) (domain.ChannelMessage, int, er
 		&sendAsType, &sendAsID, &msg.Date, &msg.EditDate, &msg.Post, &msg.Silent, &msg.NoForwards,
 		&msg.Body, &entities, &reply, &replyMsgID, &replyPeerType, &replyPeerID, &replyTopID,
 		&forward, &discussionChannelID, &discussionMessageID, &action, &msg.Pts, &msg.Deleted, &mediaJSON,
-		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON, &msg.ShowMessageSender, &count,
+		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON, &msg.ShowMessageSender, &msg.GuestChatViaFrom.ID, &count,
 	); err != nil {
 		return domain.ChannelMessage{}, 0, err
 	}
 	msg.From.Type = domain.PeerType(fromType)
+	if msg.GuestChatViaFrom.ID != 0 {
+		msg.GuestChatViaFrom.Type = domain.PeerTypeUser
+	}
 	msg.SavedPeer = domain.Peer{Type: domain.PeerType(savedPeerType), ID: savedPeerID}
 	msg.SuggestedPost = decodeJSONPtr[domain.SuggestedPost](suggestedPostJSON)
 	if sendAsType.Valid && sendAsID.Valid {

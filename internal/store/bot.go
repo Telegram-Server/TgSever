@@ -71,6 +71,7 @@ type BotStore interface {
 
 	SaveRequestedWebViewButton(ctx context.Context, button domain.BotRequestedWebViewButton) error
 	GetRequestedWebViewButton(ctx context.Context, botUserID, userID int64, webAppReqID string) (domain.BotRequestedWebViewButton, bool, error)
+	ConsumeRequestedWebViewButton(ctx context.Context, botUserID, userID int64, reqID string) (domain.BotRequestedWebViewButton, bool, error)
 	DeleteRequestedWebViewButton(ctx context.Context, botUserID, userID int64, webAppReqID string) error
 
 	SetBotEmojiStatusPermission(ctx context.Context, botUserID, userID int64, allowed bool) error

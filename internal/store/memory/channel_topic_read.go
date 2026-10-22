@@ -36,7 +36,7 @@ func (s *ChannelStore) channelMessageInTopicLocked(channelID int64, msg domain.C
 			return false
 		}
 		// 排除其它话题的根服务消息（reply_to_top_id=0 但 id 是某话题根，不属于 General）。
-		if _, isRoot := s.topics[channelID][msg.ID]; isRoot {
+		if _, isRoot := s.topics[channelID][msg.ID]; isRoot && msg.ID != domain.ForumGeneralTopicID {
 			return false
 		}
 		return true
@@ -187,10 +187,17 @@ func (s *ChannelStore) GeneralForumTopic(_ context.Context, viewerUserID, channe
 	}
 	gid := domain.ForumGeneralTopicID
 	water := s.channelTopicReadInboxLocked(channelID, viewerUserID, gid, member.AvailableMinID)
+	metadata := s.topics[channelID][gid]
+	if metadata.Title == "" {
+		metadata.Title = "General"
+	}
 	return domain.ChannelForumTopic{
 		ChannelID:            channelID,
 		TopicID:              gid,
-		Title:                "General",
+		Title:                metadata.Title,
+		IconColor:            domain.DefaultForumTopicIconColor,
+		Closed:               metadata.Closed,
+		Hidden:               metadata.Hidden,
 		CreatorUserID:        channel.CreatorUserID,
 		Date:                 channel.Date,
 		TopMessageID:         s.channelTopicTopMessageIDLocked(channelID, gid, member.AvailableMinID),

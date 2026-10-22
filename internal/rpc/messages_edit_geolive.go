@@ -123,7 +123,7 @@ func editLiveLocationMedia(current *domain.MessageMedia, date, now int, input *t
 			next.Heading = heading
 		}
 		if period, ok := input.GetPeriod(); ok {
-			if period != foreverLiveLocationPeriod && (period < minLiveLocationPeriod || period > 90*86400 || int64(period) > int64(next.Period)+86400) {
+			if period != foreverLiveLocationPeriod && (period < minLiveLocationPeriod || int64(date)+int64(period) > int64(now)+90*86400 || int64(date)+int64(period) <= int64(now) || int64(period) > int64(next.Period)+86400) {
 				return nil, mediaInvalidErr()
 			}
 			next.Period = period

@@ -47,3 +47,29 @@ func TestValidateMessageReplyBoundsAllowsForumTopicOnlyHeader(t *testing.T) {
 		t.Fatalf("ValidateMessageReplyBounds err = %v, want nil", err)
 	}
 }
+
+func TestValidateMessageReplyBoundsForSourceDetails(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply MessageReply
+		valid bool
+	}{
+		{"checklist lower bound", MessageReply{MessageID: 1, ChecklistTaskID: -1}, false},
+		{"checklist upper bound", MessageReply{MessageID: 1, ChecklistTaskID: MaxMessageBoxID}, true},
+		{"checklist overflow", MessageReply{MessageID: 1, ChecklistTaskID: MaxMessageBoxID + 1}, false},
+		{"poll option limit", MessageReply{MessageID: 1, PollOption: make([]byte, 256)}, true},
+		{"poll option overflow", MessageReply{MessageID: 1, PollOption: make([]byte, 257)}, false},
+		{"mutually exclusive details", MessageReply{MessageID: 1, ChecklistTaskID: 1, PollOption: []byte{1}}, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateMessageReplyBounds(&test.reply)
+			if test.valid && err != nil {
+				t.Fatalf("valid source detail rejected: %v", err)
+			}
+			if !test.valid && !errors.Is(err, ErrReplyMessageIDInvalid) {
+				t.Fatalf("invalid source detail error = %v", err)
+			}
+		})
+	}
+}

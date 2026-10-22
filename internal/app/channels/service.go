@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"telesrv/internal/app/guestauth"
 	"telesrv/internal/app/readmodel"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -1217,7 +1218,7 @@ func (s *Service) RecordMessageReactionUse(ctx context.Context, userID int64, re
 
 // DeleteParticipantReaction removes one participant reaction on a channel message.
 func (s *Service) DeleteParticipantReaction(ctx context.Context, userID int64, req domain.DeleteChannelParticipantReactionRequest) (domain.ChannelMessageReactionsResult, error) {
-	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 || req.ParticipantUserID == 0 {
+	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 || !domain.ReactionActorValid(req.Participant) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrChannelInvalid
 	}
 	if req.UserID == 0 {
@@ -1235,7 +1236,7 @@ func (s *Service) DeleteParticipantReaction(ctx context.Context, userID int64, r
 
 // DeleteParticipantReactions removes a bounded page of one participant's reactions.
 func (s *Service) DeleteParticipantReactions(ctx context.Context, userID int64, req domain.DeleteChannelParticipantReactionsRequest) (domain.DeleteChannelParticipantReactionsResult, error) {
-	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.ParticipantUserID == 0 {
+	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || !domain.ReactionActorValid(req.Participant) {
 		return domain.DeleteChannelParticipantReactionsResult{}, domain.ErrChannelInvalid
 	}
 	if req.UserID == 0 {
@@ -1463,7 +1464,24 @@ func (s *Service) SendMessage(ctx context.Context, userID int64, req domain.Send
 	if req.UserID != userID {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	if req.GuestBotID != 0 {
+		return domain.SendChannelMessageResult{}, domain.ErrAuthenticatedScopeInvalid
+	}
+	botID, err := guestauth.Take(ctx, userID, domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID})
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	if botID != 0 {
+		if err := s.ensureCanSend(ctx, botID); err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		req.GuestBotID = botID
+		req.ViaBotID = botID
+	}
 	if err := domain.ValidateReplyMarkup(req.ReplyMarkup); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	if err := domain.ValidateReplyMarkupMedia(req.ReplyMarkup, req.Media); err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
 	if req.RandomID != 0 && !req.IdempotencyPreflighted {

@@ -31,7 +31,8 @@ Russian version of this document: [bot-api.ru.md](./bot-api.ru.md).
 - [Methods: payments](#methods-payments)
 - [Markup and entities](#markup-and-entities)
 - [Limits](#limits)
-- [Not implemented](#not-implemented)
+- [Additional Bot API 10.3 methods](#additional-bot-api-103-methods)
+- [Compatibility boundaries](#compatibility-boundaries)
 - [Demos and self-tests](#demos-and-self-tests)
 
 ## Transport
@@ -52,8 +53,7 @@ Client configuration:
 - `python-telegram-bot`: pass `--base-url http://host:8081/bot` and
   `--base-file-url http://host:8081/file/bot`.
 - `aiogram`: `TelegramAPIServer.from_base("http://host:8081")`.
-- grammY: `new Api("host:8081")` / `api.config.use((ctx) => ({ apiRoot:
-  "http://host:8081/bot" }))`.
+- grammY: `new Api(token, { apiRoot: "http://host:8081" })`.
 
 ## Authentication
 
@@ -180,7 +180,12 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (79 methods + 1 file route):
+The gateway registers **186 HTTP method names**: **184 implemented official
+Bot API 10.3 methods**, the `dropPendingUpdates` extension, and the recognized
+but blocked `answerShippingQuery` (HTTP 501). File download is a separate
+route, not another official method. The table below covers the existing core;
+the [additional method tables](#additional-bot-api-103-methods) enumerate all
+106 newly implemented methods and form the rest of this summary.
 
 | Group | Methods |
 |---|---|
@@ -211,7 +216,7 @@ one answers that group with `501 METHOD_NOT_FOUND`.
 
 ## Updates
 
-Nine update kinds are produced:
+Updates include the following core kinds:
 
 | `allowed_updates` value | Update key | Delivered by default |
 |---|---|---|
@@ -224,6 +229,18 @@ Nine update kinds are produced:
 | `message_reaction` | `message_reaction` | **no** — only when listed explicitly |
 | `message_reaction_count` | `message_reaction_count` | **no** — only when listed explicitly |
 | `chat_join_request` | `chat_join_request` | yes |
+| `channel_post`, `edited_channel_post` | same as kind | yes |
+| `poll`, `poll_answer` | same as kind | yes |
+| `inline_query`, `chosen_inline_result`, `guest_message` | same as kind | yes |
+| `business_connection`, `business_message`, `edited_business_message`, `deleted_business_messages` | same as kind | yes |
+| `managed_bot`, `purchased_paid_media` | same as kind | yes |
+| `chat_boost`, `removed_chat_boost` | recognized filter names; no new producer | not a delivery guarantee |
+
+Extended object updates retain durable event-time JSON snapshots rather than
+reconstructing old content from the latest message. Subscription/payment,
+suggested-post and draft lifecycle events use their corresponding message or
+object projections. Recognition of an update name is not proof that this
+server produces it; in particular boost producers are not implemented.
 
 `allowed_updates` is a JSON array of up to 100 strings, accepted both by
 `getUpdates` and by `setWebhook`, and it persists per bot. The filter is
@@ -367,16 +384,19 @@ default-language value is always returned.
 | `disable_web_page_preview` | boolean | |
 | `disable_notification` | boolean | |
 | `reply_to_message_id` | integer | |
-| `receiver_user_id` | integer | **telesrv extension**: switches the call to an ephemeral send |
-| `callback_query_id` | integer | ephemeral send anchored to a callback query |
-| `reply_parameters` | object | `{ephemeral_message_id}` for ephemeral replies, `{message_id}` for ordinary ones |
-| `message_thread_id` | integer | ephemeral: the top message id of the discussion group |
+| `ephemeral_message_parameters` | object | official nested receiver/callback addressing; see [Ephemeral messages](#methods-ephemeral-messages) |
+| `reply_parameters` | object | ordinary message reply, or ephemeral reply with nested ephemeral addressing |
+| `message_thread_id` | integer | forum/private topic, or ephemeral discussion top message |
 
-Ordinary and ephemeral addressing are mutually exclusive: with
-`receiver_user_id` set, `reply_to_message_id` must stay unset and
-`reply_parameters` may only carry `ephemeral_message_id`. Ephemeral sends
-accept inline keyboards only (`BUTTON_TYPE_INVALID` otherwise). The result is
-the same `Message` shape, with the ephemeral id in `message_id`.
+The shared send-options parser also handles `business_connection_id`,
+`direct_messages_topic_id`, `suggested_post_parameters`, `allow_paid_broadcast`,
+`protect_content` and `message_effect_id` on the handlers that use it. These
+are validated and authorized, not silently downgraded. A topic must belong to
+the addressed chat; private topics remain scoped to the bot/user conversation.
+Business sends require a live connection and the relevant recipient/right.
+Ordinary `reply_parameters` supports message, cross-chat and quote metadata,
+`allow_sending_without_reply`, and checklist/poll selectors where applicable.
+Conflicting legacy and nested reply selectors are rejected.
 
 ### `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice`
 
@@ -392,7 +412,7 @@ All share one handler.
 | `disable_notification`, `reply_to_message_id` | | |
 | `width`, `height`, `duration`, `title`, `performer` | integer / string | accepted and forwarded as metadata hints |
 | `emoji` | string | sticker only |
-| `receiver_user_id`, `callback_query_id`, `reply_parameters`, `message_thread_id` | | same ephemeral extension as `sendMessage` |
+| `ephemeral_message_parameters`, `reply_parameters`, `message_thread_id` | | nested ephemeral addressing or ordinary topic/reply addressing |
 
 The file field accepts, in this order of precedence:
 
@@ -408,22 +428,23 @@ Anything else is `FILE_ID_INVALID`.
 Two media fields: `photo` (still frame) and `live_photo` (the video part).
 Both accept upload, `attach://`, or `file_id`. The video part **cannot** be an
 HTTP URL — that is `FILE_ID_INVALID`, matching the official restriction.
-Captions, `parse_mode`, and the ephemeral extension work as for the other
+Captions, `parse_mode`, and nested ephemeral addressing work as for the other
 media methods.
 
 ### `sendContact`, `sendLocation`, `sendVenue`
 
-These three are **ephemeral-only**: they require `receiver_user_id` (or a
-`callback_query_id`) and otherwise fail with `EPHEMERAL_TARGET_REQUIRED`.
+These three support ordinary sends as well as explicitly addressed ephemeral
+sends. Omitting ephemeral parameters never makes a private-only send public.
 
 `sendContact` takes `chat_id`, `phone_number`, `first_name`, optional
 `last_name`, and `vcard` (up to 2048 bytes), plus an optional inline
 `reply_markup`.
 
 `sendLocation` takes `chat_id`, `latitude` (`-90..90`), `longitude`
-(`-180..180`), `horizontal_accuracy` (`0..1500`, default `0`). A non-zero
-`live_period` is rejected with `MEDIA_INVALID` — live location is not
-implemented.
+(`-180..180`), `horizontal_accuracy` (`0..1500`, default `0`), and live-location
+options `live_period`, `heading`, `proximity_alert_radius`. Live locations can
+be edited or stopped using the methods listed below; stopped/expired locations
+cannot be revived.
 
 `sendVenue` adds required `title` and `address`, and accepts either
 `foursquare_id` + `foursquare_type` or `google_place_id` +
@@ -440,10 +461,10 @@ implemented.
 | `reply_parameters` | object | `{"message_id": N}`; the legacy `reply_to_message_id` is also accepted, but not both |
 | `reply_markup` | object | `sendPoll` and `sendDice` only |
 
-`message_thread_id`, `business_connection_id`, `message_effect_id`,
-`allow_paid_broadcast` and the other newer send options are not supported
-and are ignored. These methods are ordinary sends only — there is no ephemeral
-form.
+These handlers use the shared validated message options (including topic,
+business, effects and paid broadcast options) rather than silently ignoring
+them. Not every method supports every combination: incompatible ephemeral,
+business or topic addressing is rejected instead of changing visibility.
 
 ### `sendMediaGroup`
 
@@ -492,9 +513,9 @@ The number of options is checked by the MTProto handler
 
 ### `sendRichMessage`
 
-Telesrv extension, Layer 228 rich text. Sends `InputRichMessage` instead of a
-plain formatted string, so tables, headings, dividers, details blocks and
-footers reach the client as real rich blocks.
+Official Bot API 10.3 rich text, backed by Layer 228. Sends `InputRichMessage`
+instead of a plain formatted string, so tables, headings, dividers, details
+blocks and footers reach the client as real rich blocks.
 
 | Parameter | Type | Notes |
 |---|---|---|
@@ -512,10 +533,9 @@ Rules and rejections:
 - `blocks` is parsed but rejected — `RICH_MESSAGE_BLOCKS_UNSUPPORTED`;
 - `media` is parsed but rejected — `RICH_MESSAGE_MEDIA_UNSUPPORTED`;
 - the source is capped at 256 KiB;
-- `business_connection_id`, `message_thread_id`,
-  `direct_messages_topic_id`, `allow_paid_broadcast`, and
-  `suggested_post_parameters` are rejected with an explicit error instead of
-  being silently ignored;
+- shared message options are validated and use their normal authorization;
+  specifying a connection or topic does not bypass membership or recipient
+  checks;
 - rich HTML that references remote media (`img`, `video`, `audio`, `tg-map`,
   `tg-collage`, `tg-slideshow`) fails with `WEBPAGE_MEDIA_EMPTY`, because the
   local blob backend cannot materialize an arbitrary URL atomically. The
@@ -542,21 +562,26 @@ separate `editMessageRichMessage` method.
 Ephemeral messages (Bot API 10.2) are visible only to their receiver, who
 sees a "only visible to you" notice. telesrv supports the whole lifecycle.
 
-Sending is done through the ordinary methods with `receiver_user_id`:
+Sending uses the official nested object, for example:
 
-- `sendMessage` — text;
-- the media methods — media plus a caption;
-- `sendContact`, `sendLocation`, `sendVenue` — ephemeral only.
+```json
+{"chat_id":-100123,"text":"Only for you","ephemeral_message_parameters":{"receiver_user_id":456}}
+```
+
+Text, media, contact, location and venue handlers support this addressing.
+The old top-level sending fields `receiver_user_id`, `callback_query_id` and
+`replace_callback_query_message` are rejected with
+`EPHEMERAL_MESSAGE_PARAMETERS_INVALID`, not interpreted as ordinary sends.
 
 Addressing rules:
 
-- `receiver_user_id` is required and must be a positive integer;
-- `callback_query_id` may replace it as the anchor (the receiver is derived
-  from the query);
-- `reply_parameters.ephemeral_message_id` replies to an existing ephemeral
-  message, and cannot be combined with `callback_query_id`;
-- `reply_parameters.message_id` is the ordinary reply form and is not
-  combined with a receiver;
+- `ephemeral_message_parameters.receiver_user_id` is a required positive id;
+- its optional `callback_query_id` is a string; the callback must authorize
+  that receiver, and `replace_callback_query_message` requires a callback;
+- `reply_parameters.ephemeral_message_id` requires the nested object and
+  cannot be combined with a callback or ordinary reply selectors;
+- business, direct-message-topic and suggested-post addressing cannot be
+  combined with ephemeral sending;
 - `message_thread_id` is the top message of the ephemeral discussion group;
 - the action window is 15 seconds — after it the server answers
   `EPHEMERAL_ACTION_EXPIRED`.
@@ -607,9 +632,8 @@ with a user) and to write to `chat_id`. Both accept a numeric id or
 
 Differences from the official gateway:
 
-- `message_thread_id`, `direct_messages_topic_id`, `video_start_timestamp`,
-  `show_caption_above_media`, `allow_paid_broadcast` and
-  `suggested_post_parameters` are not supported (ignored);
+- forwarding/copying use validated message options where supported; topic and
+  paid-broadcast options are not a permission or content-protection bypass;
 - a plain copy is a forward without the author header and keeps albums
   intact; a copy that changes the caption, uses `remove_caption`, or adds
   `reply_markup` is a **re-send** of the source content, so an album copied
@@ -659,8 +683,8 @@ clears the keyboard, absent keeps it.
   document (which includes video, audio and animation files) can have their
   media replaced; text, poll, dice and other messages are `MEDIA_PREV_INVALID`.
 
-There is no `editMessageLiveLocation` or `stopMessageLiveLocation` (live
-location is not implemented).
+Live-location editing and stopping are implemented; see the additional
+message methods below.
 
 ### `stopPoll`
 
@@ -1039,10 +1063,8 @@ units, unknown types are `ENTITY_TYPE_UNSUPPORTED`.
 ## MTProto prerequisites for Bot API adapters
 
 [Issue #37](https://github.com/Telegram-Server/TgSever/issues/37) tracks
-underlying MTProto/app/store behavior; it does **not** add all corresponding
-HTTP methods. The photo/boost privacy prerequisites (#38–40) are delivered
-separately and must be included before these changes. Methods in the next
-section remain unavailable until their separate gateway adapters are implemented.
+the shared MTProto/app/store foundations used by the HTTP adapters documented
+here. Photo/boost privacy and the new adapters are included in this upgrade.
 - Main invites have explicit identity; ordinary creation never promotes a
   link to main. Non-owner administrators manage only their own links, and
   management/pending-request visibility require `InviteUsers`. MTProto member
@@ -1067,17 +1089,16 @@ section remain unavailable until their separate gateway adapters are implemented
   IDs lose completion, and new IDs start incomplete. Allowed collaboration
   continues to produce edit updates.
 - Text/rich streaming drafts are bot-only, validate IDs/text/entities,
-  respect blocking, and emit server-side rich constructors. Unsupported paid
-  media is no longer advertised; paid reactions remain independent.
+  respect blocking, and emit server-side rich constructors. Paid media uses
+  persisted purchase/ownership state; paid reactions remain independent.
 - `messages.getPersonalChannelHistory` lets bots read a valid public personal
   broadcast channel only while its associated user is the active creator.
   Transferring ownership revokes the old association even if that user remains
   an administrator; ordinary bot history privacy is unchanged. Default bot
   administrator rights persist separately, and avatar byte import uses avatar
   sizing/512 KiB video parts and notifies the bot owner.
-- Internal channel deletion has an explicit `SkipUnauthorized` mode for
-  future batch adapters. Normal MTProto deletion remains atomic and does not
-  silently skip unauthorized messages.
+- Batch deletion uses an explicit authorized skip mode. Normal MTProto
+  deletion remains atomic and does not silently skip unauthorized messages.
 - Reaction delivery snapshots the committed old/new selections and counts
   before admission to the bounded FIFO worker. Bot discovery, current role
   checks and update insertion run there rather than on the reaction RPC's
@@ -1086,44 +1107,258 @@ section remain unavailable until their separate gateway adapters are implemented
   a bounded per-job deadline. This is not a durable outbox or an exactly-once
   delivery guarantee.
 
-The upgrade adds migrations `20261024010000` through `20261024060000`.
-Include the photo/privacy prerequisite migration `20261023020000` first:
-adding an older version after applying these migrations would skip it.
-The first Bot API migration repairs duplicate active main invites and enforces
-uniqueness per channel/administrator; its data correction is not undone on
-rollback. Rolling back reaction/join-request payload migrations discards queued
-updates of the removed kinds. Back up the database before upgrading or rolling back.
+New migrations sort after the published `20261027010000` head:
+`20261028010000` (profile-photo offers), `20261028010100` through
+`20261028010600` (invite identity, sender bans, sticker sets, default admin
+rights, reactions and join requests), then `20261029010000`,
+`20261029020000`, `20261029030000`, `20261029040000`, `20261029050000`,
+`20261029060000`, `20261029070000`, `20261029080000`, `20261029110000`,
+`20261029120000`, `20261029130000`, `20261029130001`, `20261029140000`,
+`20261029150000` and `20261029170000`. The sequence is intentionally not
+continuous. Apply the embedded migrations in order rather than inserting
+older versions into an already-upgraded database.
 
-## Not implemented
+Invite repair enforces unique active main links; that data correction is not
+undone on rollback. Removing reaction/join-request/object payload schemas can
+discard queued events. Financial rollback fails closed if any Stars balance
+or transaction has a fractional `nanos` component, or a broadcast reservation
+is still reserved: it never truncates money to whole Stars. Back up before
+upgrading or rolling back.
 
-Every other official method returns HTTP `404 METHOD_NOT_FOUND`. The most
-commonly reached ones:
+## Additional Bot API 10.3 methods
 
-- live location: `editMessageLiveLocation`, `stopMessageLiveLocation`
-  (and `sendLocation` with `live_period`);
-- other sending: `sendGame`, `sendPaidMedia`, `sendChecklist`,
-  `editMessageChecklist`;
-- inline mode: `answerInlineQuery` (and no `inline_query` /
-  `chosen_inline_result` updates);
-- payments: `createInvoiceLink`, `getStarTransactions`,
-  `editUserStarSubscription`, `getMyStarBalance`, and the gift-management
-  methods beyond `getAvailableGifts` / `sendGift`;
-- chat administration: `banChatSenderChat`, `unbanChatSenderChat`,
-  `setChatStickerSet`, `deleteChatStickerSet`, invite links
-  (`exportChatInviteLink`, `createChatInviteLink`, `editChatInviteLink`,
-  `revokeChatInviteLink`, subscription links), join requests
-  (`approveChatJoinRequest`, `declineChatJoinRequest`);
-- forum topics: `createForumTopic`, `editForumTopic`, `closeForumTopic`,
-  `getForumTopicIconStickers` and the rest of the topic family;
-- queries: `getUserProfilePhotos`, `getUserChatBoosts`;
-- bot administration: `setMyDefaultAdministratorRights`,
-  `getMyDefaultAdministratorRights`, `close`, `logOut`;
-- reactions (`setMessageReaction`), stickers and sticker sets, stories,
-  business-account methods, and Telegram Passport.
+These tables complete the method summary with all 106 additions. Parameters
+listed are the principal inputs actually decoded by the local handlers, not a
+claim that every optional field in the upstream specification is supported.
+Use the [official Bot API reference](https://core.telegram.org/bots/api) for
+object definitions; local restrictions below take precedence. Mutations return
+`true` unless a different result is stated.
 
-MTProto clients are unaffected: everything implemented for the official
-Android/iOS/Desktop clients is reached over MTProto, not HTTP. See
-`docs/premium-stars.md` for the shared Stars and Premium pipelines.
+### Messages, reactions, live locations, checklists and drafts
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `deleteMessages` | `chat_id`, `message_ids` (1–100 positive ids); authorized batch deletion, not unrestricted cross-chat deletion |
+| `setMessageReaction` | `chat_id`, `message_id`, `reaction` (emoji/custom-emoji objects), `is_big`; normal reaction eligibility |
+| `deleteMessageReaction`, `deleteAllMessageReactions` | `chat_id`, `user_id` or `actor_chat_id` (exactly one); single removal also takes `message_id`; moderation rights checked |
+| `editMessageLiveLocation`, `stopMessageLiveLocation` | chat/message pair or `inline_message_id`, optional inline `reply_markup`; edit takes `latitude`, `longitude`, optional `horizontal_accuracy`, `live_period`, `heading`, `proximity_alert_radius`; returns `Message` or inline `true` |
+| `sendChecklist`, `editMessageChecklist` | `business_connection_id`, `chat_id`, `checklist`, optional inline `reply_markup`; edit adds `message_id`; returns `Message` |
+| `sendMessageDraft`, `sendRichMessageDraft` | positive private `chat_id`, nonzero `draft_id`, optional `message_thread_id`, `can_stop`, `keep_on_stop`; respectively `text`/formatting or `rich_message`; transient streaming state, not a committed chat message |
+| `sendPaidMedia` | `chat_id`, `star_count` (1–25000), `media` photo/video array, optional caption/formatting, payload and send options; returns `Message` with paid-media projection |
+
+Checklists require 1–30 tasks with unique positive `id`, title up to 255
+characters and task text up to 100. `title_entities` / `text_entities` or
+their `parse_mode` forms are validated. Collaboration flags are
+`others_can_add_tasks` and `others_can_mark_tasks_as_done`. Editing requires
+the author/delegated business authority and preserves completion state for
+surviving task IDs. Draft stop behavior respects `keep_on_stop`; private
+topic ownership and user blocking are enforced. Paid-media previews do not
+grant access to purchased content.
+
+### Chat administration, invites and join requests
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `banChatSenderChat`, `unbanChatSenderChat` | `chat_id`, `sender_chat_id`; channel-identity moderation through the normal ban permission |
+| `setChatStickerSet`, `deleteChatStickerSet` | `chat_id`, plus `sticker_set_name` for setting; ChangeInfo and supergroup size rules apply |
+| `setChatMemberTag` | `chat_id`, `user_id`, `tag`; ManageRanks permission, 16 Unicode characters maximum, no emoji |
+| `exportChatInviteLink` | `chat_id`; rotates the bot's main link and returns its string |
+| `createChatInviteLink`, `editChatInviteLink` | `chat_id`, optional `name`, `expire_date`, `member_limit`, `creates_join_request`; edit requires `invite_link`; returns `ChatInviteLink` |
+| `revokeChatInviteLink` | `chat_id`, `invite_link`; returns revoked `ChatInviteLink` |
+| `approveChatJoinRequest`, `declineChatJoinRequest` | `chat_id`, `user_id`; requires a pending request and InviteUsers authority |
+| `createChatSubscriptionInviteLink` | `chat_id`, `name`, `subscription_period` (2592000), `subscription_price` (1–10000); returns `ChatInviteLink` |
+| `editChatSubscriptionInviteLink` | `chat_id`, `invite_link`, `name`; changes the name, not the subscription price |
+| `answerChatJoinRequestQuery` | `chat_join_request_query_id`, `result`; query ownership and lifetime checked |
+| `sendChatJoinRequestWebApp` | `chat_join_request_query_id`, `web_app_url`; authorized query-scoped Web App delivery |
+
+Non-owner admins manage only their own invites. Main links have explicit
+identity; creating an ordinary link does not promote it to main. Join-request
+links cannot also specify a member limit. Invite secrets are redacted in
+events for viewers without authority.
+
+### Forum and private-chat topics
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `getForumTopicIconStickers` | no inputs; array of `Sticker` |
+| `createForumTopic` | `chat_id`, `name`, optional `icon_color`, `icon_custom_emoji_id`; returns `ForumTopic` |
+| `editForumTopic` | `chat_id`, `message_thread_id`, optional `name`, `icon_custom_emoji_id` |
+| `closeForumTopic`, `reopenForumTopic`, `deleteForumTopic`, `unpinAllForumTopicMessages` | `chat_id`, `message_thread_id`; topic management/deletion/pinning rights enforced |
+| `editGeneralForumTopic` | `chat_id`, `name` |
+| `closeGeneralForumTopic`, `reopenGeneralForumTopic`, `hideGeneralForumTopic`, `unhideGeneralForumTopic`, `unpinAllGeneralForumTopicMessages` | `chat_id`; general-topic operations are for forum supergroups |
+
+Private topic IDs belong to one bot/user conversation and cannot address
+another user's topic. Supergroup topics retain their normal membership and
+administrator requirements; topic support does not create a membership bypass.
+
+### User profiles and bot configuration
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `getUserProfilePhotos` | `user_id`, optional `offset`, `limit`; `UserProfilePhotos`, filtered by viewer privacy |
+| `getUserProfileAudios` | `user_id`, optional `offset`, `limit`; saved profile audio page |
+| `getUserPersonalChatMessages` | `user_id`, optional `limit`; messages from the user's valid public personal channel, not arbitrary private history |
+| `getUserChatBoosts` | `chat_id`, `user_id`; `UserChatBoosts`, subject to chat visibility/admin privacy |
+| `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` | optional `for_channels`; setter takes `rights`; getter returns `ChatAdministratorRights`; suggestions do not grant actual rights |
+| `setMyProfilePhoto`, `removeMyProfilePhoto` | setter takes `photo` (`type: static` + `photo`, or `type: animated` + `animation`, optional `main_frame_timestamp`); imports actual bytes and notifies owner |
+
+### Stickers and custom emoji
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `getStickerSet` | `name`; `StickerSet` |
+| `getCustomEmojiStickers` | `custom_emoji_ids` (up to 200); array of `Sticker` |
+| `uploadStickerFile` | `user_id`, uploaded `sticker`, `sticker_format`; `File` |
+| `createNewStickerSet` | `user_id`, `name`, `title`, `stickers` (1–50 InputSticker), optional `sticker_type`, `needs_repainting` |
+| `addStickerToSet`, `replaceStickerInSet` | `user_id`, `name`, `sticker`; replacement also requires `old_sticker` |
+| `setStickerPositionInSet` | `sticker`, nonnegative `position` |
+| `deleteStickerFromSet` | `sticker` |
+| `setStickerEmojiList` | `sticker`, `emoji_list` |
+| `setStickerKeywords` | `sticker`, `keywords` |
+| `setStickerMaskPosition` | `sticker`, optional `mask_position` |
+| `setStickerSetTitle` | `name`, `title` |
+| `setStickerSetThumbnail` | `name`, `user_id`, `format`, optional `thumbnail` |
+| `setCustomEmojiStickerSetThumbnail` | `name`, optional `custom_emoji_id` |
+| `deleteStickerSet` | `name` |
+
+InputSticker decodes `sticker`, `format`, `emoji_list`, `keywords` and
+`mask_position`. Mutations check the owning bot/user relationship and set
+ownership; knowing a public set name or a file id is not write authority.
+Sticker references in mutation methods are local document-backed `file_id`s.
+
+### Inline, guest and Mini App
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `answerInlineQuery` | `inline_query_id`, `results`, optional `cache_time`, `is_personal`, `next_offset`, `button`; `true` |
+| `answerGuestQuery` | `guest_query_id`, `result`; `{"inline_message_id":"..."}` |
+| `savePreparedKeyboardButton` | `user_id`, `button`; `{"id":"..."}` |
+
+Inline results are parsed into supported local constructors, not arbitrary
+unvalidated JSON. Query owner, expiry and result identifiers are checked.
+Guest replies require a one-use grant tied to the actual query/chat; they do
+not impersonate a caller or allow an uninvited bot to send anywhere.
+Prepared buttons preserve their user scope and validated action.
+
+### Stars payments and subscriptions
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `createInvoiceLink` | `title`, `description`, `payload`, `currency: XTR`, `prices`, optional `business_connection_id`, `subscription_period: 2592000`; returns URL |
+| `getStarTransactions` | optional nonnegative `offset`, `limit` (1–100); `StarTransactions` |
+| `getMyStarBalance` | no inputs; `StarAmount`, including fractional `nanostar_amount` |
+| `editUserStarSubscription` | `user_id`, `telegram_payment_charge_id`, `is_canceled`; toggles renewal of the bot's subscription |
+
+Provider tokens/non-XTR invoice links are rejected. The ledger is the same
+wallet used for gifts, invoices and broadcasts, not a separate synthetic
+balance. Paid broadcast requires the bot's paid-broadcast setting and at least
+10000 Stars. The ordinary allowance is 30 messages/second; opt-in capacity is
+up to 1000/second, charging 0.1 Star (100000000 nanostars) per successful
+over-limit message. Reservations, success commits and failure releases are
+atomic; failed sends are not charged.
+
+### Business connections and delegated operations
+
+All methods below require `business_connection_id`. Connections are opaque,
+bot-owned, enabled grants, not numeric user IDs.
+
+| Methods | Other inputs and result / boundary |
+|---|---|
+| `getBusinessConnection` | `BusinessConnection` with user and granted rights |
+| `readBusinessMessage` | positive private `chat_id`, `message_id`; read right and eligible recipient required |
+| `deleteBusinessMessages` | `message_ids` (1–100); sent/all-delete rights, chat isolation and age rules apply |
+| `setBusinessAccountName` | `first_name`, optional `last_name`; name-edit right |
+| `setBusinessAccountUsername` | `username`; username-edit right |
+| `setBusinessAccountBio` | `bio`; bio-edit right |
+| `setBusinessAccountProfilePhoto`, `removeBusinessAccountProfilePhoto` | optional `is_public`; setter takes static/animated `photo` object; profile-photo right |
+| `setBusinessAccountGiftSettings` | `show_gift_button`, `accepted_gift_types`; change-gift-settings right |
+| `getBusinessAccountStarBalance` | `StarAmount`; view-gifts-and-Stars right |
+| `transferBusinessAccountStars` | `star_count`; transfer-Stars right, actual debit/credit |
+| `getBusinessAccountGifts` | pagination/filter options; `OwnedGifts`; view-gifts-and-Stars right |
+
+Delegation checks the connection's bot, enabled state, specific right,
+recipient inclusion/exclusion, pause state and applicable activity window.
+It never substitutes the owner as an unrestricted caller. Revoking or pausing
+a connection stops subsequent delegated operations and rechecks queued
+business delivery.
+
+### Owned gifts
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `getUserGifts` | `user_id`, gift filters, `offset`, `limit` (1–100); `OwnedGifts` with privacy filtering before pagination |
+| `getChatGifts` | `chat_id`, same pagination/filters; `OwnedGifts` subject to chat authority |
+| `convertGiftToStars` | `business_connection_id`, `owned_gift_id`; conversion permission and gift eligibility |
+| `upgradeGift` | same identifiers, optional `keep_original_details`, `star_count`; upgrade permission, eligibility and real Stars debit |
+| `transferGift` | same identifiers, `new_owner_chat_id`, optional `star_count`; transfer permission and gift ownership |
+
+Gift identifiers do not convey ownership. Conversion, upgrade and transfer
+operate on persisted inventory, enforce availability/cost and use the shared
+Stars ledger.
+
+### Stories
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `postStory` | `business_connection_id`, `content`, `active_period`, optional caption/formatting, `areas`, `post_to_chat_page`, `protect_content`; `Story` |
+| `repostStory` | `business_connection_id`, positive `from_chat_id`, `from_story_id`, `active_period`, posting/protection flags; `Story` |
+| `editStory` | `business_connection_id`, `story_id`, `content`, optional caption/formatting and `areas`; `Story` |
+| `deleteStory` | `business_connection_id`, `story_id`; `true` |
+
+Content is a static-photo or video upload object; video accepts `duration`,
+`cover_frame_timestamp` and `is_animation`. Captions are limited to 2048
+characters. Story ownership and `can_manage_stories` delegation are enforced;
+reposting does not bypass source visibility or protection.
+
+### Verification, managed bots and suggested posts
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `verifyUser`, `removeUserVerification` | `user_id`; verification also accepts `custom_description`; requires verifier authority |
+| `verifyChat`, `removeChatVerification` | `chat_id`; verification also accepts `custom_description`; cannot remove another verifier's mark |
+| `getManagedBotToken`, `replaceManagedBotToken` | `user_id` (the managed bot); token string; management relationship required, replacement invalidates old token |
+| `getManagedBotAccessSettings` | `user_id` (the managed bot); managed access settings |
+| `setManagedBotAccessSettings` | `user_id` (the managed bot), `is_access_restricted`, optional `added_user_ids` (up to 10); management authority required |
+| `approveSuggestedPost` | `chat_id`, `message_id`, optional `send_date`; approval authority and pending-state transition |
+| `declineSuggestedPost` | `chat_id`, `message_id`, optional `comment`; authorized rejection |
+
+Managed-bot access controls do not turn the manager into the managed bot for
+unrelated APIs. Tokens are credentials and are not included in public updates.
+
+### Games, Passport and gateway lifecycle
+
+| Methods | Inputs and result / boundary |
+|---|---|
+| `sendGame` | `chat_id`, `game_short_name`, optional markup/reply/send options; `Message`; game must belong to the bot |
+| `setGameScore` | `user_id`, `score`, chat/message pair or `inline_message_id`, optional `force`, `disable_edit_message`; `Message` or inline `true` |
+| `getGameHighScores` | `user_id`, chat/message pair or `inline_message_id`; array of `GameHighScore` |
+| `setPassportDataErrors` | `user_id`, nonempty `errors`; validates secure-data error constructors and bot authority |
+| `logOut`, `close` | no inputs; stops the local bot API instance according to its lifecycle/lease rules; cooldown errors include retry information |
+
+## Compatibility boundaries
+
+- `answerShippingQuery` remains recognized but always returns HTTP
+  `501 METHOD_NOT_FOUND`: this server implements XTR payments, not physical
+  shipping or external payment providers.
+- `dropPendingUpdates` is the sole non-official method in the registered
+  count (individual parameters such as idempotency keys can still be local
+  extensions). Rich messages and ephemeral methods are official Bot API 10.3
+  methods, not local extensions.
+- Unknown method names return HTTP 404. Optional gateway services omitted by
+  a custom embedding can return 501; production wiring includes the new
+  adapters, but registration alone does not prove a business operation works.
+- No legacy basic groups, localized bot-profile storage or non-default
+  command scopes. Existing upload, formatting and webhook certificate/IP
+  restrictions still apply.
+- Rich source `blocks` and embedded `media` remain explicitly unsupported;
+  remote rich-HTML media cannot be materialized atomically.
+- Boost update names are recognized, but no new `chat_boost` or
+  `removed_chat_boost` producer is claimed. A successful empty ledger/profile
+  query is not proof of a funded payment or every update transition.
+
+MTProto and HTTP share authorization, persistence and the Stars/Premium
+pipelines; see [premium-stars.md](./premium-stars.md). This is an implemented
+method inventory, not a claim of complete upstream optional-field parity.
 
 ## Demos and self-tests
 

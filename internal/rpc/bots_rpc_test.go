@@ -33,6 +33,9 @@ func newBotRPCTestRouter(t *testing.T) (*Router, *botsapp.Service, *memory.UserS
 	if err != nil {
 		t.Fatalf("create manager bot: %v", err)
 	}
+	if err := svc.SetCanManageBots(ctx, owner.ID, manager.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
 		Users: appusers.NewService(users),
 		Bots:  svc,

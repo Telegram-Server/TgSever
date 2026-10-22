@@ -25,6 +25,29 @@ func (r *Router) botInvoiceSettle(ctx context.Context, userID int64, req *tg.Pay
 		}
 		return nil, true, err
 	}
+	return r.settleBotInvoice(ctx, userID, req, invoice)
+}
+
+func (r *Router) settleBotInvoice(ctx context.Context, userID int64, req *tg.PaymentsSendPaymentFormRequest, invoice domain.BotInvoice) (tg.PaymentsPaymentResultClass, bool, error) {
+	if r.deps.Bots == nil || r.deps.Stars == nil {
+		return nil, true, notImplementedErr()
+	}
+	var err error
+	if err := r.ensureBotAccess(ctx, invoice.BotUserID, userID); err != nil {
+		return nil, true, err
+	}
+	var offer domain.InvoiceLink
+	if r.deps.BotCommerce != nil {
+		offer, err = r.deps.BotCommerce.InvoiceOffer(ctx, invoice.ID)
+		if err != nil && !errors.Is(err, domain.ErrCommerceNotFound) {
+			return nil, true, err
+		}
+		if offer.BusinessConnectionID != "" {
+			if _, err := r.botAPIBusinessOwner(ctx, invoice.BotUserID, offer.BusinessConnectionID, "can_reply"); err != nil {
+				return nil, true, err
+			}
+		}
+	}
 	// A real XTR purchase carries neither shipping nor a tip: telesrv models no
 	// fiat checkout, so anything extra is a request it cannot honour.
 	if req.RequestedInfoID != "" {
@@ -53,7 +76,7 @@ func (r *Router) botInvoiceSettle(ctx context.Context, userID int64, req *tg.Pay
 	//
 	// An already settled invoice skips the question: the order was approved once
 	// and a replay must not re-ask or re-charge.
-	if !invoice.Settled() {
+	if !invoice.Settled() && offer.ChannelID == 0 {
 		if err := r.runPreCheckout(ctx, invoice.BotUserID, userID,
 			invoice.Currency, invoice.Amount, invoice.Payload); err != nil {
 			return nil, true, err
@@ -68,7 +91,21 @@ func (r *Router) botInvoiceSettle(ctx context.Context, userID int64, req *tg.Pay
 		return nil, true, starsErr(err)
 	}
 	r.notifyBotAPIUpdate(invoice.BotUserID)
-	return &tg.PaymentsPaymentResult{Updates: tgPrivateSendResultUpdates(sent, 0, false, nil, nil)}, true, nil
+	updates := tgPrivateSendResultUpdates(sent, 0, false, nil, nil)
+	if offer.ChannelID > 0 {
+		if r.deps.Channels == nil {
+			return nil, true, notImplementedErr()
+		}
+		r.invalidateRPCProjectionForChannel(offer.ChannelID)
+		view, err := r.deps.Channels.GetChannel(ctx, userID, offer.ChannelID)
+		if err != nil {
+			return nil, true, channelInviteErr(err)
+		}
+		r.addOnlineChannelMemberships(offer.ChannelID, userID)
+		updates.Chats = append(updates.Chats, tgChannelChat(userID, view.Channel, &view.Self))
+		updates.Updates = append(updates.Updates, &tg.UpdateChannel{ChannelID: offer.ChannelID})
+	}
+	return &tg.PaymentsPaymentResult{Updates: updates}, true, nil
 }
 
 // botInvoiceChargeID derives a stable charge id from the invoice id.

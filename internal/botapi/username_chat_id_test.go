@@ -37,9 +37,9 @@ func (g *usernameChatRecorder) handler() http.Handler {
 	return (&handler{bots: &fakeBotAPIBots{profile: testBotProfile}, gateway: g, invoices: g}).routes()
 }
 
-func (g *usernameChatRecorder) BotAPIEditMessageText(ctx context.Context, botID, chatID int64, messageID int, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool) (domain.Message, error) {
+func (g *usernameChatRecorder) BotAPIEditMessageTextWithOptions(ctx context.Context, botID, chatID int64, messageID int, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool, options domain.BotAPIMessageOptions) (domain.Message, error) {
 	g.seen["editMessageText"] = chatID
-	return g.fakeBotAPIGateway.BotAPIEditMessageText(ctx, botID, chatID, messageID, text, entities, setReplyMarkup, replyMarkup, disableWebPagePreview)
+	return g.fakeBotAPIGateway.BotAPIEditMessageTextWithOptions(ctx, botID, chatID, messageID, text, entities, setReplyMarkup, replyMarkup, disableWebPagePreview, options)
 }
 
 func (g *usernameChatRecorder) BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, messageID int) (bool, error) {
@@ -52,7 +52,7 @@ func (g *usernameChatRecorder) BotAPIDeleteEphemeral(ctx context.Context, botID,
 	return g.fakeBotAPIGateway.BotAPIDeleteEphemeral(ctx, botID, chatID, receiverID, messageID)
 }
 
-func (g *usernameChatRecorder) BotAPISendInvoice(_ context.Context, _, chatID int64, _, _, _ string, _ int64) (domain.Message, error) {
+func (g *usernameChatRecorder) BotAPISendInvoice(_ context.Context, _, chatID int64, _, _, _ string, _ int64, _ bool) (domain.Message, error) {
 	g.seen["sendInvoice"] = chatID
 	return domain.Message{ID: 1}, nil
 }
@@ -93,9 +93,9 @@ func TestMethodsAcceptUsernameChatID(t *testing.T) {
 			func(g *usernameChatRecorder) int64 { return g.seen["deleteMessage"] }},
 		{"sendGift", `{"gift_id":"5","chat_id":"@publicchannel","request_id":"r1"}`,
 			func(g *usernameChatRecorder) int64 { return g.starGiftChatID }},
-		{"sendContact", `{"chat_id":"@publicchannel","receiver_user_id":2001,"phone_number":"+100","first_name":"Alice"}`, ephemeralSend},
-		{"sendLocation", `{"chat_id":"@publicchannel","receiver_user_id":2001,"latitude":1.25,"longitude":2.5}`, ephemeralSend},
-		{"sendVenue", `{"chat_id":"@publicchannel","receiver_user_id":2001,"latitude":1.25,"longitude":2.5,"title":"Place","address":"Street"}`, ephemeralSend},
+		{"sendContact", `{"chat_id":"@publicchannel","ephemeral_message_parameters":{"receiver_user_id":2001},"phone_number":"+100","first_name":"Alice"}`, ephemeralSend},
+		{"sendLocation", `{"chat_id":"@publicchannel","ephemeral_message_parameters":{"receiver_user_id":2001},"latitude":1.25,"longitude":2.5}`, ephemeralSend},
+		{"sendVenue", `{"chat_id":"@publicchannel","ephemeral_message_parameters":{"receiver_user_id":2001},"latitude":1.25,"longitude":2.5,"title":"Place","address":"Street"}`, ephemeralSend},
 		{"editEphemeralMessageText", `{"chat_id":"@publicchannel","receiver_user_id":2001,"ephemeral_message_id":77,"text":"edited"}`,
 			func(g *usernameChatRecorder) int64 {
 				if len(g.ephemeralEdits) == 0 {
@@ -136,7 +136,7 @@ func TestSendGiftSurfacesUsernameResolutionErrors(t *testing.T) {
 
 func TestEphemeralSendKeepsItsErrorForMalformedChatID(t *testing.T) {
 	gateway := newUsernameChatRecorder()
-	rec := callMethod(t, gateway.handler(), "sendContact", `{"chat_id":"abc","receiver_user_id":2001,"phone_number":"+100","first_name":"Alice"}`)
+	rec := callMethod(t, gateway.handler(), "sendContact", `{"chat_id":"abc","ephemeral_message_parameters":{"receiver_user_id":2001},"phone_number":"+100","first_name":"Alice"}`)
 	if resp := decodeAPIResponse(t, rec); resp.OK || resp.Description != "MEDIA_INVALID" {
 		t.Fatalf("sendContact(abc) = %s, want MEDIA_INVALID", rec.Body.String())
 	}

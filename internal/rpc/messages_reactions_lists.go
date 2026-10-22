@@ -20,22 +20,29 @@ func (r *Router) onMessagesDeleteParticipantReaction(ctx context.Context, req *t
 	if err != nil {
 		return nil, err
 	}
-	if participant.Type != domain.PeerTypeUser || participant.ID == 0 {
+	if !domain.ReactionActorValid(participant) {
 		return nil, userIDInvalidErr()
 	}
 	if peer.Type != domain.PeerTypeChannel || r.deps.Channels == nil {
 		return nil, peerIDInvalidErr()
+	}
+	return r.deleteParticipantReaction(ctx, userID, peer, req.MsgID, participant)
+}
+
+func (r *Router) deleteParticipantReaction(ctx context.Context, userID int64, peer domain.Peer, messageID int, participant domain.Peer) (tg.UpdatesClass, error) {
+	if messageID <= 0 || messageID > domain.MaxMessageBoxID {
+		return nil, messageIDInvalidErr()
 	}
 	moderator, ok := r.deps.Channels.(channelParticipantReactionModerator)
 	if !ok {
 		return nil, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	res, err := moderator.DeleteParticipantReaction(ctx, userID, domain.DeleteChannelParticipantReactionRequest{
-		UserID:            userID,
-		ChannelID:         peer.ID,
-		MessageID:         req.MsgID,
-		ParticipantUserID: participant.ID,
-		Date:              int(r.clock.Now().Unix()),
+		UserID:      userID,
+		ChannelID:   peer.ID,
+		MessageID:   messageID,
+		Participant: participant,
+		Date:        int(r.clock.Now().Unix()),
 	})
 	if err != nil {
 		return nil, channelInvalidErr(err)
@@ -58,12 +65,16 @@ func (r *Router) onMessagesDeleteParticipantReactions(ctx context.Context, req *
 	if err != nil {
 		return false, err
 	}
-	if participant.Type != domain.PeerTypeUser || participant.ID == 0 {
+	if !domain.ReactionActorValid(participant) {
 		return false, userIDInvalidErr()
 	}
 	if peer.Type != domain.PeerTypeChannel || r.deps.Channels == nil {
 		return false, peerIDInvalidErr()
 	}
+	return r.deleteParticipantReactions(ctx, userID, peer, participant)
+}
+
+func (r *Router) deleteParticipantReactions(ctx context.Context, userID int64, peer, participant domain.Peer) (bool, error) {
 	moderator, ok := r.deps.Channels.(channelParticipantReactionModerator)
 	if !ok {
 		return false, channelInvalidErr(domain.ErrChannelInvalid)
@@ -72,7 +83,7 @@ func (r *Router) onMessagesDeleteParticipantReactions(ctx context.Context, req *
 	for deleted := 0; deleted < 10000; {
 		limit := min(domain.MaxDeleteParticipantReactionsBatch, 10000-deleted)
 		res, err := moderator.DeleteParticipantReactions(ctx, userID, domain.DeleteChannelParticipantReactionsRequest{
-			UserID: userID, ChannelID: peer.ID, ParticipantUserID: participant.ID, Limit: limit, Date: date,
+			UserID: userID, ChannelID: peer.ID, Participant: participant, Limit: limit, Date: date,
 		})
 		if err != nil {
 			return false, channelInvalidErr(err)

@@ -542,26 +542,7 @@ func (c *documentMetaCache) put(id int64, doc domain.Document) {
 }
 
 func cloneDocument(doc domain.Document) domain.Document {
-	doc.FileReference = append([]byte(nil), doc.FileReference...)
-	if len(doc.Attributes) > 0 {
-		attrs := make([]domain.DocumentAttribute, len(doc.Attributes))
-		copy(attrs, doc.Attributes)
-		for i := range attrs {
-			attrs[i].Waveform = append([]byte(nil), attrs[i].Waveform...)
-		}
-		doc.Attributes = attrs
-	}
-	if len(doc.Thumbs) > 0 {
-		thumbs := make([]domain.PhotoSize, len(doc.Thumbs))
-		copy(thumbs, doc.Thumbs)
-		for i := range thumbs {
-			thumbs[i].Bytes = append([]byte(nil), thumbs[i].Bytes...)
-			thumbs[i].Sizes = append([]int(nil), thumbs[i].Sizes...)
-			thumbs[i].BackgroundColors = append([]int(nil), thumbs[i].BackgroundColors...)
-		}
-		doc.Thumbs = thumbs
-	}
-	return doc
+	return *domain.CloneDocumentPtr(&doc)
 }
 
 func documentFromRow(row sqlcgen.GetDocumentRow) (domain.Document, error) {
@@ -864,26 +845,16 @@ func insertStickerSet(ctx context.Context, db sqlcgen.DBTX, set domain.StickerSe
 	if kind == "" {
 		kind = string(domain.StickerSetKindStickers)
 	}
-	_, err = db.Exec(ctx, `
-INSERT INTO sticker_sets (
-  id, access_hash, short_name, title, count, hash, set_kind,
-  official, animated, videos, emojis, masks, text_color, creator_user_id,
-  installed, archived, deleted, installed_date,
-  thumb_document_id, thumbs, thumb_dc_id, thumb_version,
-  document_ids, packs, keywords, sort_order, system_key, software, updated_at
-) VALUES (
-  $1, $2, $3, $4, $5, $6, $7,
-  $8, $9, $10, $11, $12, $13, $14,
-  $15, $16, $17, $18,
-  $19, $20::jsonb, $21, $22,
-  $23::jsonb, $24::jsonb, $25::jsonb, $26, $27, $28, now()
-)`,
-		set.ID, set.AccessHash, set.ShortName, set.Title, set.Count, set.Hash, kind,
-		set.Official, set.Animated, set.Videos, set.Emojis, set.Masks, set.TextColor, set.CreatorUserID,
-		set.Installed, set.Archived, set.Deleted, set.InstalledDate,
-		set.ThumbDocumentID, thumbs, set.ThumbDCID, set.ThumbVersion,
-		docIDs, packs, keywords, set.SortOrder, set.SystemKey, set.Software,
-	)
+	err = sqlcgen.New(db).CreateOwnedStickerSet(ctx, sqlcgen.CreateOwnedStickerSetParams{
+		ID: set.ID, AccessHash: set.AccessHash, ShortName: set.ShortName, Title: set.Title,
+		Count: int32(set.Count), Hash: int32(set.Hash), SetKind: kind,
+		Official: set.Official, Animated: set.Animated, Videos: set.Videos, Emojis: set.Emojis,
+		Masks: set.Masks, TextColor: set.TextColor, CreatorUserID: set.CreatorUserID, CreatorBotID: set.CreatorBotID,
+		Installed: set.Installed, Archived: set.Archived, Deleted: set.Deleted, InstalledDate: int32(set.InstalledDate),
+		ThumbDocumentID: set.ThumbDocumentID, Thumbs: thumbs, ThumbDcID: int32(set.ThumbDCID), ThumbVersion: int32(set.ThumbVersion),
+		DocumentIds: docIDs, Packs: packs, Keywords: keywords, SortOrder: int32(set.SortOrder),
+		SystemKey: set.SystemKey, Software: set.Software,
+	})
 	return err
 }
 
@@ -1056,7 +1027,7 @@ SELECT
   official, animated, videos, emojis, masks, installed, archived, installed_date,
   thumb_document_id, thumbs::text AS thumbs_json, thumb_dc_id, thumb_version,
   document_ids::text AS document_ids_json, packs::text AS packs_json, sort_order, system_key,
-  creator_user_id, text_color, deleted, software, keywords::text AS keywords_json
+  creator_user_id, text_color, deleted, software, keywords::text AS keywords_json, creator_bot_id
 FROM sticker_sets
 `
 
@@ -1106,13 +1077,14 @@ func scanStickerSet(row stickerSetScanner) (domain.StickerSet, error) {
 		deleted         bool
 		software        string
 		keywordsJSON    string
+		creatorBotID    int64
 	)
 	if err := row.Scan(
 		&id, &accessHash, &shortName, &title, &count, &hash, &kind,
 		&official, &animated, &videos, &emojis, &masks, &installed, &archived, &installedDate,
 		&thumbDocumentID, &thumbsJSON, &thumbDCID, &thumbVersion,
 		&docIDsJSON, &packsJSON, &sortOrder, &systemKey,
-		&creatorUserID, &textColor, &deleted, &software, &keywordsJSON,
+		&creatorUserID, &textColor, &deleted, &software, &keywordsJSON, &creatorBotID,
 	); err != nil {
 		return domain.StickerSet{}, err
 	}
@@ -1147,6 +1119,7 @@ func scanStickerSet(row stickerSetScanner) (domain.StickerSet, error) {
 		Masks:           masks,
 		TextColor:       textColor,
 		CreatorUserID:   creatorUserID,
+		CreatorBotID:    creatorBotID,
 		Installed:       installed,
 		Archived:        archived,
 		Deleted:         deleted,

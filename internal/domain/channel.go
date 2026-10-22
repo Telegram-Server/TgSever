@@ -448,6 +448,7 @@ type Channel struct {
 	PreHistoryHidden         bool
 	ParticipantsHidden       bool
 	AntiSpam                 bool
+	GuardBotID               int64
 	// HasLink 表示频道/群存在未撤销的导出邀请链接。Android send-as 入口会用
 	// megagroup && (public || has_geo || has_link) 判定是否拉取候选列表。
 	HasLink      bool
@@ -703,9 +704,9 @@ type ChannelMessageAction struct {
 	Wallpaper *Wallpaper
 	// Photo 仅 chat_edit_photo 服务消息使用。
 	Photo *Photo
-	// Suggested-post lifecycle actions share the immutable price snapshot.  The
-	// approval action additionally uses the reject/balance/schedule fields;
-	// refund uses PayerInitiated.
+	// Approval actions retain the immutable quoted price; success actions carry
+	// the channel's net income after commission. Approval additionally uses
+	// reject/balance/schedule fields; refund uses PayerInitiated.
 	SuggestedPostRejected       bool
 	SuggestedPostBalanceTooLow  bool
 	SuggestedPostRejectComment  string
@@ -740,6 +741,7 @@ type ChannelMessage struct {
 	ReplyTo           *MessageReply
 	Forward           *MessageForward
 	ViaBotID          int64
+	GuestChatViaFrom  Peer
 	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
@@ -892,6 +894,7 @@ type ChannelMessagePeerReaction struct {
 	MessageID    int
 	SenderUserID int64
 	UserID       int64
+	ActorChatID  int64
 	Reaction     MessageReaction
 	Big          bool
 	Unread       bool
@@ -916,6 +919,7 @@ type ChannelMessageReactions struct {
 // SetChannelMessageReactionsRequest replaces the current user's reactions for one message.
 type SetChannelMessageReactionsRequest struct {
 	UserID      int64
+	Actor       Peer
 	ChannelID   int64
 	MessageID   int
 	Reactions   []MessageReaction
@@ -939,20 +943,20 @@ type ChannelMessageReactionsResult struct {
 
 // DeleteChannelParticipantReactionRequest removes one participant reaction on one message.
 type DeleteChannelParticipantReactionRequest struct {
-	UserID            int64
-	ChannelID         int64
-	MessageID         int
-	ParticipantUserID int64
-	Date              int
+	UserID      int64
+	ChannelID   int64
+	MessageID   int
+	Participant Peer
+	Date        int
 }
 
 // DeleteChannelParticipantReactionsRequest removes a bounded page of one participant's reactions.
 type DeleteChannelParticipantReactionsRequest struct {
-	UserID            int64
-	ChannelID         int64
-	ParticipantUserID int64
-	Limit             int
-	Date              int
+	UserID      int64
+	ChannelID   int64
+	Participant Peer
+	Limit       int
+	Date        int
 }
 
 // DeleteChannelParticipantReactionsResult describes moderation reaction clears.
@@ -1695,9 +1699,10 @@ type DeleteChannelResult struct {
 
 // SendChannelMessageRequest sends one channel/supergroup message.
 type SendChannelMessageRequest struct {
-	UserID    int64
-	ChannelID int64
-	RandomID  int64
+	UserID     int64
+	ChannelID  int64
+	GuestBotID int64
+	RandomID   int64
 	// IdempotencyFingerprint is the SHA-256 of the immutable client send intent. RPC callers
 	// provide a raw-TL per-item value; internal callers leave it empty for the store fallback.
 	IdempotencyFingerprint []byte
@@ -1743,6 +1748,8 @@ type SendMonoforumMessageRequest struct {
 	Message                string
 	Entities               []MessageEntity
 	Media                  *MessageMedia
+	RichMessage            *MessageRichMessage
+	ReplyMarkup            *MessageReplyMarkup
 	ReplyTo                *MessageReply
 	Forward                *MessageForward
 	Silent                 bool
@@ -2197,6 +2204,7 @@ type UpdateChannelPinnedMessageResult struct {
 type UnpinAllChannelMessagesRequest struct {
 	UserID    int64
 	ChannelID int64
+	TopicID   int
 	Date      int
 }
 
@@ -2206,17 +2214,19 @@ type ChannelInvite struct {
 	InviteID  int64
 	Hash      string
 	// Link is the public URL captured for an outbound update; storage uses Hash.
-	Link           string
-	AdminUserID    int64
-	Title          string
-	Permanent      bool
-	Revoked        bool
-	RequestNeeded  bool
-	ExpireDate     int
-	UsageLimit     int
-	UsageCount     int
-	RequestedCount int
-	Date           int
+	Link               string
+	AdminUserID        int64
+	Title              string
+	Permanent          bool
+	Revoked            bool
+	RequestNeeded      bool
+	ExpireDate         int
+	UsageLimit         int
+	UsageCount         int
+	RequestedCount     int
+	SubscriptionPeriod int
+	SubscriptionPrice  int64
+	Date               int
 }
 
 // ExportChannelInviteRequest creates one invite link.

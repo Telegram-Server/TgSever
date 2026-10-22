@@ -12,7 +12,7 @@ func (s *Service) AddStickerToSet(ctx context.Context, actorUserID int64, ref do
 	if err != nil {
 		return domain.StickerSet{}, nil, err
 	}
-	if len(set.DocumentIDs) >= domain.MaxStickerSetItems {
+	if len(set.DocumentIDs) >= stickerSetCapacity(set.Kind, set.CreatorBotID) && !containsInt64(set.DocumentIDs, item.DocumentID) {
 		return domain.StickerSet{}, nil, domain.ErrStickerSetTooMuch
 	}
 	doc, err := s.loadStickerMaterialDocument(ctx, item.DocumentID, item.DocumentAccessHash)
@@ -34,10 +34,10 @@ func (s *Service) AddStickerToSet(ctx context.Context, actorUserID int64, ref do
 	if err != nil {
 		return domain.StickerSet{}, nil, err
 	}
+	doc = applyStickerInputMetadata(doc, item)
 	set.DocumentIDs = append(set.DocumentIDs, doc.ID)
 	set.Count = len(set.DocumentIDs)
-	set.Packs = addDocumentToStickerPacks(set.Packs, emoji, doc.ID)
-	set.Keywords = upsertStickerKeywords(set.Keywords, parseStickerKeywords(doc.ID, item.Keywords))
+	set.Packs, set.Keywords = stickerInputIndexes(set.Packs, set.Keywords, doc.ID, item)
 	if set.ThumbDocumentID == 0 {
 		setStickerSetThumbFromDocument(&set, doc)
 	}
@@ -269,6 +269,7 @@ func (s *Service) loadStickerMaterialDocument(ctx context.Context, documentID in
 }
 
 func (s *Service) persistStickerSetMutation(ctx context.Context, set domain.StickerSet, docs []domain.Document, changedDocs []domain.Document) (domain.StickerSet, []domain.Document, error) {
+	updateBotStickerSetFormats(&set, docs)
 	if err := s.media.UpdateStickerSet(ctx, set, changedDocs); err != nil {
 		return domain.StickerSet{}, nil, err
 	}

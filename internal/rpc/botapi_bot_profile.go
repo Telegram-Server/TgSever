@@ -47,8 +47,8 @@ func (r *Router) BotAPIGetBotInfo(ctx context.Context, botID int64, languageCode
 	return info.Name, info.About, info.Description, nil
 }
 
-// BotAPIGetMyDefaultAdministratorRights exposes the stored scope without adding
-// an HTTP method. The future gateway uses the same bot identity as MTProto.
+// BotAPIGetMyDefaultAdministratorRights returns the same persisted scope used by
+// the MTProto administrator-rights suggestions.
 func (r *Router) BotAPIGetMyDefaultAdministratorRights(ctx context.Context, botID int64, forChannels bool) (domain.ChannelAdminRights, error) {
 	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) || r.deps.Bots == nil {
 		return domain.ChannelAdminRights{}, errors.New("BOT_INVALID")

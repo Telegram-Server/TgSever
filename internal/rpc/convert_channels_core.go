@@ -82,7 +82,7 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		return nil
 	}
 	peer := &tg.PeerChannel{ChannelID: m.ChannelID}
-	outgoing := m.SenderUserID == viewerUserID && viewerUserID != 0 && (m.SavedPeer.ID != 0 || m.From.Type != domain.PeerTypeChannel)
+	outgoing := m.GuestChatViaFrom.ID == 0 && m.SenderUserID == viewerUserID && viewerUserID != 0 && (m.SavedPeer.ID != 0 || m.From.Type != domain.PeerTypeChannel)
 	from := tg.PeerClass(nil)
 	if (!m.Post || m.ShowMessageSender) && m.SendAs != nil && m.SendAs.ID != 0 {
 		from = tgPeer(*m.SendAs)
@@ -176,6 +176,11 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	}
 	if m.ViaBotID != 0 {
 		msg.SetViaBotID(m.ViaBotID)
+	}
+	if m.GuestChatViaFrom.ID != 0 {
+		if caller := tgPeer(m.GuestChatViaFrom); caller != nil {
+			msg.SetGuestchatViaFrom(caller)
+		}
 	}
 	if m.GroupedID != 0 {
 		msg.SetGroupedID(m.GroupedID)

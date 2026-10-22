@@ -308,7 +308,7 @@ ORDER BY channel_id ASC, message_id ASC, stars DESC, reactor_user_id ASC`, pairC
 }
 
 func channelReactionOffset(row domain.ChannelMessagePeerReaction) string {
-	return strconv.Itoa(row.Date) + ":" + strconv.FormatInt(row.UserID, 10) + ":" + string(row.Reaction.Type) + ":" + row.Reaction.Value()
+	return strconv.Itoa(row.Date) + ":" + strconv.FormatInt(row.ActorKey(), 10) + ":" + string(row.Reaction.Type) + ":" + row.Reaction.Value()
 }
 
 func parseChannelReactionOffset(offset string) (channelReactionCursor, bool) {
@@ -321,7 +321,7 @@ func parseChannelReactionOffset(offset string) (channelReactionCursor, bool) {
 		return channelReactionCursor{}, false
 	}
 	userID, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil || userID < 0 {
+	if err != nil || userID == 0 {
 		return channelReactionCursor{}, false
 	}
 	if len(parts) == 3 {
@@ -348,6 +348,7 @@ func scanChannelMessagePeerReaction(row rowScanner, viewerUserID int64) (domain.
 		return domain.ChannelMessagePeerReaction{}, err
 	}
 	out.My = out.UserID == viewerUserID
+	out.SetActorKey(out.UserID)
 	reaction, ok := domain.MessageReactionFromValue(domain.MessageReactionType(reactionType), reactionValue)
 	if !ok {
 		return domain.ChannelMessagePeerReaction{}, fmt.Errorf("invalid channel message reaction value")

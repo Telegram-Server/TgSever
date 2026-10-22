@@ -125,6 +125,14 @@ func ChannelSenderBans(t *testing.T, s store.ChannelStore, reopen func() store.C
 			}
 		})
 	}
+	alternate, err := s.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: member, Title: "Other owned identity", Broadcast: true, Date: baseNow()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alternatePeer := domain.Peer{Type: domain.PeerTypeChannel, ID: alternate.Channel.ID}
+	if _, err = s.SendChannelMessage(ctx, domain.SendChannelMessageRequest{UserID: member, ChannelID: created.Channel.ID, Message: "owner bypass", SendAs: &alternatePeer, Date: baseNow()}); !errors.Is(err, domain.ErrChannelSenderBanned) {
+		t.Fatalf("same-owner alternate channel bypassed ban: %v", err)
+	}
 	ban.BannedRights = domain.ChannelBannedRights{}
 	if _, err := s.EditChannelBanned(ctx, ban); err != nil {
 		t.Fatal(err)
@@ -137,6 +145,9 @@ func ChannelSenderBans(t *testing.T, s store.ChannelStore, reopen func() store.C
 	sent, err := s.SendChannelMessage(ctx, domain.SendChannelMessageRequest{UserID: member, ChannelID: created.Channel.ID, Message: "restored", SendAs: &peer, Date: baseNow()})
 	if err != nil || sent.Message.SendAs == nil || *sent.Message.SendAs != peer {
 		t.Fatalf("unbanned send = %+v, %v", sent.Message, err)
+	}
+	if _, err = s.SendChannelMessage(ctx, domain.SendChannelMessageRequest{UserID: member, ChannelID: created.Channel.ID, Message: "other identity restored", SendAs: &alternatePeer, Date: baseNow()}); err != nil {
+		t.Fatalf("same-owner alternate identity stayed banned: %v", err)
 	}
 	logs, err := s.ListAdminLog(ctx, domain.ChannelAdminLogRequest{UserID: owner, ChannelID: created.Channel.ID, Limit: 100})
 	if err != nil {

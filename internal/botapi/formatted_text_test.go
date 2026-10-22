@@ -175,7 +175,7 @@ func TestBotAPIInlineAndNestedMediaUseFormattedTextParser(t *testing.T) {
 		"type": "photo", "media": fileID, "caption": "_media_", "parse_mode": "MarkdownV2",
 	})
 	var input domain.BotAPIEphemeralEditInput
-	if err := parseEphemeralEditMedia(string(raw), &input); err != nil {
+	if err := parseEphemeralEditMedia(string(raw), &input, nil); err != nil {
 		t.Fatal(err)
 	}
 	if input.Fields.Message != "media" || !reflect.DeepEqual(input.Fields.Entities, []domain.MessageEntity{{Type: domain.MessageEntityItalic, Offset: 0, Length: 5}}) {
@@ -211,7 +211,7 @@ func TestBotAPIFormattedTextIsUsedByAllMessageEntryPoints(t *testing.T) {
 		t.Fatalf("edit status=%d body=%s text=%q entities=%#v", rec.Code, rec.Body.String(), gateway.editText, gateway.editEntities)
 	}
 
-	rec = performBotAPIRequest(t, h, bots.profile, "sendMessage", `{"chat_id":-1000000003001,"receiver_user_id":2001,"text":"<u>ephemeral</u>","parse_mode":"HTML"}`)
+	rec = performBotAPIRequest(t, h, bots.profile, "sendMessage", `{"chat_id":-1000000003001,"ephemeral_message_parameters":{"receiver_user_id":2001},"text":"<u>ephemeral</u>","parse_mode":"HTML"}`)
 	if rec.Code != http.StatusOK || len(gateway.ephemeralSends) == 0 {
 		t.Fatalf("ephemeral status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -251,5 +251,59 @@ func TestBotAPIHTMLParseFailureIsAtomic(t *testing.T) {
 	rec := performBotAPIRequest(t, h, bots.profile, "sendMessage", `{"chat_id":2001,"text":"<b>broken","parse_mode":"HTML"}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Can't parse entities") || gateway.sendCalled {
 		t.Fatalf("status=%d body=%s gatewayCalled=%v", rec.Code, rec.Body.String(), gateway.sendCalled)
+	}
+}
+
+func TestReplyParametersRetainFormattedQuoteAndRejectAmbiguousTargets(t *testing.T) {
+	reply, err := parseBotAPIReplyParameters(map[string]string{"reply_parameters": `{"message_id":77,"chat_id":"@source","quote":"<b>😀</b>","quote_parse_mode":"HTML","quote_position":2,"checklist_task_id":9}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.MessageID != 77 || reply.ChatID != "@source" || reply.Quote != "😀" || reply.QuotePosition == nil || *reply.QuotePosition != 2 || reply.ChecklistTaskID != 9 ||
+		!reflect.DeepEqual(reply.QuoteEntities, []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 2}}) {
+		t.Fatalf("formatted reply changed: %+v", reply)
+	}
+	for _, raw := range []string{
+		`null`, `{}`, `{"message_id":77,"ephemeral_message_id":4}`,
+		`{"message_id":"77"}`, `{"message_id":77,"allow_sending_without_reply":"true"}`,
+		`{"message_id":77,"quote_position":-1}`, `{"message_id":77,"quote":"a","quote_position":null}`,
+		`{"message_id":77,"chat_id":true}`, `{"message_id":77,"chat_id":0}`,
+		`{"message_id":77,"unknown":true}`, `{"message_id":77,"checklist_task_id":0}`,
+		`{"message_id":77,"checklist_task_id":1,"poll_option_id":"option"}`,
+	} {
+		if _, err := parseBotAPIReplyParameters(map[string]string{"reply_parameters": raw}); err == nil {
+			t.Fatalf("ambiguous reply accepted: %s", raw)
+		}
+	}
+	if _, err := parseBotAPIReplyParameters(map[string]string{"reply_to_message_id": "1", "reply_parameters": `{"message_id":2}`}); err == nil {
+		t.Fatal("legacy and typed target conflict accepted")
+	}
+	if _, err := botAPIMessageOptions(map[string]string{"business_connection_id": "business", "reply_parameters": `{"message_id":2,"chat_id":42}`}); err == nil {
+		t.Fatal("business cross-chat reply accepted")
+	}
+	if _, err := botAPIMessageOptions(map[string]string{"reply_parameters": `{"ephemeral_message_id":2}`}); err == nil {
+		t.Fatal("ephemeral reply accepted by persistent send")
+	}
+}
+
+func TestSuggestedPostParametersPreserveUnpaidAndExactTONPrice(t *testing.T) {
+	unpaid, err := parseBotAPISuggestedPost(`{}`)
+	if err != nil || unpaid == nil || unpaid.Price != nil {
+		t.Fatalf("unpaid suggestion lost: %+v err=%v", unpaid, err)
+	}
+	post, err := parseBotAPISuggestedPost(`{"price":{"currency":"TON","amount":10000000000000},"send_date":1900000000}`)
+	if err != nil || post.Price == nil || post.Price.Kind != domain.SuggestedPostPriceTON || post.Price.Amount != 10000000000000 || post.ScheduleDate != 1900000000 {
+		t.Fatalf("TON price/date changed: %+v err=%v", post, err)
+	}
+	for _, raw := range []string{
+		`null`, `{"price":null}`, `{"send_date":null}`, `{"send_date":"1900000000"}`,
+		`{"price":{"currency":"XTR","amount":4}}`, `{"price":{"currency":"XTR","amount":100001}}`,
+		`{"price":{"currency":"TON","amount":9999999}}`, `{"price":{"currency":"TON","amount":10000000000001}}`,
+		`{"price":{"currency":"TON","amount":10000000.5}}`, `{"price":{"currency":"XTR","amount":5,"unknown":1}}`,
+		`{"unknown":true}`,
+	} {
+		if _, err := parseBotAPISuggestedPost(raw); err == nil {
+			t.Fatalf("invalid suggestion accepted: %s", raw)
+		}
 	}
 }

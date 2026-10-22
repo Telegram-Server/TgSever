@@ -10,7 +10,7 @@ import (
 )
 
 const getBotsByIDs = `-- name: GetBotsByIDs :many
-SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history, bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type, menu_button_text, menu_button_url, bot_inline_geo, group_admin_rights, broadcast_admin_rights FROM bots WHERE bot_user_id = ANY($1::bigint[])
+SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history, bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type, menu_button_text, menu_button_url, bot_inline_geo, group_admin_rights, broadcast_admin_rights, guest_chat, can_manage_bots, inline_feedback_percentage FROM bots WHERE bot_user_id = ANY($1::bigint[])
 `
 
 func (q *Queries) GetBotsByIDs(ctx context.Context, ids []int64) ([]Bot, error) {
@@ -39,6 +39,9 @@ func (q *Queries) GetBotsByIDs(ctx context.Context, ids []int64) ([]Bot, error) 
 			&i.BotInlineGeo,
 			&i.GroupAdminRights,
 			&i.BroadcastAdminRights,
+			&i.GuestChat,
+			&i.CanManageBots,
+			&i.InlineFeedbackPercentage,
 		); err != nil {
 			return nil, err
 		}

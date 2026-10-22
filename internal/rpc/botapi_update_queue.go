@@ -2,9 +2,12 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
+	"telesrv/internal/botapi"
 	"telesrv/internal/domain"
 )
 
@@ -79,7 +82,7 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 		if _, ok := botAPIQueuedUpdateKind(botID, item, now); !ok {
 			continue
 		}
-		if item.Ephemeral != nil || item.ChatMember != nil || item.Reaction != nil || item.JoinRequest != nil {
+		if item.Object != nil || item.Ephemeral != nil || item.ChatMember != nil || item.Reaction != nil || item.JoinRequest != nil {
 			continue
 		}
 		if item.Callback != nil && item.Callback.InlineMessage != nil {
@@ -110,7 +113,7 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 	leadingSkipped := int64(0)
 	for _, item := range items {
 		event, ok := botAPIQueuedUpdateEventFromMessages(botID, item, privateMessages, channelMessages, now)
-		if !ok {
+		if !ok || !r.botAPIObjectAuthorized(ctx, botID, item) {
 			if len(events) == 0 {
 				leadingSkipped = item.ID
 			}
@@ -173,6 +176,10 @@ func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate, now time.Time
 	eventType, ok := botAPIUpdateEventType(item.Kind)
 	if !ok {
 		return "", false
+	}
+	if item.Object != nil {
+		err := domain.ValidateBotAPIObjectRequest(domain.EnqueueBotAPIUpdateRequest{BotUserID: item.BotUserID, Kind: item.Kind, Peer: item.Peer, MessageID: item.MessageID, SourcePts: item.SourcePts, Date: item.Date, Object: item.Object, Callback: item.Callback, PreCheckout: item.PreCheckout, Ephemeral: item.Ephemeral, ChatMember: item.ChatMember, Reaction: item.Reaction, JoinRequest: item.JoinRequest})
+		return domain.UpdateEventBotAPIObject, err == nil && now.Before(time.Unix(int64(item.Date), 0).Add(24*time.Hour))
 	}
 	if item.Ephemeral != nil && !botAPIQueuedEphemeralValid(botID, item, now) {
 		return "", false
@@ -275,6 +282,9 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 	if !ok {
 		return domain.UpdateEvent{}, false
 	}
+	if item.Object != nil {
+		return domain.UpdateEvent{UserID: botID, Type: eventType, BotAPIUpdateID: item.ID, Date: item.Date, BotAPIObject: item.Object.Clone()}, true
+	}
 	if item.JoinRequest != nil {
 		peers := []domain.Peer{{Type: domain.PeerTypeUser, ID: item.JoinRequest.UserID}}
 		if item.JoinRequest.Invite != nil {
@@ -283,7 +293,7 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 		return domain.UpdateEvent{UserID: botID, Type: eventType, BotAPIUpdateID: item.ID, Date: item.Date, Peer: item.Peer, Peers: peers, BotJoinRequest: item.JoinRequest.Clone()}, true
 	}
 	if item.Reaction != nil {
-		return domain.UpdateEvent{UserID: botID, Type: eventType, BotAPIUpdateID: item.ID, Date: item.Date, Peer: item.Peer, Peers: []domain.Peer{{Type: domain.PeerTypeUser, ID: item.Reaction.ActorUserID}}, BotReaction: item.Reaction.Clone()}, true
+		return domain.UpdateEvent{UserID: botID, Type: eventType, BotAPIUpdateID: item.ID, Date: item.Date, Peer: item.Peer, Peers: []domain.Peer{item.Reaction.Actor()}, BotReaction: item.Reaction.Clone()}, true
 	}
 	if item.Ephemeral != nil {
 		message := item.Ephemeral.EphemeralMessage()
@@ -452,20 +462,37 @@ func botAPIUpdateEventType(kind domain.BotAPIUpdateKind) (domain.UpdateEventType
 	case domain.BotAPIUpdateChatJoinRequest:
 		return domain.UpdateEventBotChatJoinRequest, true
 	default:
+		if domain.BotAPIObjectKind(kind) {
+			return domain.UpdateEventBotAPIObject, true
+		}
 		return "", false
 	}
 }
 
-// enqueueBotAPIPrivateMessageUpdateAsync 把私聊消息的 Bot API 队列写入投给后台
-// dispatcher（性能审计 H2）：发送者 RPC 不再为 bot 判定 miss / INSERT 多等 PG 往返。
-// dispatcher 未启动（测试/未装配）时同步执行，行为不变。
+// enqueueBotAPIObject snapshots a public Bot API object before the producer can
+// mutate it. The existing durable queue owns filtering, acknowledgement and TTL.
+func (r *Router) enqueueBotAPIObject(ctx context.Context, botID int64, kind domain.BotAPIUpdateKind, payload map[string]any) {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID <= 0 {
+		return
+	}
+	object, err := domain.NewBotAPIObject(kind, payload)
+	if err != nil {
+		return
+	}
+	date := int(r.clock.Now().Unix())
+	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
+		if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(jobCtx, domain.EnqueueBotAPIUpdateRequest{BotUserID: botID, Kind: kind, Date: date, Object: object}); err == nil && created {
+			r.notifyBotAPIUpdate(botID)
+		}
+	})
+}
+
+// Snapshot before dispatch so a subsequent edit cannot rewrite an unread update.
 func (r *Router) enqueueBotAPIPrivateMessageUpdateAsync(ctx context.Context, res domain.SendPrivateTextResult) {
 	if r == nil || r.deps.BotAPIUpdates == nil || res.Duplicate || res.RecipientMessage.ID <= 0 {
 		return
 	}
-	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
-		r.enqueueBotAPIPrivateMessageUpdate(jobCtx, res)
-	})
+	r.enqueueBotAPIPrivateMessageUpdate(ctx, res)
 }
 
 // enqueueBotAPIPrivateEditUpdatesAsync 同上，覆盖私聊编辑的 edited_message 队列写入。
@@ -473,15 +500,14 @@ func (r *Router) enqueueBotAPIPrivateEditUpdatesAsync(ctx context.Context, res d
 	if r == nil || r.deps.BotAPIUpdates == nil || len(res.Edited) == 0 {
 		return
 	}
-	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
-		r.enqueueBotAPIPrivateEditUpdates(jobCtx, res)
-	})
+	r.enqueueBotAPIPrivateEditUpdates(ctx, res)
 }
 
 func (r *Router) enqueueBotAPIPrivateMessageUpdate(ctx context.Context, res domain.SendPrivateTextResult) {
 	if r == nil || r.deps.BotAPIUpdates == nil || res.Duplicate || res.RecipientMessage.ID <= 0 || res.RecipientMessage.Out {
 		return
 	}
+	r.enqueueBotAPIBusinessPrivateMessage(ctx, res)
 	botID := res.RecipientMessage.OwnerUserID
 	if botID == 0 || !botAPIMessageProjectable(res.RecipientMessage) {
 		return
@@ -490,22 +516,17 @@ func (r *Router) enqueueBotAPIPrivateMessageUpdate(ctx context.Context, res doma
 	if err != nil || !isBot {
 		return
 	}
-	if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
-		BotUserID: botID,
-		Kind:      domain.BotAPIUpdateMessage,
-		Peer:      res.RecipientMessage.Peer,
-		MessageID: res.RecipientMessage.ID,
-		SourcePts: res.RecipientEvent.Pts,
-		Date:      res.RecipientMessage.Date,
-	}); err == nil && created {
-		r.notifyBotAPIUpdate(botID)
+	if res.SenderMessage.OwnerUserID > 0 && r.ensureBotAccess(ctx, botID, res.SenderMessage.OwnerUserID) != nil {
+		return
 	}
+	r.enqueueBotAPIMessageSnapshot(ctx, botID, domain.BotAPIUpdateMessage, res.RecipientMessage, nil)
 }
 
 func (r *Router) enqueueBotAPIPrivateEditUpdates(ctx context.Context, res domain.EditMessageResult) {
 	if r == nil || r.deps.BotAPIUpdates == nil {
 		return
 	}
+	r.enqueueBotAPIBusinessPrivateEdits(ctx, res)
 	for _, item := range res.Edited {
 		if item.UserID == 0 || item.UserID == res.OwnerUserID || !botAPIMessageProjectable(item.Message) {
 			continue
@@ -514,16 +535,10 @@ func (r *Router) enqueueBotAPIPrivateEditUpdates(ctx context.Context, res domain
 		if err != nil || !isBot {
 			continue
 		}
-		if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
-			BotUserID: item.UserID,
-			Kind:      domain.BotAPIUpdateEditedMessage,
-			Peer:      item.Message.Peer,
-			MessageID: item.Message.ID,
-			SourcePts: item.Event.Pts,
-			Date:      item.Message.EditDate,
-		}); err == nil && created {
-			r.notifyBotAPIUpdate(item.UserID)
+		if res.OwnerUserID > 0 && r.ensureBotAccess(ctx, item.UserID, res.OwnerUserID) != nil {
+			continue
 		}
+		r.enqueueBotAPIMessageSnapshot(ctx, item.UserID, domain.BotAPIUpdateEditedMessage, item.Message, nil)
 	}
 }
 
@@ -550,16 +565,19 @@ func (r *Router) enqueueBotAPIChannelMessageUpdateForBots(ctx context.Context, r
 		if _, skipped := skip[botID]; skipped {
 			continue
 		}
-		if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
-			BotUserID: botID,
-			Kind:      domain.BotAPIUpdateMessage,
-			Peer:      domain.Peer{Type: domain.PeerTypeChannel, ID: res.Message.ChannelID},
-			MessageID: res.Message.ID,
-			SourcePts: res.Event.Pts,
-			Date:      res.Message.Date,
-		}); err == nil && created {
-			r.notifyBotAPIUpdate(botID)
+		if res.Message.SenderUserID > 0 && r.ensureBotAccess(ctx, botID, res.Message.SenderUserID) != nil {
+			continue
 		}
+		message := botAPIMessageFromChannel(botID, res.Message)
+		kind := domain.BotAPIUpdateMessage
+		view, err := r.deps.Channels.GetChannel(ctx, botID, res.Message.ChannelID)
+		if err != nil || view.Forbidden || view.Self.Status != domain.ChannelMemberActive {
+			continue
+		}
+		if view.Channel.Broadcast && !view.Channel.Megagroup {
+			kind = domain.BotAPIUpdateKind("channel_post")
+		}
+		r.enqueueBotAPIMessageSnapshot(ctx, botID, kind, message, []domain.Channel{view.Channel})
 	}
 }
 
@@ -591,24 +609,23 @@ func (r *Router) enqueueBotAPIChannelEditMessageUpdate(ctx context.Context, orig
 	if err != nil {
 		return
 	}
-	date := res.Message.EditDate
-	if date == 0 {
-		date = res.Message.Date
-	}
 	for _, botID := range botIDs {
 		if botID == 0 || botID == res.Message.SenderUserID {
 			continue
 		}
-		if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
-			BotUserID: botID,
-			Kind:      domain.BotAPIUpdateEditedMessage,
-			Peer:      domain.Peer{Type: domain.PeerTypeChannel, ID: res.Message.ChannelID},
-			MessageID: res.Message.ID,
-			SourcePts: res.Event.Pts,
-			Date:      date,
-		}); err == nil && created {
-			r.notifyBotAPIUpdate(botID)
+		if res.Message.SenderUserID > 0 && r.ensureBotAccess(ctx, botID, res.Message.SenderUserID) != nil {
+			continue
 		}
+		message := botAPIMessageFromChannel(botID, res.Message)
+		kind := domain.BotAPIUpdateEditedMessage
+		view, err := r.deps.Channels.GetChannel(ctx, botID, res.Message.ChannelID)
+		if err != nil || view.Forbidden || view.Self.Status != domain.ChannelMemberActive {
+			continue
+		}
+		if view.Channel.Broadcast && !view.Channel.Megagroup {
+			kind = domain.BotAPIUpdateKind("edited_channel_post")
+		}
+		r.enqueueBotAPIMessageSnapshot(ctx, botID, kind, message, []domain.Channel{view.Channel})
 	}
 }
 
@@ -800,6 +817,12 @@ func botAPIMessageProjectable(msg domain.Message) bool {
 	if msg.ID <= 0 {
 		return false
 	}
+	if msg.Action != nil {
+		switch msg.Action.Type {
+		case domain.ChannelActionTopicCreate, domain.ChannelActionTopicEdit, domain.ChannelActionSuggestedPostApproval, domain.ChannelActionSuggestedPostSuccess, domain.ChannelActionSuggestedPostRefund:
+			return true
+		}
+	}
 	if msg.Body != "" {
 		return true
 	}
@@ -811,6 +834,12 @@ func botAPIMessageMediaProjectable(media *domain.MessageMedia) bool {
 		return false
 	}
 	switch media.Kind {
+	case domain.MessageMediaKindGame:
+		return media.Game != nil
+	case domain.MessageMediaKindPaidMedia:
+		return media.PaidMedia != nil
+	case domain.MessageMediaKindDice:
+		return media.Dice != nil
 	case domain.MessageMediaKindPhoto:
 		return media.Photo != nil
 	case domain.MessageMediaKindDocument:
@@ -832,6 +861,10 @@ func botAPIMessageMediaProjectable(media *domain.MessageMedia) bool {
 			return false
 		}
 		switch media.ServiceAction.Kind {
+		case domain.MessageServiceActionPassportData:
+			return media.ServiceAction.PassportData != nil && media.ServiceAction.PassportData.BotUserID > 0
+		case domain.MessageServiceActionTopicCreate, domain.MessageServiceActionTopicEdit:
+			return media.ServiceAction.ForumTopic != nil
 		case domain.MessageServiceActionWebViewDataSent:
 			return media.ServiceAction.WebViewData != nil
 		case domain.MessageServiceActionRequestedPeer:
@@ -850,6 +883,9 @@ func botAPIMessageMediaProjectable(media *domain.MessageMedia) bool {
 }
 
 func botAPIRequestedPeerProjectable(action *domain.MessageRequestedPeerAction) bool {
+	if action != nil && action.ManagedBot != nil {
+		return action.ManagedBot.ID > 0 && action.ManagedBot.Bot
+	}
 	if action == nil || action.ButtonID == 0 || len(action.Peers) == 0 || len(action.Peers) > domain.MaxBotRequestedPeerQuantity {
 		return false
 	}
@@ -874,4 +910,123 @@ func botAPIRequestedPeerProjectable(action *domain.MessageRequestedPeerAction) b
 		allUsers = allUsers && peer.Type == domain.PeerTypeUser
 	}
 	return allUsers || (len(action.Peers) == 1 && action.Peers[0].Type == domain.PeerTypeChannel)
+}
+
+func (r *Router) enqueueBotAPIMessageSnapshot(ctx context.Context, botID int64, kind domain.BotAPIUpdateKind, message domain.Message, channels []domain.Channel) {
+	events := r.enrichUpdateEvents(ctx, botID, []domain.UpdateEvent{{UserID: botID, Type: domain.UpdateEventNewMessage, Message: message, Channels: channels}})
+	if len(events) != 1 {
+		return
+	}
+	r.enqueueBotAPIObject(ctx, botID, kind, botapi.SnapshotMessage(message, events[0].Users, append(channels, events[0].Channels...)))
+}
+
+func (r *Router) botAPIObjectAuthorized(ctx context.Context, botID int64, item domain.BotAPIUpdate) bool {
+	if item.Peer.Type == domain.PeerTypeChannel {
+		switch item.Kind {
+		case domain.BotAPIUpdateChatMember, domain.BotAPIUpdateMessageReaction, domain.BotAPIUpdateMessageReactionCount, domain.BotAPIUpdateChatJoinRequest:
+			if r.deps.Channels == nil {
+				return false
+			}
+			view, err := r.deps.Channels.GetChannel(ctx, botID, item.Peer.ID)
+			if err != nil || view.Forbidden || view.Self.Status != domain.ChannelMemberActive {
+				return false
+			}
+			admin := view.Self.Role == domain.ChannelRoleCreator || view.Self.Role == domain.ChannelRoleAdmin
+			if !admin {
+				return false
+			}
+			if item.Kind == domain.BotAPIUpdateChatJoinRequest && view.Self.Role != domain.ChannelRoleCreator && !view.Self.AdminRights.InviteUsers {
+				return false
+			}
+		}
+	}
+	if item.Object == nil {
+		return true
+	}
+	body, err := item.Object.Object()
+	if err != nil {
+		return false
+	}
+	switch item.Kind {
+	case "message", "edited_message", "channel_post", "edited_channel_post", "guest_message", "inline_query", "chosen_inline_result":
+		if from, ok := body["from"].(map[string]any); ok {
+			if raw, ok := from["id"].(json.Number); ok {
+				actorID, err := raw.Int64()
+				if err != nil || r.ensureBotAccess(ctx, botID, actorID) != nil {
+					return false
+				}
+			}
+		}
+	}
+	switch item.Kind {
+	case "chat_join_request":
+		id, ok := body["query_id"].(string)
+		if !ok || r.deps.Channels == nil {
+			return false
+		}
+		queryID, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return false
+		}
+		query, err := r.deps.Channels.GetChatJoinQuery(ctx, queryID)
+		if err != nil || !query.CanResolve(botID, int(r.clock.Now().Unix()), "approve") {
+			return false
+		}
+		guard, err := r.deps.Channels.GetChannelGuardBot(ctx, query.ChannelID)
+		return err == nil && guard == botID
+	case "business_message", "edited_business_message", "deleted_business_messages":
+		connectionID, _ := body["business_connection_id"].(string)
+		chat, _ := body["chat"].(map[string]any)
+		id, ok := chat["id"].(json.Number)
+		if !ok {
+			return false
+		}
+		chatID, err := id.Int64()
+		if err != nil {
+			return false
+		}
+		peer := domain.Peer{Type: domain.PeerTypeUser, ID: chatID}
+		if chatID < -1000000000000 {
+			peer = domain.Peer{Type: domain.PeerTypeChannel, ID: -chatID - 1000000000000}
+		}
+		_, err = r.botAPIBusinessPeer(ctx, botID, connectionID, "", peer)
+		return err == nil
+	case "message", "edited_message", "channel_post", "edited_channel_post", "chat_boost", "removed_chat_boost":
+		chat, _ := body["chat"].(map[string]any)
+		if chat["type"] == "private" {
+			return true
+		}
+		id, ok := chat["id"].(json.Number)
+		if !ok || r.deps.Channels == nil {
+			return false
+		}
+		chatID, err := id.Int64()
+		if err != nil || chatID >= -1000000000000 {
+			return false
+		}
+		view, err := r.deps.Channels.GetChannel(ctx, botID, -chatID-1000000000000)
+		if err != nil || view.Forbidden || view.Self.UserID != botID || view.Self.Status != domain.ChannelMemberActive {
+			return false
+		}
+		if item.Kind == "chat_boost" || item.Kind == "removed_chat_boost" {
+			return view.Self.Role == domain.ChannelRoleAdmin || view.Self.Role == domain.ChannelRoleCreator
+		}
+		if raw, ok := body["message_id"].(json.Number); ok {
+			messageID, err := raw.Int64()
+			if err != nil || messageID <= 0 || messageID > domain.MaxMessageBoxID {
+				return false
+			}
+			history, err := r.deps.Channels.GetMessages(ctx, botID, view.Channel.ID, []int{int(messageID)})
+			if err != nil {
+				return false
+			}
+			for _, message := range history.Messages {
+				if message.ID == int(messageID) && !message.Deleted {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return true
 }

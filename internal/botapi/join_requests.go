@@ -41,6 +41,10 @@ func apiInviteLink(invite domain.ChannelInvite, creator domain.User, viewerID in
 	if invite.RequestNeeded {
 		out["pending_join_request_count"] = invite.RequestedCount
 	}
+	if invite.SubscriptionPeriod > 0 {
+		out["subscription_period"] = invite.SubscriptionPeriod
+		out["subscription_price"] = invite.SubscriptionPrice
+	}
 	return out
 }
 

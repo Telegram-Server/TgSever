@@ -32,7 +32,15 @@ func (s *MessageStore) SetMessageReactions(_ context.Context, req domain.SetPriv
 			break
 		}
 	}
-	if target.ID == 0 || target.UID == 0 {
+	if target.GroupedID != 0 {
+		for _, candidate := range s.m[req.UserID] {
+			if candidate.Peer == req.Peer && candidate.GroupedID == target.GroupedID && !candidate.Deleted && (target.Deleted || candidate.ID < target.ID) {
+				target = candidate
+			}
+		}
+		req.MessageID = target.ID
+	}
+	if target.ID == 0 || target.UID == 0 || target.Deleted {
 		return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
 	if target.Media != nil && target.Media.Kind == domain.MessageMediaKindService {

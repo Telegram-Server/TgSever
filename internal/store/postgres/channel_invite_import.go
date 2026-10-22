@@ -65,6 +65,9 @@ func (s *ChannelStore) ImportInvite(ctx context.Context, req domain.ImportChanne
 	if invite.ExpireDate > 0 && invite.ExpireDate < req.Date {
 		return domain.CreateChannelResult{}, domain.ErrInviteHashExpired
 	}
+	if err := requireCommerceInviteEntitlement(ctx, tx, invite, req.UserID, req.Date); err != nil {
+		return domain.CreateChannelResult{}, err
+	}
 	if invite.RequestNeeded {
 		if err := s.recordPendingInviteImporterTx(ctx, tx, invite, req.UserID, req.Date); err != nil {
 			return domain.CreateChannelResult{}, err

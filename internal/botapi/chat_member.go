@@ -42,6 +42,9 @@ func apiChatMember(member domain.ChannelMember, user domain.User, canBeEdited bo
 	default:
 		out["status"] = "member"
 	}
+	if (out["status"] == "member" || out["status"] == "restricted") && member.Rank != "" {
+		out["tag"] = member.Rank
+	}
 	return out
 }
 

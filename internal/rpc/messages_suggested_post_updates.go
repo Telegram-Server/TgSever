@@ -72,6 +72,7 @@ func (r *Router) suggestedPostApprovalUpdatesWithPeerCacheAndOverlaysStrict(ctx 
 }
 
 func (r *Router) enqueueSuggestedPostApprovalFanout(ctx context.Context, originUserID int64, result domain.ToggleSuggestedPostApprovalResult) {
+	r.enqueueBotAPISuggestedPostUpdates(ctx, result)
 	monoOnly := result
 	monoOnly.Published = nil
 	nudge := max(result.OriginalEvent.Pts, result.ServiceEvent.Pts)

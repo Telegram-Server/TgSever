@@ -48,14 +48,6 @@ func TestBotsLongtailReadStubsReturnEmptyFacts(t *testing.T) {
 		t.Fatalf("preview medias len = %d, want 0", len(medias))
 	}
 
-	access, err := f.router.onBotsGetAccessSettings(userCtx, inputUser(f.bot))
-	if err != nil {
-		t.Fatalf("getAccessSettings: %v", err)
-	}
-	if access.GetRestricted() {
-		t.Fatalf("access settings = %+v, want unrestricted empty", access)
-	}
-
 	recs, err := f.router.onBotsGetBotRecommendations(userCtx, inputUser(f.bot))
 	if err != nil {
 		t.Fatalf("getBotRecommendations: %v", err)
@@ -245,11 +237,6 @@ func TestBotsLongtailCommercialAndSettingsStubs(t *testing.T) {
 	}()); ok || !tgerr.Is(err, "BOT_VERIFIER_FORBIDDEN") {
 		t.Fatalf("set custom verification = %v,%v, want false,BOT_VERIFIER_FORBIDDEN", ok, err)
 	}
-	if ok, err := f.router.onBotsEditAccessSettings(userCtx, &tg.BotsEditAccessSettingsRequest{
-		Bot: inputUser(f.bot),
-	}); ok || !tgerr.Is(err, "BOT_INVALID") {
-		t.Fatalf("edit access settings = %v,%v, want false,BOT_INVALID", ok, err)
-	}
 	if _, err := f.router.onBotsRequestWebViewButton(botCtx, &tg.BotsRequestWebViewButtonRequest{
 		UserID: inputUser(f.owner),
 		Button: tg.KeyboardButton{
@@ -277,7 +264,6 @@ func TestBotsLongtailExplicitStubsAreRegistered(t *testing.T) {
 		{name: "getRequestedWebViewButton", req: &tg.BotsGetRequestedWebViewButtonRequest{Bot: inputUser(f.bot), WebappReqID: "req"}, want: "BUTTON_DATA_INVALID"},
 		{name: "reorderUsernames", req: &tg.BotsReorderUsernamesRequest{Bot: inputUser(f.bot), Order: []string{f.bot.Username}}, want: "USERNAME_NOT_MODIFIED"},
 		{name: "toggleUsername", req: &tg.BotsToggleUsernameRequest{Bot: inputUser(f.bot), Username: f.bot.Username, Active: true}, want: "USERNAME_NOT_MODIFIED"},
-		{name: "editAccessSettings", req: &tg.BotsEditAccessSettingsRequest{Bot: inputUser(f.bot)}, want: "BOT_INVALID"},
 	}
 	for _, tt := range userRequests {
 		t.Run(tt.name, func(t *testing.T) {

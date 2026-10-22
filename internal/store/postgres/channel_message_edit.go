@@ -459,25 +459,43 @@ func (s *ChannelStore) UnpinAllChannelMessages(ctx context.Context, req domain.U
 	if !canPinChannelMessages(channel, member) {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelAdminRequired
 	}
-	rows, err := tx.Query(ctx, `
+	var cleared []int
+	if req.TopicID != 0 {
+		if !channel.Forum {
+			return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelForumMissing
+		}
+		if req.TopicID != domain.ForumGeneralTopicID {
+			if _, err := s.getForumTopic(ctx, tx, req.ChannelID, req.TopicID); err != nil {
+				return domain.UpdateChannelPinnedMessageResult{}, err
+			}
+		}
+		ids, err := sqlcgen.New(tx).UnpinForumChannelMessages(ctx, sqlcgen.UnpinForumChannelMessagesParams{ChannelID: req.ChannelID, TopicID: int32(req.TopicID)})
+		if err != nil {
+			return domain.UpdateChannelPinnedMessageResult{}, err
+		}
+		for _, id := range ids {
+			cleared = append(cleared, int(id))
+		}
+	} else {
+		rows, err := tx.Query(ctx, `
 UPDATE channel_messages SET pinned = false
 WHERE channel_id = $1 AND pinned AND NOT deleted
 RETURNING id`, req.ChannelID)
-	if err != nil {
-		return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("unpin all channel messages: %w", err)
-	}
-	cleared := []int(nil)
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+		if err != nil {
+			return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("unpin all channel messages: %w", err)
+		}
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return domain.UpdateChannelPinnedMessageResult{}, err
+			}
+			cleared = append(cleared, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
 			return domain.UpdateChannelPinnedMessageResult{}, err
 		}
-		cleared = append(cleared, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return domain.UpdateChannelPinnedMessageResult{}, err
 	}
 	if len(cleared) == 0 {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelNotModified
@@ -487,12 +505,16 @@ RETURNING id`, req.ChannelID)
 	if err != nil {
 		return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("allocate channel unpin-all pts: %w", err)
 	}
+	pinnedID, err := sqlcgen.New(tx).HighestPinnedForumChannelMessage(ctx, req.ChannelID)
+	if err != nil {
+		return domain.UpdateChannelPinnedMessageResult{}, err
+	}
 	if _, err := tx.Exec(ctx, `
-UPDATE channels SET pinned_message_id = 0, pts = $2, updated_at = now()
-WHERE id = $1`, req.ChannelID, pts); err != nil {
+UPDATE channels SET pinned_message_id = $3, pts = $2, updated_at = now()
+WHERE id = $1`, req.ChannelID, pts, pinnedID); err != nil {
 		return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("clear channel pinned message: %w", err)
 	}
-	channel.PinnedMessageID = 0
+	channel.PinnedMessageID = int(pinnedID)
 	channel.Pts = pts
 	event := domain.ChannelUpdateEvent{
 		ChannelID:    req.ChannelID,

@@ -45,7 +45,7 @@ func actorChannelReactionChanges(ctx context.Context, tx pgx.Tx, channelID int64
 	index := make(map[int]int, len(ids))
 	for _, id := range ids {
 		index[id] = len(changes)
-		changes = append(changes, domain.MessageReactionChange{MessageID: id, ActorUserID: userID})
+		changes = append(changes, domain.ReactionChangeForActor(id, domain.DecodeReactionActorKey(userID), nil, nil))
 	}
 	for _, row := range rows {
 		reaction, ok := domain.MessageReactionFromValue(domain.MessageReactionType(row.ReactionType), row.ReactionValue)

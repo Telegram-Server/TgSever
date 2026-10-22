@@ -535,6 +535,12 @@ JOIN star_gift_catalog c ON c.gift_id = p.gift_id
 LEFT JOIN star_gift_collectible_revisions acr
   ON acr.id = c.collectible_revision_id AND acr.status = 'published'
 LEFT JOIN unique_star_gifts hosted ON hosted.id = p.unique_gift_id`
+	// Bot API categories use the gift's historical limited flag, not the live
+	// catalog; dynamic optional predicates below intentionally require SQL here.
+	if filter.BotAPI {
+		joins += `
+JOIN star_gift_catalog_revisions saved_revision ON saved_revision.id=p.catalog_revision_id`
+	}
 	if filter.PeerColorAvailable {
 		joins += `
 JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id`
@@ -558,12 +564,25 @@ JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id`
 	if filter.ExcludeUnique {
 		conditions = append(conditions, "p.unique_gift_id IS NULL")
 	}
-	// telesrv ordinary catalog gifts are currently unlimited. Unique gifts are
-	// collectibles and therefore survive exclude_unlimited.
 	if filter.ExcludeUnlimited {
-		conditions = append(conditions, "p.unique_gift_id IS NOT NULL")
+		if filter.BotAPI {
+			conditions = append(conditions, "(p.unique_gift_id IS NOT NULL OR saved_revision.limited)")
+		} else {
+			conditions = append(conditions, "p.unique_gift_id IS NOT NULL")
+		}
 	}
 	upgradable := `(p.unique_gift_id IS NULL AND acr.id IS NOT NULL AND acr.upgrade_stars > 0 AND acr.issued < acr.supply_total)`
+	if filter.BotAPI {
+		if filter.ExcludeLimitedUpgradable {
+			conditions = append(conditions, "NOT (saved_revision.limited AND "+upgradable+")")
+		}
+		if filter.ExcludeLimitedNonUpgradable {
+			conditions = append(conditions, "NOT (p.unique_gift_id IS NULL AND saved_revision.limited AND NOT "+upgradable+")")
+		}
+		if filter.ExcludeFromBlockchain {
+			conditions = append(conditions, "COALESCE(hosted.owner_address,'')=''")
+		}
+	}
 	if filter.ExcludeUpgradable && !filter.ExcludeUnupgradable {
 		conditions = append(conditions, "NOT "+upgradable)
 	}
@@ -605,7 +624,7 @@ WHERE ci.saved_gift_id = p.id AND ci.collection_id = $%d
 				priceExpr, len(args)-1, priceExpr, len(args)-1, len(args))
 		}
 	} else if cursor, ok := domain.DecodeSavedStarGiftListCursor(offset); ok {
-		if profileOrder && cursor.PinnedOrder > 0 {
+		if profileOrder && !filter.BotAPI && cursor.PinnedOrder > 0 {
 			args = append(args, cursor.PinnedOrder, cursor.Date, cursor.ID)
 			where += fmt.Sprintf(` AND (
     p.pinned_order = 0
@@ -614,8 +633,10 @@ WHERE ci.saved_gift_id = p.id AND ci.collection_id = $%d
 )`, len(args)-2, len(args)-1, len(args))
 		} else {
 			args = append(args, cursor.Date, cursor.ID)
-			if profileOrder {
+			if profileOrder && !filter.BotAPI {
 				where += fmt.Sprintf(" AND p.pinned_order = 0 AND (p.gift_date, p.id) < ($%d, $%d)", len(args)-1, len(args))
+			} else if profileOrder {
+				where += fmt.Sprintf(" AND (p.gift_date, p.id) < ($%d, $%d)", len(args)-1, len(args))
 			} else {
 				where += fmt.Sprintf(" AND p.id < $%d", len(args))
 			}
@@ -625,8 +646,10 @@ WHERE ci.saved_gift_id = p.id AND ci.collection_id = $%d
 	switch {
 	case filter.SortByValue:
 		orderBy = "ORDER BY " + priceExpr + " DESC, p.id DESC"
-	case profileOrder:
+	case profileOrder && !filter.BotAPI:
 		orderBy = "ORDER BY (p.pinned_order = 0), p.pinned_order, p.gift_date DESC, p.id DESC"
+	case profileOrder:
+		orderBy = "ORDER BY p.gift_date DESC, p.id DESC"
 	}
 	args = append(args, limit+1)
 	limitPlaceholder := len(args)
@@ -682,7 +705,7 @@ LIMIT $`+fmt.Sprint(limitPlaceholder), args...)
 			page.NextOffset = domain.EncodeSavedStarGiftPriceCursor(price, last.ID)
 		} else {
 			pinnedOrder := 0
-			if profileOrder {
+			if profileOrder && !filter.BotAPI {
 				pinnedOrder = last.PinnedOrder
 			}
 			page.NextOffset = domain.EncodeSavedStarGiftListCursor(pinnedOrder, last.Date, last.ID)

@@ -351,12 +351,6 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "CHANNEL_FORUM_MISSING") {
 		t.Fatalf("messages.reorderPinnedForumTopics err = %v, want CHANNEL_FORUM_MISSING", err)
 	}
-	if _, err := r.onMessagesDeleteTopicHistory(ownerCtx, &tg.MessagesDeleteTopicHistoryRequest{
-		Peer:     inputPeerChannel(channel),
-		TopMsgID: 1,
-	}); err == nil || !strings.Contains(err.Error(), "CHANNEL_FORUM_MISSING") {
-		t.Fatalf("messages.deleteTopicHistory err = %v, want CHANNEL_FORUM_MISSING", err)
-	}
 	chats, err := r.onMessagesGetChats(ownerCtx, []int64{channel.ID})
 	if err != nil {
 		t.Fatalf("messages.getChats legacy wrapper: %v", err)

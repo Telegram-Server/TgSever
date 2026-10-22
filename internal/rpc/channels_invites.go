@@ -84,6 +84,30 @@ func (r *Router) onMessagesCheckChatInvite(ctx context.Context, hash string) (tg
 	// third-party mark is part of what identifies the peer, so the preview a
 	// non-member sees has to carry it as well.
 	r.applyBotVerificationToChatInvite(ctx, invite, res.Channel.ID)
+	if r.deps.BotCommerce != nil {
+		offer, err := r.deps.BotCommerce.SubscriptionInvite(ctx, hash)
+		if err == nil {
+			subs, err := r.deps.BotCommerce.UserSubscriptions(ctx, userID)
+			if err != nil {
+				return nil, internalErr()
+			}
+			for _, sub := range subs {
+				if sub.ChannelID == offer.ChannelID && sub.Active && sub.Until > int(r.clock.Now().Unix()) {
+					invite.SetSubscriptionPricing(tg.StarsSubscriptionPricing{Period: offer.SubscriptionPeriod, Amount: offer.Amount})
+					invite.SetCanRefulfillSubscription(true)
+					return invite, nil
+				}
+			}
+			checkout, err := r.deps.BotCommerce.CreateInvoiceCheckout(ctx, offer.Slug, userID, int(r.clock.Now().Unix()))
+			if err != nil {
+				return nil, commerceError(err)
+			}
+			invite.SetSubscriptionPricing(tg.StarsSubscriptionPricing{Period: offer.SubscriptionPeriod, Amount: offer.Amount})
+			invite.SetSubscriptionFormID(botInvoiceFormID(checkout))
+		} else if !errors.Is(err, domain.ErrCommerceNotFound) {
+			return nil, internalErr()
+		}
+	}
 	return invite, nil
 }
 
@@ -122,6 +146,11 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
+			if result, queryErr := r.startChatJoinQuery(ctx, res); queryErr != nil {
+				return nil, queryErr
+			} else if result != nil {
+				return result, nil
+			}
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
 			r.deliverChatJoinRequest(ctx, res)
 		}
@@ -391,6 +420,12 @@ func createChatInviteMemberIDs(ids []int64, selfUserID int64) []int64 {
 }
 
 func (r *Router) tgExportedChannelInvite(invite domain.ChannelInvite) tg.ExportedChatInviteClass {
+	if r.deps.BotCommerce != nil && invite.SubscriptionPeriod == 0 {
+		if offer, err := r.deps.BotCommerce.SubscriptionInvite(context.Background(), invite.Hash); err == nil {
+			invite.SubscriptionPeriod = offer.SubscriptionPeriod
+			invite.SubscriptionPrice = offer.Amount
+		}
+	}
 	return tgExportedChannelInvite(invite, r.cfg.PublicBaseURL)
 }
 
@@ -420,6 +455,9 @@ func tgExportedChannelInvite(invite domain.ChannelInvite, publicBaseURL string) 
 	}
 	if invite.RequestedCount > 0 {
 		out.SetRequested(invite.RequestedCount)
+	}
+	if invite.SubscriptionPeriod > 0 {
+		out.SetSubscriptionPricing(tg.StarsSubscriptionPricing{Period: invite.SubscriptionPeriod, Amount: invite.SubscriptionPrice})
 	}
 	return out
 }

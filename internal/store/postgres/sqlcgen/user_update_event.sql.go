@@ -189,6 +189,9 @@ SELECT
   COALESCE(m.reaction_unread, false)::boolean AS reaction_unread,
   COALESCE(m.pinned, false)::boolean AS pinned,
   COALESCE(m.via_bot_id, 0)::bigint AS via_bot_id,
+  COALESCE(m.guestchat_via_from, 0)::bigint AS guestchat_via_from,
+  COALESCE(m.business_connection_id, '')::text AS business_connection_id,
+  COALESCE(m.business_bot_id, 0)::bigint AS business_bot_id,
   COALESCE(m.grouped_id, 0)::bigint AS grouped_id,
   COALESCE(m.effect, 0)::bigint AS effect,
   COALESCE(m.reply_markup::text, '{}')::text AS reply_markup_json,
@@ -329,6 +332,9 @@ type BatchListDispatchEventsRow struct {
 	ReactionUnread                 bool
 	Pinned                         bool
 	ViaBotID                       int64
+	GuestchatViaFrom               int64
+	BusinessConnectionID           string
+	BusinessBotID                  int64
 	GroupedID                      int64
 	Effect                         int64
 	ReplyMarkupJson                string
@@ -467,6 +473,9 @@ func (q *Queries) BatchListDispatchEvents(ctx context.Context, arg BatchListDisp
 			&i.ReactionUnread,
 			&i.Pinned,
 			&i.ViaBotID,
+			&i.GuestchatViaFrom,
+			&i.BusinessConnectionID,
+			&i.BusinessBotID,
 			&i.GroupedID,
 			&i.Effect,
 			&i.ReplyMarkupJson,
@@ -851,6 +860,9 @@ SELECT
   COALESCE(m.reaction_unread, false)::boolean AS reaction_unread,
   COALESCE(m.pinned, false)::boolean AS pinned,
   COALESCE(m.via_bot_id, 0)::bigint AS via_bot_id,
+  COALESCE(m.guestchat_via_from, 0)::bigint AS guestchat_via_from,
+  COALESCE(m.business_connection_id, '')::text AS business_connection_id,
+  COALESCE(m.business_bot_id, 0)::bigint AS business_bot_id,
   COALESCE(m.grouped_id, 0)::bigint AS grouped_id,
   COALESCE(m.effect, 0)::bigint AS effect,
   COALESCE(m.reply_markup::text, '{}')::text AS reply_markup_json,
@@ -994,6 +1006,9 @@ type ListUserUpdateEventsAfterRow struct {
 	ReactionUnread                 bool
 	Pinned                         bool
 	ViaBotID                       int64
+	GuestchatViaFrom               int64
+	BusinessConnectionID           string
+	BusinessBotID                  int64
 	GroupedID                      int64
 	Effect                         int64
 	ReplyMarkupJson                string
@@ -1130,6 +1145,9 @@ func (q *Queries) ListUserUpdateEventsAfter(ctx context.Context, arg ListUserUpd
 			&i.ReactionUnread,
 			&i.Pinned,
 			&i.ViaBotID,
+			&i.GuestchatViaFrom,
+			&i.BusinessConnectionID,
+			&i.BusinessBotID,
 			&i.GroupedID,
 			&i.Effect,
 			&i.ReplyMarkupJson,

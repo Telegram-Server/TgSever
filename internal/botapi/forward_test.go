@@ -48,7 +48,7 @@ func (g *fakeForwardGateway) BotAPICopyMessages(_ context.Context, botID, chatID
 	return g.result, g.err
 }
 
-func (g *fakeForwardGateway) BotAPICopyMessage(_ context.Context, botID, chatID, fromChatID int64, messageID int, setCaption bool, caption string, entities []domain.MessageEntity, markup *domain.MessageReplyMarkup, silent, protect bool, replyTo int) (domain.Message, error) {
+func (g *fakeForwardGateway) BotAPICopyMessageWithOptions(_ context.Context, botID, chatID, fromChatID int64, messageID int, setCaption bool, caption string, entities []domain.MessageEntity, markup *domain.MessageReplyMarkup, silent, protect bool, replyTo int, _ domain.BotAPIMessageOptions) (domain.Message, error) {
 	g.copyCalls = append(g.copyCalls, forwardCall{botID: botID, chatID: chatID, fromChatID: fromChatID,
 		messageIDs: []int{messageID}, setCaption: setCaption, caption: caption, entities: entities, markup: markup,
 		silent: silent, protect: protect, replyTo: replyTo})

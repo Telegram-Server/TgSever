@@ -102,7 +102,7 @@ func (q *Queries) DeleteBotChatState(ctx context.Context, arg DeleteBotChatState
 }
 
 const getBot = `-- name: GetBot :one
-SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history, bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type, menu_button_text, menu_button_url, bot_inline_geo, group_admin_rights, broadcast_admin_rights FROM bots WHERE bot_user_id = $1
+SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history, bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type, menu_button_text, menu_button_url, bot_inline_geo, group_admin_rights, broadcast_admin_rights, guest_chat, can_manage_bots, inline_feedback_percentage FROM bots WHERE bot_user_id = $1
 `
 
 func (q *Queries) GetBot(ctx context.Context, botUserID int64) (Bot, error) {
@@ -125,6 +125,9 @@ func (q *Queries) GetBot(ctx context.Context, botUserID int64) (Bot, error) {
 		&i.BotInlineGeo,
 		&i.GroupAdminRights,
 		&i.BroadcastAdminRights,
+		&i.GuestChat,
+		&i.CanManageBots,
+		&i.InlineFeedbackPercentage,
 	)
 	return i, err
 }
@@ -226,7 +229,7 @@ func (q *Queries) InsertBotUser(ctx context.Context, arg InsertBotUserParams) (U
 }
 
 const listBotsByOwner = `-- name: ListBotsByOwner :many
-SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history, bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type, menu_button_text, menu_button_url, bot_inline_geo, group_admin_rights, broadcast_admin_rights FROM bots WHERE owner_user_id = $1 AND bot_user_id <> owner_user_id ORDER BY bot_user_id
+SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history, bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type, menu_button_text, menu_button_url, bot_inline_geo, group_admin_rights, broadcast_admin_rights, guest_chat, can_manage_bots, inline_feedback_percentage FROM bots WHERE owner_user_id = $1 AND bot_user_id <> owner_user_id ORDER BY bot_user_id
 `
 
 // 排除 self-owner 种子行（内置 BotFather 自有），与 memory 实现一致：/mybots 与
@@ -257,6 +260,9 @@ func (q *Queries) ListBotsByOwner(ctx context.Context, ownerUserID int64) ([]Bot
 			&i.BotInlineGeo,
 			&i.GroupAdminRights,
 			&i.BroadcastAdminRights,
+			&i.GuestChat,
+			&i.CanManageBots,
+			&i.InlineFeedbackPercentage,
 		); err != nil {
 			return nil, err
 		}

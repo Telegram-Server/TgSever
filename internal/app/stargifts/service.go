@@ -31,6 +31,7 @@ type Service struct {
 	store      store.StarGiftStore
 	upgrades   store.StarGiftUpgradeStore
 	lifecycle  store.StarGiftLifecycleStore
+	ownerStore store.StarGiftOwnerStore
 	withdrawal StarGiftWithdrawalProvider
 	blobs      BlobBackend
 	dc         int
@@ -63,6 +64,12 @@ func WithUpgradeStore(upgrades store.StarGiftUpgradeStore) Option {
 
 func WithLifecycleStore(lifecycle store.StarGiftLifecycleStore) Option {
 	return func(service *Service) { service.lifecycle = lifecycle }
+}
+
+// WithOwnerStore installs an atomic owner lifecycle implementation for memory
+// deployments, where the production PostgreSQL coordinators are not available.
+func WithOwnerStore(owner store.StarGiftOwnerStore) Option {
+	return func(service *Service) { service.ownerStore = owner }
 }
 
 type StarGiftWithdrawalProvider interface {
@@ -558,6 +565,13 @@ func (s *Service) ListUniqueByOwner(ctx context.Context, owner domain.Peer, limi
 }
 
 func (s *Service) Upgrade(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error) {
+	if s != nil && s.ownerStore != nil {
+		result, err := s.ownerStore.UpgradeStarGift(ctx, req)
+		if err == nil {
+			s.InvalidateStarGiftCatalog()
+		}
+		return result, err
+	}
 	if s == nil || s.upgrades == nil {
 		return domain.StarGiftUpgradeResult{}, fmt.Errorf("star gift upgrade store is not configured")
 	}
@@ -569,6 +583,9 @@ func (s *Service) Upgrade(ctx context.Context, req domain.StarGiftUpgradeRequest
 }
 
 func (s *Service) UpgradeReceipt(ctx context.Context, userID int64, commandKey string) (domain.StarGiftUpgradeReceipt, bool, error) {
+	if s != nil && s.ownerStore != nil {
+		return s.ownerStore.StarGiftUpgradeReceipt(ctx, userID, commandKey)
+	}
 	if s == nil || s.upgrades == nil {
 		return domain.StarGiftUpgradeReceipt{}, false, nil
 	}
@@ -707,6 +724,9 @@ func (s *Service) SetListing(ctx context.Context, req domain.StarGiftListingRequ
 }
 
 func (s *Service) Transfer(ctx context.Context, req domain.StarGiftTransferRequest) (domain.StarGiftTransferResult, error) {
+	if s != nil && s.ownerStore != nil {
+		return s.ownerStore.TransferStarGift(ctx, req)
+	}
 	if s == nil || s.lifecycle == nil {
 		return domain.StarGiftTransferResult{}, domain.ErrStarGiftTransferUnavailable
 	}
@@ -1171,6 +1191,9 @@ func (s *Service) Convert(ctx context.Context, ref domain.SavedStarGiftRef) (dom
 }
 
 func (s *Service) ConvertAggregate(ctx context.Context, req domain.StarGiftConvertRequest) (domain.StarGiftConvertResult, error) {
+	if s != nil && s.ownerStore != nil {
+		return s.ownerStore.ConvertStarGift(ctx, req)
+	}
 	if s == nil || s.lifecycle == nil {
 		return domain.StarGiftConvertResult{}, domain.ErrStarGiftUnavailable
 	}

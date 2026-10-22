@@ -23,7 +23,19 @@ func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 	if m.IsZero() {
 		return &tg.MessageMediaEmpty{}
 	}
+	if m.Kind == domain.MessageMediaKindPaidMedia {
+		return tgPaidMedia(m.PaidMedia)
+	}
 	switch m.Kind {
+	case domain.MessageMediaKindGame:
+		if m.Game == nil {
+			return &tg.MessageMediaEmpty{}
+		}
+		game := &tg.Game{ID: m.Game.ID, AccessHash: m.Game.AccessHash, ShortName: m.Game.ShortName, Title: m.Game.Title, Description: m.Game.Description, Photo: tgPhoto(m.Game.Photo)}
+		if m.Game.Animation != nil {
+			game.SetDocument(tgDocument(*m.Game.Animation))
+		}
+		return &tg.MessageMediaGame{Game: *game}
 	case domain.MessageMediaKindPhoto:
 		out := &tg.MessageMediaPhoto{Spoiler: m.Spoiler}
 		if m.Photo != nil {
@@ -54,6 +66,12 @@ func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 		}
 		if m.TTLSeconds > 0 {
 			out.TTLSeconds = m.TTLSeconds
+		}
+		if m.VideoCover != nil {
+			out.SetVideoCover(tgPhoto(*m.VideoCover))
+		}
+		if m.VideoTimestamp > 0 {
+			out.SetVideoTimestamp(int(m.VideoTimestamp))
 		}
 		return out
 	case domain.MessageMediaKindContact:
@@ -166,13 +184,17 @@ func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 			if !m.ProductInvoice.Valid() {
 				return &tg.MessageMediaEmpty{}
 			}
-			return &tg.MessageMediaInvoice{
+			invoice := &tg.MessageMediaInvoice{
 				Title:       m.ProductInvoice.Title,
 				Description: m.ProductInvoice.Description,
 				Currency:    domain.PremiumCurrencyStars,
 				TotalAmount: m.ProductInvoice.AmountStars,
 				StartParam:  m.ProductInvoice.StartParam,
 			}
+			if m.ProductInvoice.Photo != nil {
+				invoice.SetPhoto(tgInlineWebDocument(*m.ProductInvoice.Photo))
+			}
+			return invoice
 		}
 		if m.Invoice == nil || !m.Invoice.Valid() {
 			return &tg.MessageMediaEmpty{}
@@ -492,11 +514,15 @@ func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []t
 			}
 			out = append(out, &tg.DocumentAttributeAnimated{})
 		case domain.DocAttrSticker:
-			out = append(out, &tg.DocumentAttributeSticker{
+			sticker := &tg.DocumentAttributeSticker{
 				Mask:       a.Mask,
 				Alt:        a.Alt,
 				Stickerset: tgInputStickerSetFromIDs(a.StickerSetID, a.StickerSetAccessHash),
-			})
+			}
+			if coords, ok := tgStickerMaskCoords(a.MaskPosition); ok {
+				sticker.SetMaskCoords(coords)
+			}
+			out = append(out, sticker)
 		case domain.DocAttrVideo:
 			video := &tg.DocumentAttributeVideo{
 				RoundMessage:      a.RoundMessage,

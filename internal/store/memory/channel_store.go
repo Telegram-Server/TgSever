@@ -105,6 +105,7 @@ type ChannelStore struct {
 	adminLogs              map[int64][]domain.ChannelAdminLogEvent
 	invites                map[string]domain.ChannelInvite
 	importers              map[int64]map[int64]domain.ChannelInviteImporter
+	joinQueries            map[int64]domain.ChatJoinQuery
 	msgSeq                 map[int64]int
 	ptsSeq                 map[int64]int
 	logSeq                 map[int64]int64
@@ -124,6 +125,8 @@ type ChannelStore struct {
 	// polls 是共享 poll 权威（与 MessageStore 同一实例）；nil 时 poll 链路按未接入处理。
 	polls            *PollStore
 	usernameRegistry *CollectibleUsernameStore
+	commerce         *BotCommerceStore
+	replyMessages    *MessageStore
 	// deletions 是删除记录（与 MessageStore 共用同一实例）；nil 时不记录。
 	deletions *MessageDeletionStore
 }

@@ -73,7 +73,7 @@ func (r *Router) updatePrivatePinnedMessage(ctx context.Context, userID int64, p
 }
 
 // unpinAllPrivateMessages 处理 messages.unpinAllMessages 的私聊分支。
-func (r *Router) unpinAllPrivateMessages(ctx context.Context, userID int64, peer domain.Peer) (*tg.MessagesAffectedHistory, error) {
+func (r *Router) unpinAllPrivateMessages(ctx context.Context, userID int64, peer domain.Peer, topicID int) (*tg.MessagesAffectedHistory, error) {
 	authKeyID, _ := AuthKeyIDFrom(ctx)
 	if r.deps.Messages == nil {
 		return nil, notImplementedErr()
@@ -82,6 +82,7 @@ func (r *Router) unpinAllPrivateMessages(ctx context.Context, userID int64, peer
 	res, err := r.deps.Messages.UnpinAllPrivateMessages(ctx, userID, domain.UnpinAllPrivateMessagesRequest{
 		OwnerUserID:     userID,
 		Peer:            peer,
+		TopicID:         topicID,
 		Date:            int(r.clock.Now().Unix()),
 		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,

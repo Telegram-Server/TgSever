@@ -29,6 +29,14 @@ func NewBotStore(db sqlcgen.DBTX) *BotStore {
 
 // CreateBotAccount 在单事务内创建 users 行（is_bot=true, phone 空）与 bots 行。
 func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile) (domain.User, domain.BotProfile, error) {
+	return s.createBotAccount(ctx, user, profile, 0)
+}
+
+func (s *BotStore) CreateManagedBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile, managerID int64) (domain.User, domain.BotProfile, error) {
+	return s.createBotAccount(ctx, user, profile, managerID)
+}
+
+func (s *BotStore) createBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile, managerID int64) (domain.User, domain.BotProfile, error) {
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
 		return domain.User{}, domain.BotProfile{}, fmt.Errorf("create bot account: db does not support transactions")
@@ -80,6 +88,15 @@ func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profi
 		TokenSecret: profile.TokenSecret,
 	}); err != nil {
 		return domain.User{}, domain.BotProfile{}, fmt.Errorf("create bot account: insert bot: %w", err)
+	}
+	if managerID != 0 {
+		n, err := q.SetBotManager(ctx, sqlcgen.SetBotManagerParams{BotID: row.ID, OwnerID: profile.OwnerUserID, ManagerID: managerID})
+		if err != nil {
+			return domain.User{}, domain.BotProfile{}, err
+		}
+		if n == 0 {
+			return domain.User{}, domain.BotProfile{}, domain.ErrBotManagerInvalid
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.User{}, domain.BotProfile{}, fmt.Errorf("create bot account: commit: %w", err)
@@ -481,6 +498,8 @@ func botProfileFromModel(r sqlcgen.Bot) domain.BotProfile {
 		ChatHistory:       r.BotChatHistory,
 		Nochats:           r.BotNochats,
 		InlineGeo:         r.BotInlineGeo,
+		GuestChat:         r.GuestChat,
+		CanManageBots:     r.CanManageBots,
 		InlinePlaceholder: r.InlinePlaceholder,
 		MenuButton: domain.BotMenuButton{
 			Type: domain.BotMenuButtonType(r.MenuButtonType),

@@ -21,6 +21,9 @@ func (r *Router) onMessagesCreateForumTopic(ctx context.Context, req *tg.Message
 	if req.RandomID == 0 {
 		return nil, randomIDEmptyErr()
 	}
+	if _, private := req.Peer.(*tg.InputPeerUser); private {
+		return r.createPrivateForumTopicRPC(ctx, userID, req)
+	}
 	peer, err := r.forumTopicPeer(ctx, req.Peer)
 	if err != nil {
 		return nil, err
@@ -76,6 +79,9 @@ func (r *Router) onMessagesEditForumTopic(ctx context.Context, req *tg.MessagesE
 	}
 	if req.TopicID <= 0 || req.TopicID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
+	}
+	if _, private := req.Peer.(*tg.InputPeerUser); private {
+		return r.editPrivateForumTopicRPC(ctx, userID, req)
 	}
 	peer, err := r.forumTopicPeer(ctx, req.Peer)
 	if err != nil {
@@ -190,6 +196,9 @@ func (r *Router) onMessagesDeleteTopicHistory(ctx context.Context, req *tg.Messa
 	if req.TopMsgID <= 0 || req.TopMsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
 	}
+	if _, private := req.Peer.(*tg.InputPeerUser); private {
+		return r.deletePrivateForumTopicRPC(ctx, userID, req)
+	}
 	peer, err := r.forumTopicPeer(ctx, req.Peer)
 	if err != nil {
 		return nil, err
@@ -295,7 +304,16 @@ func (r *Router) onMessagesGetForumTopics(ctx context.Context, req *tg.MessagesG
 	if !view.Channel.Forum {
 		return nil, channelForumMissingErr()
 	}
-	includeGeneral := effectiveLimit > 0 && forumTopicQueryMatchesGeneral(req.Q)
+	generalTitle := "General"
+	if r.deps.Channels != nil {
+		general, err := r.deps.Channels.GeneralForumTopic(ctx, userID, view.Channel.ID)
+		if err != nil {
+			return nil, forumTopicError(err)
+		}
+		generalTitle = general.Title
+	}
+	query := strings.TrimSpace(strings.ToLower(req.Q))
+	includeGeneral := effectiveLimit > 0 && (query == "" || strings.Contains(strings.ToLower(generalTitle), query))
 	list := domain.ChannelForumTopicList{}
 	if r.deps.Channels != nil && effectiveLimit > 0 {
 		limit := effectiveLimit
@@ -484,12 +502,17 @@ func (r *Router) forumTopicsResponse(ctx context.Context, userID int64, view dom
 }
 
 func tgForumGeneralTopic(viewerUserID int64, view domain.ChannelView, topic domain.ChannelForumTopic) *tg.ForumTopic {
+	if topic.Title == "" {
+		topic.Title = "General"
+	}
 	return &tg.ForumTopic{
 		My:                   view.Channel.CreatorUserID == viewerUserID && viewerUserID != 0,
 		ID:                   forumGeneralTopicID,
 		Date:                 view.Channel.Date,
 		Peer:                 &tg.PeerChannel{ChannelID: view.Channel.ID},
-		Title:                "General",
+		Title:                topic.Title,
+		Closed:               topic.Closed,
+		Hidden:               topic.Hidden,
 		IconColor:            forumGeneralIconColor,
 		TopMessage:           topic.TopMessageID,
 		ReadInboxMaxID:       topic.ReadInboxMaxID,
@@ -559,9 +582,4 @@ func (r *Router) pinnedForumTopicsOrderUpdates(viewerUserID int64, channel domai
 		Date:    int(r.clock.Now().Unix()),
 		Seq:     0,
 	}
-}
-
-func forumTopicQueryMatchesGeneral(query string) bool {
-	query = strings.TrimSpace(strings.ToLower(query))
-	return query == "" || strings.Contains("general", query)
 }

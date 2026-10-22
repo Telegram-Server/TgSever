@@ -961,6 +961,7 @@ func applyBotProfileFlags(out *tg.User, profile domain.BotProfile) {
 	if out == nil {
 		return
 	}
+	out.SetBotGuestchat(profile.GuestChat)
 	if profile.ChatHistory {
 		out.SetBotChatHistory(true)
 	}

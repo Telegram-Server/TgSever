@@ -181,8 +181,8 @@ func TestBotAPICopyMessageReplacesCaptionAndAddsButtons(t *testing.T) {
 		Type: domain.MarkupButtonCallback, Text: "go", Data: []byte("x"),
 	}}}}
 
-	msg, err := f.router.BotAPICopyMessage(f.ctx, f.bot.ID, f.member.ID, f.chatID, photo, true, "new caption",
-		[]domain.MessageEntity{{Type: domain.MessageEntityItalic, Offset: 0, Length: 3}}, markup, false, false, 0)
+	msg, err := f.router.BotAPICopyMessageWithOptions(f.ctx, f.bot.ID, f.member.ID, f.chatID, photo, true, "new caption",
+		[]domain.MessageEntity{{Type: domain.MessageEntityItalic, Offset: 0, Length: 3}}, markup, false, false, 0, domain.BotAPIMessageOptions{})
 	if err != nil {
 		t.Fatalf("BotAPICopyMessage: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestBotAPICopyMessagePlainCopyRepliesWithoutHeader(t *testing.T) {
 	anchor := f.memberPostsInGroup(t, "anchor", 9210)
 	src := f.memberMessagesBot(t, "dm text", 9211)
 
-	msg, err := f.router.BotAPICopyMessage(f.ctx, f.bot.ID, f.chatID, f.member.ID, src, false, "", nil, nil, false, false, anchor)
+	msg, err := f.router.BotAPICopyMessageWithOptions(f.ctx, f.bot.ID, f.chatID, f.member.ID, src, false, "", nil, nil, false, false, anchor, domain.BotAPIMessageOptions{})
 	if err != nil {
 		t.Fatalf("BotAPICopyMessage: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestBotAPICopyMessageRefusesProtectedMessages(t *testing.T) {
 		t.Fatalf("owner protected photo: %v", err)
 	}
 	// 改说明文字走重新发送路径，同样不能绕过 no-forwards。
-	if _, err := f.router.BotAPICopyMessage(f.ctx, f.bot.ID, f.member.ID, f.chatID, res.Message.ID, true, "leak", nil, nil, false, false, 0); err == nil ||
+	if _, err := f.router.BotAPICopyMessageWithOptions(f.ctx, f.bot.ID, f.member.ID, f.chatID, res.Message.ID, true, "leak", nil, nil, false, false, 0, domain.BotAPIMessageOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "CHAT_FORWARDS_RESTRICTED") {
 		t.Fatalf("copy protected message err = %v", err)
 	}

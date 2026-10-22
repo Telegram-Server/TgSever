@@ -124,6 +124,9 @@ INSERT INTO private_messages (
   reply_markup,
   rich_message,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect
 ) VALUES (
@@ -149,6 +152,9 @@ INSERT INTO private_messages (
   sqlc.arg(reply_markup_json)::jsonb,
   sqlc.arg(rich_message_json)::jsonb,
   sqlc.arg(via_bot_id)::bigint,
+  sqlc.arg(guestchat_via_from)::bigint,
+  sqlc.arg(business_connection_id)::text,
+  sqlc.arg(business_bot_id)::bigint,
   sqlc.arg(grouped_id)::bigint,
   sqlc.arg(effect)::bigint
 )
@@ -235,6 +241,9 @@ INSERT INTO message_boxes (
   reply_markup,
   rich_message,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect
 ) VALUES (
@@ -269,6 +278,9 @@ INSERT INTO message_boxes (
   sqlc.arg(reply_markup_json)::jsonb,
   sqlc.arg(rich_message_json)::jsonb,
   sqlc.arg(via_bot_id)::bigint,
+  sqlc.arg(guestchat_via_from)::bigint,
+  sqlc.arg(business_connection_id)::text,
+  sqlc.arg(business_bot_id)::bigint,
   sqlc.arg(grouped_id)::bigint,
   sqlc.arg(effect)::bigint
 )
@@ -313,6 +325,9 @@ RETURNING
   reaction_unread,
   pinned,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
@@ -360,6 +375,9 @@ SELECT
   reaction_unread,
   pinned,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
@@ -374,6 +392,7 @@ SELECT
   box_id,
   private_message_id,
   message_sender_id,
+  reply_to_top_id,
   from_user_id, message_date, body, entities::text AS entities_json,
   media::text AS media_json, noforwards
 FROM message_boxes
@@ -382,7 +401,7 @@ WHERE owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND peer_id = sqlc.arg(peer_id)::bigint
   AND box_id = sqlc.arg(box_id)::int
   AND NOT deleted
-LIMIT 1;
+LIMIT 1 FOR SHARE;
 
 -- name: GetMessageBoxesForForward :many
 WITH requested AS (
@@ -434,6 +453,9 @@ SELECT
   m.reaction_unread,
   m.pinned,
   m.via_bot_id,
+  m.guestchat_via_from,
+  m.business_connection_id,
+  m.business_bot_id,
   m.grouped_id
 FROM requested r
 JOIN message_boxes m
@@ -504,6 +526,9 @@ base AS NOT MATERIALIZED (
     m.reaction_unread,
     m.pinned,
     m.via_bot_id,
+    m.guestchat_via_from,
+    m.business_connection_id,
+    m.business_bot_id,
     m.grouped_id,
     m.effect,
     m.reply_markup::text AS reply_markup_json,
@@ -707,6 +732,9 @@ SELECT
   reaction_unread,
   pinned,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect,
   reply_markup_json,
@@ -791,6 +819,9 @@ SELECT
   m.reaction_unread,
   m.pinned,
   m.via_bot_id,
+  m.guestchat_via_from,
+  m.business_connection_id,
+  m.business_bot_id,
   m.grouped_id,
   m.effect,
   m.reply_markup::text AS reply_markup_json,
@@ -1003,6 +1034,9 @@ SELECT
   m.reaction_unread,
   m.pinned,
   m.via_bot_id,
+  m.guestchat_via_from,
+  m.business_connection_id,
+  m.business_bot_id,
   m.grouped_id,
   m.effect,
   m.reply_markup::text AS reply_markup_json,
@@ -1089,6 +1123,9 @@ SELECT
   reaction_unread,
   pinned,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
@@ -1145,6 +1182,9 @@ SELECT
   reaction_unread,
   pinned,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
@@ -1234,6 +1274,9 @@ RETURNING
   reaction_unread,
   pinned,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
@@ -1536,6 +1579,9 @@ SELECT
   reaction_unread,
   pinned,
   via_bot_id,
+  guestchat_via_from,
+  business_connection_id,
+  business_bot_id,
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
@@ -1582,6 +1628,7 @@ WITH target AS (
   WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
     AND m.peer_type = sqlc.arg(peer_type)::text
     AND m.peer_id = sqlc.arg(peer_id)::bigint
+    AND (sqlc.arg(topic_id)::int = 0 OR m.reply_to_top_id = sqlc.arg(topic_id))
     AND m.pinned
     AND NOT m.deleted
   ORDER BY m.box_id DESC
@@ -1602,6 +1649,7 @@ SELECT EXISTS (
   WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
     AND m.peer_type = sqlc.arg(peer_type)::text
     AND m.peer_id = sqlc.arg(peer_id)::bigint
+    AND (sqlc.arg(topic_id)::int = 0 OR m.reply_to_top_id = sqlc.arg(topic_id))
     AND m.pinned
     AND NOT m.deleted
   LIMIT 1

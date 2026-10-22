@@ -86,6 +86,10 @@ func ValidateMessageReplyBounds(reply *MessageReply) error {
 	if reply.StoryID < 0 || reply.StoryID > MaxStoryID {
 		return ErrReplyMessageIDInvalid
 	}
+	if reply.ChecklistTaskID < 0 || reply.ChecklistTaskID > MaxMessageBoxID ||
+		len(reply.PollOption) > 256 || (reply.ChecklistTaskID > 0 && len(reply.PollOption) != 0) {
+		return ErrReplyMessageIDInvalid
+	}
 	// story 回复（StoryID>0）不携带 MessageID/TopMessageID；普通回复至少有其一。
 	if reply.MessageID == 0 && reply.TopMessageID == 0 && reply.StoryID == 0 && reply.External == nil {
 		return ErrReplyMessageIDInvalid
@@ -126,30 +130,33 @@ type MessageEntity struct {
 
 // Message 是账号视角下的一条私聊消息。
 type Message struct {
-	ID             int   // 当前 owner 视角下的 message box id，暴露给 Telegram 客户端。
-	UID            int64 // 共享私聊消息主体 id，不暴露给客户端。
-	RandomID       int64
-	OwnerUserID    int64
-	Peer           Peer
-	From           Peer
-	Date           int
-	EditDate       int
-	HideEdited     bool
-	Out            bool
-	Silent         bool
-	NoForwards     bool
-	Body           string
-	Entities       []MessageEntity
-	ReplyTo        *MessageReply
-	Forward        *MessageForward
-	Reactions      *ChannelMessageReactions
-	Pts            int
-	TTLPeriod      int
-	ExpiresAt      int
-	Media          *MessageMedia
-	MediaUnread    bool
-	ReactionUnread bool
-	ViaBotID       int64
+	ID                   int   // 当前 owner 视角下的 message box id，暴露给 Telegram 客户端。
+	UID                  int64 // 共享私聊消息主体 id，不暴露给客户端。
+	RandomID             int64
+	OwnerUserID          int64
+	Peer                 Peer
+	From                 Peer
+	Date                 int
+	EditDate             int
+	HideEdited           bool
+	Out                  bool
+	Silent               bool
+	NoForwards           bool
+	Body                 string
+	Entities             []MessageEntity
+	ReplyTo              *MessageReply
+	Forward              *MessageForward
+	Reactions            *ChannelMessageReactions
+	Pts                  int
+	TTLPeriod            int
+	ExpiresAt            int
+	Media                *MessageMedia
+	MediaUnread          bool
+	ReactionUnread       bool
+	ViaBotID             int64
+	GuestChatViaFrom     Peer
+	BusinessConnectionID string
+	BusinessBotID        int64
 	// GroupedID 是相册分组 id：同一次 sendMultiMedia 的各条消息共享同一非零值，
 	// 客户端据此把它们渲染成一个相册组。非相册消息恒 0。双盒持同一值。
 	GroupedID int64
@@ -171,7 +178,9 @@ type Message struct {
 	// SavedPeer 是 Saved Messages 分会话分组键（message.saved_peer_id）。
 	// 仅 self-chat box 行非零：直发笔记 = self；转发进收藏夹 = 源会话 peer；
 	// 存量回填兜底 hidden author 占位 user 2666000。非 self-chat 行恒零值。
-	SavedPeer Peer
+	SavedPeer     Peer
+	SuggestedPost *SuggestedPost
+	Action        *ChannelMessageAction
 }
 
 // NewHistoryClearMessage 把一个 owner 视角的现有 box 原位投影为
@@ -232,6 +241,25 @@ type MessageRichMessage struct {
 	BotAPIProjection []byte `json:"bot_api_projection,omitempty"`
 }
 
+// CloneRichMessage isolates rich blocks and all embedded media metadata.
+func CloneRichMessage(message *MessageRichMessage) *MessageRichMessage {
+	if message == nil {
+		return nil
+	}
+	out := *message
+	out.Blocks = append([]byte(nil), message.Blocks...)
+	out.BotAPIProjection = append([]byte(nil), message.BotAPIProjection...)
+	out.Photos = append([]Photo(nil), message.Photos...)
+	for i := range out.Photos {
+		out.Photos[i] = *ClonePhotoPtr(&message.Photos[i])
+	}
+	out.Documents = append([]Document(nil), message.Documents...)
+	for i := range out.Documents {
+		out.Documents[i] = *CloneDocumentPtr(&message.Documents[i])
+	}
+	return &out
+}
+
 // EffectiveBlocksLayer returns the deterministic storage grammar for Blocks.
 // A missing JSON field is the original storage-v1 format and therefore Layer
 // 228; it is not an adaptive decode fallback.
@@ -249,13 +277,17 @@ func (m *MessageRichMessage) IsZero() bool {
 
 // MessageReply describes a message reply/thread header without depending on TL types.
 type MessageReply struct {
-	MessageID     int
-	Peer          Peer
-	TopMessageID  int
-	ForumTopic    bool
-	QuoteText     string
-	QuoteEntities []MessageEntity
-	QuoteOffset   int
+	MessageID int
+	// AllowMissing is send intent only; persisted replies always identify a source.
+	AllowMissing    bool `json:"-"`
+	Peer            Peer
+	TopMessageID    int
+	ForumTopic      bool
+	QuoteText       string
+	QuoteEntities   []MessageEntity
+	QuoteOffset     int
+	ChecklistTaskID int
+	PollOption      []byte
 	// External is an immutable source snapshot resolved by the owning store.
 	// It is not client input and does not authorize a source message lookup.
 	External *MessageReplyExternal `json:",omitempty"`
@@ -322,21 +354,51 @@ type MessageFilter struct {
 	RestrictPeerIDs bool
 }
 
+// BotAPIReplyParameters preserves the complete request until source authorization.
+type BotAPIReplyParameters struct {
+	MessageID                int
+	EphemeralMessageID       int
+	ChatID                   string
+	AllowSendingWithoutReply bool
+	Quote                    string
+	QuoteEntities            []MessageEntity
+	QuotePosition            *int
+	ChecklistTaskID          int
+	PollOptionID             string
+}
+
+// BotAPIMessageOptions carries authenticated business, thread and broadcast send context.
+type BotAPIMessageOptions struct {
+	BusinessConnectionID  string
+	MessageThreadID       int
+	AllowPaidBroadcast    bool
+	ProtectContent        bool
+	EffectID              int64
+	ReplyParameters       *BotAPIReplyParameters
+	DirectMessagesTopicID int
+	SuggestedPost         *SuggestedPost
+	// AlbumGroupID is trusted grouping intent; HTTP callers cannot supply it.
+	AlbumGroupID int64 `json:"-"`
+}
+
 // SendPrivateTextRequest 是私聊文本/媒体发送命令。
 type SendPrivateTextRequest struct {
-	SenderUserID    int64
-	RecipientUserID int64
-	RandomID        int64
-	Message         string
-	Entities        []MessageEntity
-	Media           *MessageMedia
-	Silent          bool
-	NoForwards      bool
-	ReplyTo         *MessageReply
-	Forward         *MessageForward
-	Date            int
-	OriginAuthKeyID [8]byte
-	OriginSessionID int64
+	SenderUserID         int64
+	RecipientUserID      int64
+	GuestBotID           int64
+	BusinessConnectionID string
+	BusinessBotID        int64
+	RandomID             int64
+	Message              string
+	Entities             []MessageEntity
+	Media                *MessageMedia
+	Silent               bool
+	NoForwards           bool
+	ReplyTo              *MessageReply
+	Forward              *MessageForward
+	Date                 int
+	OriginAuthKeyID      [8]byte
+	OriginSessionID      int64
 	// OriginClientSession carries the exact request's initConnection language
 	// into an in-process bot responder. Stores and idempotency fingerprints
 	// intentionally ignore this ephemeral metadata.
@@ -823,6 +885,7 @@ func (r PinPrivateMessageResult) Changed() bool {
 type UnpinAllPrivateMessagesRequest struct {
 	OwnerUserID     int64
 	Peer            Peer
+	TopicID         int
 	Date            int
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64

@@ -98,28 +98,49 @@ func cloneMessage(msg domain.Message) domain.Message {
 	msg.Forward = cloneMessageForward(msg.Forward)
 	msg.Reactions = cloneChannelMessageReactionsPtr(msg.Reactions)
 	msg.ReplyMarkup = cloneReplyMarkup(msg.ReplyMarkup)
-	msg.RichMessage = cloneRichMessage(msg.RichMessage)
+	msg.RichMessage = domain.CloneRichMessage(msg.RichMessage)
+	if msg.SuggestedPost != nil {
+		suggested := *msg.SuggestedPost
+		if suggested.Price != nil {
+			price := *suggested.Price
+			suggested.Price = &price
+		}
+		msg.SuggestedPost = &suggested
+	}
+	msg.Action = cloneChannelMessageAction(msg.Action)
 	return msg
 }
 
-// cloneRequestedPeerMedia isolates the immutable disclosure snapshot carried by
-// messageActionRequestedPeer. Other media payloads retain their established
-// copy behavior; this helper only deep-copies the newly mutable peer/photo slices.
+// cloneRequestedPeerMedia isolates mutable disclosure and Bot API media snapshots.
 func cloneRequestedPeerMedia(media *domain.MessageMedia) *domain.MessageMedia {
 	if media == nil {
 		return nil
 	}
 	clone := *media
-	if media.LivePhotoVideo != nil {
-		video := *media.LivePhotoVideo
-		video.FileReference = append([]byte(nil), media.LivePhotoVideo.FileReference...)
-		video.Attributes = append([]domain.DocumentAttribute(nil), media.LivePhotoVideo.Attributes...)
-		clone.LivePhotoVideo = &video
+	clone.Photo = domain.ClonePhotoPtr(media.Photo)
+	clone.Document = domain.CloneDocumentPtr(media.Document)
+	clone.LivePhotoVideo = domain.CloneDocumentPtr(media.LivePhotoVideo)
+	clone.VideoCover = domain.ClonePhotoPtr(media.VideoCover)
+	clone.PaidMedia = domain.ClonePaidMedia(media.PaidMedia)
+	if media.ProductInvoice != nil {
+		invoice := *media.ProductInvoice
+		if invoice.Photo != nil {
+			photo := *invoice.Photo
+			photo.Attributes = domain.CloneDocumentAttributes(invoice.Photo.Attributes)
+			invoice.Photo = &photo
+		}
+		clone.ProductInvoice = &invoice
+	}
+	if media.Game != nil {
+		game := domain.CloneBotGame(*media.Game)
+		clone.Game = &game
 	}
 	if media.ServiceAction == nil {
 		return &clone
 	}
 	action := *media.ServiceAction
+	action.ForumTopic = cloneChannelMessageAction(media.ServiceAction.ForumTopic)
+	action.PassportData = domain.ClonePassportAuthorization(media.ServiceAction.PassportData)
 	if media.ServiceAction.NoForwards != nil {
 		noForwards := *media.ServiceAction.NoForwards
 		action.NoForwards = &noForwards
@@ -131,6 +152,13 @@ func cloneRequestedPeerMedia(media *domain.MessageMedia) *domain.MessageMedia {
 	requested := *media.ServiceAction.RequestedPeer
 	requested.Peers = append([]domain.Peer(nil), requested.Peers...)
 	requested.Details = append([]domain.MessageRequestedPeerDetails(nil), requested.Details...)
+	if requested.ManagedBot != nil {
+		bot := *requested.ManagedBot
+		bot.PhotoStripped = append([]byte(nil), bot.PhotoStripped...)
+		bot.ContactNoteEntities = append([]domain.MessageEntity(nil), bot.ContactNoteEntities...)
+		bot.RestrictionReasons = append([]domain.UserRestrictionReason(nil), bot.RestrictionReasons...)
+		requested.ManagedBot = &bot
+	}
 	for i := range requested.Details {
 		requested.Details[i].Photo = domain.ClonePhotoPtr(requested.Details[i].Photo)
 	}
@@ -163,20 +191,6 @@ func cloneReplyMarkup(m *domain.MessageReplyMarkup) *domain.MessageReplyMarkup {
 			clone.Keyboard[i] = append([]domain.MarkupButton(nil), row...)
 		}
 	}
-	return &clone
-}
-
-// cloneRichMessage 深拷 Layer 228 富文本快照：复制不透明 blocks、Bot API 投影与内嵌媒体切片，
-// 避免发送方/接收方两行共享底层切片（与 postgres 每盒独立 decode 对齐）。
-func cloneRichMessage(m *domain.MessageRichMessage) *domain.MessageRichMessage {
-	if m == nil {
-		return nil
-	}
-	clone := *m
-	clone.Blocks = append([]byte(nil), m.Blocks...)
-	clone.Photos = append([]domain.Photo(nil), m.Photos...)
-	clone.Documents = append([]domain.Document(nil), m.Documents...)
-	clone.BotAPIProjection = append([]byte(nil), m.BotAPIProjection...)
 	return &clone
 }
 

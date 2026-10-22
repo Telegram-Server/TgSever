@@ -151,6 +151,19 @@ func TestPersonalChannelOwnershipTransferRevokesWarmReads(t *testing.T) {
 		} else if len(messages) != 0 {
 			t.Fatalf("stale personal history = %+v", messages)
 		}
+		apiMessages, _, _, err := f.router.BotAPIGetUserPersonalChatMessages(ctx, f.bot.ID, user.ID, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		apiFound := false
+		for _, message := range apiMessages {
+			if message.ID == postID {
+				apiFound = true
+			}
+		}
+		if apiFound != want || (!want && len(apiMessages) != 0) {
+			t.Fatalf("Bot API personal channel history = %+v want visible=%v", apiMessages, want)
+		}
 	}
 	read(f.owner, true)
 	transfer, err := f.router.deps.Channels.TransferOwnership(ownerCtx, f.owner.ID, domain.TransferChannelOwnershipRequest{ChannelID: channel.ID, NewOwnerID: f.peer.ID})

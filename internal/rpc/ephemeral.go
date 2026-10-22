@@ -155,7 +155,7 @@ func (r *Router) onEphemeralGetCallbackAnswer(ctx context.Context, request *tg.E
 	defer r.callbacks.deregisterContext(context.Background(), callback.BotUserID, queryID)
 	created, err := r.deps.Ephemeral.PutCallbackAction(ctx, domain.EphemeralCallbackAction{
 		QueryID: queryID, BotUserID: callback.BotUserID, UserID: userID, Peer: peer,
-		MessageID: request.ID, TopMessageID: callback.Message.TopMessageID, Device: callback.Device, CreatedAt: callback.OccurredAt,
+		MessageID: request.ID, FromEphemeral: true, TopMessageID: callback.Message.TopMessageID, Device: callback.Device, CreatedAt: callback.OccurredAt,
 		ExpiresAt: callback.OccurredAt.Add(domain.EphemeralReplyWindow),
 	})
 	if err != nil || !created {
@@ -425,6 +425,9 @@ func tgEphemeralMessage(viewerUserID int64, message domain.EphemeralMessage) tg.
 		ReceiverID: message.ReceiverUserID,
 		Date:       message.Date,
 		Message:    message.Content.Message,
+	}
+	if message.ReplaceMessageID > 0 {
+		out.SetAnchorMsgID(message.ReplaceMessageID)
 	}
 	if message.TopMessageID > 0 {
 		out.SetTopMsgID(message.TopMessageID)

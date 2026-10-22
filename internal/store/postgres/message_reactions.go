@@ -51,6 +51,14 @@ func (s *MessageStore) SetMessageReactions(ctx context.Context, req domain.SetPr
 	if err := lockUsersForUpdate(ctx, tx, req.UserID, req.Peer.ID); err != nil {
 		return domain.PrivateMessageReactionsResult{}, fmt.Errorf("lock set message reactions users: %w", err)
 	}
+	albumID, err := qtx.ResolvePrivateReactionAlbumTarget(ctx, sqlcgen.ResolvePrivateReactionAlbumTargetParams{OwnerUserID: req.UserID, BoxID: int32(req.MessageID), PeerID: req.Peer.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
+	}
+	if err != nil {
+		return domain.PrivateMessageReactionsResult{}, err
+	}
+	req.MessageID = int(albumID)
 
 	var target struct {
 		boxID            int32

@@ -43,6 +43,11 @@ func (r *Router) sendStarGiftTransferForm(ctx context.Context, userID, formID in
 	if r.giftRecipientDeleted(ctx, userID, to) {
 		return nil, userIDInvalidErr()
 	}
+	if to.Type == domain.PeerTypeUser {
+		if err := r.botAPIBusinessGiftAllowed(ctx, to.ID, true, false, target.Owner.Type == domain.PeerTypeChannel); err != nil {
+			return nil, err
+		}
+	}
 	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
 	if err != nil {
 		return nil, err
@@ -646,6 +651,11 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 	}
 	if r.giftRecipientDeleted(ctx, userID, to) {
 		return nil, starGiftInvalidErr()
+	}
+	if to.Type == domain.PeerTypeUser {
+		if err := r.botAPIBusinessGiftAllowed(ctx, to.ID, true, false, ref.Owner.Type == domain.PeerTypeChannel); err != nil {
+			return nil, err
+		}
 	}
 	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
 	if err != nil {

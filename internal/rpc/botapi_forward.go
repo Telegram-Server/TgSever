@@ -27,35 +27,37 @@ func (r *Router) BotAPICopyMessages(ctx context.Context, botID, chatID, fromChat
 	})
 }
 
-// BotAPICopyMessage 复制单条消息。
-// 只有改说明文字或加按钮时才重新发送，其余情况走 drop_author 转发。
-func (r *Router) BotAPICopyMessage(ctx context.Context, botID, chatID, fromChatID int64, messageID int, setCaption bool, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int) (domain.Message, error) {
-	if r == nil || botID == 0 {
-		return domain.Message{}, errors.New("BOT_INVALID")
+// BotAPICopyMessageWithOptions copies visible source content through the same
+// authorized reply/business/thread/broadcast path as an ordinary outgoing message.
+func (r *Router) BotAPICopyMessageWithOptions(ctx context.Context, botID, chatID, fromChatID int64, messageID int, setCaption bool, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int, options domain.BotAPIMessageOptions) (domain.Message, error) {
+	if _, err := r.BotAPISelf(ctx, botID); err != nil {
+		return domain.Message{}, err
 	}
-	if messageID <= 0 || messageID > domain.MaxMessageBoxID {
-		return domain.Message{}, errors.New("MESSAGE_ID_INVALID")
-	}
-	if replyMarkup != nil && replyMarkup.IsZero() {
-		replyMarkup = nil
-	}
-	if setCaption {
-		if utf8.RuneCountInString(caption) > domain.MaxMessageTextLength {
-			return domain.Message{}, errors.New("MESSAGE_TOO_LONG")
-		}
-		entities = r.augmentBotAPIAutoEntities(caption, entities)
-	}
-	msgs, err := r.botAPIForward(ctx, botID, chatID, fromChatID, []int{messageID}, botAPIForwardOptions{
-		silent: silent, protectContent: protectContent, copyMode: true, replyToMessageID: replyToMessageID,
-		setCaption: setCaption, caption: caption, entities: entities, replyMarkup: replyMarkup,
-	})
+	_, fromPeer, err := r.botAPIInputPeer(ctx, botID, fromChatID)
 	if err != nil {
 		return domain.Message{}, err
 	}
-	if len(msgs) == 0 {
-		return domain.Message{}, errors.New("MESSAGE_ID_INVALID")
+	source, found, err := r.botAPIReplySource(ctx, botID, fromPeer, messageID)
+	if err != nil {
+		return domain.Message{}, err
 	}
-	return msgs[0], nil
+	if !found {
+		return domain.Message{}, messageIDInvalidErr()
+	}
+	if !botAPISourceCopyable(botAPISource{id: source.ID, service: source.Action != nil || botAPIMediaIsService(source.Media), media: source.Media}) {
+		return domain.Message{}, messageIDInvalidErr()
+	}
+	if source.NoForwards || source.Media != nil && (source.Media.TTLSeconds > 0 || source.Media.PaidMedia != nil) {
+		return domain.Message{}, chatForwardsRestrictedErr()
+	}
+	if err := r.botAPICheckPrivateNoForwards(ctx, botID, fromPeer); err != nil {
+		return domain.Message{}, err
+	}
+	body, sourceEntities := source.Body, source.Entities
+	if setCaption && source.Media != nil {
+		body, sourceEntities = caption, entities
+	}
+	return r.botAPISendContent(ctx, botID, chatID, body, sourceEntities, cloneInlineMedia(source.Media), domain.CloneRichMessage(source.RichMessage), replyMarkup, silent, protectContent, replyToMessageID, 0, options)
 }
 
 // botAPIForwardOptions 是转发/复制的选项。copyMode 即 drop_author，并按复制规则过滤源消息。
@@ -207,7 +209,7 @@ func (r *Router) botAPISendCopy(ctx context.Context, botID int64, toPeer domain.
 		reply = &domain.MessageReply{Peer: toPeer, MessageID: opts.replyToMessageID}
 	}
 	if toPeer.Type == domain.PeerTypeChannel {
-		return r.botAPISendChannelMessage(ctx, botID, toPeer.ID, body, entities, media, nil, opts.replyMarkup, opts.silent, opts.protectContent, reply)
+		return r.botAPISendChannelMessage(ctx, botID, toPeer.ID, body, entities, media, nil, opts.replyMarkup, opts.silent, opts.protectContent, reply, 0)
 	}
 	if r.deps.Messages == nil {
 		return domain.Message{}, errors.New("BOT_INVALID")

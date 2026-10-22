@@ -403,7 +403,7 @@ func storedScheduledRichMessage(in *domain.MessageRichMessage) *domain.MessageRi
 	if in.IsZero() {
 		return nil
 	}
-	return cloneRichMessage(in)
+	return domain.CloneRichMessage(in)
 }
 
 // storedScheduledReply 只保留 scheduled_messages 有列的回复字段（reply_to_* 与 quote_*；
@@ -455,7 +455,7 @@ func cloneScheduledMessage(msg domain.ScheduledMessage) domain.ScheduledMessage 
 		msg.Entities = storedScheduledEntities(msg.Entities)
 	}
 	msg.Media = cloneRequestedPeerMedia(msg.Media)
-	msg.RichMessage = cloneRichMessage(msg.RichMessage)
+	msg.RichMessage = domain.CloneRichMessage(msg.RichMessage)
 	if msg.ReplyTo != nil {
 		reply := *msg.ReplyTo
 		if reply.QuoteEntities != nil {

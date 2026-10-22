@@ -191,6 +191,7 @@ type StarsTransaction struct {
 	UserID          int64 // 账本归属
 	Peer            Peer  // 对手方（grant/topup 等无对手时为零 Peer）
 	Amount          int64 // 带符号金额
+	Nanos           int32 // signed fractional Stars; same sign as nonzero Amount
 	Date            int   // Unix 秒
 	Reason          StarsTransactionReason
 	Title           string // 可选，投影到 tg.StarsTransaction.Title
@@ -201,7 +202,7 @@ type StarsTransaction struct {
 }
 
 // IsCredit 报告该流水是否为入账（贷记），投影到 tg.StarsTransaction.Refund。
-func (t StarsTransaction) IsCredit() bool { return t.Amount > 0 }
+func (t StarsTransaction) IsCredit() bool { return t.Amount > 0 || (t.Amount == 0 && t.Nanos > 0) }
 
 // StarsTransactionDirection scopes one payments.getStarsTransactions view.
 // The zero value intentionally means the combined inbound/outbound history.
@@ -257,6 +258,7 @@ func NormalizeStarsTransactionQuery(query StarsTransactionQuery) (StarsTransacti
 // StarsTransactionPage 是一页账本流水 + 当前余额 + 分页游标 + 对手方用户富化集合。
 type StarsTransactionPage struct {
 	Balance      int64
+	BalanceNanos int32
 	Transactions []StarsTransaction
 	NextOffset   string // 空表示无更多页（DrKLO 据此停止翻页，勿在末页给非空值）
 	Users        []User // History 中提到的对手方用户，供 tg Users 富化

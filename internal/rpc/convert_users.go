@@ -214,6 +214,7 @@ func applyTgUserBotFields(out *tg.User, u domain.User) {
 		return
 	}
 	out.Bot = true
+	out.SetBotGuestchat(u.BotGuestChat)
 	version := u.BotInfoVersion
 	if version < 1 {
 		version = 1
@@ -448,7 +449,7 @@ func addUsers(out *tg.UpdatesDifference, seen map[int64]struct{}, viewerUserID i
 }
 
 func addMessageUsers(out *tg.UpdatesDifference, seen map[int64]struct{}, msg domain.Message) {
-	for _, peer := range []domain.Peer{msg.From, msg.Peer, domain.Peer{Type: domain.PeerTypeUser, ID: msg.ViaBotID}} {
+	for _, peer := range []domain.Peer{msg.From, msg.Peer, msg.GuestChatViaFrom, domain.Peer{Type: domain.PeerTypeUser, ID: msg.ViaBotID}, domain.Peer{Type: domain.PeerTypeUser, ID: msg.BusinessBotID}} {
 		if peer.Type != domain.PeerTypeUser {
 			continue
 		}

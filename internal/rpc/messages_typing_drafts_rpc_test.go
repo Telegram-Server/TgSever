@@ -36,11 +36,12 @@ func typingDraftRouter(t *testing.T) (*Router, domain.User, domain.User, *captur
 	rpcTestBlocklistStores(contacts, users, stories, memory.NewUpdateEventStore())
 	sessions := &captureSessions{}
 	r := New(Config{}, Deps{
-		Users:    appusers.NewService(users),
-		Bots:     appbots.NewService(users, bots, memory.NewMessageStore()),
-		Contacts: appcontacts.NewService(contacts, users),
-		Stories:  appstories.NewService(stories),
-		Sessions: sessions,
+		Users:         appusers.NewService(users),
+		Bots:          appbots.NewService(users, bots, memory.NewMessageStore()),
+		Contacts:      appcontacts.NewService(contacts, users),
+		Stories:       appstories.NewService(stories),
+		Sessions:      sessions,
+		MessageDrafts: memory.NewMessageDraftStore(),
 	}, zaptest.NewLogger(t), clock.System)
 	return r, bot, owner, sessions
 }
@@ -202,8 +203,13 @@ func TestMessagesSetTypingDraftTextBoundaryAndBlocklist(t *testing.T) {
 		&tg.SendMessageTypingAction{},
 	} {
 		sessions.clearMessages()
-		if ok, err := r.onMessagesSetTyping(ctx, &tg.MessagesSetTypingRequest{Peer: request.Peer, Action: action}); err != nil || !ok {
-			t.Fatalf("blocked typing = %v, %v", ok, err)
+		ok, err := r.onMessagesSetTyping(ctx, &tg.MessagesSetTypingRequest{Peer: request.Peer, Action: action})
+		_, ordinary := action.(*tg.SendMessageTypingAction)
+		if ordinary && (err != nil || !ok) {
+			t.Fatalf("blocked ordinary typing = %v, %v", ok, err)
+		}
+		if !ordinary && (ok || !tgerr.Is(err, "USER_IS_BLOCKED")) {
+			t.Fatalf("blocked draft = %v, %v", ok, err)
 		}
 		if got := sessions.snapshot().message; got != nil {
 			t.Fatalf("blocked typing delivered: %T", got)

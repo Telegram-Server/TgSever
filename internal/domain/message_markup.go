@@ -67,7 +67,8 @@ const (
 	MarkupButtonCopy            MarkupButtonType = "copy"
 	// MarkupButtonBuy is keyboardButtonBuy. It is valid only on an inline
 	// keyboard attached to invoice media.
-	MarkupButtonBuy MarkupButtonType = "buy"
+	MarkupButtonBuy  MarkupButtonType = "buy"
+	MarkupButtonGame MarkupButtonType = "game"
 )
 
 // MarkupButtonStyle is the protocol-neutral semantic button color. Telegram
@@ -143,7 +144,7 @@ type MarkupButton struct {
 	// PollType is empty, "regular", or "quiz" for request_poll.
 	PollType string `json:"poll_type,omitempty"`
 	// ButtonID and request-peer fields preserve Bot API request_id and the
-	// client-side chooser shape. RequestPeerType is user/chat/broadcast.
+	// client-side chooser shape. RequestPeerType is user/chat/broadcast/managed_bot.
 	ButtonID          int                   `json:"button_id,omitempty"`
 	RequestPeerType   string                `json:"request_peer_type,omitempty"`
 	MaxQuantity       int                   `json:"max_quantity,omitempty"`
@@ -151,6 +152,8 @@ type MarkupButton struct {
 	UsernameRequested bool                  `json:"username_requested,omitempty"`
 	PhotoRequested    bool                  `json:"photo_requested,omitempty"`
 	RequestPeerFilter *BotRequestPeerFilter `json:"request_peer_filter,omitempty"`
+	SuggestedName     string                `json:"suggested_name,omitempty"`
+	SuggestedUsername string                `json:"suggested_username,omitempty"`
 	Query             string                `json:"query,omitempty"`
 	SamePeer          bool                  `json:"same_peer,omitempty"`
 	PeerTypes         []string              `json:"peer_types,omitempty"`
@@ -278,7 +281,7 @@ func validateMarkupRows(rows [][]MarkupButton, replyKeyboard bool) error {
 		return ErrButtonInvalid
 	}
 	total := 0
-	for _, row := range rows {
+	for rowIndex, row := range rows {
 		if len(row) == 0 || len(row) > MaxMarkupButtonsPerRow {
 			return ErrButtonInvalid
 		}
@@ -287,6 +290,9 @@ func validateMarkupRows(rows [][]MarkupButton, replyKeyboard bool) error {
 			return ErrButtonInvalid
 		}
 		for i := range row {
+			if !replyKeyboard && row[i].Type == MarkupButtonGame && (rowIndex != 0 || i != 0) {
+				return ErrButtonInvalid
+			}
 			if err := validateMarkupButton(row[i], replyKeyboard); err != nil {
 				return err
 			}
@@ -319,8 +325,15 @@ func validateMarkupButton(b MarkupButton, replyKeyboard bool) error {
 				return ErrButtonInvalid
 			}
 		case MarkupButtonRequestPeer:
-			if b.ButtonID == 0 || b.MaxQuantity < 1 || b.MaxQuantity > 10 ||
-				(b.RequestPeerType != "user" && b.RequestPeerType != "chat" && b.RequestPeerType != "broadcast") {
+			if b.ButtonID < -1<<31 || b.ButtonID > 1<<31-1 || b.MaxQuantity < 1 || b.MaxQuantity > 10 ||
+				(b.RequestPeerType != "user" && b.RequestPeerType != "chat" && b.RequestPeerType != "broadcast" && b.RequestPeerType != "managed_bot") {
+				return ErrButtonInvalid
+			}
+			if b.RequestPeerType == "managed_bot" {
+				if b.MaxQuantity != 1 || b.RequestPeerFilter != nil || b.NameRequested || b.UsernameRequested || b.PhotoRequested {
+					return ErrButtonInvalid
+				}
+			} else if b.SuggestedName != "" || b.SuggestedUsername != "" {
 				return ErrButtonInvalid
 			}
 			if b.RequestPeerFilter != nil {
@@ -378,13 +391,12 @@ func validateMarkupButton(b MarkupButton, replyKeyboard bool) error {
 		if b.CopyText == "" || utf8.RuneCountInString(b.CopyText) > 256 {
 			return ErrButtonInvalid
 		}
-	case MarkupButtonBuy:
+	case MarkupButtonBuy, MarkupButtonGame:
 		if len(b.Data) != 0 || b.URL != "" || b.Query != "" || b.CopyText != "" ||
 			b.RequiresPassword || b.LoginBotUserID != 0 || b.ButtonID != 0 {
 			return ErrButtonInvalid
 		}
 	default:
-		// webview/game/url_auth/request_* 等 P3 未实现类型：拒绝，绝不半实现下发。
 		return ErrButtonTypeInvalid
 	}
 	return nil

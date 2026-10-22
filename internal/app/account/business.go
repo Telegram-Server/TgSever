@@ -163,6 +163,13 @@ func (s *Service) GetConnectedBusinessBot(ctx context.Context, ownerUserID int64
 	return s.business.GetConnectedBusinessBot(ctx, ownerUserID)
 }
 
+func (s *Service) GetBusinessBotConnection(ctx context.Context, connectionID string) (domain.ConnectedBusinessBot, bool, error) {
+	if s == nil || s.business == nil || connectionID == "" {
+		return domain.ConnectedBusinessBot{}, false, nil
+	}
+	return s.business.GetBusinessBotConnection(ctx, connectionID)
+}
+
 func (s *Service) SaveConnectedBusinessBot(ctx context.Context, ownerUserID int64, bot domain.ConnectedBusinessBot) (domain.ConnectedBusinessBot, error) {
 	if s == nil || s.business == nil || ownerUserID == 0 || bot.BotUserID == 0 || bot.BotUserID == ownerUserID {
 		return domain.ConnectedBusinessBot{}, domain.ErrBotBusinessMissing

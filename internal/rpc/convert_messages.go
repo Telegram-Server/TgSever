@@ -59,7 +59,7 @@ func tgMessage(m domain.Message) tg.MessageClass {
 		return msg
 	}
 	msg := &tg.Message{
-		Out:         m.Out,
+		Out:         m.Out && m.GuestChatViaFrom.ID == 0,
 		MediaUnread: m.MediaUnread,
 		ID:          m.ID,
 		PeerID:      peer,
@@ -101,6 +101,14 @@ func tgMessage(m domain.Message) tg.MessageClass {
 	if m.ViaBotID != 0 {
 		msg.SetViaBotID(m.ViaBotID)
 	}
+	if m.GuestChatViaFrom.ID != 0 {
+		if caller := tgPeer(m.GuestChatViaFrom); caller != nil {
+			msg.SetGuestchatViaFrom(caller)
+		}
+	}
+	if m.BusinessBotID != 0 {
+		msg.SetViaBusinessBotID(m.BusinessBotID)
+	}
 	if m.GroupedID != 0 {
 		msg.SetGroupedID(m.GroupedID)
 	}
@@ -137,6 +145,32 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 		return nil
 	}
 	switch m.ServiceAction.Kind {
+	case domain.MessageServiceActionPassportData:
+		a := m.ServiceAction.PassportData
+		if a == nil {
+			return nil
+		}
+		if msg.OwnerUserID != a.BotUserID {
+			types := make([]tg.SecureValueTypeClass, 0, len(a.Elements))
+			for _, el := range a.Elements {
+				types = append(types, passportTypeTG(el.Type))
+			}
+			return &tg.MessageActionSecureValuesSent{Types: types}
+		}
+		values := make([]tg.SecureValue, 0, len(a.Elements))
+		for _, el := range a.Elements {
+			value, err := tgPassportValue(el)
+			if err != nil {
+				return nil
+			}
+			values = append(values, value)
+		}
+		return &tg.MessageActionSecureValuesSentMe{Values: values, Credentials: tg.SecureCredentialsEncrypted{Data: a.CredentialsData, Hash: a.CredentialsHash, Secret: a.CredentialsSecret}}
+	case domain.MessageServiceActionTopicCreate, domain.MessageServiceActionTopicEdit:
+		if m.ServiceAction.ForumTopic == nil {
+			return &tg.MessageActionEmpty{}
+		}
+		return tgChannelMessageAction(*m.ServiceAction.ForumTopic)
 	case domain.MessageServiceActionHistoryClear:
 		return &tg.MessageActionHistoryClear{}
 	case domain.MessageServiceActionSuggestProfilePhoto:
@@ -484,6 +518,12 @@ func tgMessageReplyHeader(m domain.Message) tg.MessageReplyHeaderClass {
 		return nil
 	}
 	header := &tg.MessageReplyHeader{}
+	if m.ReplyTo.ChecklistTaskID > 0 {
+		header.SetTodoItemID(m.ReplyTo.ChecklistTaskID)
+	}
+	if len(m.ReplyTo.PollOption) > 0 {
+		header.SetPollOption(m.ReplyTo.PollOption)
+	}
 	if m.ReplyTo.ForumTopic {
 		header.SetForumTopic(true)
 	}
@@ -598,11 +638,11 @@ func tgMessageReactions(viewerUserID int64, in *domain.ChannelMessageReactions) 
 
 func tgMessagePeerReaction(viewerUserID int64, in domain.ChannelMessagePeerReaction) *tg.MessagePeerReaction {
 	reaction := tgMessageReaction(in.Reaction)
-	if reaction == nil || in.UserID == 0 {
+	if reaction == nil || !domain.ReactionActorValid(in.Actor()) {
 		return nil
 	}
 	out := &tg.MessagePeerReaction{
-		PeerID:   &tg.PeerUser{UserID: in.UserID},
+		PeerID:   tgPeer(in.Actor()),
 		Date:     in.Date,
 		Reaction: reaction,
 	}

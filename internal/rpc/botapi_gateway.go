@@ -298,7 +298,7 @@ func (r *Router) BotAPISendMessage(ctx context.Context, botID, chatID int64, tex
 		reply = &domain.MessageReply{Peer: peer, MessageID: replyToMessageID}
 	}
 	if peer.Type == domain.PeerTypeChannel {
-		return r.botAPISendChannelMessage(ctx, botID, peer.ID, text, entities, nil, nil, replyMarkup, silent, false, reply)
+		return r.botAPISendChannelMessage(ctx, botID, peer.ID, text, entities, nil, nil, replyMarkup, silent, false, reply, 0)
 	}
 	if r.deps.Messages == nil {
 		return domain.Message{}, errors.New("BOT_INVALID")
@@ -323,6 +323,9 @@ func (r *Router) BotAPISendMessage(ctx context.Context, botID, chatID int64, tex
 	})
 	if err != nil {
 		return domain.Message{}, err
+	}
+	if !res.Duplicate {
+		r.finishMessageDraftAfterSend(ctx, botID, peer.ID, 0)
 	}
 	return res.SenderMessage, nil
 }
@@ -364,7 +367,7 @@ func (r *Router) BotAPISendRichMessage(ctx context.Context, botID, chatID int64,
 		reply = &domain.MessageReply{Peer: peer, MessageID: replyToMessageID}
 	}
 	if peer.Type == domain.PeerTypeChannel {
-		return r.botAPISendChannelMessage(ctx, botID, peer.ID, "", nil, nil, richMessage, replyMarkup, silent, noForwards, reply)
+		return r.botAPISendChannelMessage(ctx, botID, peer.ID, "", nil, nil, richMessage, replyMarkup, silent, noForwards, reply, 0)
 	}
 	if r.deps.Messages == nil {
 		return domain.Message{}, errors.New("BOT_INVALID")
@@ -384,12 +387,13 @@ func (r *Router) BotAPISendRichMessage(ctx context.Context, botID, chatID int64,
 	if err != nil {
 		return domain.Message{}, err
 	}
+	if !res.Duplicate {
+		r.finishMessageDraftAfterSend(ctx, botID, peer.ID, 0)
+	}
 	return res.SenderMessage, nil
 }
 
-// BotAPISendMedia sends a photo/document message through the same files service
-// and private/channel message state machines used by MTProto sendMedia.
-func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind, locationKey, remoteURL, fileName, mimeType string, fileBytes []byte, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent bool, replyToMessageID int) (domain.Message, error) {
+func (r *Router) BotAPISendMediaFiles(ctx context.Context, botID, chatID int64, kind string, file, secondary domain.BotAPIFileInput, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent bool, replyToMessageID int) (domain.Message, error) {
 	if r == nil || r.deps.Files == nil || botID == 0 {
 		return domain.Message{}, errors.New("BOT_INVALID")
 	}
@@ -408,7 +412,7 @@ func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind,
 	}
 	// caption 与正文同口径：/buy 等命令、@mention、裸域名都要有服务端实体才蓝显。
 	entities = r.augmentBotAPIAutoEntities(caption, entities)
-	media, err := r.botAPIMedia(ctx, botID, kind, locationKey, remoteURL, fileName, mimeType, fileBytes)
+	media, err := r.botAPIEphemeralMedia(ctx, botID, kind, file, secondary)
 	if err != nil {
 		return domain.Message{}, err
 	}
@@ -417,7 +421,7 @@ func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind,
 		reply = &domain.MessageReply{Peer: peer, MessageID: replyToMessageID}
 	}
 	if peer.Type == domain.PeerTypeChannel {
-		return r.botAPISendChannelMessage(ctx, botID, peer.ID, caption, entities, media, nil, replyMarkup, silent, false, reply)
+		return r.botAPISendChannelMessage(ctx, botID, peer.ID, caption, entities, media, nil, replyMarkup, silent, false, reply, 0)
 	}
 	if r.deps.Messages == nil {
 		return domain.Message{}, errors.New("BOT_INVALID")
@@ -443,6 +447,9 @@ func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind,
 	})
 	if err != nil {
 		return domain.Message{}, err
+	}
+	if !res.Duplicate {
+		r.finishMessageDraftAfterSend(ctx, botID, peer.ID, 0)
 	}
 	return res.SenderMessage, nil
 }
@@ -474,8 +481,23 @@ func (r *Router) BotAPISendEphemeral(ctx context.Context, input domain.BotAPIEph
 		BotUserID: input.BotUserID, ReceiverUserID: input.ReceiverUserID, Peer: peer,
 		TopMessageID: input.TopMessageID, ReplyToEphemeralID: input.ReplyToEphemeralID,
 		ActionMessageID: input.ReplyToEphemeralID, CallbackQueryID: input.CallbackQueryID,
+		ReplaceCallbackQueryMessage: input.ReplaceCallbackQueryMessage,
 	}, func(buildCtx context.Context) (domain.EphemeralContent, error) {
 		content := baseContent
+		if input.Kind == "rich" {
+			wire, err := tgInputRichMessageFromBotAPI(input.Rich)
+			if err != nil {
+				return domain.EphemeralContent{}, err
+			}
+			content.RichMessage, err = r.domainRichMessageFromInput(buildCtx, wire)
+			if err != nil {
+				return domain.EphemeralContent{}, err
+			}
+			if content.RichMessage.IsZero() {
+				return domain.EphemeralContent{}, richMessageInvalidErr()
+			}
+			return content, nil
+		}
 		if input.DirectMedia != nil {
 			content.Media = input.DirectMedia
 			if content.Media.Geo != nil && content.Media.Geo.AccessHash == 0 {
@@ -596,10 +618,14 @@ func (r *Router) botAPIEphemeralMedia(ctx context.Context, botID int64, kind str
 			return nil, err
 		}
 		photo.LivePhotoVideo = video.Document
-		return photo, nil
+		return r.botAPIMediaMetadata(ctx, botID, photo, file)
 	}
 	if kind == "photo" {
-		return r.botAPIMedia(ctx, botID, kind, file.LocationKey, file.RemoteURL, file.FileName, file.MimeType, file.Bytes)
+		media, err := r.botAPIMedia(ctx, botID, kind, file.LocationKey, file.RemoteURL, file.FileName, file.MimeType, file.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return r.botAPIMediaMetadata(ctx, botID, media, file)
 	}
 	return r.botAPIDocumentMedia(ctx, botID, kind, file)
 }
@@ -616,11 +642,33 @@ func (r *Router) botAPIDocumentMedia(ctx context.Context, botID int64, kind stri
 	var err error
 	switch {
 	case len(file.Bytes) > 0:
-		document, err = r.deps.Files.CreateDocumentFromBytes(ctx, file.Bytes, domain.DocumentSpec{MimeType: file.MimeType, Attributes: attrs, ForceFile: forceFile})
+		spec := domain.DocumentSpec{MimeType: file.MimeType, Attributes: attrs, ForceFile: forceFile || file.DisableContentTypeDetection}
+		if file.Thumbnail != nil && len(file.Thumbnail.Bytes) > 0 {
+			thumb, stageErr := r.botAPIStageUpload(ctx, botID, *file.Thumbnail)
+			if stageErr != nil {
+				return nil, stageErr
+			}
+			spec.Thumb = &thumb
+			upload, stageErr := r.botAPIStageUpload(ctx, botID, file)
+			if stageErr != nil {
+				return nil, stageErr
+			}
+			document, err = r.deps.Files.CreateDocumentFromUpload(ctx, upload, spec)
+		} else {
+			document, err = r.deps.Files.CreateDocumentFromBytes(ctx, file.Bytes, spec)
+		}
 	case file.RemoteURL != "":
-		document, err = r.deps.Files.CreateDocumentFromURL(ctx, file.RemoteURL)
-		document.Attributes = mergeDocumentAttributes(document.Attributes, attrs)
+		importer, ok := r.deps.Files.(interface {
+			CreateDocumentFromURLWithSpec(context.Context, string, domain.DocumentSpec) (domain.Document, error)
+		})
+		if !ok {
+			return nil, errors.New("MEDIA_INVALID")
+		}
+		document, err = importer.CreateDocumentFromURLWithSpec(ctx, file.RemoteURL, domain.DocumentSpec{MimeType: file.MimeType, Attributes: attrs, ForceFile: forceFile || file.DisableContentTypeDetection})
 	case file.LocationKey != "":
+		if err := r.botAPICheckPaidFile(ctx, botID, file.LocationKey); err != nil {
+			return nil, err
+		}
 		id, valid := botAPIDocumentID(file.LocationKey)
 		if !valid {
 			return nil, errors.New("FILE_ID_INVALID")
@@ -639,7 +687,7 @@ func (r *Router) botAPIDocumentMedia(ctx context.Context, botID int64, kind stri
 	if !botAPIDocumentMatchesKind(document, kind) {
 		return nil, errors.New("MEDIA_INVALID")
 	}
-	return messageMediaFromDocument(document, false, 0), nil
+	return r.botAPIMediaMetadata(ctx, botID, messageMediaFromDocument(document, false, 0), file)
 }
 
 func botAPIDocumentKindAttributes(kind string, file domain.BotAPIFileInput) ([]domain.DocumentAttribute, bool, bool) {
@@ -666,7 +714,7 @@ func botAPIDocumentKindAttributes(kind string, file domain.BotAPIFileInput) ([]d
 	case "sticker":
 		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrSticker, W: w, H: h, Alt: file.Emoji}), false, true
 	case "video":
-		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: w, H: h, Duration: float64(duration), SupportsStreaming: true}), false, true
+		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: w, H: h, Duration: float64(duration), SupportsStreaming: file.SupportsStreaming}), false, true
 	case "video_note":
 		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: w, H: h, Duration: float64(duration), RoundMessage: true, SupportsStreaming: true}), false, true
 	case "voice":
@@ -674,22 +722,6 @@ func botAPIDocumentKindAttributes(kind string, file domain.BotAPIFileInput) ([]d
 	default:
 		return nil, false, false
 	}
-}
-
-func mergeDocumentAttributes(base, additional []domain.DocumentAttribute) []domain.DocumentAttribute {
-	out := append([]domain.DocumentAttribute(nil), base...)
-	seen := make(map[domain.DocumentAttributeKind]struct{}, len(base)+len(additional))
-	for _, attribute := range base {
-		seen[attribute.Kind] = struct{}{}
-	}
-	for _, attribute := range additional {
-		if _, exists := seen[attribute.Kind]; exists {
-			continue
-		}
-		seen[attribute.Kind] = struct{}{}
-		out = append(out, attribute)
-	}
-	return out
 }
 
 func botAPIDocumentMatchesKind(document domain.Document, kind string) bool {
@@ -734,7 +766,7 @@ func botAPIPeerFromChatID(chatID int64) (domain.Peer, bool) {
 	return domain.Peer{}, false
 }
 
-func (r *Router) botAPISendChannelMessage(ctx context.Context, botID, channelID int64, text string, entities []domain.MessageEntity, media *domain.MessageMedia, richMessage *domain.MessageRichMessage, replyMarkup *domain.MessageReplyMarkup, silent, noForwards bool, reply *domain.MessageReply) (domain.Message, error) {
+func (r *Router) botAPISendChannelMessage(ctx context.Context, botID, channelID int64, text string, entities []domain.MessageEntity, media *domain.MessageMedia, richMessage *domain.MessageRichMessage, replyMarkup *domain.MessageReplyMarkup, silent, noForwards bool, reply *domain.MessageReply, groupedID int64) (domain.Message, error) {
 	if r.deps.Channels == nil {
 		return domain.Message{}, errors.New("CHAT_ID_INVALID")
 	}
@@ -743,6 +775,7 @@ func (r *Router) botAPISendChannelMessage(ctx context.Context, botID, channelID 
 		UserID:              botID,
 		ChannelID:           channelID,
 		RandomID:            randomNonZeroInt64(),
+		GroupedID:           groupedID,
 		Message:             text,
 		Entities:            append([]domain.MessageEntity(nil), entities...),
 		Media:               media,
@@ -773,31 +806,35 @@ func botAPIMessageFromChannel(botID int64, msg domain.ChannelMessage) domain.Mes
 		from = domain.Peer{Type: domain.PeerTypeUser, ID: msg.SenderUserID}
 	}
 	return domain.Message{
-		ID:          msg.ID,
-		RandomID:    msg.RandomID,
-		OwnerUserID: botID,
-		Peer:        domain.Peer{Type: domain.PeerTypeChannel, ID: msg.ChannelID},
-		From:        from,
-		Date:        msg.Date,
-		EditDate:    msg.EditDate,
-		Out:         msg.SenderUserID == botID,
-		Silent:      msg.Silent,
-		NoForwards:  msg.NoForwards,
-		Body:        msg.Body,
-		Entities:    append([]domain.MessageEntity(nil), msg.Entities...),
-		ReplyTo:     msg.ReplyTo,
-		Forward:     msg.Forward,
-		Reactions:   msg.Reactions,
-		Pts:         msg.Pts,
-		TTLPeriod:   msg.TTLPeriod,
-		ExpiresAt:   msg.ExpiresAt,
-		Media:       msg.Media,
-		MediaUnread: msg.MediaUnread,
-		ViaBotID:    msg.ViaBotID,
-		GroupedID:   msg.GroupedID,
-		ReplyMarkup: msg.ReplyMarkup,
-		RichMessage: msg.RichMessage,
-		Pinned:      msg.Pinned,
+		ID:               msg.ID,
+		RandomID:         msg.RandomID,
+		OwnerUserID:      botID,
+		Peer:             domain.Peer{Type: domain.PeerTypeChannel, ID: msg.ChannelID},
+		From:             from,
+		Date:             msg.Date,
+		EditDate:         msg.EditDate,
+		Out:              msg.SenderUserID == botID,
+		Silent:           msg.Silent,
+		NoForwards:       msg.NoForwards,
+		Body:             msg.Body,
+		Entities:         append([]domain.MessageEntity(nil), msg.Entities...),
+		ReplyTo:          msg.ReplyTo,
+		Forward:          msg.Forward,
+		Reactions:        msg.Reactions,
+		Pts:              msg.Pts,
+		TTLPeriod:        msg.TTLPeriod,
+		ExpiresAt:        msg.ExpiresAt,
+		Media:            msg.Media,
+		MediaUnread:      msg.MediaUnread,
+		ViaBotID:         msg.ViaBotID,
+		GroupedID:        msg.GroupedID,
+		ReplyMarkup:      msg.ReplyMarkup,
+		RichMessage:      msg.RichMessage,
+		Pinned:           msg.Pinned,
+		SuggestedPost:    msg.SuggestedPost,
+		SavedPeer:        msg.SavedPeer,
+		Action:           msg.Action,
+		GuestChatViaFrom: msg.GuestChatViaFrom,
 	}
 }
 
@@ -829,6 +866,9 @@ func (r *Router) botAPIMedia(ctx context.Context, botID int64, kind, locationKey
 		case remoteURL != "":
 			photo, err = r.deps.Files.CreatePhotoFromURL(ctx, remoteURL)
 		case locationKey != "":
+			if err := r.botAPICheckPaidFile(ctx, botID, locationKey); err != nil {
+				return nil, err
+			}
 			id, ok := botAPIPhotoID(locationKey)
 			if !ok {
 				return nil, errors.New("FILE_ID_INVALID")
@@ -845,35 +885,10 @@ func (r *Router) botAPIMedia(ctx context.Context, botID int64, kind, locationKey
 			return nil, botAPIMediaErr(err)
 		}
 		return &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &photo}, nil
-	case "document":
-		var doc domain.Document
-		var err error
-		switch {
-		case len(fileBytes) > 0:
-			doc, err = r.deps.Files.CreateDocumentFromBytes(ctx, fileBytes, domain.DocumentSpec{
-				MimeType:   mimeType,
-				Attributes: botAPIDocumentAttributes(fileName),
-				ForceFile:  true,
-			})
-		case remoteURL != "":
-			doc, err = r.deps.Files.CreateDocumentFromURL(ctx, remoteURL)
-		case locationKey != "":
-			id, ok := botAPIDocumentID(locationKey)
-			if !ok {
-				return nil, errors.New("FILE_ID_INVALID")
-			}
-			var found bool
-			doc, found, err = r.deps.Files.GetDocument(ctx, id)
-			if err == nil && !found {
-				err = errors.New("FILE_ID_INVALID")
-			}
-		default:
-			err = errors.New("FILE_ID_INVALID")
-		}
-		if err != nil {
-			return nil, botAPIMediaErr(err)
-		}
-		return &domain.MessageMedia{Kind: domain.MessageMediaKindDocument, Document: &doc}, nil
+	case "document", "animation", "audio", "video", "voice", "sticker", "video_note":
+		return r.botAPIDocumentMedia(ctx, botID, kind, domain.BotAPIFileInput{
+			LocationKey: locationKey, RemoteURL: remoteURL, FileName: fileName, MimeType: mimeType, Bytes: fileBytes,
+		})
 	default:
 		return nil, errors.New("MEDIA_INVALID")
 	}
@@ -926,7 +941,8 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 	if r == nil || r.deps.Messages == nil || botID == 0 {
 		return domain.Message{}, errors.New("BOT_INVALID")
 	}
-	if chatID <= 0 {
+	peer, ok := botAPIPeerFromChatID(chatID)
+	if !ok {
 		return domain.Message{}, errors.New("CHAT_ID_INVALID")
 	}
 	if messageID <= 0 || messageID > domain.MaxMessageBoxID {
@@ -938,7 +954,6 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 	if utf8.RuneCountInString(text) > domain.MaxMessageTextLength {
 		return domain.Message{}, errors.New("MESSAGE_TOO_LONG")
 	}
-	peer := domain.Peer{Type: domain.PeerTypeUser, ID: chatID}
 	if setReplyMarkup {
 		if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
 			return domain.Message{}, replyMarkupErr(err)
@@ -948,6 +963,21 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 		}
 	}
 	entities = r.augmentBotAPIAutoEntities(text, entities)
+	if peer.Type == domain.PeerTypeChannel {
+		if r.deps.Channels == nil {
+			return domain.Message{}, errors.New("CHAT_ID_INVALID")
+		}
+		res, err := r.deps.Channels.EditMessage(ctx, botID, domain.EditChannelMessageRequest{
+			UserID: botID, ChannelID: peer.ID, ID: messageID, Message: text, Entities: entities,
+			SetReplyMarkup: setReplyMarkup, ReplyMarkup: replyMarkup, SetRichMessage: true,
+			MentionUserIDs: r.mentionUserIDsFromDomain(ctx, botID, text, entities), EditDate: int(r.clock.Now().Unix()),
+		})
+		if err != nil {
+			return domain.Message{}, channelEditErr(err)
+		}
+		r.enqueueChannelEditMessageFanout(ctx, botID, res)
+		return botAPIMessageFromChannel(botID, res.Message), nil
+	}
 	res, err := r.deps.Messages.EditMessage(ctx, botID, domain.EditMessageRequest{
 		OwnerUserID:    botID,
 		Peer:           peer,
@@ -965,6 +995,7 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 		return domain.Message{}, err
 	}
 	self := res.Self()
+	r.enqueueBotAPIPrivateEditUpdatesAsync(ctx, res)
 	if self.Message.ID == 0 {
 		return domain.Message{}, errors.New("MESSAGE_ID_INVALID")
 	}
@@ -1137,6 +1168,11 @@ func (r *Router) botAPIDeletePrivateMessage(ctx context.Context, botID int64, pe
 	}) {
 		return false, errors.New("MESSAGE_ID_INVALID")
 	}
+	for _, msg := range list.Messages {
+		if msg.ID == messageID && msg.Peer == peer && !botAPIDeletionAllowed(msg, int(r.clock.Now().Unix())) {
+			return false, tgerr400("MESSAGE_DELETE_FORBIDDEN")
+		}
+	}
 	res, err := r.deps.Messages.DeleteMessages(ctx, botID, domain.DeleteMessagesRequest{
 		OwnerUserID: botID,
 		IDs:         []int{messageID},
@@ -1161,6 +1197,13 @@ func (r *Router) botAPIDeleteChannelMessage(ctx context.Context, botID, chatID i
 	channel, _, err := r.botAPIInputChannel(ctx, botID, chatID)
 	if err != nil {
 		return false, err
+	}
+	msg, err := r.botAPIReloadMessage(ctx, botID, domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ChannelID}, messageID)
+	if err != nil {
+		return false, err
+	}
+	if !botAPIDeletionAllowed(msg, int(r.clock.Now().Unix())) {
+		return false, tgerr400("MESSAGE_DELETE_FORBIDDEN")
 	}
 	res, err := r.deleteChannelMessages(WithUserID(ctx, botID), botID, channel.ChannelID, []int{messageID}, domain.BotDeletionAudit(botID))
 	if err != nil {
@@ -1238,6 +1281,13 @@ func (r *Router) BotAPIGetFile(ctx context.Context, botID int64, locationKey str
 	if r == nil || r.deps.Files == nil || botID == 0 {
 		return domain.FileChunk{}, false, nil
 	}
+	if err := r.botAPICheckPaidFile(ctx, botID, locationKey); err != nil {
+		// A valid token does not make another seller's paid file addressable.
+		if errors.Is(err, domain.ErrPaidMediaLocked) {
+			return domain.FileChunk{}, false, nil
+		}
+		return domain.FileChunk{}, false, err
+	}
 	if limit <= 0 || limit > maxUploadGetFileChunkLimit {
 		limit = maxUploadGetFileChunkLimit
 	}
@@ -1249,4 +1299,47 @@ func (r *Router) BotAPIGetFile(ctx context.Context, botID int64, locationKey str
 		Offset:      offset,
 		Limit:       limit,
 	})
+}
+
+func (r *Router) botAPICheckPaidFile(ctx context.Context, userID int64, key string) error {
+	if r.deps.BotCommerce == nil {
+		return nil
+	}
+	allowed, err := r.deps.BotCommerce.CanReadPaidFile(ctx, userID, key)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return domain.ErrPaidMediaLocked
+	}
+	return nil
+}
+
+func (r *Router) botAPIStageUpload(ctx context.Context, botID int64, file domain.BotAPIFileInput) (domain.UploadedFileRef, error) {
+	ref := domain.UploadedFileRef{OwnerUserID: botID, FileID: randomNonZeroInt64(), Name: file.FileName}
+	const chunk = 512 << 10
+	for start := 0; start < len(file.Bytes); start += chunk {
+		ok, err := r.deps.Files.SaveFilePart(ctx, botID, ref.FileID, ref.Parts, file.Bytes[start:min(start+chunk, len(file.Bytes))])
+		if err != nil {
+			return domain.UploadedFileRef{}, err
+		}
+		if !ok {
+			return domain.UploadedFileRef{}, errors.New("FILE_PART_INVALID")
+		}
+		ref.Parts++
+	}
+	return ref, nil
+}
+
+func (r *Router) botAPIMediaMetadata(ctx context.Context, botID int64, media *domain.MessageMedia, file domain.BotAPIFileInput) (*domain.MessageMedia, error) {
+	media.Spoiler, media.InvertMedia = file.HasSpoiler, file.ShowCaptionAboveMedia
+	media.VideoTimestamp = file.StartTimestamp
+	if file.VideoCover != nil {
+		cover, err := r.botAPIMedia(ctx, botID, "photo", file.VideoCover.LocationKey, file.VideoCover.RemoteURL, file.VideoCover.FileName, file.VideoCover.MimeType, file.VideoCover.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		media.VideoCover = cover.Photo
+	}
+	return media, nil
 }

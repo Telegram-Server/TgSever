@@ -183,6 +183,7 @@ func (r *Router) onEditMessageClosePoll(ctx context.Context, req *tg.MessagesEdi
 		if err != nil {
 			return nil, pollMutationErr(err)
 		}
+		r.enqueueBotAPIChannelPollMutation(ctx, userID, res, nil)
 		return r.channelPollUpdates(ctx, userID, peer, req.ID, res, true), nil
 	case domain.PeerTypeUser:
 		if r.deps.Messages == nil {
@@ -197,6 +198,7 @@ func (r *Router) onEditMessageClosePoll(ctx context.Context, req *tg.MessagesEdi
 		if err != nil {
 			return nil, pollMutationErr(err)
 		}
+		r.enqueueBotAPIPrivatePollMutation(ctx, userID, res, nil)
 		return r.privatePollUpdates(ctx, userID, res), nil
 	default:
 		return nil, peerIDInvalidErr()
