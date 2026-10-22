@@ -6,7 +6,9 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/tg"
 
+	botsapp "telesrv/internal/app/bots"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 )
 
 // permissionWhitelist 返回总开关开启、发送白名单开启且名单为 ids 的权限设置。
@@ -102,5 +104,45 @@ func TestPermissionSendWhitelistAppliesToBotPrivateChats(t *testing.T) {
 	f.perms.items[f.me.ID] = permissionWhitelist(f.me.ID, f.other.ID, bot.ID)
 	if err := f.dispatch(t, req); isPermissionErr(err) {
 		t.Fatalf("bot whitelisted: err = %v, want no permission error", err)
+	}
+}
+
+// TestPermissionBotMessageEntriesCountAsSends 证明三个会以用户身份给 bot 发出消息的入口按发送
+// 判定、目标是那个 bot：messages.startBot（/start）、messages.sendWebViewData（mini app 回传）、
+// messages.sendBotRequestedPeer（把选中的会话发给 bot）。名单外的 bot 返回
+// TELESRV_PERMISSION_SEND_WHITELIST，发送关闭时返回 TELESRV_PERMISSION_SEND。
+func TestPermissionBotMessageEntriesCountAsSends(t *testing.T) {
+	f := newPermissionMappingFixture(t)
+	dialogs := memory.NewDialogStore()
+	f.router.deps.Bots = botsapp.NewService(f.users, memory.NewBotStore(f.users), memory.NewMessageStore(dialogs))
+	bot, err := f.users.Create(f.ctx, domain.User{AccessHash: 17, FirstName: "Shop", Username: "shop_bot", Bot: true})
+	if err != nil {
+		t.Fatalf("create bot: %v", err)
+	}
+	botPeer := &tg.InputPeerUser{UserID: bot.ID, AccessHash: bot.AccessHash}
+	botUser := &tg.InputUser{UserID: bot.ID, AccessHash: bot.AccessHash}
+	cases := []struct {
+		method string
+		req    bin.Encoder
+	}{
+		{"messages.startBot", &tg.MessagesStartBotRequest{Bot: botUser, Peer: botPeer, RandomID: 401, StartParam: "ref"}},
+		{"messages.sendWebViewData", &tg.MessagesSendWebViewDataRequest{Bot: botUser, RandomID: 402, ButtonText: "Pay", Data: "{}"}},
+		{"messages.sendBotRequestedPeer", &tg.MessagesSendBotRequestedPeerRequest{Peer: botPeer, MsgID: 1, ButtonID: 1, RequestedPeers: []tg.InputPeerClass{&tg.InputPeerSelf{}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method, func(t *testing.T) {
+			f.perms.items[f.me.ID] = permissionWhitelist(f.me.ID, f.other.ID)
+			assertPermissionDenied(t, f.dispatch(t, tc.req), "TELESRV_PERMISSION_SEND_WHITELIST")
+
+			f.perms.items[f.me.ID] = permissionWhitelist(f.me.ID, bot.ID)
+			if err := f.dispatch(t, tc.req); isPermissionErr(err) {
+				t.Fatalf("bot whitelisted: err = %v, want no permission error", err)
+			}
+
+			p := permissionWhitelist(f.me.ID, bot.ID)
+			p.Flags.Send = false
+			f.perms.items[f.me.ID] = p
+			assertPermissionDenied(t, f.dispatch(t, tc.req), "TELESRV_PERMISSION_SEND")
+		})
 	}
 }

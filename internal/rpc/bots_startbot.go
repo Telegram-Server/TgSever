@@ -46,6 +46,10 @@ func (r *Router) onMessagesStartBot(ctx context.Context, req *tg.MessagesStartBo
 	if peer.Type != domain.PeerTypeUser || peer.ID != bot.ID {
 		return nil, peerIDInvalidErr()
 	}
+	// /start 是以用户身份发给 bot 的一条消息，按发送判定（白名单看这个 bot）。
+	if err := r.checkSendPermission(ctx, userID, peer); err != nil {
+		return nil, err
+	}
 	if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
 		return nil, err
 	}
