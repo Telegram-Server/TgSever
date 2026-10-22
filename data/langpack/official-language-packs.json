@@ -1956,7 +1956,7 @@
           "translations_url": "https://translations.telegram.org/zh-hans/",
           "version": 5701859,
           "file": "tdesktop/tdesktop_zh-hans_v5701859.strings",
-          "sha256": "1b663e7d2a33c5b461da0447ee304b1f4044f04db8aac3a186e2dd897c01800a"
+          "sha256": "f09a4b5ef1e76988a15562b592fdfcac7b5210d50620862d0f92ffc65aa980e1"
         },
         {
           "lang_code": "zh-hant",
@@ -1969,7 +1969,7 @@
           "translations_url": "https://translations.telegram.org/zh-hant/",
           "version": 5729875,
           "file": "tdesktop/tdesktop_zh-hant_v5729875.strings",
-          "sha256": "8af8b47dc839e67d8d4d34db1e6540ecf2a3f741d392cecde9cad10f20b557c8"
+          "sha256": "30a4ad073bf99601803da057134f84e9f5e46130a419007b243691bf0a39b491"
         }
       ]
     },
