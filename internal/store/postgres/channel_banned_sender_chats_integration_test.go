@@ -18,7 +18,7 @@ func TestChannelBannedSenderChatsPostgres(t *testing.T) {
 func TestChannelBannedSenderChatsMigrationRoundTripPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	const name = "migrations/20261028020000_channel_banned_sender_chats"
+	const name = "migrations/20261029020000_channel_banned_sender_chats"
 	downSQL, err := deploy.Migrations.ReadFile(name + ".down.sql")
 	if err != nil {
 		t.Fatal(err)
