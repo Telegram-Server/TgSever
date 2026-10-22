@@ -273,7 +273,13 @@ func TestMessageStoreConcurrentPrivateHookReplayRunsHookOnce(t *testing.T) {
 	})
 
 	db := &observedBeginDB{Pool: pool, secondBegin: make(chan struct{})}
-	messages := newTestMessageStore(db)
+	// 进程内 lane actor 会把同进程的第二次发送挡在 Begin 之前；这里要验证的是
+	// 跨进程场景下事务内 advisory lock 之后的重查，所以第二次发送使用独立的
+	// lane actor，模拟另一个进程。
+	firstStore := newTestMessageStore(db)
+	firstStore.privateSendLanes = newUserLaneActor()
+	secondStore := newTestMessageStore(db)
+	secondStore.privateSendLanes = newUserLaneActor()
 	req := domain.SendPrivateTextRequest{
 		SenderUserID: sender.ID, RecipientUserID: recipient.ID, RandomID: 775001,
 		Message: "concurrent hook replay", Date: 1700001400,
@@ -293,13 +299,13 @@ func TestMessageStoreConcurrentPrivateHookReplayRunsHookOnce(t *testing.T) {
 		err    error
 	}
 	results := make(chan sendResult, 2)
-	send := func() {
+	send := func(messages *MessageStore) {
 		result, err := messages.sendPrivateTextWithHooks(ctx, req, hooks)
 		results <- sendResult{result: result, err: err}
 	}
-	go send()
+	go send(firstStore)
 	<-firstHook
-	go send()
+	go send(secondStore)
 	select {
 	case <-db.secondBegin:
 	case <-time.After(3 * time.Second):

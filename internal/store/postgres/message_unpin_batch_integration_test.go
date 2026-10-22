@@ -13,11 +13,8 @@ func TestMessageStoreUnpinAllBatchBoundary(t *testing.T) {
 	a, b := f.owner.ID, f.peers[0].ID
 	t.Cleanup(func() {
 		// Remove only messages made by this two-user fixture before its user
-		// cleanup. Unbind lane heads before message cascades remove their outbox
-		// rows; the peer's from_user_id also prevents deleting the users first.
-		if _, err := f.pool.Exec(ctx, "DELETE FROM dispatch_outbox_lanes WHERE stream_id=ANY($1::bigint[])", []int64{a, b}); err != nil {
-			t.Error(err)
-		}
+		// cleanup; the peer's from_user_id prevents deleting the users first.
+		// dispatch_outbox_user_heads 由触发器随 outbox 行维护，无需单独清理。
 		if _, err := f.pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id=ANY($1::bigint[])", []int64{a, b}); err != nil {
 			t.Error(err)
 		}
@@ -67,12 +64,12 @@ func TestMessageStoreUnpinAllBatchBoundary(t *testing.T) {
 				}
 				delete(want[side.UserID], id)
 			}
-			var excluded []byte
-			var session int64
+			// exclude_auth_key_id 是 bigint（authKeyIDToInt64 小端编码），不是 bytea。
+			var excluded, session int64
 			if err := f.pool.QueryRow(ctx, "SELECT exclude_auth_key_id,exclude_session_id FROM dispatch_outbox WHERE target_user_id=$1 AND pts=$2", side.UserID, side.Event.Pts).Scan(&excluded, &session); err != nil {
 				t.Fatal(err)
 			}
-			if len(excluded) != 8 || (side.UserID == a && (excluded[0] != 1 || session != 7)) || (side.UserID == b && (excluded[0] != 0 || session != 0)) {
+			if (side.UserID == a && (excluded != authKeyIDToInt64(req.OriginAuthKeyID) || session != 7)) || (side.UserID == b && (excluded != 0 || session != 0)) {
 				t.Fatal("unpin batch origin exclusion")
 			}
 		}
