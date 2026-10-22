@@ -96,7 +96,11 @@ func (s *Service) loadParticipants(ctx context.Context, userID, channelID int64,
 	if filter.Kind == domain.ChannelParticipantsBots && s.bots != nil {
 		return s.getBotParticipants(ctx, userID, channelID, offset, limit)
 	}
-	return s.channels.GetParticipants(ctx, userID, channelID, filter, offset, limit)
+	list, err := s.channels.GetParticipants(ctx, userID, channelID, filter, offset, limit)
+	if err != nil || filter.Kind != domain.ChannelParticipantsKicked {
+		return list, err
+	}
+	return s.withBannedSenderChats(ctx, userID, channelID, filter, offset, limit, list)
 }
 
 func (s *Service) channelParticipantsHash(ctx context.Context, userID, channelID int64, key participantsCacheKey) (int64, error) {
@@ -164,6 +168,13 @@ func cloneParticipantList(in domain.ChannelParticipantList) domain.ChannelPartic
 			user.PhotoStripped = append([]byte(nil), user.PhotoStripped...)
 			in.Users[i] = user
 		}
+	}
+	if len(in.SenderChats) > 0 {
+		chats := make([]domain.Channel, len(in.SenderChats))
+		for i, channel := range in.SenderChats {
+			chats[i] = cloneChannel(channel)
+		}
+		in.SenderChats = chats
 	}
 	return in
 }

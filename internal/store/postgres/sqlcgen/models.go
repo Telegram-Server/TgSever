@@ -388,20 +388,22 @@ type BootstrapUpdateJob struct {
 }
 
 type Bot struct {
-	BotUserID         int64
-	OwnerUserID       int64
-	TokenSecret       string
-	Description       string
-	Commands          []byte
-	BotChatHistory    bool
-	BotNochats        bool
-	InlinePlaceholder string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	MenuButtonType    int16
-	MenuButtonText    string
-	MenuButtonUrl     string
-	BotInlineGeo      bool
+	BotUserID            int64
+	OwnerUserID          int64
+	TokenSecret          string
+	Description          string
+	Commands             []byte
+	BotChatHistory       bool
+	BotNochats           bool
+	InlinePlaceholder    string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	MenuButtonType       int16
+	MenuButtonText       string
+	MenuButtonUrl        string
+	BotInlineGeo         bool
+	GroupAdminRights     []byte
+	BroadcastAdminRights []byte
 }
 
 type BotApiUpdate struct {
@@ -790,6 +792,13 @@ type ChannelAntispamDecision struct {
 	EvidenceHash          []byte
 	ReportID              *int64
 	CreatedAt             pgtype.Timestamptz
+}
+
+type ChannelBannedSenderChat struct {
+	ChannelID      int64
+	SenderChatID   int64
+	BannedByUserID int64
+	BannedAt       int32
 }
 
 type ChannelBoostSlot struct {
