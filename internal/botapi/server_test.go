@@ -1503,6 +1503,7 @@ type fakeBotAPIGateway struct {
 	sendRichMarkup           *domain.MessageReplyMarkup
 	sendMediaCalled          bool
 	sendMediaKind            string
+	sendMediaLocationKey     string
 	sendMediaChatID          int64
 	sendMediaFileName        string
 	sendMediaBytes           []byte
@@ -1686,6 +1687,7 @@ func (f *fakeBotAPIGateway) BotAPISendRichMessage(_ context.Context, botID, chat
 func (f *fakeBotAPIGateway) BotAPISendMedia(_ context.Context, botID, chatID int64, kind, locationKey, remoteURL, fileName, mimeType string, fileBytes []byte, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent bool, replyToMessageID int) (domain.Message, error) {
 	f.sendMediaCalled = true
 	f.sendMediaKind = kind
+	f.sendMediaLocationKey = locationKey
 	f.sendMediaChatID = chatID
 	f.sendMediaFileName = fileName
 	f.sendMediaBytes = append([]byte(nil), fileBytes...)

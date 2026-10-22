@@ -180,7 +180,7 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (83 methods + 1 file route):
+Implemented (84 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
@@ -196,7 +196,7 @@ Implemented (83 methods + 1 file route):
 | Edit/delete | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
 | Ephemeral edit/delete | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
-| Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount` |
+| Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
 | Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
 | Join requests | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Files | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
@@ -724,6 +724,25 @@ an admin, so an admin bot with `can_promote_members` conservatively gets
 
 `chat_id` (supergroup or channel). Returns an integer.
 
+### `getUserProfilePhotos`
+
+`user_id`, `offset` (default 0), `limit` (1–100, default 100; out-of-range
+values are clamped, as officially). Returns `UserProfilePhotos`
+`{total_count, photos}`, newest first; each photo is an array of
+`PhotoSize` from smallest to largest. The video size of an animated avatar is
+left out. `file_id` is generated the same way as for message photos, so it
+works with `getFile` and can be resent with `sendPhoto`.
+
+The album is the one an MTProto client sees through `photos.getUserPhotos`:
+when the user's profile-photo privacy does not allow the bot, the bot sees
+only the user's public (fallback) photo, or an empty album, and
+`total_count` counts that view, not the real album. A deleted account has an
+empty album.
+
+Errors: a missing or non-numeric `user_id` is
+`Bad Request: invalid user_id specified`; a user the bot cannot see is
+`Bad Request: user not found`.
+
 ## Methods: chat management
 
 Every method acts as the bot through the corresponding MTProto handler, so
@@ -1036,7 +1055,7 @@ commonly reached ones:
   (`approveChatJoinRequest`, `declineChatJoinRequest`);
 - forum topics: `createForumTopic`, `editForumTopic`, `closeForumTopic`,
   `getForumTopicIconStickers` and the rest of the topic family;
-- queries: `getUserProfilePhotos`, `getUserChatBoosts`;
+- queries: `getUserChatBoosts`;
 - bot administration: `setMyDefaultAdministratorRights`,
   `getMyDefaultAdministratorRights`;
 - reactions (`setMessageReaction`), stickers and sticker sets, stories,
