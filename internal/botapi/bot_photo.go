@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"telesrv/internal/domain"
@@ -83,10 +85,11 @@ const (
 // inputProfilePhotoParser 解析某一种 InputProfilePhoto 的专属字段；失败时返回说明文本。
 type inputProfilePhotoParser func(object map[string]json.RawMessage, files map[string]uploadedFile) (domain.BotAPIProfilePhoto, string)
 
-// inputProfilePhotoParsers 按 type 分派。新种类（animated：animation 文件 +
-// main_frame_timestamp）在这里登记一个解析函数，文件部分复用 profilePhotoUpload。
+// inputProfilePhotoParsers 按 type 分派。新种类在这里登记一个解析函数，文件部分复用
+// profilePhotoUpload。
 var inputProfilePhotoParsers = map[domain.BotAPIProfilePhotoKind]inputProfilePhotoParser{
-	domain.BotAPIProfilePhotoStatic: parseInputProfilePhotoStatic,
+	domain.BotAPIProfilePhotoStatic:   parseInputProfilePhotoStatic,
+	domain.BotAPIProfilePhotoAnimated: parseInputProfilePhotoAnimated,
 }
 
 // parseInputProfilePhoto 解析 setMyProfilePhoto 的 photo 参数（JSON 序列化的 InputProfilePhoto）。
@@ -123,6 +126,56 @@ func parseInputProfilePhotoStatic(object map[string]json.RawMessage, files map[s
 		MimeType: file.MimeType,
 		Data:     file.Bytes,
 	}, ""
+}
+
+const (
+	mainFrameTimestampNumberDescription = `Bad Request: field "main_frame_timestamp" must be a valid Number`
+	mainFrameTimestampWrongDescription  = "Bad Request: wrong main frame timestamp specified"
+)
+
+// parseInputProfilePhotoAnimated 解析 InputProfilePhotoAnimated：animation 字段指向上传的
+// MPEG4 视频；可选的 main_frame_timestamp（秒，缺省 0）选定作为静态头像的那一帧，
+// 与官方一样数字和数字字符串都接受，负数拒绝。
+func parseInputProfilePhotoAnimated(object map[string]json.RawMessage, files map[string]uploadedFile) (domain.BotAPIProfilePhoto, string) {
+	file, err := profilePhotoUpload(object, "animation", files)
+	if err != nil {
+		return domain.BotAPIProfilePhoto{}, inputProfilePhotoUploadDescription
+	}
+	var mainFrame float64
+	if raw, found := object["main_frame_timestamp"]; found && string(raw) != "null" {
+		var parsed bool
+		mainFrame, parsed = jsonNumber(raw)
+		if !parsed {
+			return domain.BotAPIProfilePhoto{}, mainFrameTimestampNumberDescription
+		}
+		if mainFrame < 0 {
+			return domain.BotAPIProfilePhoto{}, mainFrameTimestampWrongDescription
+		}
+	}
+	return domain.BotAPIProfilePhoto{
+		Kind:               domain.BotAPIProfilePhotoAnimated,
+		FileName:           file.Name,
+		MimeType:           file.MimeType,
+		Data:               file.Bytes,
+		MainFrameTimestamp: mainFrame,
+	}, ""
+}
+
+// jsonNumber 读取 JSON 数字或数字字符串，只接受有限值。
+func jsonNumber(raw json.RawMessage) (float64, bool) {
+	var number float64
+	if err := json.Unmarshal(raw, &number); err == nil {
+		return number, true
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return 0, false
+	}
+	number, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+		return 0, false
+	}
+	return number, true
 }
 
 var errProfilePhotoNotUploaded = errors.New("profile photo is not an uploaded file")

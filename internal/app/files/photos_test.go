@@ -763,3 +763,56 @@ func testJPEG(t *testing.T, w, h int) []byte {
 	}
 	return buf.Bytes()
 }
+
+// CreateAvatarVideoFromBytes（Bot API setMyProfilePhoto animated 的入口）要能保存超过
+// 单个上传分片（512KB）的视频：字节按分片写入后组装成完整的 'u' 视频尺寸，
+// 下载回来逐字节一致，主帧时间戳写进 video_start_ts。
+func TestCreateAvatarVideoFromBytesStoresVideoLargerThanOnePart(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	svc := NewService(newFakeMediaStore(), blobs, 2, WithVideoThumbnailer(&fakeVideoThumbnailer{thumb: testJPEG(t, 640, 640)}))
+
+	video := make([]byte, 2*MaxUploadPartBytes+12345)
+	for i := range video {
+		video[i] = byte(i*7 + i/1024)
+	}
+	photo, err := svc.CreateAvatarVideoFromBytes(ctx, video, 1.5)
+	if err != nil {
+		t.Fatalf("CreateAvatarVideoFromBytes(%d bytes): %v", len(video), err)
+	}
+	var videoSize *domain.PhotoSize
+	for i := range photo.Sizes {
+		if photo.Sizes[i].Kind == domain.PhotoSizeKindVideo {
+			videoSize = &photo.Sizes[i]
+		}
+	}
+	if videoSize == nil || videoSize.Type != "u" || videoSize.Size != len(video) || videoSize.VideoStartTs != 1.5 {
+		t.Fatalf("video size = %+v, want u with %d bytes and video_start_ts 1.5", videoSize, len(video))
+	}
+
+	var downloaded []byte
+	for offset := int64(0); ; offset += MaxUploadPartBytes {
+		chunk, found, err := svc.GetFile(ctx, domain.FileDownloadRequest{
+			LocationKey: fmt.Sprintf("photo:%d:u", photo.ID),
+			Offset:      offset,
+			Limit:       MaxUploadPartBytes,
+		})
+		if err != nil || !found {
+			t.Fatalf("download video avatar at %d: found=%v err=%v", offset, found, err)
+		}
+		if chunk.MimeType != "video/mp4" {
+			t.Fatalf("video avatar mime = %q, want video/mp4", chunk.MimeType)
+		}
+		downloaded = append(downloaded, chunk.Bytes...)
+		if len(chunk.Bytes) < MaxUploadPartBytes {
+			break
+		}
+	}
+	if !bytes.Equal(downloaded, video) {
+		t.Fatalf("downloaded video = %d bytes, want the uploaded %d bytes unchanged", len(downloaded), len(video))
+	}
+	assertAvatarImageSize(t, svc, photo.ID, "c", 640, 640, "image/jpeg")
+}

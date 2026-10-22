@@ -343,18 +343,31 @@ MTProto), поэтому другие клиенты видят изменени
 |---|---|---|
 | `photo` | InputProfilePhoto | обязателен; JSON-объект, запрос должен быть `multipart/form-data` |
 
-Поддерживается только `InputProfilePhotoStatic`:
-`{"type":"static","photo":"attach://<поле>"}`, где `<поле>` — файловая часть
-того же запроса. Как и официально, фото профиля нельзя задать через `file_id`
-или URL. Изображение сохраняется по правилам размеров фото профиля (`s`, `a`,
-`c`), становится текущим фото бота, возвращается `True`. Как и при
-`removeMyProfilePhoto`, владелец получает `updateUser` для бота.
+Поддерживаются два вида:
+
+- `InputProfilePhotoStatic`: `{"type":"static","photo":"attach://<поле>"}`.
+  Изображение сохраняется по правилам размеров фото профиля (`s`, `a`, `c`).
+- `InputProfilePhotoAnimated`:
+  `{"type":"animated","animation":"attach://<поле>","main_frame_timestamp":<секунды>}`.
+  Видео MPEG4 становится видеоаватаром (размер видео `u`) и сохраняется
+  частями по 512 КБ, поэтому работают и видео больше одной части.
+  `main_frame_timestamp` необязателен (по умолчанию `0`, число или строка с
+  числом) и сохраняется как `video_start_ts` видео — клиенты берут этот кадр
+  как статичный.
+
+`<поле>` — файловая часть того же запроса. Как и официально, фото профиля
+нельзя задать через `file_id` или URL. Файл становится текущим фото бота,
+возвращается `True`. Как и при `removeMyProfilePhoto`, владелец получает
+`updateUser` для бота.
 
 Ошибки: отсутствующий или некорректный `photo` даёт `Bad Request: parameter
 "photo" is required`, `Bad Request: can't parse InputProfilePhoto JSON object`
 или `Bad Request: invalid InputProfilePhoto type specified`; `photo`, не
 указывающий на загруженный файл, — `Bad Request: profile photo must be uploaded
-as a new file using attach://`. Файл, который не декодируется как изображение,
+as a new file using attach://`. `main_frame_timestamp`, который не является
+числом, даёт `Bad Request: field "main_frame_timestamp" must be a valid
+Number`; отрицательный — `Bad Request: wrong main frame timestamp specified`.
+Файл, который не декодируется как изображение,
 даёт `Bad Request: IMAGE_PROCESS_FAILED`; файл больше 10 МБ —
 `Bad Request: file is too big`.
 
