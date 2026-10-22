@@ -361,7 +361,7 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	if !view.Self.CanInviteUsers(view.Channel) {
 		return nil, channelInviteErr(domain.ErrChannelAdminRequired)
 	}
-	userIDs, missingInvitees, err := r.filterChatInvitePrivacy(ctx, userID, userIDs)
+	userIDs, missingInvitees, err := r.filterChatInvitePrivacy(ctx, userID, userIDs, permissions.ChannelTarget(view.Channel))
 	if err != nil {
 		return nil, internalErr()
 	}
@@ -711,6 +711,16 @@ func (r *Router) onMessagesHideChatJoinRequest(ctx context.Context, req *tg.Mess
 	if len(targets) == 0 {
 		return nil, userIDInvalidErr()
 	}
+	if req.Approved {
+		// 申请人自己的权限禁止加入这类会话时不能被批准（#118 被拉入）；拒绝申请不受影响。
+		restricted, err := r.joinPermissionRestricted(ctx, targets[0], permissions.ChannelTarget(view.Channel))
+		if err != nil {
+			return nil, err
+		}
+		if restricted {
+			return nil, userPrivacyRestrictedErr()
+		}
+	}
 	date := int(r.clock.Now().Unix())
 	res, err := r.deps.Channels.HideChatJoinRequest(ctx, userID, domain.HideChannelJoinRequestRequest{
 		UserID:       userID,
@@ -750,14 +760,22 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 			return nil, err
 		}
 	}
+	var excluded []int64
+	if req.Approved {
+		excluded, err = r.restrictedJoinApplicants(ctx, userID, view.Channel, hash)
+		if err != nil {
+			return nil, err
+		}
+	}
 	date := int(r.clock.Now().Unix())
 	res, err := r.deps.Channels.HideAllChatJoinRequests(ctx, userID, domain.HideChannelJoinRequestsRequest{
-		UserID:    userID,
-		ChannelID: view.Channel.ID,
-		Hash:      hash,
-		Approved:  req.Approved,
-		Limit:     domain.MaxChannelHideJoinRequests,
-		Date:      date,
+		UserID:         userID,
+		ChannelID:      view.Channel.ID,
+		Hash:           hash,
+		Approved:       req.Approved,
+		Limit:          domain.MaxChannelHideJoinRequests,
+		Date:           date,
+		ExcludeUserIDs: excluded,
 	})
 	if err != nil {
 		return nil, channelInviteErr(err)
@@ -772,6 +790,44 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
 	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinRequestMemberChanges(userID, res, date)...)
 	return updates, nil
+}
+
+// restrictedJoinApplicants 列出 channel 的全部待处理入群申请（hash 非空时只看该链接的），返回
+// 自己的权限禁止加入这类会话的申请人（#118 被拉入）。批量批准跳过他们，其他人照常批准。没有接线
+// 权限服务时不做任何查询。
+func (r *Router) restrictedJoinApplicants(ctx context.Context, userID int64, channel domain.Channel, hash string) ([]int64, error) {
+	if r.deps.Permissions == nil {
+		return nil, nil
+	}
+	target := permissions.ChannelTarget(channel)
+	var restricted []int64
+	listReq := domain.ChannelInviteImportersRequest{
+		UserID:    userID,
+		ChannelID: channel.ID,
+		Hash:      hash,
+		Requested: true,
+		Limit:     domain.MaxChannelInviteListLimit,
+	}
+	for {
+		page, err := r.deps.Channels.ListInviteImporters(ctx, userID, listReq)
+		if err != nil {
+			return nil, channelInviteErr(err)
+		}
+		for _, importer := range page.Importers {
+			blocked, err := r.joinPermissionRestricted(ctx, importer.UserID, target)
+			if err != nil {
+				return nil, err
+			}
+			if blocked {
+				restricted = append(restricted, importer.UserID)
+			}
+		}
+		if len(page.Importers) < listReq.Limit {
+			return restricted, nil
+		}
+		last := page.Importers[len(page.Importers)-1]
+		listReq.OffsetDate, listReq.OffsetUserID = last.Date, last.UserID
+	}
 }
 
 func canViewChannelJoinRequests(member domain.ChannelMember) bool {

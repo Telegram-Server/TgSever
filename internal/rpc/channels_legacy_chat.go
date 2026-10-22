@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
+	"telesrv/internal/app/permissions"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 	"unicode/utf8"
@@ -29,7 +30,7 @@ func (r *Router) onMessagesCreateChat(ctx context.Context, req *tg.MessagesCreat
 		return nil, err
 	}
 	memberIDs = createChatInviteMemberIDs(memberIDs, userID)
-	memberIDs, missingInvitees, err := r.filterChatInvitePrivacy(ctx, userID, memberIDs)
+	memberIDs, missingInvitees, err := r.filterChatInvitePrivacy(ctx, userID, memberIDs, permissions.Target{Kind: permissions.TargetGroup})
 	if err != nil {
 		return nil, internalErr()
 	}

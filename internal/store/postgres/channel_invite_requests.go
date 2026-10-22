@@ -125,12 +125,17 @@ func (s *ChannelStore) HideAllChatJoinRequests(ctx context.Context, req domain.H
 	if limit <= 0 || limit > domain.MaxChannelHideJoinRequests {
 		limit = domain.MaxChannelHideJoinRequests
 	}
+	excludeUserIDs := req.ExcludeUserIDs
+	if excludeUserIDs == nil {
+		excludeUserIDs = []int64{}
+	}
 	rows, err := s.db.Query(ctx, `
 SELECT user_id
 FROM channel_invite_importers
 WHERE channel_id = $1 AND requested AND ($2::bigint = 0 OR invite_id = $2)
+  AND NOT (user_id = ANY($4::bigint[]))
 ORDER BY date ASC, user_id ASC
-LIMIT $3`, req.ChannelID, inviteID, limit)
+LIMIT $3`, req.ChannelID, inviteID, limit, excludeUserIDs)
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
