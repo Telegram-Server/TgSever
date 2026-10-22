@@ -30,7 +30,11 @@ func (s *ChannelStore) EditChannelBannedSenderChat(_ context.Context, req domain
 	if !canBanChannelUsers(actor) {
 		return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelAdminRequired
 	}
-	if target, ok := s.channels[req.SenderChatID]; !ok || target.Deleted || req.SenderChatID == req.ChannelID {
+	if req.SenderChatID == req.ChannelID {
+		return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
+	}
+	// 只有封禁要求目标频道存在且未删除；解封不要求，频道删除后封禁记录仍可解除。
+	if target, ok := s.channels[req.SenderChatID]; ban && (!ok || target.Deleted) {
 		return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
 	}
 	date := restrictionNow(req.Date)
@@ -57,24 +61,8 @@ func (s *ChannelStore) EditChannelBannedSenderChat(_ context.Context, req domain
 		res.Ban = existing
 	}
 	res.Changed = true
-	s.appendChannelAdminLogLocked(senderChatBanAdminLogEvent(req, res.Ban, ban, date))
+	s.appendChannelAdminLogLocked(domain.SenderChatBanAdminLogEvent(req, res.Ban, ban, date))
 	return res, nil
-}
-
-// senderChatBanAdminLogEvent 生成频道 peer 封禁/解封的管理日志：与用户被踢出/解除踢出同类，
-// 参与者用 SenderChatID 表示频道 peer。
-func senderChatBanAdminLogEvent(req domain.EditChannelBannedSenderChatRequest, record domain.ChannelBannedSenderChat, banned bool, date int) domain.ChannelAdminLogEvent {
-	bannedMember := record.Member()
-	left := domain.SenderChatLeftMember(req.ChannelID, req.SenderChatID)
-	event := domain.ChannelAdminLogEvent{ChannelID: req.ChannelID, UserID: req.UserID, Date: date}
-	if banned {
-		event.Type = domain.ChannelAdminLogParticipantKick
-		event.PrevParticipant, event.NewParticipant = &left, &bannedMember
-	} else {
-		event.Type = domain.ChannelAdminLogParticipantUnkick
-		event.PrevParticipant, event.NewParticipant = &bannedMember, &left
-	}
-	return event
 }
 
 // GetChannelBannedSenderChat 返回封禁记录，不做查看者鉴权。
@@ -99,7 +87,12 @@ func (s *ChannelStore) ListChannelBannedSenderChats(_ context.Context, viewerUse
 	query = strings.ToLower(strings.TrimSpace(query))
 	items := make([]domain.ChannelBannedSenderChat, 0, len(s.bannedSenderChats[channelID]))
 	for _, record := range s.bannedSenderChats[channelID] {
-		if query != "" && !senderChatMatchesQuery(s.channels[record.SenderChatID], query) {
+		// 已删除的频道不计入、不列出，与 SenderChats 保持一致（封禁记录保留，仍可解封）。
+		sender, ok := s.channels[record.SenderChatID]
+		if !ok || sender.Deleted {
+			continue
+		}
+		if query != "" && !senderChatMatchesQuery(sender, query) {
 			continue
 		}
 		items = append(items, record)
@@ -115,13 +108,30 @@ func (s *ChannelStore) ListChannelBannedSenderChats(_ context.Context, viewerUse
 	end := min(offset+limit, len(items))
 	out.Bans = items[offset:end]
 	for _, record := range out.Bans {
-		if channel, ok := s.channels[record.SenderChatID]; ok && !channel.Deleted {
-			out.SenderChats = append(out.SenderChats, channel)
-		}
+		out.SenderChats = append(out.SenderChats, s.channels[record.SenderChatID])
 	}
 	return out, nil
 }
 
 func senderChatMatchesQuery(channel domain.Channel, query string) bool {
 	return strings.Contains(strings.ToLower(channel.Title), query) || strings.Contains(strings.ToLower(channel.Username), query)
+}
+
+// GetSenderChatsByIDs 一次读出一批频道 peer 的基础行（见 store.ChannelBannedSenderChatStore）。
+func (s *ChannelStore) GetSenderChatsByIDs(_ context.Context, ids []int64) ([]domain.Channel, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]domain.Channel, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok || id == 0 {
+			continue
+		}
+		seen[id] = struct{}{}
+		if channel, ok := s.channels[id]; ok && !channel.Deleted {
+			out = append(out, cloneChannel(channel))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -53,11 +54,14 @@ func (s *ChannelStore) EditChannelBannedSenderChat(ctx context.Context, req doma
 	if req.SenderChatID == req.ChannelID {
 		return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
 	}
-	if _, err := getChannelByID(ctx, tx, req.SenderChatID); err != nil {
-		if errors.Is(err, domain.ErrChannelInvalid) {
-			return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
+	// 只有封禁要求目标频道存在且未删除；解封不要求，频道删除后封禁记录仍可解除。
+	if ban {
+		if _, err := getChannelByID(ctx, tx, req.SenderChatID); err != nil {
+			if errors.Is(err, domain.ErrChannelInvalid) {
+				return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
+			}
+			return domain.EditChannelBannedSenderChatResult{}, err
 		}
-		return domain.EditChannelBannedSenderChatResult{}, err
 	}
 	q := sqlcgen.New(tx)
 	res := domain.EditChannelBannedSenderChatResult{Channel: channel, Banned: ban}
@@ -84,7 +88,7 @@ func (s *ChannelStore) EditChannelBannedSenderChat(ctx context.Context, req doma
 	default:
 		res.Changed = true
 		res.Ban = channelBannedSenderChatFromRow(row)
-		if err := s.insertChannelAdminLogTx(ctx, tx, senderChatBanAdminLogEvent(req, res.Ban, ban)); err != nil {
+		if err := s.insertChannelAdminLogTx(ctx, tx, domain.SenderChatBanAdminLogEvent(req, res.Ban, ban, req.Date)); err != nil {
 			return domain.EditChannelBannedSenderChatResult{}, err
 		}
 	}
@@ -93,22 +97,6 @@ func (s *ChannelStore) EditChannelBannedSenderChat(ctx context.Context, req doma
 	}
 	committed = true
 	return res, nil
-}
-
-// senderChatBanAdminLogEvent 生成频道 peer 封禁/解封的管理日志：与用户被踢出/解除踢出同类，
-// 参与者用 SenderChatID 表示频道 peer。
-func senderChatBanAdminLogEvent(req domain.EditChannelBannedSenderChatRequest, record domain.ChannelBannedSenderChat, banned bool) domain.ChannelAdminLogEvent {
-	bannedMember := record.Member()
-	left := domain.SenderChatLeftMember(req.ChannelID, req.SenderChatID)
-	event := domain.ChannelAdminLogEvent{ChannelID: req.ChannelID, UserID: req.UserID, Date: req.Date}
-	if banned {
-		event.Type = domain.ChannelAdminLogParticipantKick
-		event.PrevParticipant, event.NewParticipant = &left, &bannedMember
-	} else {
-		event.Type = domain.ChannelAdminLogParticipantUnkick
-		event.PrevParticipant, event.NewParticipant = &bannedMember, &left
-	}
-	return event
 }
 
 // GetChannelBannedSenderChat 返回封禁记录，不做查看者鉴权。
@@ -168,6 +156,25 @@ func (s *ChannelStore) ListChannelBannedSenderChats(ctx context.Context, viewerU
 			out.SenderChats = append(out.SenderChats, channel)
 		}
 	}
+	return out, nil
+}
+
+// GetSenderChatsByIDs 一次读出一批频道 peer 的基础行（见 store.ChannelBannedSenderChatStore），
+// 走频道行缓存。
+func (s *ChannelStore) GetSenderChatsByIDs(ctx context.Context, ids []int64) ([]domain.Channel, error) {
+	ids = uniqueNonZeroInt64s(ids...)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	channels, err := s.channelsByIDs(ctx, s.db, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Channel, 0, len(channels))
+	for _, channel := range channels {
+		out = append(out, channel)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 

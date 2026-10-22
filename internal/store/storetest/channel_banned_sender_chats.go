@@ -208,6 +208,30 @@ func ChannelBannedSenderChats(t *testing.T, s ChannelBannedSenderChatStore, user
 		}
 	})
 
+	t.Run("被封频道删除后不出现在列表里且仍可解封", func(t *testing.T) {
+		doomed := newBroadcast("Doomed")
+		if _, err := edit(owner, doomed, full, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DeleteChannel(ctx, domain.DeleteChannelRequest{UserID: member, ChannelID: doomed, Date: now}); err != nil {
+			t.Fatal(err)
+		}
+		page := list(owner, "", 0, 10)
+		if page.Count != 1 || len(page.Bans) != 1 || page.Bans[0].SenderChatID != beta || len(page.SenderChats) != 1 || page.SenderChats[0].ID != beta {
+			t.Fatalf("list after banned channel deleted = %+v, want only beta", page)
+		}
+		if countOnly := list(owner, "", 0, 0); countOnly.Count != 1 {
+			t.Fatalf("count after banned channel deleted = %d, want 1", countOnly.Count)
+		}
+		res, err := edit(owner, doomed, domain.ChannelBannedRights{}, now+40)
+		if err != nil {
+			t.Fatalf("unban deleted channel: %v", err)
+		}
+		if !res.Changed || res.Banned || banned(doomed) {
+			t.Fatalf("unban deleted channel = %+v, still banned=%v", res, banned(doomed))
+		}
+	})
+
 	t.Run("已删除的频道不能被封禁", func(t *testing.T) {
 		gone := newBroadcast("Gone")
 		if _, err := s.DeleteChannel(ctx, domain.DeleteChannelRequest{UserID: member, ChannelID: gone, Date: now}); err != nil {
@@ -215,6 +239,24 @@ func ChannelBannedSenderChats(t *testing.T, s ChannelBannedSenderChatStore, user
 		}
 		if _, err := edit(owner, gone, full, now); !errors.Is(err, domain.ErrChannelSenderChatInvalid) {
 			t.Fatalf("ban deleted channel = %v, want ErrChannelSenderChatInvalid", err)
+		}
+	})
+
+	t.Run("批量读取频道 peer 基础行", func(t *testing.T) {
+		gone := newBroadcast("Gone Too")
+		if _, err := s.DeleteChannel(ctx, domain.DeleteChannelRequest{UserID: member, ChannelID: gone, Date: now}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.GetSenderChatsByIDs(ctx, []int64{beta, alpha, alpha, 0, gone, alpha + 1000000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lo, hi := alpha, beta
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		if len(got) != 2 || got[0].ID != lo || got[1].ID != hi || got[0].Title == "" {
+			t.Fatalf("sender chats by ids = %+v, want %d and %d", got, lo, hi)
 		}
 	})
 }

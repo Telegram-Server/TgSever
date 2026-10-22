@@ -26,8 +26,13 @@ const senderChatBanDate = 1_700_100_000
 
 func newSenderChatBanFixture(t *testing.T, opts ...Option) *senderChatBanFixture {
 	t.Helper()
+	return newSenderChatBanFixtureWithStore(t, memory.NewChannelStore(), opts...)
+}
+
+func newSenderChatBanFixtureWithStore(t *testing.T, channels store.ChannelStore, opts ...Option) *senderChatBanFixture {
+	t.Helper()
 	f := &senderChatBanFixture{t: t, ctx: context.Background(), owner: 5001, bot: 5002, plain: 5003, member: 5004, kick: 5005}
-	f.svc = NewService(memory.NewChannelStore(), opts...)
+	f.svc = NewService(channels, opts...)
 	created, err := f.svc.CreateChannel(f.ctx, f.owner, domain.CreateChannelRequest{Title: "Sender chat bans", Megagroup: true, MemberUserIDs: []int64{f.bot, f.plain, f.member, f.kick}, Date: senderChatBanDate})
 	if err != nil {
 		t.Fatal(err)
@@ -312,5 +317,62 @@ func TestKickedParticipantsCacheSeesSenderChatBan(t *testing.T) {
 	f.ban(f.alpha)
 	if after := f.kicked(0, 10); len(after.Participants) != 2 || after.Participants[1].SenderChatID != f.alpha {
 		t.Fatalf("kicked after ban = %+v, want cached page invalidated", after.Participants)
+	}
+}
+
+// 被封频道改名后（其 channel_base 版本前进），kicked 列表不能返回缓存里的旧行（review #5）。
+func TestKickedParticipantsCacheSeesSenderChatRename(t *testing.T) {
+	versions := &fakeReadModelVersions{hashes: map[store.ReadModelKey]int64{}}
+	f := newSenderChatBanFixture(t, WithReadModelVersions(versions))
+	base := func(id int64) store.ReadModelKey {
+		return store.ReadModelKey{Model: readmodel.ModelChannelBase, PeerType: domain.PeerTypeChannel, PeerID: id}
+	}
+	versions.hashes[base(f.group)] = 401
+	versions.hashes[store.ReadModelKey{Model: readmodel.ModelChannelParticipants, PeerType: domain.PeerTypeChannel, PeerID: f.group}] = 402
+	versions.hashes[base(f.alpha)] = 403
+	f.ban(f.alpha)
+	if before := f.kicked(0, 10); len(before.SenderChats) != 1 || before.SenderChats[0].Title != "Alpha" {
+		t.Fatalf("sender chats before rename = %+v", before.SenderChats)
+	}
+	if _, err := f.svc.EditTitle(f.ctx, f.member, domain.EditChannelTitleRequest{ChannelID: f.alpha, Title: "Alpha Renamed", Date: senderChatBanDate + 2}); err != nil {
+		t.Fatal(err)
+	}
+	versions.hashes[base(f.alpha)] = 404
+	if after := f.kicked(0, 10); len(after.SenderChats) != 1 || after.SenderChats[0].Title != "Alpha Renamed" {
+		t.Fatalf("sender chats after rename = %+v, want renamed row", after.SenderChats)
+	}
+}
+
+// countingChannelLookups 统计逐个按 id 读取频道的次数。
+type countingChannelLookups struct {
+	*memory.ChannelStore
+	byID int
+}
+
+func (c *countingChannelLookups) GetChannelByID(ctx context.Context, channelID int64) (domain.Channel, error) {
+	c.byID++
+	return c.ChannelStore.GetChannelByID(ctx, channelID)
+}
+
+// 管理日志里的频道 peer 一次批量读出，不按事件逐个查询（review #8）。
+func TestAdminLogSenderChatsLoadedInOneBatch(t *testing.T) {
+	counting := &countingChannelLookups{ChannelStore: memory.NewChannelStore()}
+	f := newSenderChatBanFixtureWithStore(t, counting)
+	f.ban(f.alpha)
+	f.ban(f.beta)
+	counting.byID = 0
+	res, err := f.svc.ListAdminLog(f.ctx, f.owner, domain.ChannelAdminLogRequest{ChannelID: f.group, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]string{}
+	for _, ch := range res.SenderChats {
+		got[ch.ID] = ch.Title
+	}
+	if len(res.SenderChats) != 2 || got[f.alpha] != "Alpha" || got[f.beta] != "Beta" {
+		t.Fatalf("admin log sender chats = %+v, want Alpha and Beta", res.SenderChats)
+	}
+	if counting.byID != 0 {
+		t.Fatalf("GetChannelByID called %d times for admin log sender chats, want a single batch read", counting.byID)
 	}
 }

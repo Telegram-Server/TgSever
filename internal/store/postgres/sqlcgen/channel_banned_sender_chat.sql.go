@@ -14,6 +14,7 @@ SELECT count(*)
 FROM channel_banned_sender_chats b
 JOIN channels c ON c.id = b.sender_chat_id
 WHERE b.channel_id = $1
+  AND NOT c.deleted
   AND ($2::text = ''
        OR lower(c.title) LIKE $2::text ESCAPE '\'
        OR lower(coalesce(c.username, '')) LIKE $2::text ESCAPE '\')
@@ -25,6 +26,7 @@ type CountChannelBannedSenderChatsParams struct {
 }
 
 // pattern 为空表示不过滤；否则是已转义的 LIKE 模式，匹配频道标题或用户名（小写）。
+// 已删除的频道不计入、不列出（与返回的 SenderChats 一致）；封禁记录保留，仍可解封。
 func (q *Queries) CountChannelBannedSenderChats(ctx context.Context, arg CountChannelBannedSenderChatsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countChannelBannedSenderChats, arg.ChannelID, arg.Pattern)
 	var count int64
@@ -118,6 +120,7 @@ SELECT b.channel_id, b.sender_chat_id, b.banned_by_user_id, b.banned_at
 FROM channel_banned_sender_chats b
 JOIN channels c ON c.id = b.sender_chat_id
 WHERE b.channel_id = $1
+  AND NOT c.deleted
   AND ($2::text = ''
        OR lower(c.title) LIKE $2::text ESCAPE '\'
        OR lower(coalesce(c.username, '')) LIKE $2::text ESCAPE '\')

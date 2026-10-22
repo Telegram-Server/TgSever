@@ -118,28 +118,22 @@ func (s *Service) withBannedSenderChats(ctx context.Context, userID, channelID i
 	return users, nil
 }
 
-// senderChatsForAdminLog 补齐管理日志里频道 peer 参与者对应的频道基础行。
+// senderChatsForAdminLog 补齐管理日志里频道 peer 参与者对应的频道基础行（一次批量读取）。
 func (s *Service) senderChatsForAdminLog(ctx context.Context, events []domain.ChannelAdminLogEvent) ([]domain.Channel, error) {
-	seen := make(map[int64]struct{})
-	var out []domain.Channel
+	var ids []int64
 	for _, event := range events {
 		for _, member := range []*domain.ChannelMember{event.PrevParticipant, event.NewParticipant, event.Participant} {
-			if member == nil || member.SenderChatID == 0 {
-				continue
+			if member != nil && member.SenderChatID != 0 {
+				ids = append(ids, member.SenderChatID)
 			}
-			if _, ok := seen[member.SenderChatID]; ok {
-				continue
-			}
-			seen[member.SenderChatID] = struct{}{}
-			channel, err := s.channels.GetChannelByID(ctx, member.SenderChatID)
-			if errors.Is(err, domain.ErrChannelInvalid) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, channel)
 		}
 	}
-	return out, nil
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	bans, ok := s.bannedSenderChatStore()
+	if !ok {
+		return nil, nil
+	}
+	return bans.GetSenderChatsByIDs(ctx, ids)
 }

@@ -119,7 +119,46 @@ func (s *Service) channelParticipantsHash(ctx context.Context, userID, channelID
 	if base == 0 || participants == 0 {
 		return 0, nil
 	}
-	return readmodel.MixHashes(base, participants, rows[keys[2]], rows[keys[3]], participantsPageHash(key)), nil
+	hash := readmodel.MixHashes(base, participants, rows[keys[2]], rows[keys[3]], participantsPageHash(key))
+	if key.kind != domain.ChannelParticipantsKicked {
+		return hash, nil
+	}
+	return s.mixBannedSenderChatHashes(ctx, userID, channelID, key, hash)
+}
+
+// mixBannedSenderChatHashes 把可能出现在 kicked 页里的被封频道的 channel_base 版本并入页 hash：
+// 页里缓存了这些频道的基础行，频道改名/换头像后必须换代。频道 peer 排在用户之后，本页能出现的
+// 只会是（同一 query 下）前 offset+limit 条封禁记录。任何一个频道没有版本行时不缓存（返回 0）。
+func (s *Service) mixBannedSenderChatHashes(ctx context.Context, userID, channelID int64, key participantsCacheKey, hash int64) (int64, error) {
+	bans, ok := s.bannedSenderChatStore()
+	if !ok {
+		return hash, nil
+	}
+	page, err := bans.ListChannelBannedSenderChats(ctx, userID, channelID, key.query, 0, key.offset+key.limit)
+	if err != nil {
+		return 0, err
+	}
+	if len(page.Bans) == 0 {
+		return hash, nil
+	}
+	keys := make([]store.ReadModelKey, 0, len(page.Bans))
+	for _, ban := range page.Bans {
+		keys = append(keys, store.ReadModelKey{Model: readmodel.ModelChannelBase, OwnerUserID: 0, PeerType: domain.PeerTypeChannel, PeerID: ban.SenderChatID})
+	}
+	rows, err := s.versions.ReadModelHashes(ctx, keys)
+	if err != nil {
+		return 0, err
+	}
+	parts := make([]int64, 0, 2*len(keys)+1)
+	parts = append(parts, hash)
+	for _, k := range keys {
+		version := rows[k]
+		if version == 0 {
+			return 0, nil
+		}
+		parts = append(parts, k.PeerID, version)
+	}
+	return readmodel.MixHashes(parts...), nil
 }
 
 func normalizeParticipantsRequest(filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantsFilter, int, int) {

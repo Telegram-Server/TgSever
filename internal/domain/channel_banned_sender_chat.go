@@ -9,7 +9,7 @@ import "errors"
 var (
 	// ErrChannelBannedRightsInvalid 表示对频道 peer 传了除全封、解封之外的权限组合。
 	ErrChannelBannedRightsInvalid = errors.New("channel banned rights invalid")
-	// ErrChannelSenderChatInvalid 表示要封禁的频道不存在、已删除或就是本群自己。
+	// ErrChannelSenderChatInvalid 表示目标就是本群自己，或要封禁的频道不存在、已删除。
 	ErrChannelSenderChatInvalid = errors.New("channel sender chat invalid")
 )
 
@@ -47,6 +47,23 @@ func SenderChatLeftMember(channelID, senderChatID int64) ChannelMember {
 		Role:         ChannelRoleMember,
 		Status:       ChannelMemberLeft,
 	}
+}
+
+// SenderChatBanAdminLogEvent 生成频道 peer 封禁/解封的管理日志：与用户被踢出/解除踢出同类，
+// 参与者用 SenderChatID 表示频道 peer。record 是封禁记录（解封时是被删除的那条），date 是
+// 日志时间（memory 与 postgres 各自按请求时间或当前时间取值后传入）。
+func SenderChatBanAdminLogEvent(req EditChannelBannedSenderChatRequest, record ChannelBannedSenderChat, banned bool, date int) ChannelAdminLogEvent {
+	bannedMember := record.Member()
+	left := SenderChatLeftMember(req.ChannelID, req.SenderChatID)
+	event := ChannelAdminLogEvent{ChannelID: req.ChannelID, UserID: req.UserID, Date: date}
+	if banned {
+		event.Type = ChannelAdminLogParticipantKick
+		event.PrevParticipant, event.NewParticipant = &left, &bannedMember
+	} else {
+		event.Type = ChannelAdminLogParticipantUnkick
+		event.PrevParticipant, event.NewParticipant = &bannedMember, &left
+	}
+	return event
 }
 
 // SenderChatBanFromRights 把 channels.editBanned 的权限换算成频道 peer 的目标状态：
