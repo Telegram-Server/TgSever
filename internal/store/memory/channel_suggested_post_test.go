@@ -105,6 +105,9 @@ func TestSuggestedPostStarsApprovalRefundAndSettlement(t *testing.T) {
 	if duplicate.OriginalMessage.SuggestedPost.ScheduleDate != 1_700_000_200 || duplicate.ServiceMessage.Action.SuggestedPostScheduleDate != 1_700_000_200 {
 		t.Fatalf("duplicate changed immediate approval date: %+v", duplicate)
 	}
+	if _, err := store.ToggleSuggestedPostApproval(ctx, domain.ToggleSuggestedPostApprovalRequest{UserID: 1, MonoforumID: mono.ID, MessageID: suggestion.Message.ID, Reject: true, Date: 1_700_000_202}); !errors.Is(err, domain.ErrSuggestedPostAlreadyHandled) {
+		t.Fatalf("decline of approved post=%v", err)
+	}
 	store.mu.Lock()
 	for i := range store.messages[parent.ID] {
 		if store.messages[parent.ID][i].ID == approved.Published.Message.ID {
@@ -131,6 +134,9 @@ func TestSuggestedPostStarsApprovalRefundAndSettlement(t *testing.T) {
 	lifecycle, err = store.ProcessSuggestedPostLifecycle(ctx, domain.SuggestedPostLifecycleRequest{Now: 1_700_000_500 + suggestedPostSettlementAge, Limit: 10})
 	if err != nil || len(lifecycle) != 1 || lifecycle[0].State != domain.SuggestedPostStateCompleted || lifecycle[0].ServiceMessage.Action.Type != domain.ChannelActionSuggestedPostSuccess {
 		t.Fatalf("success lifecycle=%+v err=%v", lifecycle, err)
+	}
+	if got := lifecycle[0].ServiceMessage.Action.SuggestedPostPrice.Amount; got != 17 {
+		t.Fatalf("paid service amount=%d, want channel receipt 17", got)
 	}
 	if store.starsBalances[subscriber.ID] != 80 || store.channelStarsBalances[parent.ID] != 17 {
 		t.Fatalf("settled balances=%d/%d, want 80/17", store.starsBalances[subscriber.ID], store.channelStarsBalances[parent.ID])
@@ -176,6 +182,9 @@ func TestSuggestedPostLowBalanceRetryScheduleAndRoleMatrix(t *testing.T) {
 	rejected, err := store.ToggleSuggestedPostApproval(ctx, domain.ToggleSuggestedPostApprovalRequest{UserID: 2, MonoforumID: mono.ID, MessageID: third.Message.ID, Reject: true, RejectComment: "no", Date: 1_700_002_100})
 	if err != nil || rejected.State != domain.SuggestedPostStateRejected {
 		t.Fatalf("decline=%+v err=%v", rejected, err)
+	}
+	if _, err := store.ToggleSuggestedPostApproval(ctx, domain.ToggleSuggestedPostApprovalRequest{UserID: 1, MonoforumID: mono.ID, MessageID: third.Message.ID, Date: 1_700_002_101}); !errors.Is(err, domain.ErrSuggestedPostAlreadyHandled) {
+		t.Fatalf("approve of declined post=%v", err)
 	}
 }
 
@@ -355,5 +364,53 @@ func TestSuggestedPostDeletedAfterMinimumAgeStillSettles(t *testing.T) {
 	}
 	if store.starsBalances[subscriber.ID] != 20 || store.channelStarsBalances[parent.ID] != 8 {
 		t.Fatalf("balances=%d/%d, want 20/8", store.starsBalances[subscriber.ID], store.channelStarsBalances[parent.ID])
+	}
+}
+
+func TestSuggestedPostTONDeclineEscrowRefundAndSettlement(t *testing.T) {
+	ctx := context.Background()
+	s, parent, mono, subscriber := newSuggestedPostMemoryFixture(t)
+	s.tonBalances[subscriber.ID] = 100_000_000
+	send := func(randomID int64) domain.SendChannelMessageResult {
+		t.Helper()
+		res, err := s.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: mono.ID, SenderUserID: subscriber.ID, SavedPeer: subscriber, RandomID: randomID, Message: "TON suggestion", SuggestedPost: &domain.SuggestedPost{Price: &domain.SuggestedPostPrice{Kind: domain.SuggestedPostPriceTON, Amount: 10_000_000}}, Date: 1_700_100_000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	declined := send(9701)
+	if _, err := s.ToggleSuggestedPostApproval(ctx, domain.ToggleSuggestedPostApprovalRequest{UserID: 1, MonoforumID: mono.ID, MessageID: declined.Message.ID, Reject: true, Date: 1_700_100_001}); err != nil {
+		t.Fatal(err)
+	}
+	if s.tonBalances[subscriber.ID] != 100_000_000 || s.channelTONBalances[parent.ID] != 0 {
+		t.Fatal("decline moved TON")
+	}
+	refunded := send(9702)
+	command := domain.ToggleSuggestedPostApprovalRequest{UserID: 1, MonoforumID: mono.ID, MessageID: refunded.Message.ID, Date: 1_700_100_001}
+	approved, err := s.ToggleSuggestedPostApproval(ctx, command)
+	if err != nil || approved.Published == nil || s.tonBalances[subscriber.ID] != 90_000_000 {
+		t.Fatalf("TON approval=%+v err=%v", approved, err)
+	}
+	if _, err := s.ToggleSuggestedPostApproval(ctx, command); err != nil || s.tonBalances[subscriber.ID] != 90_000_000 {
+		t.Fatalf("TON approval replay double debited: %v", err)
+	}
+	if _, err := s.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{UserID: 1, ChannelID: parent.ID, IDs: []int{approved.Published.Message.ID}, Date: 1_700_100_002}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.ProcessSuggestedPostLifecycle(ctx, domain.SuggestedPostLifecycleRequest{Now: 1_700_100_003})
+	if err != nil || len(result) != 1 || result[0].State != domain.SuggestedPostStateRefunded || s.tonBalances[subscriber.ID] != 100_000_000 {
+		t.Fatalf("TON refund=%+v err=%v", result, err)
+	}
+	settled := send(9703)
+	if _, err := s.ToggleSuggestedPostApproval(ctx, domain.ToggleSuggestedPostApprovalRequest{UserID: 1, MonoforumID: mono.ID, MessageID: settled.Message.ID, Date: 1_700_100_004}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = s.ProcessSuggestedPostLifecycle(ctx, domain.SuggestedPostLifecycleRequest{Now: 1_700_100_004 + suggestedPostSettlementAge})
+	if err != nil || len(result) != 1 || result[0].State != domain.SuggestedPostStateCompleted || result[0].ServiceMessage.Action.SuggestedPostPrice.Amount != 8_500_000 || s.tonBalances[subscriber.ID] != 90_000_000 || s.channelTONBalances[parent.ID] != 8_500_000 {
+		t.Fatalf("TON settlement=%+v err=%v", result, err)
+	}
+	if _, err := s.ProcessSuggestedPostLifecycle(ctx, domain.SuggestedPostLifecycleRequest{Now: 1_700_100_005 + suggestedPostSettlementAge}); err != nil || s.channelTONBalances[parent.ID] != 8_500_000 {
+		t.Fatalf("TON settlement replay changed balance: %v", err)
 	}
 }

@@ -29,6 +29,14 @@ func NewBotStore(db sqlcgen.DBTX) *BotStore {
 
 // CreateBotAccount 在单事务内创建 users 行（is_bot=true, phone 空）与 bots 行。
 func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile) (domain.User, domain.BotProfile, error) {
+	return s.createBotAccount(ctx, user, profile, 0)
+}
+
+func (s *BotStore) CreateManagedBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile, managerID int64) (domain.User, domain.BotProfile, error) {
+	return s.createBotAccount(ctx, user, profile, managerID)
+}
+
+func (s *BotStore) createBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile, managerID int64) (domain.User, domain.BotProfile, error) {
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
 		return domain.User{}, domain.BotProfile{}, fmt.Errorf("create bot account: db does not support transactions")
@@ -80,6 +88,15 @@ func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profi
 		TokenSecret: profile.TokenSecret,
 	}); err != nil {
 		return domain.User{}, domain.BotProfile{}, fmt.Errorf("create bot account: insert bot: %w", err)
+	}
+	if managerID != 0 {
+		n, err := q.SetBotManager(ctx, sqlcgen.SetBotManagerParams{BotID: row.ID, OwnerID: profile.OwnerUserID, ManagerID: managerID})
+		if err != nil {
+			return domain.User{}, domain.BotProfile{}, err
+		}
+		if n == 0 {
+			return domain.User{}, domain.BotProfile{}, domain.ErrBotManagerInvalid
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.User{}, domain.BotProfile{}, fmt.Errorf("create bot account: commit: %w", err)
@@ -193,41 +210,13 @@ func (s *BotStore) GetBots(ctx context.Context, botUserIDs []int64) (map[int64]d
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := s.db.Query(ctx, `
-SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history,
-       bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type,
-       menu_button_text, menu_button_url, bot_inline_geo
-FROM bots
-WHERE bot_user_id = ANY($1::bigint[])`, ids)
+	rows, err := s.q.GetBotsByIDs(ctx, ids)
 	if err != nil {
 		return nil, fmt.Errorf("get bots: %w", err)
 	}
-	defer rows.Close()
-	out := make(map[int64]domain.BotProfile, len(ids))
-	for rows.Next() {
-		var row sqlcgen.Bot
-		if err := rows.Scan(
-			&row.BotUserID,
-			&row.OwnerUserID,
-			&row.TokenSecret,
-			&row.Description,
-			&row.Commands,
-			&row.BotChatHistory,
-			&row.BotNochats,
-			&row.InlinePlaceholder,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-			&row.MenuButtonType,
-			&row.MenuButtonText,
-			&row.MenuButtonUrl,
-			&row.BotInlineGeo,
-		); err != nil {
-			return nil, err
-		}
+	out := make(map[int64]domain.BotProfile, len(rows))
+	for _, row := range rows {
 		out[row.BotUserID] = botProfileFromModel(row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("get bots: %w", err)
 	}
 	for id, profile := range out {
 		enriched, err := s.enrichBotProfile(ctx, profile)
@@ -509,6 +498,8 @@ func botProfileFromModel(r sqlcgen.Bot) domain.BotProfile {
 		ChatHistory:       r.BotChatHistory,
 		Nochats:           r.BotNochats,
 		InlineGeo:         r.BotInlineGeo,
+		GuestChat:         r.GuestChat,
+		CanManageBots:     r.CanManageBots,
 		InlinePlaceholder: r.InlinePlaceholder,
 		MenuButton: domain.BotMenuButton{
 			Type: domain.BotMenuButtonType(r.MenuButtonType),
@@ -516,6 +507,8 @@ func botProfileFromModel(r sqlcgen.Bot) domain.BotProfile {
 			URL:  r.MenuButtonUrl,
 		},
 	}
+	_ = json.Unmarshal(r.GroupAdminRights, &p.GroupAdminRights)
+	_ = json.Unmarshal(r.BroadcastAdminRights, &p.BroadcastAdminRights)
 	if len(r.Commands) > 0 {
 		// commands 列损坏不阻断读路径：botInfo 退化为空命令列表。
 		_ = json.Unmarshal(r.Commands, &p.Commands)

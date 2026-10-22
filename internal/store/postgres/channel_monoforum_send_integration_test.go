@@ -65,7 +65,7 @@ func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 					t.Fatalf("load monoforum for delete: %v", err)
 				}
 				member := domain.ChannelMember{ChannelID: monoID, UserID: creatorID, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}
-				_, event, _, err := channels.deleteChannelMessagesTx(ctx, tx, mono, member, ids, creatorID, date, domain.UserDeletionAudit(domain.DeletionSourceUser, creatorID, [8]byte{}, 0))
+				_, event, _, err := channels.deleteChannelMessagesTx(ctx, tx, mono, member, ids, creatorID, date, domain.UserDeletionAudit(domain.DeletionSourceUser, creatorID, [8]byte{}, 0), false)
 				if err != nil {
 					t.Fatalf("delete monoforum message: %v", err)
 				}

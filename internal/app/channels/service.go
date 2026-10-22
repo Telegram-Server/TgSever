@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"telesrv/internal/app/guestauth"
 	"telesrv/internal/app/readmodel"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -344,6 +345,15 @@ func (s *Service) GetParticipant(ctx context.Context, userID, channelID, partici
 	return s.channels.GetParticipant(ctx, userID, channelID, participantUserID)
 }
 
+// GetMessageRanks reads current tags after the caller has authorized message visibility.
+// Do not use the returned metadata to authorize access, or retain it across responses.
+func (s *Service) GetMessageRanks(ctx context.Context, authors []domain.ChannelMessageAuthor) (map[domain.ChannelMessageAuthor]string, error) {
+	if s == nil || s.channels == nil {
+		return nil, domain.ErrChannelInvalid
+	}
+	return s.channels.GetMessageRanks(ctx, authors)
+}
+
 // FutureCreatorAfterLeave returns the member that will become creator if userID leaves.
 func (s *Service) FutureCreatorAfterLeave(ctx context.Context, userID, channelID int64) (domain.ChannelMember, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
@@ -450,7 +460,7 @@ func (s *Service) EditAdmin(ctx context.Context, userID int64, req domain.EditCh
 	if req.UserID == 0 {
 		req.UserID = userID
 	}
-	if req.UserID != userID || req.ChannelID == 0 || req.MemberID == 0 || len(req.Rank) > domain.MaxChannelAdminRankLength {
+	if req.UserID != userID || req.ChannelID == 0 || req.MemberID == 0 {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
 	res, err := s.channels.EditChannelAdmin(ctx, req)
@@ -491,7 +501,7 @@ func (s *Service) EditMemberRank(ctx context.Context, userID int64, req domain.E
 	if req.UserID == 0 {
 		req.UserID = userID
 	}
-	if req.UserID != userID || req.ChannelID == 0 || req.MemberID == 0 || len(req.Rank) > domain.MaxChannelAdminRankLength {
+	if req.UserID != userID || req.ChannelID == 0 || req.MemberID == 0 {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
 	res, err := s.channels.EditChannelMemberRank(ctx, req)
@@ -510,12 +520,14 @@ func (s *Service) EditBanned(ctx context.Context, userID int64, req domain.EditC
 	if req.UserID == 0 {
 		req.UserID = userID
 	}
-	if req.UserID != userID || req.ChannelID == 0 || req.Participant.Type != domain.PeerTypeUser || req.Participant.ID == 0 {
+	if req.UserID != userID || req.ChannelID == 0 || (req.Participant.Type != domain.PeerTypeUser && req.Participant.Type != domain.PeerTypeChannel) || req.Participant.ID == 0 {
 		return domain.EditChannelBannedResult{}, domain.ErrChannelInvalid
 	}
 	res, err := s.channels.EditChannelBanned(ctx, req)
-	if err == nil {
-		s.invalidateActiveChannelIDs(req.Participant.ID)
+	if err == nil && !res.NoChange {
+		if req.Participant.Type == domain.PeerTypeUser {
+			s.invalidateActiveChannelIDs(req.Participant.ID)
+		}
 		s.participantCache.invalidateChannel(req.ChannelID)
 		s.invalidateActiveBotMemberIDs(req.ChannelID)
 	}
@@ -1206,7 +1218,7 @@ func (s *Service) RecordMessageReactionUse(ctx context.Context, userID int64, re
 
 // DeleteParticipantReaction removes one participant reaction on a channel message.
 func (s *Service) DeleteParticipantReaction(ctx context.Context, userID int64, req domain.DeleteChannelParticipantReactionRequest) (domain.ChannelMessageReactionsResult, error) {
-	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 || req.ParticipantUserID == 0 {
+	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 || !domain.ReactionActorValid(req.Participant) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrChannelInvalid
 	}
 	if req.UserID == 0 {
@@ -1224,7 +1236,7 @@ func (s *Service) DeleteParticipantReaction(ctx context.Context, userID int64, r
 
 // DeleteParticipantReactions removes a bounded page of one participant's reactions.
 func (s *Service) DeleteParticipantReactions(ctx context.Context, userID int64, req domain.DeleteChannelParticipantReactionsRequest) (domain.DeleteChannelParticipantReactionsResult, error) {
-	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.ParticipantUserID == 0 {
+	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || !domain.ReactionActorValid(req.Participant) {
 		return domain.DeleteChannelParticipantReactionsResult{}, domain.ErrChannelInvalid
 	}
 	if req.UserID == 0 {
@@ -1452,7 +1464,24 @@ func (s *Service) SendMessage(ctx context.Context, userID int64, req domain.Send
 	if req.UserID != userID {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	if req.GuestBotID != 0 {
+		return domain.SendChannelMessageResult{}, domain.ErrAuthenticatedScopeInvalid
+	}
+	botID, err := guestauth.Take(ctx, userID, domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID})
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	if botID != 0 {
+		if err := s.ensureCanSend(ctx, botID); err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		req.GuestBotID = botID
+		req.ViaBotID = botID
+	}
 	if err := domain.ValidateReplyMarkup(req.ReplyMarkup); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	if err := domain.ValidateReplyMarkupMedia(req.ReplyMarkup, req.Media); err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
 	if req.RandomID != 0 && !req.IdempotencyPreflighted {
@@ -1553,6 +1582,8 @@ func (s *Service) EditInlineBotMessage(ctx context.Context, botID int64, req dom
 }
 
 // DeleteMessages deletes a bounded set of channel/supergroup messages.
+// SkipUnauthorized is an explicit application opt-in; MTProto callers leave it
+// false so authorization failures reject the entire batch.
 func (s *Service) DeleteMessages(ctx context.Context, userID int64, req domain.DeleteChannelMessagesRequest) (domain.DeleteChannelMessagesResult, error) {
 	if s == nil || s.channels == nil || userID == 0 {
 		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
@@ -1658,7 +1689,7 @@ func (s *Service) ExportInvite(ctx context.Context, userID int64, req domain.Exp
 	if req.UserID == 0 {
 		req.UserID = userID
 	}
-	if req.UserID != userID || req.ChannelID == 0 || len(req.Title) > domain.MaxChannelInviteTitleLength {
+	if req.UserID != userID || req.ChannelID == 0 {
 		return domain.ExportChannelInviteResult{}, domain.ErrChannelInvalid
 	}
 	return s.channels.ExportInvite(ctx, req)
@@ -1743,9 +1774,6 @@ func (s *Service) EditExportedInvite(ctx context.Context, userID int64, req doma
 	req.Hash = strings.TrimSpace(req.Hash)
 	if req.UserID != userID || req.ChannelID == 0 || req.Hash == "" {
 		return domain.EditChannelInviteResult{}, domain.ErrInviteHashEmpty
-	}
-	if req.ExpireDate < 0 || req.UsageLimit < 0 || len(req.Title) > domain.MaxChannelInviteTitleLength {
-		return domain.EditChannelInviteResult{}, domain.ErrChannelInvalid
 	}
 	return s.channels.EditExportedInvite(ctx, req)
 }

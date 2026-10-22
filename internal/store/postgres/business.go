@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func (s *PasswordStore) HasBusinessAutomation(ctx context.Context, userID int64) (bool, error) {
@@ -518,69 +519,103 @@ LIMIT 1`, ownerUserID, peerUserID, string(kind))
 }
 
 func (s *PasswordStore) GetConnectedBusinessBot(ctx context.Context, ownerUserID int64) (domain.ConnectedBusinessBot, bool, error) {
-	row := s.db.QueryRow(ctx, `
-SELECT owner_user_id, bot_user_id, COALESCE(recipients::text, '{}')::text, COALESCE(rights::text, '{}')::text,
-       COALESCE(EXTRACT(EPOCH FROM created_at), 0)::bigint,
-       COALESCE(EXTRACT(EPOCH FROM updated_at), 0)::bigint
-FROM business_connected_bots
-WHERE owner_user_id = $1`, ownerUserID)
-	bot, err := scanConnectedBusinessBot(row)
+	raw, err := sqlcgen.New(s.db).GetCurrentBusinessConnection(ctx, ownerUserID)
+	return decodeBusinessConnection(raw, err)
+}
+
+func (s *PasswordStore) GetBusinessBotConnection(ctx context.Context, connectionID string) (domain.ConnectedBusinessBot, bool, error) {
+	raw, err := sqlcgen.New(s.db).GetBusinessBotConnection(ctx, connectionID)
+	return decodeBusinessConnection(raw, err)
+}
+
+func decodeBusinessConnection(raw []byte, err error) (domain.ConnectedBusinessBot, bool, error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ConnectedBusinessBot{}, false, nil
+	}
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.ConnectedBusinessBot{}, false, nil
-		}
-		return domain.ConnectedBusinessBot{}, false, fmt.Errorf("get connected business bot: %w", err)
+		return domain.ConnectedBusinessBot{}, false, err
+	}
+	var bot domain.ConnectedBusinessBot
+	if err := json.Unmarshal(raw, &bot); err != nil {
+		return domain.ConnectedBusinessBot{}, false, err
 	}
 	return bot, true, nil
 }
 
 func (s *PasswordStore) SaveConnectedBusinessBot(ctx context.Context, bot domain.ConnectedBusinessBot) (domain.ConnectedBusinessBot, error) {
+	if bot.OwnerUserID == 0 || bot.BotUserID == 0 {
+		return domain.ConnectedBusinessBot{}, domain.ErrBotBusinessMissing
+	}
 	recipients, err := json.Marshal(bot.Recipients)
 	if err != nil {
-		return domain.ConnectedBusinessBot{}, fmt.Errorf("encode connected business bot recipients: %w", err)
+		return domain.ConnectedBusinessBot{}, err
 	}
 	rights, err := json.Marshal(bot.Rights)
 	if err != nil {
-		return domain.ConnectedBusinessBot{}, fmt.Errorf("encode connected business bot rights: %w", err)
+		return domain.ConnectedBusinessBot{}, err
 	}
-	row := s.db.QueryRow(ctx, `
-INSERT INTO business_connected_bots (owner_user_id, bot_user_id, recipients, rights, created_at, updated_at)
-VALUES ($1,$2,$3::jsonb,$4::jsonb,now(),now())
-ON CONFLICT (owner_user_id) DO UPDATE SET
-  bot_user_id = EXCLUDED.bot_user_id,
-  recipients = EXCLUDED.recipients,
-  rights = EXCLUDED.rights,
-  updated_at = now()
-RETURNING owner_user_id, bot_user_id, COALESCE(recipients::text, '{}')::text, COALESCE(rights::text, '{}')::text,
-          COALESCE(EXTRACT(EPOCH FROM created_at), 0)::bigint,
-          COALESCE(EXTRACT(EPOCH FROM updated_at), 0)::bigint`, bot.OwnerUserID, bot.BotUserID, string(recipients), string(rights))
-	saved, err := scanConnectedBusinessBot(row)
-	if err != nil {
-		return domain.ConnectedBusinessBot{}, fmt.Errorf("save connected business bot: %w", err)
-	}
-	return saved, nil
+	err = withTx(ctx, s.db, "save connected business bot", func(tx pgx.Tx) error {
+		q := sqlcgen.New(tx)
+		if _, err := q.LockBusinessConnectionOwner(ctx, bot.OwnerUserID); err != nil {
+			return err
+		}
+		previous, found, err := NewPasswordStore(tx).GetConnectedBusinessBot(ctx, bot.OwnerUserID)
+		if err != nil {
+			return err
+		}
+		connectionID := previous.ConnectionID
+		if !found || previous.BotUserID != bot.BotUserID {
+			connectionID, err = domain.NewBusinessConnectionID()
+			if err != nil {
+				return err
+			}
+		}
+		row, err := q.SaveCurrentBusinessConnection(ctx, sqlcgen.SaveCurrentBusinessConnectionParams{
+			OwnerUserID: bot.OwnerUserID, BotUserID: bot.BotUserID, Recipients: recipients, Rights: rights, ConnectionID: connectionID,
+		})
+		if err != nil {
+			return err
+		}
+		bot.ConnectionID, bot.Disabled = row.ConnectionID, false
+		bot.CreatedAtUnix, bot.UpdatedAtUnix = row.CreatedAtUnix, row.UpdatedAtUnix
+		if err := q.RetireOtherBusinessConnections(ctx, sqlcgen.RetireOtherBusinessConnectionsParams{OwnerUserID: bot.OwnerUserID, ConnectionID: bot.ConnectionID}); err != nil {
+			return err
+		}
+		if found && previous.ConnectionID != bot.ConnectionID {
+			if err := q.ClearBusinessConnectionPeerStates(ctx, bot.OwnerUserID); err != nil {
+				return err
+			}
+		}
+		raw, err := json.Marshal(bot)
+		if err != nil {
+			return err
+		}
+		return q.SaveBusinessConnectionSnapshot(ctx, sqlcgen.SaveBusinessConnectionSnapshotParams{ConnectionID: bot.ConnectionID, OwnerUserID: bot.OwnerUserID, BotUserID: bot.BotUserID, Snapshot: raw})
+	})
+	return bot, err
 }
 
 func (s *PasswordStore) DeleteConnectedBusinessBot(ctx context.Context, ownerUserID, botUserID int64) (bool, error) {
 	deleted := false
 	err := withTx(ctx, s.db, "delete connected business bot", func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `DELETE FROM business_connected_bots WHERE owner_user_id = $1 AND bot_user_id = $2`, ownerUserID, botUserID)
-		if err != nil {
-			return fmt.Errorf("delete connected business bot: %w", err)
+		q := sqlcgen.New(tx)
+		if _, err := q.LockBusinessConnectionOwner(ctx, ownerUserID); err != nil {
+			return err
 		}
-		deleted = tag.RowsAffected() > 0
+		n, err := q.RevokeBusinessBotConnection(ctx, sqlcgen.RevokeBusinessBotConnectionParams{OwnerUserID: ownerUserID, BotUserID: botUserID})
+		if err != nil {
+			return err
+		}
+		deleted = n > 0
 		if !deleted {
 			return nil
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM business_connected_bot_peer_states WHERE owner_user_id = $1`, ownerUserID); err != nil {
-			return fmt.Errorf("delete connected business bot peer states: %w", err)
+		if err := q.DeleteCurrentBusinessConnection(ctx, sqlcgen.DeleteCurrentBusinessConnectionParams{OwnerUserID: ownerUserID, BotUserID: botUserID}); err != nil {
+			return err
 		}
-		return nil
+		return q.ClearBusinessConnectionPeerStates(ctx, ownerUserID)
 	})
-	if err != nil {
-		return false, err
-	}
-	return deleted, nil
+	return deleted, err
 }
 
 func (s *PasswordStore) SetConnectedBusinessBotPaused(ctx context.Context, ownerUserID, peerUserID int64, paused bool) (domain.ConnectedBusinessBotPeerState, error) {
@@ -765,27 +800,6 @@ func scanQuickReplyMessage(ownerUserID int64, shortcutID int, row interface {
 	return msg, nil
 }
 
-func scanConnectedBusinessBot(row interface {
-	Scan(dest ...any) error
-}) (domain.ConnectedBusinessBot, error) {
-	var bot domain.ConnectedBusinessBot
-	var recipientsJSON, rightsJSON string
-	if err := row.Scan(&bot.OwnerUserID, &bot.BotUserID, &recipientsJSON, &rightsJSON, &bot.CreatedAtUnix, &bot.UpdatedAtUnix); err != nil {
-		return domain.ConnectedBusinessBot{}, err
-	}
-	if recipientsJSON != "" && recipientsJSON != "{}" {
-		if err := json.Unmarshal([]byte(recipientsJSON), &bot.Recipients); err != nil {
-			return domain.ConnectedBusinessBot{}, fmt.Errorf("decode connected business bot recipients: %w", err)
-		}
-	}
-	if rightsJSON != "" && rightsJSON != "{}" {
-		if err := json.Unmarshal([]byte(rightsJSON), &bot.Rights); err != nil {
-			return domain.ConnectedBusinessBot{}, fmt.Errorf("decode connected business bot rights: %w", err)
-		}
-	}
-	return bot, nil
-}
-
 func scanConnectedBusinessBotPeerState(row interface {
 	Scan(dest ...any) error
 }) (domain.ConnectedBusinessBotPeerState, error) {
@@ -867,4 +881,8 @@ func quickReplyPGErr(err error) error {
 		return domain.ErrShortcutOccupied
 	}
 	return err
+}
+
+func (s *PasswordStore) DeleteBusinessConnectionsForUser(ctx context.Context, userID int64) error {
+	return sqlcgen.New(s.db).DeleteBusinessConnectionsForUser(ctx, userID)
 }

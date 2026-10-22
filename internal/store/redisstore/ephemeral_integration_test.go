@@ -29,6 +29,8 @@ func TestRedisEphemeralAtomicLifecycleCallbackAndBroker(t *testing.T) {
 		SenderUserID: seed + 3, ReceiverUserID: seed + 4, Date: int(now.Unix()), RandomID: seed + 5,
 		Content: domain.EphemeralContent{Message: "/private"}, PayloadHash: sha256.Sum256([]byte("payload")),
 		Version: 1, CreatedAt: now, ExpiresAt: now.Add(domain.EphemeralMessageRetention),
+		ReplaceMessageID: 73,
+		OriginDevice:     domain.EphemeralDevice{UserID: seed + 4, BusinessAuthKeyID: [8]byte{7}, SessionID: 8},
 	}
 	t.Cleanup(func() {
 		_ = client.Del(context.Background(), ephemeralMessageKey(message.Peer, message.ID), ephemeralRandomKey(message), ephemeralCallbackActionKey(seed+6)).Err()
@@ -40,6 +42,10 @@ func TestRedisEphemeralAtomicLifecycleCallbackAndBroker(t *testing.T) {
 	replay, fresh, err := storeImpl.CreateEphemeralMessage(ctx, message)
 	if err != nil || fresh || replay.ID != message.ID {
 		t.Fatalf("replay=%+v fresh=%v err=%v", replay, fresh, err)
+	}
+	loaded, found, err := storeImpl.GetEphemeralMessage(ctx, message.Peer, message.ID, now)
+	if err != nil || !found || loaded.ReplaceMessageID != 73 || loaded.OriginDevice != message.OriginDevice {
+		t.Fatalf("replacement routing round trip=%+v found=%v err=%v", loaded, found, err)
 	}
 	edited, err := storeImpl.EditEphemeralMessage(ctx, message.Peer, message.ID, 1, domain.EphemeralContent{Message: "edited"}, message.Date+1, now)
 	if err != nil || edited.Version != 2 || edited.Content.Message != "edited" {

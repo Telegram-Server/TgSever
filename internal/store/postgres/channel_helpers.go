@@ -95,6 +95,9 @@ func (s *ChannelStore) DeleteChannel(ctx context.Context, req domain.DeleteChann
 	if member.Role != domain.ChannelRoleCreator {
 		return domain.DeleteChannelResult{}, domain.ErrChannelAdminRequired
 	}
+	if err := s.finishDeletedChannelSuggestedPostsTx(ctx, tx, channel, req.Date); err != nil {
+		return domain.DeleteChannelResult{}, fmt.Errorf("finish channel suggested posts: %w", err)
+	}
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 	if _, err := tx.Exec(ctx, `UPDATE channels SET deleted = true, username = NULL, updated_at = now() WHERE id = $1`, req.ChannelID); err != nil {
 		return domain.DeleteChannelResult{}, fmt.Errorf("mark channel deleted: %w", err)
@@ -807,6 +810,15 @@ GROUP BY topic_id`, userID, channelID, roots, availableMinID)
 }
 
 func (s *ChannelStore) resolveChannelReply(ctx context.Context, db sqlcgen.DBTX, req domain.SendChannelMessageRequest, member domain.ChannelMember, channel domain.Channel, selfBoostsApplied int) (*domain.MessageReply, error) {
+	if channel.Forum && req.ReplyTo == nil && req.Action == nil {
+		topic, err := s.getForumTopic(ctx, db, req.ChannelID, domain.ForumGeneralTopicID)
+		if err != nil {
+			return nil, err
+		}
+		if err := forumTopicWriteError(channel, member, topic, req.UserID, selfBoostsApplied, req.Action); err != nil {
+			return nil, err
+		}
+	}
 	if req.ReplyTo == nil {
 		return nil, nil
 	}
@@ -819,33 +831,22 @@ func (s *ChannelStore) resolveChannelReply(ctx context.Context, db sqlcgen.DBTX,
 		peer = channelPeer
 	}
 	if peer != channelPeer {
-		// inputReplyToMessage.reply_to_peer_id may deliberately reference a
-		// message from another dialog (the official clients expose this as
-		// "Reply in another chat"). Keep that source pair intact instead of
-		// resolving it as a destination-channel thread reply.
-		if req.ReplyTo.MessageID <= 0 {
-			return nil, domain.ErrReplyMessageIDInvalid
-		}
-		switch peer.Type {
-		case domain.PeerTypeUser:
-			var exists bool
-			if err := db.QueryRow(ctx, `SELECT EXISTS (
-SELECT 1 FROM message_boxes
-WHERE owner_user_id=$1 AND peer_type='user' AND peer_id=$2 AND box_id=$3 AND NOT deleted
-)`, req.UserID, peer.ID, req.ReplyTo.MessageID).Scan(&exists); err != nil || !exists {
-				return nil, domain.ErrReplyMessageIDInvalid
-			}
-		case domain.PeerTypeChannel:
-			target, err := s.getChannelMessage(ctx, db, peer.ID, req.ReplyTo.MessageID)
-			if err != nil || target.Deleted {
-				return nil, domain.ErrReplyMessageIDInvalid
-			}
-		default:
-			return nil, domain.ErrReplyMessageIDInvalid
-		}
 		reply := cloneMessageReply(req.ReplyTo)
-		reply.Peer = peer
-		return reply, nil
+		if channel.Forum && req.Action == nil {
+			id := reply.TopMessageID
+			if id <= 0 {
+				id = domain.ForumGeneralTopicID
+			}
+			topic, err := s.getForumTopic(ctx, db, req.ChannelID, id)
+			if err != nil {
+				return nil, err
+			}
+			if err := forumTopicWriteError(channel, member, topic, req.UserID, selfBoostsApplied, req.Action); err != nil {
+				return nil, err
+			}
+			reply.TopMessageID, reply.ForumTopic = topic.TopicID, true
+		}
+		return resolveExternalReply(ctx, db, req.UserID, reply)
 	}
 	if req.ReplyTo.MessageID == 0 {
 		if req.ReplyTo.TopMessageID <= 0 {
@@ -890,11 +891,8 @@ WHERE owner_user_id=$1 AND peer_type='user' AND peer_id=$2 AND box_id=$3 AND NOT
 		if err != nil {
 			return nil, domain.ErrReplyMessageIDInvalid
 		}
-		if topic.Hidden {
-			return nil, domain.ErrReplyMessageIDInvalid
-		}
-		if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
-			return nil, domain.ErrChannelWriteForbidden
+		if err := forumTopicWriteError(channel, member, topic, req.UserID, selfBoostsApplied, req.Action); err != nil {
+			return nil, err
 		}
 		reply := cloneMessageReply(req.ReplyTo)
 		reply.MessageID = 0
@@ -903,15 +901,33 @@ WHERE owner_user_id=$1 AND peer_type='user' AND peer_id=$2 AND box_id=$3 AND NOT
 		reply.ForumTopic = true
 		return reply, nil
 	}
+	if _, err := sqlcgen.New(db).LockBotReplyChannelSource(ctx, sqlcgen.LockBotReplyChannelSourceParams{ChannelID: req.ChannelID, ID: int32(req.ReplyTo.MessageID)}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if req.ReplyTo.AllowMissing && !channel.Forum && !req.ReplyTo.ForumTopic && req.ReplyTo.TopMessageID == 0 {
+				return nil, nil
+			}
+			return nil, domain.ErrReplyMessageIDInvalid
+		}
+		return nil, err
+	}
 	target, err := s.getChannelMessage(ctx, db, req.ChannelID, req.ReplyTo.MessageID)
 	if err != nil {
 		if errors.Is(err, domain.ErrMessageIDInvalid) || errors.Is(err, pgx.ErrNoRows) {
+			if req.ReplyTo.AllowMissing && !channel.Forum && !req.ReplyTo.ForumTopic && req.ReplyTo.TopMessageID == 0 {
+				return nil, nil
+			}
 			return nil, domain.ErrReplyMessageIDInvalid
 		}
 		return nil, err
 	}
 	if target.Deleted || target.ID <= member.AvailableMinID {
+		if req.ReplyTo.AllowMissing && !channel.Forum && !req.ReplyTo.ForumTopic && req.ReplyTo.TopMessageID == 0 {
+			return nil, nil
+		}
 		return nil, domain.ErrReplyMessageIDInvalid
+	}
+	if err := domain.ValidateBotAPIReplySource(req.ReplyTo, replyChannelMessage(target)); err != nil {
+		return nil, err
 	}
 	reply := cloneMessageReply(req.ReplyTo)
 	reply.MessageID = target.ID
@@ -936,17 +952,32 @@ WHERE owner_user_id=$1 AND peer_type='user' AND peer_id=$2 AND box_id=$3 AND NOT
 			zap.Int("reply_to_msg_id", req.ReplyTo.MessageID),
 		)
 	}
-	if channel.Forum && reply.TopMessageID > 0 {
-		if topic, err := s.getForumTopic(ctx, db, req.ChannelID, reply.TopMessageID); err == nil && !topic.Hidden {
-			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
-				return nil, domain.ErrChannelWriteForbidden
+	if channel.Forum {
+		topic, err := s.getForumTopic(ctx, db, req.ChannelID, reply.TopMessageID)
+		if errors.Is(err, domain.ErrMessageIDInvalid) {
+			if target.ReplyTo != nil && target.ReplyTo.ForumTopic && reply.TopMessageID != domain.ForumGeneralTopicID {
+				return nil, domain.ErrReplyMessageIDInvalid
 			}
-			reply.ForumTopic = true
-		} else if err != nil && !errors.Is(err, domain.ErrMessageIDInvalid) {
+			topic, err = s.getForumTopic(ctx, db, req.ChannelID, domain.ForumGeneralTopicID)
+		}
+		if err != nil {
 			return nil, err
 		}
+		if err := forumTopicWriteError(channel, member, topic, req.UserID, selfBoostsApplied, req.Action); err != nil {
+			return nil, err
+		}
+		reply.TopMessageID, reply.ForumTopic = topic.TopicID, true
 	}
 	return reply, nil
+}
+
+func forumTopicWriteError(channel domain.Channel, member domain.ChannelMember, topic domain.ChannelForumTopic, userID int64, boosts int, action *domain.ChannelMessageAction) error {
+	manage := canManageForumTopic(channel, member, topic, userID, boosts)
+	editing := action != nil && action.Type == domain.ChannelActionTopicEdit
+	if topic.Hidden && !(editing && manage) || topic.Closed && !manage {
+		return domain.ErrChannelWriteForbidden
+	}
+	return nil
 }
 
 func visibleChannelTopAfter(ctx context.Context, db sqlcgen.DBTX, channelID int64, availableMinID int, fallbackDate int) (int, int, error) {

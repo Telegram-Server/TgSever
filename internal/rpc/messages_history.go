@@ -255,6 +255,9 @@ func (r *Router) onMessagesGetReplies(ctx context.Context, req *tg.MessagesGetRe
 		}
 		return r.tgChannelHistoryMessages(ctx, userID, r.enrichChannelHistory(ctx, userID, replies)), nil
 	}
+	if peer.Type == domain.PeerTypeUser {
+		return r.privateForumReplies(ctx, userID, peer.ID, req)
+	}
 	result := &tg.MessagesMessages{
 		Messages: []tg.MessageClass{},
 		Chats:    r.chatsForInputPeer(ctx, userID, req.Peer),

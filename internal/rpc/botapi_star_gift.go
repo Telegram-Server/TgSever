@@ -89,6 +89,11 @@ func (r *Router) BotAPISendStarGift(
 	if !found {
 		return false, r.botAPIStarGiftErr(botID, "GIFT_NOT_AVAILABLE", nil)
 	}
+	if to.Type == domain.PeerTypeUser {
+		if err := r.botAPIBusinessGiftAllowed(ctx, to.ID, payForUpgrade, gift.Limited, false); err != nil {
+			return false, err
+		}
+	}
 	now := int(r.clock.Now().Unix())
 	switch {
 	case gift.SoldOut, gift.Limited && gift.AvailabilityRemains <= 0,

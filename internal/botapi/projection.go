@@ -55,6 +55,9 @@ func parseAllowedUpdates(raw string) ([]domain.BotAPIUpdateKind, error) {
 			return nil, errors.New("ALLOWED_UPDATES_INVALID")
 		}
 		kind := domain.BotAPIUpdateKind(item)
+		if !domain.BotAPIUpdateKindKnown(kind) {
+			return nil, errors.New("ALLOWED_UPDATES_INVALID")
+		}
 		if _, ok := seen[kind]; !ok {
 			seen[kind] = struct{}{}
 			out = append(out, kind)
@@ -93,6 +96,16 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 		return nil, "", false
 	}
 	switch event.Type {
+	case domain.UpdateEventBotAPIObject:
+		if event.BotAPIObject == nil {
+			return nil, "", false
+		}
+		body, err := event.BotAPIObject.Object()
+		if err != nil {
+			return nil, "", false
+		}
+		kind := string(event.BotAPIObject.Kind)
+		return map[string]any{"update_id": updateID, kind: body}, kind, true
 	case domain.UpdateEventNewMessage:
 		if event.EphemeralMessage != nil {
 			message, ok := apiEphemeralMessage(*event.EphemeralMessage, event.Users, event.Channels)
@@ -101,13 +114,11 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 			}
 			return map[string]any{"update_id": updateID, "message": message}, "message", true
 		}
-		if !apiMessageProjectable(event.Message) {
+		if event.Message.Out || !apiMessageProjectable(event.Message) {
 			return nil, "", false
 		}
-		return map[string]any{
-			"update_id": updateID,
-			"message":   apiMessage(event.Message, event.Users, event.Channels),
-		}, "message", true
+		kind := apiMessageUpdateKind(event, false)
+		return map[string]any{"update_id": updateID, kind: apiMessage(event.Message, event.Users, event.Channels)}, kind, true
 	case domain.UpdateEventEditMessage:
 		if event.EphemeralMessage != nil {
 			message, ok := apiEphemeralMessage(*event.EphemeralMessage, event.Users, event.Channels)
@@ -119,10 +130,8 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 		if !apiMessageProjectable(event.Message) {
 			return nil, "", false
 		}
-		return map[string]any{
-			"update_id":      updateID,
-			"edited_message": apiMessage(event.Message, event.Users, event.Channels),
-		}, "edited_message", true
+		kind := apiMessageUpdateKind(event, true)
+		return map[string]any{"update_id": updateID, kind: apiMessage(event.Message, event.Users, event.Channels)}, kind, true
 	case domain.UpdateEventBotCallbackQuery:
 		callback := event.BotCallbackQuery
 		if callback == nil || callback.ID == 0 || callback.UserID == 0 {
@@ -142,7 +151,14 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 			"id":            strconv.FormatInt(callback.ID, 10),
 			"from":          apiUser(from),
 			"chat_instance": strconv.FormatInt(callback.ChatInstance, 10),
-			"data":          string(callback.Data),
+		}
+		if callback.GameShortName != "" {
+			if len(callback.Data) != 0 {
+				return nil, "", false
+			}
+			query["game_short_name"] = callback.GameShortName
+		} else {
+			query["data"] = string(callback.Data)
 		}
 		if callback.InlineMessage != nil {
 			inlineMessageID, ok := encodeBotAPIInlineMessageID(*callback.InlineMessage)
@@ -195,6 +211,18 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 				"invoice_payload": query.Payload,
 			},
 		}, "pre_checkout_query", true
+	case domain.UpdateEventBotChatJoinRequest:
+		body, ok := apiChatJoinRequest(event)
+		if !ok {
+			return nil, "", false
+		}
+		return map[string]any{"update_id": updateID, "chat_join_request": body}, "chat_join_request", true
+	case domain.UpdateEventBotMessageReaction, domain.UpdateEventBotMessageReactionCount:
+		body, kind, ok := apiReactionUpdated(event)
+		if !ok {
+			return nil, "", false
+		}
+		return map[string]any{"update_id": updateID, kind: body}, kind, true
 	case domain.UpdateEventBotMyChatMember, domain.UpdateEventBotChatMember:
 		body, ok := apiChatMemberUpdated(event)
 		if !ok {
@@ -244,6 +272,9 @@ func apiChatMemberUpdated(event domain.UpdateEvent) (map[string]any, bool) {
 		"date":            update.Date,
 		"old_chat_member": apiChatMember(old, subject, domain.CanEditChannelAdmin(viewer, old)),
 		"new_chat_member": apiChatMember(updated, subject, domain.CanEditChannelAdmin(viewer, updated)),
+	}
+	if update.Invite != nil {
+		out["invite_link"] = apiInviteLink(*update.Invite, userOf(update.Invite.AdminUserID), event.UserID)
 	}
 	if update.ViaJoinRequest {
 		out["via_join_request"] = true
@@ -330,8 +361,14 @@ func decodeBotAPIInlineMessageID(raw string) (domain.BotInlineMessageID, error) 
 }
 
 func apiMessageProjectable(msg domain.Message) bool {
-	if msg.Out || msg.ID <= 0 {
+	if msg.ID <= 0 {
 		return false
+	}
+	if msg.Action != nil {
+		switch msg.Action.Type {
+		case domain.ChannelActionTopicCreate, domain.ChannelActionTopicEdit, domain.ChannelActionSuggestedPostApproval, domain.ChannelActionSuggestedPostSuccess, domain.ChannelActionSuggestedPostRefund:
+			return true
+		}
 	}
 	if apiSuccessfulPayment(msg.Media) != nil {
 		return true
@@ -377,6 +414,15 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 		"message_id": msg.ID,
 		"date":       msg.Date,
 		"chat":       apiChat(msg.Peer, userByID),
+	}
+	projectGuestCaller(msg, out, userByID, channelByID)
+	if msg.BusinessConnectionID != "" {
+		out["business_connection_id"] = msg.BusinessConnectionID
+	}
+	if msg.BusinessBotID > 0 {
+		if bot, found := userByID[msg.BusinessBotID]; found {
+			out["sender_business_bot"] = apiUser(bot)
+		}
 	}
 	if msg.Peer.Type == domain.PeerTypeChannel {
 		if channel, ok := channelByID[msg.Peer.ID]; ok {
@@ -637,6 +683,8 @@ func apiReplyMarkup(markup *domain.MessageReplyMarkup) map[string]any {
 				item["login_url"] = login
 			case domain.MarkupButtonCallback:
 				item["callback_data"] = string(button.Data)
+			case domain.MarkupButtonGame:
+				item["callback_game"] = map[string]any{}
 			case domain.MarkupButtonWebView:
 				item["web_app"] = map[string]any{"url": button.URL}
 			case domain.MarkupButtonSwitchInline:
@@ -697,6 +745,15 @@ func apiSuccessfulPayment(media *domain.MessageMedia) map[string]any {
 		"total_amount":               payment.TotalAmount,
 		"telegram_payment_charge_id": payment.ChargeID,
 		"provider_payment_charge_id": payment.ProviderChargeID,
+	}
+	if payment.SubscriptionExpirationDate > 0 {
+		out["subscription_expiration_date"] = payment.SubscriptionExpirationDate
+	}
+	if payment.IsRecurring {
+		out["is_recurring"] = true
+	}
+	if payment.IsFirstRecurring {
+		out["is_first_recurring"] = true
 	}
 	if payment.Payload != "" {
 		out["invoice_payload"] = payment.Payload
@@ -772,6 +829,35 @@ func apiMessageMedia(media *domain.MessageMedia, users map[int64]domain.User, ch
 			return nil
 		}
 		return map[string]any{"poll": apiPoll(*media.Poll, users)}
+	case domain.MessageMediaKindTodo:
+		if media.Todo == nil {
+			return nil
+		}
+		todo := media.Todo
+		completed := make(map[int]domain.MessageTodoCompletion, len(todo.Completions))
+		for _, completion := range todo.Completions {
+			completed[completion.ID] = completion
+		}
+		tasks := make([]map[string]any, 0, len(todo.Items))
+		for _, item := range todo.Items {
+			task := map[string]any{"id": item.ID, "text": item.Title}
+			if entities := apiMessageEntities(item.Entities, users); len(entities) > 0 {
+				task["text_entities"] = entities
+			}
+			if completion, ok := completed[item.ID]; ok {
+				user := users[completion.CompletedBy]
+				user.ID = completion.CompletedBy
+				task["completed_by_user"] = apiUser(user)
+				task["completion_date"] = completion.Date
+			}
+			tasks = append(tasks, task)
+		}
+		checklist := map[string]any{"title": todo.Title, "tasks": tasks,
+			"others_can_add_tasks": todo.OthersCanAppend, "others_can_mark_tasks_as_done": todo.OthersCanComplete}
+		if entities := apiMessageEntities(todo.TitleEntities, users); len(entities) > 0 {
+			checklist["title_entities"] = entities
+		}
+		return map[string]any{"checklist": checklist}
 	case domain.MessageMediaKindService:
 		if media.ServiceAction == nil {
 			return nil
@@ -861,7 +947,7 @@ func apiLocation(geo domain.MessageGeoPoint, live *domain.MessageGeoLive) map[st
 		out["horizontal_accuracy"] = float64(geo.AccuracyRadius)
 	}
 	if live != nil {
-		if live.Period > 0 {
+		if live.Period > 0 && !live.Stopped {
 			out["live_period"] = live.Period
 		}
 		if live.Heading > 0 {
@@ -939,6 +1025,7 @@ func apiPoll(poll domain.MessagePoll, users map[int64]domain.User) map[string]an
 		"options": options, "total_voter_count": totalVoters, "is_closed": poll.Closed,
 		"is_anonymous": !poll.PublicVoters, "type": pollType,
 		"allows_multiple_answers": poll.MultipleChoice, "allows_revoting": !poll.RevotingDisabled,
+		"members_only": false,
 	}
 	if entities := apiMessageEntities(poll.QuestionEntities, users); len(entities) > 0 {
 		out["question_entities"] = entities
@@ -994,6 +1081,12 @@ func apiPollMedia(media *domain.MessageMedia) map[string]any {
 }
 
 func apiRequestedPeer(action *domain.MessageRequestedPeerAction, _ map[int64]domain.User, _ map[int64]domain.Channel) map[string]any {
+	if action != nil && action.ManagedBot != nil {
+		if action.ManagedBot.ID <= 0 || !action.ManagedBot.Bot {
+			return nil
+		}
+		return map[string]any{"managed_bot_created": map[string]any{"bot": apiUser(*action.ManagedBot)}}
+	}
 	if action == nil || action.ButtonID == 0 || len(action.Peers) == 0 {
 		return nil
 	}
@@ -1078,25 +1171,11 @@ func apiPhotoSizesWithPrefix(sizes []domain.PhotoSize, locationPrefix string) []
 	return out
 }
 
-// apiSticker projects a document snapshot as a Bot API Sticker. The sticker
-// loop marks the concrete document as a regular sticker and upgrades is_animated
-// / is_video from the document attributes.
 func apiSticker(document domain.Document) map[string]any {
-	base := apiDocument(document)
-	for _, attribute := range document.Attributes {
-		if attribute.Kind != domain.DocAttrSticker {
-			continue
-		}
-		sticker := cloneAPIMap(base)
-		sticker["type"], sticker["width"], sticker["height"] = "regular", attribute.W, attribute.H
-		sticker["is_animated"] = hasDocumentAttribute(document, domain.DocAttrAnimated)
-		sticker["is_video"] = hasDocumentAttribute(document, domain.DocAttrVideo)
-		if attribute.Alt != "" {
-			sticker["emoji"] = attribute.Alt
-		}
-		return sticker
+	if document.IsStickerLike() {
+		return apiManagedSticker(document, "")
 	}
-	return base
+	return apiDocument(document)
 }
 
 func apiDocument(doc domain.Document) map[string]any {
@@ -1141,4 +1220,40 @@ func decodeBotAPIFileID(fileID string) (string, bool) {
 		return locationKey, true
 	}
 	return "", false
+}
+
+// SnapshotMessage builds the same public object used by HTTP responses, before
+// storing a durable update. Private domain and session fields are not serialized.
+func SnapshotMessage(message domain.Message, users []domain.User, channels []domain.Channel) map[string]any {
+	return apiMessage(message, users, channels)
+}
+
+func SnapshotPoll(poll domain.MessagePoll, users []domain.User) map[string]any {
+	byID := make(map[int64]domain.User, len(users))
+	for _, user := range users {
+		byID[user.ID] = user
+	}
+	return apiPoll(poll, byID)
+}
+
+func EncodeInlineMessageID(id domain.BotInlineMessageID) (string, bool) {
+	return encodeBotAPIInlineMessageID(id)
+}
+
+func SnapshotUser(user domain.User) map[string]any { return apiUser(user) }
+
+// Legacy queue rows stored only message ids, so infer their public kind from the
+// authoritative channel metadata as well as handling new immutable snapshots.
+func apiMessageUpdateKind(event domain.UpdateEvent, edited bool) string {
+	kind := "message"
+	for _, channel := range event.Channels {
+		if event.Message.Peer.Type == domain.PeerTypeChannel && channel.ID == event.Message.Peer.ID && channel.Broadcast && !channel.Megagroup {
+			kind = "channel_post"
+			break
+		}
+	}
+	if edited {
+		kind = "edited_" + kind
+	}
+	return kind
 }

@@ -1,0 +1,3 @@
+DROP TABLE business_bot_connections;
+DROP INDEX business_connected_bots_connection_idx;
+ALTER TABLE business_connected_bots DROP COLUMN connection_id;

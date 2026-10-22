@@ -28,6 +28,11 @@ func (s *BotAPIUpdateStore) SetBotAPIWebhook(ctx context.Context, config domain.
 	if config.BotUserID <= 0 || config.URL == "" || config.MaxConnections < 1 || config.MaxConnections > 100 {
 		return fmt.Errorf("invalid bot api webhook")
 	}
+	for _, kind := range config.AllowedUpdates {
+		if !domain.BotAPIUpdateKindKnown(kind) {
+			return fmt.Errorf("invalid bot api allowed update kind %q", kind)
+		}
+	}
 	var allowed []string
 	if len(config.AllowedUpdates) > 0 {
 		allowed = make([]string, 0, len(config.AllowedUpdates))
@@ -291,10 +296,20 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(ctx context.Context, req domain.
 	if err := validateBotAPIUpdateRequest(req); err != nil {
 		return domain.BotAPIUpdate{}, false, err
 	}
+	if req.Object != nil {
+		return s.enqueueObjectUpdate(ctx, req)
+	}
+	if req.JoinRequest != nil {
+		return s.enqueueJoinRequestUpdate(ctx, req)
+	}
+	if req.Reaction != nil {
+		return s.enqueueReactionUpdate(ctx, req)
+	}
 	var callbackQueryID, callbackUserID, callbackChatInstance int64
 	var callbackInlineDCID, callbackInlineMessageID int
 	var callbackInlineOwnerID, callbackInlineAccessHash int64
 	var callbackData []byte
+	var gameShortName string
 	var ephemeralPayload []byte
 	var preCheckoutPayload []byte
 	var preCheckoutID string
@@ -311,6 +326,7 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(ctx context.Context, req domain.
 		callbackUserID = req.Callback.UserID
 		callbackChatInstance = req.Callback.ChatInstance
 		callbackData = req.Callback.Data
+		gameShortName = req.Callback.GameShortName
 		if req.Callback.InlineMessage != nil {
 			callbackInlineDCID = req.Callback.InlineMessage.DCID
 			callbackInlineOwnerID = req.Callback.InlineMessage.OwnerID
@@ -339,8 +355,8 @@ WITH inserted AS (
   bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
   callback_query_id, callback_user_id, callback_chat_instance, callback_data,
   callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-  ephemeral_payload, pre_checkout_payload, member_payload
-) SELECT $1, $2::varchar(32), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18::jsonb
+  ephemeral_payload, pre_checkout_payload, member_payload, game_short_name
+) SELECT $1, $2::varchar(32), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19
 WHERE NOT EXISTS (
   SELECT 1
   FROM bot_api_update_states
@@ -360,7 +376,7 @@ WHERE NOT EXISTS (
  RETURNING id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
            callback_query_id, callback_user_id, callback_chat_instance, callback_data,
            callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-           ephemeral_payload, pre_checkout_payload, member_payload
+           ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload, object_payload, game_short_name
 ), wake_webhook AS (
  UPDATE bot_api_webhooks
  SET next_attempt_at = now(), updated_at = now()
@@ -370,12 +386,12 @@ WHERE NOT EXISTS (
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload, member_payload
+       ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload, object_payload, game_short_name
 FROM inserted
 `, req.BotUserID, string(req.Kind), string(req.Peer.Type), req.Peer.ID, req.MessageID, req.SourcePts, req.Date,
 		callbackQueryID, callbackUserID, callbackChatInstance, callbackData,
 		callbackInlineDCID, callbackInlineOwnerID, callbackInlineMessageID, callbackInlineAccessHash, ephemeralPayload,
-		preCheckoutPayload, memberPayload))
+		preCheckoutPayload, memberPayload, gameShortName))
 	if err == nil {
 		return row, true, nil
 	}
@@ -390,7 +406,7 @@ FROM inserted
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload, member_payload
+       ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload, object_payload, game_short_name
 FROM bot_api_updates
 WHERE bot_user_id = $1
   AND update_kind = $2
@@ -427,12 +443,12 @@ func (s *BotAPIUpdateStore) ListTailBotAPIUpdates(ctx context.Context, botUserID
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload, member_payload
+       ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload, object_payload, game_short_name
 FROM (
   SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
          callback_query_id, callback_user_id, callback_chat_instance, callback_data,
          callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-         ephemeral_payload, pre_checkout_payload, member_payload
+         ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload, object_payload, game_short_name
   FROM bot_api_updates
   WHERE bot_user_id = $1
     AND id > COALESCE((SELECT confirmed_update_id FROM bot_api_update_states WHERE bot_user_id = $1), 0)
@@ -474,7 +490,7 @@ func (s *BotAPIUpdateStore) ListBotAPIUpdates(ctx context.Context, botUserID, fr
 SELECT id, bot_user_id, update_kind, peer_type, peer_id, message_id, source_pts, date,
        callback_query_id, callback_user_id, callback_chat_instance, callback_data,
        callback_inline_dc_id, callback_inline_owner_id, callback_inline_message_id, callback_inline_access_hash,
-       ephemeral_payload, pre_checkout_payload, member_payload
+       ephemeral_payload, pre_checkout_payload, member_payload, reaction_payload, join_request_payload, object_payload, game_short_name
 FROM bot_api_updates
 WHERE bot_user_id = $1 AND id >= $2
 ORDER BY id
@@ -531,6 +547,11 @@ SET confirmed_update_id = GREATEST(
 }
 
 func (s *BotAPIUpdateStore) SetBotAPIAllowedUpdates(ctx context.Context, botUserID int64, allowed []domain.BotAPIUpdateKind) error {
+	for _, kind := range allowed {
+		if !domain.BotAPIUpdateKindKnown(kind) {
+			return fmt.Errorf("invalid bot api allowed update kind %q", kind)
+		}
+	}
 	if botUserID == 0 {
 		return nil
 	}
@@ -676,15 +697,40 @@ func scanBotAPIUpdateRows(row botAPIUpdateScanner) (domain.BotAPIUpdate, error) 
 	var callbackInlineDCID, callbackInlineMessageID int
 	var callbackInlineOwnerID, callbackInlineAccessHash int64
 	var callbackData []byte
-	var ephemeralPayload, preCheckoutPayload, memberPayload []byte
+	var gameShortName string
+	var ephemeralPayload, preCheckoutPayload, memberPayload, reactionPayload, joinRequestPayload, objectPayload []byte
 	if err := row.Scan(&item.ID, &item.BotUserID, &kind, &peerType, &item.Peer.ID, &item.MessageID, &item.SourcePts, &item.Date,
 		&callbackQueryID, &callbackUserID, &callbackChatInstance, &callbackData,
 		&callbackInlineDCID, &callbackInlineOwnerID, &callbackInlineMessageID, &callbackInlineAccessHash,
-		&ephemeralPayload, &preCheckoutPayload, &memberPayload); err != nil {
+		&ephemeralPayload, &preCheckoutPayload, &memberPayload, &reactionPayload, &joinRequestPayload, &objectPayload, &gameShortName); err != nil {
 		return domain.BotAPIUpdate{}, err
 	}
 	item.Kind = domain.BotAPIUpdateKind(kind)
 	item.Peer.Type = domain.PeerType(peerType)
+	if len(objectPayload) != 0 {
+		var object domain.BotAPIObject
+		if err := json.Unmarshal(objectPayload, &object); err != nil {
+			return domain.BotAPIUpdate{}, err
+		}
+		item.Object = &object
+		if err := domain.ValidateBotAPIObjectRequest(domain.EnqueueBotAPIUpdateRequest{BotUserID: item.BotUserID, Kind: item.Kind, Date: item.Date, Peer: item.Peer, MessageID: item.MessageID, SourcePts: item.SourcePts, Object: item.Object}); err != nil {
+			return domain.BotAPIUpdate{}, err
+		}
+	}
+	if len(joinRequestPayload) != 0 {
+		var payload domain.BotChatJoinRequest
+		if err := json.Unmarshal(joinRequestPayload, &payload); err != nil {
+			return domain.BotAPIUpdate{}, fmt.Errorf("decode bot api join request payload: %w", err)
+		}
+		item.JoinRequest = &payload
+	}
+	if len(reactionPayload) != 0 {
+		var payload domain.BotMessageReactionUpdated
+		if err := json.Unmarshal(reactionPayload, &payload); err != nil {
+			return domain.BotAPIUpdate{}, fmt.Errorf("decode bot api reaction payload: %w", err)
+		}
+		item.Reaction = &payload
+	}
 	if len(memberPayload) != 0 {
 		var payload domain.BotChatMemberUpdated
 		if err := json.Unmarshal(memberPayload, &payload); err != nil {
@@ -694,13 +740,14 @@ func scanBotAPIUpdateRows(row botAPIUpdateScanner) (domain.BotAPIUpdate, error) 
 	}
 	if item.Kind == domain.BotAPIUpdateCallbackQuery {
 		item.Callback = &domain.BotCallbackQuery{
-			ID:           callbackQueryID,
-			BotUserID:    item.BotUserID,
-			UserID:       callbackUserID,
-			Peer:         item.Peer,
-			MessageID:    item.MessageID,
-			ChatInstance: callbackChatInstance,
-			Data:         append([]byte(nil), callbackData...),
+			ID:            callbackQueryID,
+			BotUserID:     item.BotUserID,
+			UserID:        callbackUserID,
+			Peer:          item.Peer,
+			MessageID:     item.MessageID,
+			ChatInstance:  callbackChatInstance,
+			Data:          append([]byte(nil), callbackData...),
+			GameShortName: gameShortName,
 		}
 		if callbackInlineMessageID > 0 {
 			item.Callback.InlineMessage = &domain.BotInlineMessageID{DCID: callbackInlineDCID, OwnerID: callbackInlineOwnerID, ID: callbackInlineMessageID, AccessHash: callbackInlineAccessHash}
@@ -733,6 +780,34 @@ func scanBotAPIUpdateRows(row botAPIUpdateScanner) (domain.BotAPIUpdate, error) 
 func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	if req.BotUserID == 0 {
 		return fmt.Errorf("invalid bot api update")
+	}
+	if req.Callback != nil && (len(req.Callback.GameShortName) > 64 || (req.Callback.GameShortName != "" && len(req.Callback.Data) != 0)) {
+		return fmt.Errorf("invalid game callback")
+	}
+	if err := domain.ValidateBotAPIObjectRequest(req); err != nil {
+		return err
+	}
+	if req.Object != nil {
+		return nil
+	}
+	if req.PreCheckout != nil || req.Kind == domain.BotAPIUpdatePreCheckoutQuery {
+		q := req.PreCheckout
+		if q == nil || req.Kind != domain.BotAPIUpdatePreCheckoutQuery || q.BotUserID != req.BotUserID || q.ID == 0 || q.UserID <= 0 || q.Currency == "" || q.TotalAmount <= 0 || req.Peer != (domain.Peer{}) || req.MessageID != 0 || req.SourcePts != 0 || req.Date <= 0 || req.Callback != nil || req.ChatMember != nil || req.Reaction != nil || req.JoinRequest != nil || req.Ephemeral != nil {
+			return fmt.Errorf("invalid bot api pre checkout query")
+		}
+		return nil
+	}
+	if err := domain.ValidateBotAPIJoinRequest(req); err != nil {
+		return err
+	}
+	if req.JoinRequest != nil {
+		return nil
+	}
+	if err := domain.ValidateBotAPIReactionRequest(req); err != nil {
+		return err
+	}
+	if req.Reaction != nil {
+		return nil
 	}
 	// A pre-checkout query is message-less by design: the bot is asked before any
 	// payment exists, so it carries no peer and no message id.

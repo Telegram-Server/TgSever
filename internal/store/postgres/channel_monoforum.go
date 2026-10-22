@@ -19,7 +19,7 @@ const paidMessageChannelCommissionPermille int64 = 850
 // 无需成员记录但只能写自己的 saved_peer，母频道管理员可以回复任意订阅者。
 func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.MonoforumID == 0 || req.SenderUserID == 0 || req.SavedPeer.ID == 0 ||
-		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" && req.Media == nil {
+		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" && req.Media == nil && req.RichMessage.IsZero() {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	if req.AllowPaidStars < 0 {
@@ -43,6 +43,13 @@ func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.Send
 		}); err != nil {
 			return domain.SendChannelMessageResult{}, err
 		} else if found {
+			if _, broadcast := store.BotBroadcastFromContext(ctx); broadcast {
+				if err := withTx(ctx, s.db, "complete monoforum broadcast replay", func(tx pgx.Tx) error {
+					return commitBotBroadcastTx(ctx, tx, nil, &dup.Message, true)
+				}); err != nil {
+					return domain.SendChannelMessageResult{}, err
+				}
+			}
 			return dup, nil
 		}
 	}
@@ -148,17 +155,24 @@ SET balance = channel_stars_balances.balance + EXCLUDED.balance, updated_at = no
 		if req.ReplyTo.MessageID <= 0 || req.ReplyTo.Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}) {
 			return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
 		}
-		var exists bool
-		if err := tx.QueryRow(ctx, `
-SELECT EXISTS (
-    SELECT 1 FROM channel_messages
-    WHERE channel_id = $1 AND id = $2 AND NOT deleted
-      AND saved_peer_type = $3 AND saved_peer_id = $4
-)`, channel.ID, req.ReplyTo.MessageID, string(req.SavedPeer.Type), req.SavedPeer.ID).Scan(&exists); err != nil {
-			return domain.SendChannelMessageResult{}, err
+		source, sourceErr := getSuggestedPostMessageForShare(ctx, tx, channel.ID, req.ReplyTo.MessageID)
+		if sourceErr != nil && !errors.Is(sourceErr, domain.ErrMessageIDInvalid) {
+			return domain.SendChannelMessageResult{}, sourceErr
 		}
-		if !exists {
+		if sourceErr == nil && source.SavedPeer != req.SavedPeer {
 			return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
+		}
+		if sourceErr != nil || source.Deleted {
+			if !req.ReplyTo.AllowMissing {
+				return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
+			}
+			req.ReplyTo = nil
+		} else {
+			if err := domain.ValidateBotAPIReplySource(req.ReplyTo, domain.Message{Body: source.Body, Entities: source.Entities, Media: source.Media}); err != nil {
+				return domain.SendChannelMessageResult{}, err
+			}
+			req.ReplyTo = domain.CloneMessageReply(req.ReplyTo)
+			req.ReplyTo.AllowMissing = false
 		}
 	}
 	from := domain.Peer{Type: domain.PeerTypeUser, ID: req.SenderUserID}
@@ -188,6 +202,8 @@ SELECT EXISTS (
 		Body:             req.Message,
 		Entities:         append([]domain.MessageEntity(nil), req.Entities...),
 		Media:            req.Media,
+		RichMessage:      req.RichMessage,
+		ReplyMarkup:      req.ReplyMarkup,
 		ReplyTo:          req.ReplyTo,
 		Forward:          req.Forward,
 		GroupedID:        req.GroupedID,
@@ -261,6 +277,9 @@ ORDER BY user_id`, parent.ID)
 		return domain.SendChannelMessageResult{}, err
 	}
 	rows.Close()
+	if err := commitBotBroadcastTx(ctx, tx, nil, &msg, false); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("commit send monoforum: %w", err)
 	}

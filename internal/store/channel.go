@@ -26,6 +26,10 @@ type ChannelStore interface {
 	SaveChannelDefaultSendAs(ctx context.Context, req domain.SaveChannelDefaultSendAsRequest) (domain.ChannelView, error)
 	GetParticipants(ctx context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error)
 	GetParticipant(ctx context.Context, viewerUserID, channelID, participantUserID int64) (domain.ChannelMember, error)
+	// GetMessageRanks reads current tags only for already-authorized message authors.
+	// It does not authorize message access; omitted authors have no current tag.
+	GetMessageRanks(ctx context.Context, authors []domain.ChannelMessageAuthor) (map[domain.ChannelMessageAuthor]string, error)
+	GetChannelSenderBan(ctx context.Context, viewerUserID, channelID, senderChannelID int64) (domain.ChannelMember, error)
 	FutureCreatorAfterLeave(ctx context.Context, channelID, userID int64) (domain.ChannelMember, error)
 	InviteToChannel(ctx context.Context, channelID, inviterUserID int64, userIDs []int64, date int) (domain.CreateChannelResult, error)
 	JoinChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error)
@@ -67,6 +71,7 @@ type ChannelStore interface {
 	SetPaidMessagesPrice(ctx context.Context, userID, channelID int64, stars int64, broadcastMessagesAllowed bool) (domain.ChannelPaidMessagesPriceResult, error)
 	SetAntiSpam(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetSlowMode(ctx context.Context, userID, channelID int64, seconds int) (domain.Channel, error)
+	SetStickers(ctx context.Context, userID, channelID, stickerSetID int64) (domain.Channel, error)
 	SetBoostsToUnblockRestrictions(ctx context.Context, userID, channelID int64, boosts int) (domain.Channel, error)
 	SetNoForwards(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetJoinToSend(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)

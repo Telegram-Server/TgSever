@@ -164,6 +164,16 @@ func (s *MessageStore) sendPrivateTextWithHooks(ctx context.Context, req domain.
 	for attempt := 0; attempt < 2; attempt++ {
 		res, err = s.sendPrivateTextOnce(ctx, req, hooks)
 		if err == nil {
+			if res.Duplicate {
+				if _, ok := store.BotBroadcastFromContext(ctx); ok {
+					err = withTx(ctx, s.db, "complete broadcast replay", func(tx pgx.Tx) error {
+						return commitBotBroadcastTx(ctx, tx, &res.SenderMessage, nil, true)
+					})
+					if err != nil {
+						return domain.SendPrivateTextResult{}, err
+					}
+				}
+			}
 			return res, nil
 		}
 		if !isMessageBoxDuplicateKey(err) || attempt > 0 {
@@ -190,6 +200,14 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		req.Date = int(time.Now().Unix())
 	}
 	plainHotPath := plainPrivateSendHotPath(req, hooks)
+	if _, broadcast := store.BotBroadcastFromContext(ctx); broadcast {
+		if req.RecipientBlocked {
+			return domain.SendPrivateTextResult{}, domain.ErrBotBroadcastRecipientBlocked
+		}
+		// The batch/plain shortcut commits without aggregate hooks. Broadcast
+		// quota, receipt and fee must share this message's full transaction.
+		plainHotPath = false
+	}
 	var entities, replyMarkupJSON, richMessageJSON []byte
 	if !plainHotPath {
 		var err error
@@ -275,7 +293,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if err := lockDispatchOutboxAppendFences(ctx, tx, []int64{req.SenderUserID, req.RecipientUserID}); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("lock send dispatch append fences: %w", err)
 	}
-	if hooks.before != nil || req.ReplyTo != nil {
+	if hooks.before != nil || req.ReplyTo != nil || req.Media != nil && req.Media.ServiceAction != nil && req.Media.ServiceAction.Kind == domain.MessageServiceActionPassportData {
 		// The preflight above cannot observe another first request until it commits.
 		// Recheck after the per-user transaction lock so aggregate-backed sends
 		// replay the committed message before their hook runs a second time.
@@ -307,6 +325,9 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		if err := hooks.before(ctx, tx, &req); err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
+	}
+	if err := persistPassportAuthorizationTx(ctx, tx, req); err != nil {
+		return domain.SendPrivateTextResult{}, err
 	}
 	if plainHotPath {
 		pm, createErr := createPlainPrivateMessage(ctx, tx, req, requestFingerprint, deliverRecipient)
@@ -381,22 +402,25 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	}
 
 	privateArg := sqlcgen.CreatePrivateMessageParams{
-		SenderUserID:       req.SenderUserID,
-		RecipientUserID:    req.RecipientUserID,
-		RandomID:           req.RandomID,
-		RequestFingerprint: requestFingerprint,
-		RecipientDelivered: deliverRecipient,
-		MessageDate:        int32(req.Date),
-		Body:               req.Message,
-		TtlPeriod:          int32(ttlPeriod),
-		ExpiresAt:          int32(expiresAt),
-		EntitiesJson:       entities,
-		MediaJson:          sharedMediaJSON,
-		ReplyMarkupJson:    replyMarkupJSON,
-		RichMessageJson:    richMessageJSON,
-		ViaBotID:           req.ViaBotID,
-		GroupedID:          req.GroupedID,
-		Effect:             req.Effect,
+		SenderUserID:         req.SenderUserID,
+		RecipientUserID:      req.RecipientUserID,
+		RandomID:             req.RandomID,
+		RequestFingerprint:   requestFingerprint,
+		RecipientDelivered:   deliverRecipient,
+		MessageDate:          int32(req.Date),
+		Body:                 req.Message,
+		TtlPeriod:            int32(ttlPeriod),
+		ExpiresAt:            int32(expiresAt),
+		EntitiesJson:         entities,
+		MediaJson:            sharedMediaJSON,
+		ReplyMarkupJson:      replyMarkupJSON,
+		RichMessageJson:      richMessageJSON,
+		ViaBotID:             req.ViaBotID,
+		GuestchatViaFrom:     domain.GuestChatViaFromID(req.SenderUserID, req.GuestBotID),
+		BusinessConnectionID: req.BusinessConnectionID,
+		BusinessBotID:        req.BusinessBotID,
+		GroupedID:            req.GroupedID,
+		Effect:               req.Effect,
 	}
 	applyCreatePrivateMessageMetadata(&privateArg, senderMeta)
 	pm, err := qtx.CreatePrivateMessage(ctx, privateArg)
@@ -475,26 +499,29 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 	}
 
 	senderArg := sqlcgen.CreateMessageBoxParams{
-		OwnerUserID:      req.SenderUserID,
-		BoxID:            int32(senderBoxID),
-		PrivateMessageID: pm.ID,
-		MessageSenderID:  req.SenderUserID,
-		PeerType:         string(domain.PeerTypeUser),
-		PeerID:           req.RecipientUserID,
-		FromUserID:       req.SenderUserID,
-		MessageDate:      int32(req.Date),
-		Outgoing:         true,
-		Body:             req.Message,
-		TtlPeriod:        int32(ttlPeriod),
-		ExpiresAt:        int32(expiresAt),
-		EntitiesJson:     entities,
-		Pts:              int32(senderPts),
-		MediaJson:        senderMediaJSON,
-		ReplyMarkupJson:  replyMarkupJSON,
-		RichMessageJson:  richMessageJSON,
-		ViaBotID:         req.ViaBotID,
-		GroupedID:        req.GroupedID,
-		Effect:           req.Effect,
+		OwnerUserID:          req.SenderUserID,
+		BoxID:                int32(senderBoxID),
+		PrivateMessageID:     pm.ID,
+		MessageSenderID:      req.SenderUserID,
+		PeerType:             string(domain.PeerTypeUser),
+		PeerID:               req.RecipientUserID,
+		FromUserID:           domain.GuestSenderUserID(req.SenderUserID, req.GuestBotID),
+		MessageDate:          int32(req.Date),
+		Outgoing:             true,
+		Body:                 req.Message,
+		TtlPeriod:            int32(ttlPeriod),
+		ExpiresAt:            int32(expiresAt),
+		EntitiesJson:         entities,
+		Pts:                  int32(senderPts),
+		MediaJson:            senderMediaJSON,
+		ReplyMarkupJson:      replyMarkupJSON,
+		RichMessageJson:      richMessageJSON,
+		ViaBotID:             req.ViaBotID,
+		GuestchatViaFrom:     domain.GuestChatViaFromID(req.SenderUserID, req.GuestBotID),
+		BusinessConnectionID: req.BusinessConnectionID,
+		BusinessBotID:        req.BusinessBotID,
+		GroupedID:            req.GroupedID,
+		Effect:               req.Effect,
 		// voice/round 在发送者自己的副本上也保持"未听"，直到对端
 		// readMessageContents 触发 sender 侧清除；发给自己无人可听，恒已读。
 		MediaUnread:    media.Sender.HasUnreadPayload() && !selfMessage,
@@ -551,28 +578,31 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 	}
 	if deliverRecipient {
 		recipientArg := sqlcgen.CreateMessageBoxParams{
-			OwnerUserID:      req.RecipientUserID,
-			BoxID:            int32(recipientBoxID),
-			PrivateMessageID: pm.ID,
-			MessageSenderID:  req.SenderUserID,
-			PeerType:         string(domain.PeerTypeUser),
-			PeerID:           req.SenderUserID,
-			FromUserID:       req.SenderUserID,
-			MessageDate:      int32(req.Date),
-			Outgoing:         false,
-			Body:             req.Message,
-			TtlPeriod:        int32(ttlPeriod),
-			ExpiresAt:        int32(expiresAt),
-			EntitiesJson:     entities,
-			Pts:              int32(recipientPts),
-			MediaJson:        recipientMediaJSON,
-			ReplyMarkupJson:  replyMarkupJSON,
-			RichMessageJson:  richMessageJSON,
-			ViaBotID:         req.ViaBotID,
-			GroupedID:        req.GroupedID,
-			Effect:           req.Effect,
-			MediaUnread:      media.Recipient.HasUnreadPayload(),
-			ReactionUnread:   false,
+			OwnerUserID:          req.RecipientUserID,
+			BoxID:                int32(recipientBoxID),
+			PrivateMessageID:     pm.ID,
+			MessageSenderID:      req.SenderUserID,
+			PeerType:             string(domain.PeerTypeUser),
+			PeerID:               req.SenderUserID,
+			FromUserID:           domain.GuestSenderUserID(req.SenderUserID, req.GuestBotID),
+			MessageDate:          int32(req.Date),
+			Outgoing:             false,
+			Body:                 req.Message,
+			TtlPeriod:            int32(ttlPeriod),
+			ExpiresAt:            int32(expiresAt),
+			EntitiesJson:         entities,
+			Pts:                  int32(recipientPts),
+			MediaJson:            recipientMediaJSON,
+			ReplyMarkupJson:      replyMarkupJSON,
+			RichMessageJson:      richMessageJSON,
+			ViaBotID:             req.ViaBotID,
+			GuestchatViaFrom:     domain.GuestChatViaFromID(req.SenderUserID, req.GuestBotID),
+			BusinessConnectionID: req.BusinessConnectionID,
+			BusinessBotID:        req.BusinessBotID,
+			GroupedID:            req.GroupedID,
+			Effect:               req.Effect,
+			MediaUnread:          media.Recipient.HasUnreadPayload(),
+			ReactionUnread:       false,
 		}
 		applyCreateMessageBoxMetadata(&recipientArg, recipientMeta)
 		recipientRow, err := qtx.CreateMessageBox(ctx, recipientArg)
@@ -652,6 +682,12 @@ WHERE sender_user_id = $1
 		if err := hooks.after(ctx, tx, result); err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
+	}
+	if err := persistBusinessGameMessageTx(ctx, tx, req, sender.ID); err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	if err := commitBotBroadcastTx(ctx, tx, &result.SenderMessage, nil, false); err != nil {
+		return domain.SendPrivateTextResult{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -815,6 +851,12 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, db sqlcgen.D
 	if req.ReplyTo == nil {
 		return nil, nil, nil
 	}
+	if (req.ReplyTo.ForumTopic || req.ReplyTo.TopMessageID > 0) && req.ReplyTo.Peer.ID != 0 && req.ReplyTo.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID}) {
+		return s.resolvePrivateForumExternalReply(ctx, db, q, req)
+	}
+	if (req.ReplyTo.ForumTopic || req.ReplyTo.TopMessageID > 0) && (req.ReplyTo.Peer.ID == 0 || req.ReplyTo.Peer.Type == domain.PeerTypeUser) {
+		return s.resolvePrivateForumReply(ctx, q, req)
+	}
 	if req.ReplyTo.External != nil {
 		return nil, nil, domain.ErrReplyMessageIDInvalid
 	}
@@ -839,13 +881,9 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, db sqlcgen.D
 	if peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel {
 		return nil, nil, domain.ErrReplyMessageIDInvalid
 	}
-	// Channel messages are validated at the RPC boundary through Channels.GetMessages.
-	// They have no private message_box row, so retain the cross-dialog reference
-	// and quote verbatim in both recipient projections.
 	if peer.Type == domain.PeerTypeChannel {
-		reply := cloneMessageReply(req.ReplyTo)
-		reply.Peer = peer
-		return reply, cloneMessageReply(reply), nil
+		reply, err := resolveExternalReply(ctx, db, req.SenderUserID, req.ReplyTo)
+		return reply, domain.CloneMessageReply(reply), err
 	}
 	source, err := q.GetMessageBoxForReply(ctx, sqlcgen.GetMessageBoxForReplyParams{
 		OwnerUserID: req.SenderUserID,
@@ -855,23 +893,40 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, db sqlcgen.D
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if req.ReplyTo.AllowMissing && peer.ID == req.RecipientUserID && req.ReplyTo.TopMessageID == 0 && !req.ReplyTo.ForumTopic {
+				return nil, nil, nil
+			}
 			return nil, nil, domain.ErrReplyMessageIDInvalid
 		}
 		return nil, nil, fmt.Errorf("get reply message: %w", err)
+	}
+	sourceMessage, err := loadPrivateReplyMessage(source, peer)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := domain.ValidateBotAPIReplySource(req.ReplyTo, sourceMessage); err != nil {
+		return nil, nil, err
+	}
+	topicID := int(source.ReplyToTopID)
+	if peer.ID == req.RecipientUserID && topicID == 0 {
+		if _, err := q.ResolvePrivateForumTopic(ctx, sqlcgen.ResolvePrivateForumTopicParams{SenderID: req.SenderUserID, RecipientID: req.RecipientUserID, TopicID: source.BoxID}); err == nil {
+			topicID = int(source.BoxID)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, err
+		}
+	}
+	if peer.ID == req.RecipientUserID && topicID > 0 {
+		req.ReplyTo = cloneMessageReply(req.ReplyTo)
+		req.ReplyTo.TopMessageID = topicID
+		req.ReplyTo.ForumTopic = true
+		return s.resolvePrivateForumReply(ctx, q, req)
 	}
 	senderReply := cloneMessageReply(req.ReplyTo)
 	senderReply.MessageID = int(source.BoxID)
 	senderReply.Peer = peer
 	if peer.ID != req.RecipientUserID {
-		entities, err := decodeMessageEntities(source.EntitiesJson)
-		if err != nil {
-			return nil, nil, err
-		}
-		media, err := decodeMessageMedia(source.MediaJson)
-		if err != nil {
-			return nil, nil, err
-		}
-		protected := source.Noforwards || (media != nil && media.TTLSeconds > 0)
+		entities, media := sourceMessage.Entities, sourceMessage.Media
+		protected := source.Noforwards || (media != nil && (media.TTLSeconds > 0 || media.PaidMedia != nil))
 		if low, high, ok := pgNoForwardsPair(req.SenderUserID, peer.ID); ok {
 			var pairProtected bool
 			if err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM private_no_forwards_chats WHERE user_low_id=$1 AND user_high_id=$2 AND COALESCE(enabled_by_user_id,0)<>0)`, low, high).Scan(&pairProtected); err != nil {
@@ -882,7 +937,7 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, db sqlcgen.D
 		if protected {
 			return nil, nil, domain.ErrChatForwardsRestricted
 		}
-		if err := domain.ValidateExternalReplyQuote(req.ReplyTo, source.Body); err != nil {
+		if err := domain.ValidateBotAPIReplySource(req.ReplyTo, sourceMessage); err != nil {
 			return nil, nil, err
 		}
 		senderReply.External, err = domain.NewMessageReplyExternal(domain.Message{From: domain.Peer{Type: domain.PeerTypeUser, ID: source.FromUserID}, Date: int(source.MessageDate), Body: source.Body, Entities: entities, Media: media})

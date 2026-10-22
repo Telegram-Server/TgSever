@@ -39,13 +39,8 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return nil, err
 	}
-	// game 按钮（getBotCallbackAnswer.game）P3 不支持：返回空答案（客户端不弹任何东西），
-	// 不挂起、不推送（避免给 bot 投递无法处理的 game query）。
-	if req.Game {
-		return &tg.MessagesBotCallbackAnswer{}, nil
-	}
 	data, hasData := req.GetData()
-	if !hasData {
+	if !hasData && !req.Game || req.Game && hasData {
 		return nil, dataInvalidErr()
 	}
 	if len(data) > domain.MaxCallbackDataLen {
@@ -55,12 +50,15 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
 	}
-	callback, err := r.resolveBotCallbackQuery(ctx, userID, peer, req.MsgID, data)
+	callback, err := r.resolveBotCallbackQuery(ctx, userID, peer, req.MsgID, data, req.Game)
 	if err != nil {
 		return nil, err
 	}
 	callback.ClientSession = clientSessionMetadataFromContext(ctx)
 	botUserID := callback.BotUserID
+	if err := r.ensureBotAccess(ctx, botUserID, userID); err != nil {
+		return nil, err
+	}
 
 	// 内置（进程内）service bot 分支：@verifybot 这类 bot 没有 MTProto session、也没有
 	// Bot API 消费者，走下面的「推 updateBotCallbackQuery + 挂起 25s」必然超时回
@@ -88,6 +86,19 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	}
 	defer r.callbacks.deregisterContext(context.Background(), botUserID, queryID)
 	callback.ID = queryID
+	if r.deps.Ephemeral != nil && peer.Type == domain.PeerTypeChannel {
+		device, err := ephemeralDeviceFromContext(ctx, userID)
+		if err == nil {
+			now := r.clock.Now()
+			created, err := r.deps.Ephemeral.PutCallbackAction(ctx, domain.EphemeralCallbackAction{
+				QueryID: queryID, BotUserID: botUserID, UserID: userID, Peer: peer,
+				MessageID: req.MsgID, TopMessageID: callback.TopMessageID, Device: device, CreatedAt: now, ExpiresAt: now.Add(domain.EphemeralReplyWindow),
+			})
+			if err != nil || !created {
+				return nil, internalErr()
+			}
+		}
+	}
 
 	// Bot API callback_query shares the dedicated durable update_id queue with message and
 	// edited_message. The callback answer waiter itself remains ephemeral/process-local.
@@ -116,14 +127,22 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 			QueryID: queryID, UserID: userID,
 			MsgID: tgInputBotInlineMessageID(*callback.InlineMessage), ChatInstance: callback.ChatInstance,
 		}
-		inline.SetData(data)
+		if req.Game {
+			inline.SetGameShortName(callback.GameShortName)
+		} else {
+			inline.SetData(data)
+		}
 		update = inline
 	} else {
 		direct := &tg.UpdateBotCallbackQuery{
 			QueryID: queryID, UserID: userID, Peer: tgPeer(callback.Peer),
 			MsgID: callback.MessageID, ChatInstance: callback.ChatInstance,
 		}
-		direct.SetData(data)
+		if req.Game {
+			direct.SetGameShortName(callback.GameShortName)
+		} else {
+			direct.SetData(data)
+		}
 		update = direct
 	}
 	r.pushUserMessage(ctx, botUserID, "push bot callback query", &tg.Updates{
@@ -158,10 +177,9 @@ func (r *Router) waitBotCallbackAnswer(ctx context.Context, botUserID, queryID i
 	}
 }
 
-// resolveBotCallbackQuery validates the clicked message and resolves the bot-visible message
-// identity. Inline-mode via_bot messages require updateInlineBotCallbackQuery + signed inline
-// ids and therefore remain an explicit blocked path instead of being misrouted here.
-func (r *Router) resolveBotCallbackQuery(ctx context.Context, userID int64, peer domain.Peer, msgID int, data []byte) (domain.BotCallbackQuery, error) {
+// resolveBotCallbackQuery validates the actual clicked button and binds it to its
+// authoring bot, including signed via-bot inline identities.
+func (r *Router) resolveBotCallbackQuery(ctx context.Context, userID int64, peer domain.Peer, msgID int, data []byte, game bool) (domain.BotCallbackQuery, error) {
 	if peer.Type == domain.PeerTypeUser {
 		msg, found, err := r.lookupOwnerMessage(ctx, userID, msgID)
 		if err != nil {
@@ -170,8 +188,27 @@ func (r *Router) resolveBotCallbackQuery(ctx context.Context, userID int64, peer
 		if !found || msg.Peer != peer || msg.ReplyMarkup == nil || msg.ReplyMarkup.Kind() != domain.MessageReplyMarkupInline || msg.ReplyMarkup.IsZero() {
 			return domain.BotCallbackQuery{}, messageIDInvalidErr()
 		}
-		if !replyMarkupContainsCallbackData(msg.ReplyMarkup, data) {
+		if !replyMarkupContainsCallback(msg.ReplyMarkup, data, game) || game && (msg.Media == nil || msg.Media.Game == nil) {
 			return domain.BotCallbackQuery{}, dataInvalidErr()
+		}
+		if game && msg.BusinessBotID != 0 {
+			botID := msg.BusinessBotID
+			if msg.Media.Game.BotUserID != botID {
+				return domain.BotCallbackQuery{}, dataInvalidErr()
+			}
+			owner, err := r.botAPIBusinessPeer(ctx, botID, msg.BusinessConnectionID, "can_reply", domain.Peer{Type: domain.PeerTypeUser, ID: userID})
+			if err != nil || owner != msg.From.ID {
+				return domain.BotCallbackQuery{}, dataInvalidErr()
+			}
+			provider, ok := r.deps.Messages.(privateMessageByUIDService)
+			if !ok {
+				return domain.BotCallbackQuery{}, internalErr()
+			}
+			sent, found, err := provider.GetMessageByUID(ctx, owner, msg.UID)
+			if err != nil || !found {
+				return domain.BotCallbackQuery{}, messageIDInvalidErr()
+			}
+			return domain.BotCallbackQuery{BotUserID: botID, UserID: userID, Peer: sent.Peer, MessageID: sent.ID, ChatInstance: chatInstanceFor(botID, userID), GameShortName: msg.Media.Game.ShortName}, nil
 		}
 		if msg.ViaBotID != 0 {
 			if !r.userIsBot(ctx, msg.ViaBotID) {
@@ -183,7 +220,8 @@ func (r *Router) resolveBotCallbackQuery(ctx context.Context, userID int64, peer
 			}
 			return domain.BotCallbackQuery{
 				BotUserID: msg.ViaBotID, UserID: userID,
-				ChatInstance: chatInstanceFor(msg.ViaBotID, userID), Data: append([]byte(nil), data...),
+				GameShortName: callbackGameName(msg.Media, game),
+				ChatInstance:  chatInstanceFor(msg.ViaBotID, userID), Data: append([]byte(nil), data...),
 				InlineMessage: domainInlineMessageID(inlineID),
 			}, nil
 		}
@@ -203,12 +241,13 @@ func (r *Router) resolveBotCallbackQuery(ctx context.Context, userID int64, peer
 			return domain.BotCallbackQuery{}, messageIDInvalidErr()
 		}
 		return domain.BotCallbackQuery{
-			BotUserID:    msg.From.ID,
-			UserID:       userID,
-			Peer:         botMessage.Peer,
-			MessageID:    botMessage.ID,
-			ChatInstance: chatInstanceFor(msg.From.ID, userID),
-			Data:         append([]byte(nil), data...),
+			GameShortName: callbackGameName(msg.Media, game),
+			BotUserID:     msg.From.ID,
+			UserID:        userID,
+			Peer:          botMessage.Peer,
+			MessageID:     botMessage.ID,
+			ChatInstance:  chatInstanceFor(msg.From.ID, userID),
+			Data:          append([]byte(nil), data...),
 		}, nil
 	}
 	if peer.Type != domain.PeerTypeChannel || r.deps.Channels == nil {
@@ -225,7 +264,7 @@ func (r *Router) resolveBotCallbackQuery(ctx context.Context, userID int64, peer
 	if msg.ID != msgID || msg.Deleted || msg.ReplyMarkup == nil || msg.ReplyMarkup.Kind() != domain.MessageReplyMarkupInline || msg.ReplyMarkup.IsZero() {
 		return domain.BotCallbackQuery{}, messageIDInvalidErr()
 	}
-	if !replyMarkupContainsCallbackData(msg.ReplyMarkup, data) {
+	if !replyMarkupContainsCallback(msg.ReplyMarkup, data, game) || game && (msg.Media == nil || msg.Media.Game == nil) {
 		return domain.BotCallbackQuery{}, dataInvalidErr()
 	}
 	if msg.ViaBotID != 0 {
@@ -237,7 +276,8 @@ func (r *Router) resolveBotCallbackQuery(ctx context.Context, userID int64, peer
 			return domain.BotCallbackQuery{}, messageIDInvalidErr()
 		}
 		return domain.BotCallbackQuery{
-			BotUserID: msg.ViaBotID, UserID: userID,
+			GameShortName: callbackGameName(msg.Media, game),
+			BotUserID:     msg.ViaBotID, UserID: userID,
 			ChatInstance: chatInstanceForPeer(msg.ViaBotID, peer), Data: append([]byte(nil), data...),
 			InlineMessage: domainInlineMessageID(inlineID),
 		}, nil
@@ -245,13 +285,19 @@ func (r *Router) resolveBotCallbackQuery(ctx context.Context, userID int64, peer
 	if msg.SenderUserID == 0 || !r.userIsBot(ctx, msg.SenderUserID) {
 		return domain.BotCallbackQuery{}, dataInvalidErr()
 	}
+	topMessageID := 0
+	if msg.ReplyTo != nil && msg.ReplyTo.ForumTopic {
+		topMessageID = msg.ReplyTo.TopMessageID
+	}
 	return domain.BotCallbackQuery{
-		BotUserID:    msg.SenderUserID,
-		UserID:       userID,
-		Peer:         peer,
-		MessageID:    msg.ID,
-		ChatInstance: chatInstanceForPeer(msg.SenderUserID, peer),
-		Data:         append([]byte(nil), data...),
+		GameShortName: callbackGameName(msg.Media, game),
+		BotUserID:     msg.SenderUserID,
+		UserID:        userID,
+		Peer:          peer,
+		MessageID:     msg.ID,
+		TopMessageID:  topMessageID,
+		ChatInstance:  chatInstanceForPeer(msg.SenderUserID, peer),
+		Data:          append([]byte(nil), data...),
 	}, nil
 }
 
@@ -266,18 +312,25 @@ func tgInputBotInlineMessageID(id domain.BotInlineMessageID) tg.InputBotInlineMe
 	return &tg.InputBotInlineMessageID64{DCID: id.DCID, OwnerID: id.OwnerID, ID: id.ID, AccessHash: id.AccessHash}
 }
 
-func replyMarkupContainsCallbackData(markup *domain.MessageReplyMarkup, data []byte) bool {
+func replyMarkupContainsCallback(markup *domain.MessageReplyMarkup, data []byte, game bool) bool {
 	if markup == nil || markup.Kind() != domain.MessageReplyMarkupInline {
 		return false
 	}
 	for _, row := range markup.Inline {
 		for _, button := range row {
-			if button.Type == domain.MarkupButtonCallback && bytes.Equal(button.Data, data) {
+			if game && button.Type == domain.MarkupButtonGame || !game && button.Type == domain.MarkupButtonCallback && bytes.Equal(button.Data, data) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func callbackGameName(media *domain.MessageMedia, game bool) string {
+	if game && media != nil && media.Game != nil {
+		return media.Game.ShortName
+	}
+	return ""
 }
 
 // onMessagesSetBotCallbackAnswer 是 bot 对一次 callback query 的应答：解挂等待中的

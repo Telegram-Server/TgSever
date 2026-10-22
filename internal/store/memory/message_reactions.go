@@ -32,9 +32,21 @@ func (s *MessageStore) SetMessageReactions(_ context.Context, req domain.SetPriv
 			break
 		}
 	}
-	if target.ID == 0 || target.UID == 0 {
+	if target.GroupedID != 0 {
+		for _, candidate := range s.m[req.UserID] {
+			if candidate.Peer == req.Peer && candidate.GroupedID == target.GroupedID && !candidate.Deleted && (target.Deleted || candidate.ID < target.ID) {
+				target = candidate
+			}
+		}
+		req.MessageID = target.ID
+	}
+	if target.ID == 0 || target.UID == 0 || target.Deleted {
 		return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
+	if target.Media != nil && target.Media.Kind == domain.MessageMediaKindService {
+		return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
+	}
+	old := reactionSelection(s.privateReactions[target.UID][req.UserID])
 	if _, ok := s.privateReactions[target.UID]; !ok {
 		s.privateReactions[target.UID] = make(map[int64][]domain.ChannelMessagePeerReaction)
 	}
@@ -67,7 +79,9 @@ func (s *MessageStore) SetMessageReactions(_ context.Context, req domain.SetPriv
 		}
 	}
 	s.refreshPrivateReactionDialogSnapshotsLocked(target.UID)
-	return s.privateReactionResultLocked(target.UID), nil
+	res := s.privateReactionResultLocked(target.UID)
+	res.MessageReactionChange = domain.MessageReactionChange{MessageID: req.MessageID, ActorUserID: req.UserID, OldReactions: old, NewReactions: append([]domain.MessageReaction(nil), req.Reactions...)}
+	return res, nil
 }
 
 func (s *MessageStore) GetMessageReactions(_ context.Context, req domain.PrivateMessageReactionsRequest) (domain.PrivateMessageReactionsResult, error) {

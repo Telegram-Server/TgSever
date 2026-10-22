@@ -450,7 +450,7 @@ func TestMessagesSaveDraftPushesDraftUpdateToOtherSessions(t *testing.T) {
 		Sessions: sessions,
 		Users: mapUsersService{users: map[int64]domain.User{
 			userID: {ID: userID, FirstName: "Alice"},
-			peerID: {ID: peerID, FirstName: "Bob"},
+			peerID: {ID: peerID, AccessHash: 22, FirstName: "Bob"},
 		}},
 	}, zaptest.NewLogger(t), clock.System)
 	var authKeyID [8]byte

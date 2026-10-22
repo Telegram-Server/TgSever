@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error) {
+func (s *ChannelStore) SendChannelMessage(ctx context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
@@ -26,8 +26,26 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		}
 		req.IdempotencyFingerprint = fingerprint
 	}
+	commerce, broadcast, err := lockMemoryBroadcast(ctx)
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	if commerce != nil {
+		defer commerce.mu.Unlock()
+		if commerce.channels != s {
+			return domain.SendChannelMessageResult{}, domain.ErrBotBroadcastReservation
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	res, err := s.sendChannelMessageLocked(req, fingerprint)
+	if err == nil && commerce != nil {
+		commerce.commitBroadcastLocked(broadcast, nil, &res.Message, res.Duplicate)
+	}
+	return res, err
+}
+
+func (s *ChannelStore) sendChannelMessageLocked(req domain.SendChannelMessageRequest, fingerprint []byte) (domain.SendChannelMessageResult, error) {
 	if req.RandomID != 0 {
 		if replay, found, replayErr := s.lookupChannelSendReplayLocked(domain.ChannelSendReplayRequest{
 			ChannelID:              req.ChannelID,
@@ -58,6 +76,21 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	}
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
+	}
+	if req.GuestBotID != 0 {
+		if !channel.Megagroup || channel.Broadcast || req.SendAs != nil {
+			return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
+		}
+		if bot, exists := s.members[req.ChannelID][req.GuestBotID]; exists {
+			if bot.Status == domain.ChannelMemberBanned || bot.Status == domain.ChannelMemberKicked || domain.ChannelBannedRightsBlockMessage(req, channel, bot, 0) {
+				return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
+			}
+		}
+	}
+	if req.SendAs != nil && req.SendAs.Type == domain.PeerTypeChannel {
+		if s.senderIdentityBannedLocked(req.ChannelID, req.SendAs.ID) {
+			return domain.SendChannelMessageResult{}, domain.ErrChannelSenderBanned
+		}
 	}
 	if member.Guest && channel.JoinToSend {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
@@ -92,7 +125,8 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	skipDelivery := channelDeliverySkipSet(req.SkipDeliveryUserIDs)
 	var discussion *domain.SendChannelDiscussionResult
 	var discussionRef *domain.ChannelDiscussionRef
-	if channel.Broadcast && channel.LinkedChatID != 0 {
+	linkedSenderBanned := s.senderIdentityBannedLocked(channel.LinkedChatID, channel.ID)
+	if channel.Broadcast && channel.LinkedChatID != 0 && !linkedSenderBanned {
 		if linked, ok := s.channels[channel.LinkedChatID]; ok && !linked.Deleted && linked.Megagroup {
 			discussionPts := s.nextChannelPtsLocked(linked.ID)
 			discussionMsgID := s.nextChannelMessageIDLocked(linked.ID)
@@ -107,7 +141,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 				NoForwards:   req.NoForwards || channel.NoForwards || linked.NoForwards,
 				Body:         req.Message,
 				Entities:     append([]domain.MessageEntity(nil), req.Entities...),
-				RichMessage:  cloneRichMessage(req.RichMessage),
+				RichMessage:  domain.CloneRichMessage(req.RichMessage),
 				Forward:      &domain.MessageForward{From: domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}, Date: req.Date, ChannelPost: msgID, SavedFrom: domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}, SavedFromMsgID: msgID},
 				ViaBotID:     req.ViaBotID,
 				GroupedID:    req.GroupedID,
@@ -147,7 +181,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		ID:                msgID,
 		RandomID:          req.RandomID,
 		SenderUserID:      req.UserID,
-		From:              domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID},
+		From:              domain.Peer{Type: domain.PeerTypeUser, ID: domain.GuestSenderUserID(req.UserID, req.GuestBotID)},
 		Date:              req.Date,
 		Post:              channel.Broadcast,
 		ShowMessageSender: channel.Broadcast && channel.SignatureProfiles && sendAs != nil && !(sendAs.Type == domain.PeerTypeChannel && sendAs.ID == channel.ID),
@@ -157,7 +191,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		Body:              req.Message,
 		Entities:          append([]domain.MessageEntity(nil), req.Entities...),
 		Media:             req.Media,
-		RichMessage:       cloneRichMessage(req.RichMessage),
+		RichMessage:       domain.CloneRichMessage(req.RichMessage),
 		ReplyTo:           replyTo,
 		Forward:           cloneMessageForward(req.Forward),
 		ViaBotID:          req.ViaBotID,
@@ -168,6 +202,9 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		Action:            cloneChannelMessageAction(req.Action),
 		FromBoostsApplied: fromBoostsApplied,
 		Pts:               pts,
+	}
+	if req.GuestBotID != 0 {
+		msg.GuestChatViaFrom = domain.GuestChatPeer(req.UserID)
 	}
 	msg.Replies = s.channelMessageRepliesLocked(req.UserID, req.ChannelID, msg)
 	var sendSnapshot []byte

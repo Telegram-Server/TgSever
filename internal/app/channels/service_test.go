@@ -1863,6 +1863,7 @@ func TestSendMessageResolvesChannelReplyTopID(t *testing.T) {
 		ChannelID: created.Channel.ID,
 		RandomID:  1,
 		Message:   "root",
+		Entities:  []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 4}},
 		Date:      11,
 	})
 	if err != nil {

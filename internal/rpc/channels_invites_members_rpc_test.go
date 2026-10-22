@@ -675,14 +675,25 @@ func TestChannelAdminPinInviteRPC(t *testing.T) {
 		t.Fatalf("import result = %T, want *tg.MessagesChatInviteJoinResultOk", imported)
 	}
 	importUpdates := importOk.Updates.(*tg.Updates)
-	if len(importUpdates.Chats) != 1 || len(importUpdates.Updates) != 2 {
-		t.Fatalf("import updates = %+v, want chat, join service update, and channel refresh", importUpdates)
+	if len(importUpdates.Chats) != 1 {
+		t.Fatalf("import chats = %+v", importUpdates.Chats)
 	}
 	assertDefaultBannedRightsAllowsSend(t, importUpdates.Chats[0])
-	if _, ok := importUpdates.Updates[0].(*tg.UpdateNewChannelMessage); !ok {
-		t.Fatalf("import first update = %T, want join service update", importUpdates.Updates[0])
-	} else if refresh, ok := importUpdates.Updates[1].(*tg.UpdateChannel); !ok || refresh.ChannelID != channel.ID {
-		t.Fatalf("import second update = %#v, want channel refresh", importUpdates.Updates[1])
+	joined, refreshed := false, false
+	for _, update := range importUpdates.Updates {
+		switch update := update.(type) {
+		case *tg.UpdateNewChannelMessage:
+			if message, ok := update.Message.(*tg.MessageService); ok {
+				if action, ok := message.Action.(*tg.MessageActionChatJoinedByLink); ok && action.InviterID == friend.ID {
+					joined = true
+				}
+			}
+		case *tg.UpdateChannel:
+			refreshed = refreshed || update.ChannelID == channel.ID
+		}
+	}
+	if !joined || !refreshed {
+		t.Fatalf("join service or channel refresh missing: %+v", importUpdates.Updates)
 	}
 	inviteList, err := r.onMessagesGetExportedChatInvites(WithUserID(ctx, friend.ID), &tg.MessagesGetExportedChatInvitesRequest{
 		Peer:    &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
@@ -756,14 +767,14 @@ func TestChannelAdminPinInviteRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get admins with invites: %v", err)
 	}
-	// 创建者随建自动持有主链接（1 条）；friend 为显式导出的 "join" + 列表自愈
-	// 生成的主链接（2 条）。
+	// 非群主只能看到自己的链接汇总：friend 的附加链接和自己的主链接，
+	// 不得泄露创建者的主链接计数。
 	adminInvites := map[int64]int{}
 	for _, admin := range adminsWithInvites.Admins {
 		adminInvites[admin.AdminID] = admin.InvitesCount
 	}
-	if len(adminsWithInvites.Admins) != 2 || adminInvites[owner.ID] != 1 || adminInvites[friend.ID] != 2 || len(adminsWithInvites.Users) == 0 {
-		t.Fatalf("admins with invites = %+v, want creator permanent link plus friend's two links", adminsWithInvites)
+	if len(adminInvites) != 1 || adminInvites[friend.ID] != 2 {
+		t.Fatalf("admins with invites = %+v, want only friend's two links", adminsWithInvites)
 	}
 	importers, err := r.onMessagesGetChatInviteImporters(WithUserID(ctx, friend.ID), &tg.MessagesGetChatInviteImportersRequest{
 		Peer:  &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},

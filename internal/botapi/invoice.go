@@ -45,7 +45,7 @@ func (h *handler) sendInvoice(w http.ResponseWriter, r *http.Request, botID int6
 		return
 	}
 	msg, err := h.invoices.BotAPISendInvoice(r.Context(), botID, chatID,
-		values["title"], values["description"], values["payload"], amount)
+		values["title"], values["description"], values["payload"], amount, apiBool(values["allow_paid_broadcast"]))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return

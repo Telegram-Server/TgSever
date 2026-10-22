@@ -18,7 +18,7 @@ func TestPrivatePinRequiresMessageBoundary(t *testing.T) {
 	if out, err := r.updatePrivatePinnedMessage(ctx, 1001, peer, &tg.MessagesUpdatePinnedMessageRequest{ID: 1}); !tgerr.Is(err, "NOT_IMPLEMENTED") || out != nil {
 		t.Fatal("pin missing dependency", out, err)
 	}
-	if out, err := r.unpinAllPrivateMessages(ctx, 1001, peer); !tgerr.Is(err, "NOT_IMPLEMENTED") || out != nil {
+	if out, err := r.unpinAllPrivateMessages(ctx, 1001, peer, 0); !tgerr.Is(err, "NOT_IMPLEMENTED") || out != nil {
 		t.Fatal("unpin all missing dependency returned success", out, err)
 	}
 }

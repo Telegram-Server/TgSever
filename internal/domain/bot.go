@@ -214,6 +214,10 @@ type BotRequestedWebViewButton struct {
 	UserID            int64
 	ButtonID          int
 	Text              string
+	Style             MarkupButtonStyle
+	IconCustomEmojiID int64
+	SuggestedName     string
+	SuggestedUsername string
 	PeerType          string
 	MaxQuantity       int
 	PeerFilter        *BotRequestPeerFilter
@@ -302,10 +306,12 @@ var (
 // plain product, so reusing it for a bot sale would mean filling in fields that
 // mean nothing here. The Premium bot keeps its own type.
 type Invoice struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	AmountStars int64  `json:"amount_stars"`
-	StartParam  string `json:"start_param,omitempty"`
+	Title       string                `json:"title"`
+	Description string                `json:"description"`
+	AmountStars int64                 `json:"amount_stars"`
+	StartParam  string                `json:"start_param,omitempty"`
+	Slug        string                `json:"slug,omitempty"`
+	Photo       *BotInlineWebDocument `json:"photo,omitempty"`
 }
 
 // Valid reports whether the invoice can be projected onto messageMediaInvoice.
@@ -314,7 +320,7 @@ func (i Invoice) Valid() bool {
 		utf8.RuneCountInString(i.Title) <= BotInvoiceMaxTitle &&
 		utf8.RuneCountInString(i.Description) > 0 &&
 		utf8.RuneCountInString(i.Description) <= BotInvoiceMaxDescription &&
-		i.AmountStars > 0 && len(i.StartParam) <= BotInvoiceMaxPayload
+		i.AmountStars > 0 && len(i.StartParam) <= BotInvoiceMaxStartParam
 }
 
 // BotInvoiceMaxTitle is the messageMediaInvoice title budget.
@@ -323,8 +329,11 @@ const BotInvoiceMaxTitle = 32
 // BotInvoiceMaxDescription is the messageMediaInvoice description budget.
 const BotInvoiceMaxDescription = 255
 
-// BotInvoiceMaxPayload is the start_param budget Telegram allows.
-const BotInvoiceMaxPayload = 64
+// BotInvoiceMaxPayload bounds the private invoice payload in bytes.
+const BotInvoiceMaxPayload = 128
+
+// BotInvoiceMaxStartParam bounds the public deep-link start parameter.
+const BotInvoiceMaxStartParam = 64
 
 // GramsrvBotUserID is the built-in @gramsrv moderation bot account used by
 // WithGramsrvAdmin. Zero means the bot is not provisioned on this server.
@@ -336,7 +345,7 @@ func (i BotInvoice) Valid() bool {
 		i.Currency == PremiumCurrencyStars &&
 		utf8.RuneCountInString(i.Title) <= BotInvoiceMaxTitle &&
 		utf8.RuneCountInString(i.Description) <= BotInvoiceMaxDescription &&
-		len(i.Payload) <= BotInvoiceMaxPayload
+		len(i.Payload) > 0 && len(i.Payload) <= BotInvoiceMaxPayload
 }
 
 // Settled reports whether the invoice has already been paid, which makes a
@@ -344,20 +353,24 @@ func (i BotInvoice) Valid() bool {
 func (i BotInvoice) Settled() bool { return i.Paid && i.ChargeID != "" }
 
 type BotProfile struct {
-	BotUserID         int64
-	OwnerUserID       int64
-	TokenSecret       string
-	Description       string
-	Commands          []BotCommand
-	ChatHistory       bool // privacy mode 关闭 = true（bot_chat_history flag）
-	Nochats           bool // true = 不允许加群（bot_nochats flag）
-	InlineGeo         bool
-	InlinePlaceholder string
-	MenuButton        BotMenuButton
-	HasMainApp        bool
-	HasAttachMenu     bool
-	HasPreviewMedias  bool
-	AppSettings       *BotAppSettings
+	BotUserID            int64
+	OwnerUserID          int64
+	TokenSecret          string
+	Description          string
+	Commands             []BotCommand
+	ChatHistory          bool // privacy mode 关闭 = true（bot_chat_history flag）
+	Nochats              bool // true = 不允许加群（bot_nochats flag）
+	InlineGeo            bool
+	GuestChat            bool
+	CanManageBots        bool
+	InlinePlaceholder    string
+	MenuButton           BotMenuButton
+	GroupAdminRights     ChannelAdminRights
+	BroadcastAdminRights ChannelAdminRights
+	HasMainApp           bool
+	HasAttachMenu        bool
+	HasPreviewMedias     bool
+	AppSettings          *BotAppSettings
 }
 
 // BotChatState 是内置 bot（当前仅 BotFather）与某用户的对话状态机持久态。

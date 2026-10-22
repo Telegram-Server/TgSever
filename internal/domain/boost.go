@@ -90,17 +90,19 @@ type PremiumBoostStatus struct {
 }
 
 // PremiumBoostList is a bounded admin-visible boosts page.
+//
+// 不携带用户行：store 读出的原始 users 行含手机号等未按查看者处理的字段，boost
+// 用户一律由 rpc 层按 Boosts[].UserID 走查看者投影（手机号、头像隐私、已注销）。
 type PremiumBoostList struct {
 	Count      int
 	Boosts     []PremiumBoostSlot
-	Users      []User
 	NextOffset string
 }
 
-// PremiumMyBoosts is the current user's slot inventory.
+// PremiumMyBoosts is the current user's slot inventory. 同 PremiumBoostList，
+// 不携带用户行。
 type PremiumMyBoosts struct {
 	Slots    []PremiumBoostSlot
-	Users    []User
 	Channels []Channel
 }
 

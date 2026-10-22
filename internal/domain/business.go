@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"unicode/utf8"
@@ -106,6 +108,8 @@ type BusinessBotRecipients struct {
 }
 
 type ConnectedBusinessBot struct {
+	ConnectionID  string
+	Disabled      bool
 	OwnerUserID   int64
 	BotUserID     int64
 	Recipients    BusinessBotRecipients
@@ -120,6 +124,52 @@ type ConnectedBusinessBotPeerState struct {
 	Paused        bool
 	Disabled      bool
 	UpdatedAtUnix int64
+}
+
+// NewBusinessConnectionID creates an opaque, unguessable delegation identifier.
+func NewBusinessConnectionID() (string, error) {
+	var raw [24]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw[:]), nil
+}
+
+func (r BusinessBotRights) Allows(right string) bool {
+	switch right {
+	case "":
+		return true
+	case "can_reply":
+		return r.Reply
+	case "can_read_messages":
+		return r.ReadMessages
+	case "can_delete_sent_messages":
+		return r.DeleteSentMessages
+	case "can_delete_all_messages":
+		return r.DeleteReceivedMessages
+	case "can_edit_name":
+		return r.EditName
+	case "can_edit_bio":
+		return r.EditBio
+	case "can_edit_profile_photo":
+		return r.EditProfilePhoto
+	case "can_edit_username":
+		return r.EditUsername
+	case "can_change_gift_settings":
+		return r.ChangeGiftSettings
+	case "can_view_gifts_and_stars":
+		return r.ViewGifts
+	case "can_convert_gifts_to_stars":
+		return r.SellGifts
+	case "can_transfer_and_upgrade_gifts":
+		return r.TransferAndUpgradeGifts
+	case "can_transfer_stars":
+		return r.TransferStars
+	case "can_manage_stories":
+		return r.ManageStories
+	default:
+		return false
+	}
 }
 
 type BusinessGreetingMessage struct {

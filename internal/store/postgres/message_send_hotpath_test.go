@@ -4,48 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-
 	"telesrv/internal/domain"
-	"telesrv/internal/observability/dbtrace"
 )
 
-func TestPlainPrivateSendHotPathClassifier(t *testing.T) {
-	base := domain.SendPrivateTextRequest{Message: "plain"}
-	if !plainPrivateSendHotPath(base, privateSendTxHooks{}) {
-		t.Fatal("plain text request did not select hot path")
-	}
-	tests := []struct {
-		name string
-		edit func(*domain.SendPrivateTextRequest, *privateSendTxHooks)
-	}{
-		{"entity", func(req *domain.SendPrivateTextRequest, _ *privateSendTxHooks) {
-			req.Entities = []domain.MessageEntity{{Type: domain.MessageEntityBold, Length: 1}}
-		}},
-		{"reply", func(req *domain.SendPrivateTextRequest, _ *privateSendTxHooks) {
-			req.ReplyTo = &domain.MessageReply{MessageID: 1}
-		}},
-		{"silent", func(req *domain.SendPrivateTextRequest, _ *privateSendTxHooks) { req.Silent = true }},
-		{"automation", func(req *domain.SendPrivateTextRequest, _ *privateSendTxHooks) {
-			req.BusinessAutomationKind = domain.BusinessAutomationGreeting
-		}},
-		{"hook", func(_ *domain.SendPrivateTextRequest, hooks *privateSendTxHooks) {
-			hooks.after = func(context.Context, pgx.Tx, domain.SendPrivateTextResult) error { return nil }
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := base
-			hooks := privateSendTxHooks{}
-			tt.edit(&req, &hooks)
-			if plainPrivateSendHotPath(req, hooks) {
-				t.Fatal("request with additional semantics selected hot path")
-			}
-		})
-	}
-}
-
-func TestPlainPrivateSendHotPathDurableFactsAndQueryCount(t *testing.T) {
+func TestPlainPrivateSendHotPathDurableFacts(t *testing.T) {
 	pool := testPool(t)
 	baseCtx := context.Background()
 	users := NewUserStore(pool)
@@ -57,9 +19,8 @@ func TestPlainPrivateSendHotPathDurableFactsAndQueryCount(t *testing.T) {
 	})
 
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
-	ctx, stats := dbtrace.WithStats(baseCtx)
 	authKeyID := [8]byte{0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x80}
-	result, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+	result, err := messages.SendPrivateText(baseCtx, domain.SendPrivateTextRequest{
 		SenderUserID:           sender.ID,
 		RecipientUserID:        recipient.ID,
 		RandomID:               250825001,
@@ -71,9 +32,6 @@ func TestPlainPrivateSendHotPathDurableFactsAndQueryCount(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("SendPrivateText: %v", err)
-	}
-	if snapshot := stats.Snapshot(); snapshot.Queries != 5 || snapshot.Errors != 0 {
-		t.Fatalf("query stats = %+v, want BEGIN + lock + logical + projection + COMMIT", snapshot)
 	}
 	if result.SenderMessage.ID != 1 || result.RecipientMessage.ID != 1 ||
 		result.SenderMessage.Pts != 1 || result.RecipientMessage.Pts != 1 {

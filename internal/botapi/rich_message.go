@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 
@@ -65,25 +66,147 @@ func richMessageInputFromAPI(raw string) (domain.BotAPIRichMessageInput, error) 
 	return out, nil
 }
 
-func richReplyMessageID(values map[string]string) (int, error) {
-	legacy := apiInt(values["reply_to_message_id"], 0)
-	raw := strings.TrimSpace(values["reply_parameters"])
-	if raw == "" {
-		if legacy < 0 {
-			return 0, errors.New("REPLY_MESSAGE_ID_INVALID")
+func parseBotAPIReplyParameters(values map[string]string) (*domain.BotAPIReplyParameters, error) {
+	invalid := errors.New("REPLY_PARAMETERS_INVALID")
+	legacyRaw, legacyPresent := values["reply_to_message_id"]
+	raw, present := values["reply_parameters"]
+	if !present {
+		if !legacyPresent {
+			return nil, nil
 		}
-		return legacy, nil
+		id, err := strconv.Atoi(legacyRaw)
+		if err != nil || id <= 0 || id > domain.MaxMessageBoxID {
+			return nil, invalid
+		}
+		return &domain.BotAPIReplyParameters{MessageID: id}, nil
 	}
-	if legacy != 0 {
-		return 0, errors.New("REPLY_PARAMETERS_INVALID")
+	if legacyPresent {
+		return nil, invalid
 	}
 	var payload struct {
-		MessageID int `json:"message_id"`
+		MessageID                int             `json:"message_id"`
+		EphemeralMessageID       int             `json:"ephemeral_message_id"`
+		ChatID                   json.RawMessage `json:"chat_id"`
+		AllowSendingWithoutReply bool            `json:"allow_sending_without_reply"`
+		Quote                    string          `json:"quote"`
+		QuoteParseMode           string          `json:"quote_parse_mode"`
+		QuoteEntities            json.RawMessage `json:"quote_entities"`
+		QuotePosition            *int            `json:"quote_position"`
+		ChecklistTaskID          *int            `json:"checklist_task_id"`
+		PollOptionID             string          `json:"poll_option_id"`
 	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload.MessageID <= 0 {
-		return 0, errors.New("REPLY_PARAMETERS_INVALID")
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&payload) != nil || decoder.Decode(new(any)) != io.EOF ||
+		payload.MessageID < 0 || payload.MessageID > domain.MaxMessageBoxID ||
+		payload.EphemeralMessageID < 0 || payload.EphemeralMessageID > domain.MaxMessageBoxID ||
+		(payload.MessageID == 0) == (payload.EphemeralMessageID == 0) {
+		return nil, invalid
 	}
-	return payload.MessageID, nil
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &fields) != nil {
+		return nil, invalid
+	}
+	for _, value := range fields {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return nil, invalid
+		}
+	}
+	result := &domain.BotAPIReplyParameters{
+		MessageID: payload.MessageID, EphemeralMessageID: payload.EphemeralMessageID,
+		AllowSendingWithoutReply: payload.AllowSendingWithoutReply,
+		QuotePosition:            payload.QuotePosition, PollOptionID: payload.PollOptionID,
+	}
+	if len(payload.ChatID) != 0 {
+		if payload.ChatID[0] == '"' {
+			if json.Unmarshal(payload.ChatID, &result.ChatID) != nil {
+				return nil, invalid
+			}
+		} else {
+			result.ChatID = string(payload.ChatID)
+		}
+		if result.ChatID == "" || result.ChatID != strings.TrimSpace(result.ChatID) {
+			return nil, invalid
+		}
+		if strings.HasPrefix(result.ChatID, "@") {
+			if len(result.ChatID) == 1 {
+				return nil, invalid
+			}
+		} else if id, err := strconv.ParseInt(result.ChatID, 10, 64); err != nil || id == 0 {
+			return nil, invalid
+		}
+	}
+	if result.QuotePosition != nil && (*result.QuotePosition < 0 || *result.QuotePosition > domain.MaxMessageReplyQuoteOffset) {
+		return nil, invalid
+	}
+	if payload.ChecklistTaskID != nil {
+		if *payload.ChecklistTaskID <= 0 || *payload.ChecklistTaskID > domain.MaxMessageBoxID {
+			return nil, invalid
+		}
+		result.ChecklistTaskID = *payload.ChecklistTaskID
+	}
+	if result.ChecklistTaskID != 0 && result.PollOptionID != "" {
+		return nil, invalid
+	}
+	var err error
+	result.Quote, result.QuoteEntities, err = botAPIFormattedTextRaw(payload.Quote, payload.QuoteParseMode, string(payload.QuoteEntities), 1024, false)
+	if err != nil {
+		return nil, err
+	}
+	if result.Quote == "" && (result.QuotePosition != nil || len(result.QuoteEntities) != 0) {
+		return nil, invalid
+	}
+	return result, nil
+}
+
+func parseBotAPISuggestedPost(raw string) (*domain.SuggestedPost, error) {
+	invalid := errors.New("SUGGESTED_POST_PARAMETERS_INVALID")
+	var parameters struct {
+		Price *struct {
+			Currency string `json:"currency"`
+			Amount   int64  `json:"amount"`
+		} `json:"price"`
+		SendDate *int `json:"send_date"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&parameters) != nil || decoder.Decode(new(any)) != io.EOF {
+		return nil, invalid
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &fields) != nil || fields == nil {
+		return nil, invalid
+	}
+	for _, value := range fields {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return nil, invalid
+		}
+	}
+	result := &domain.SuggestedPost{}
+	if parameters.SendDate != nil {
+		if *parameters.SendDate <= 0 || *parameters.SendDate > domain.MaxMessageBoxID {
+			return nil, invalid
+		}
+		result.ScheduleDate = *parameters.SendDate
+	}
+	if parameters.Price != nil {
+		price := parameters.Price
+		switch price.Currency {
+		case "XTR":
+			if price.Amount < 5 || price.Amount > 100000 {
+				return nil, invalid
+			}
+			result.Price = &domain.SuggestedPostPrice{Kind: domain.SuggestedPostPriceStars, Amount: price.Amount}
+		case "TON":
+			if price.Amount < 10000000 || price.Amount > 10000000000000 {
+				return nil, invalid
+			}
+			result.Price = &domain.SuggestedPostPrice{Kind: domain.SuggestedPostPriceTON, Amount: price.Amount}
+		default:
+			return nil, invalid
+		}
+	}
+	return result, nil
 }
 
 func apiInt64(raw string) (int64, error) {

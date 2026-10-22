@@ -77,13 +77,15 @@ type EphemeralMessage struct {
 	RandomID           int64
 	TopMessageID       int
 	ReplyToEphemeralID int
-	Content            EphemeralContent
-	OriginDevice       EphemeralDevice
-	PayloadHash        [32]byte
-	Version            uint64
-	Deleted            bool
-	CreatedAt          time.Time
-	ExpiresAt          time.Time
+	// ReplaceMessageID is private device-routing metadata, not a message box ID.
+	ReplaceMessageID int
+	Content          EphemeralContent
+	OriginDevice     EphemeralDevice
+	PayloadHash      [32]byte
+	Version          uint64
+	Deleted          bool
+	CreatedAt        time.Time
+	ExpiresAt        time.Time
 	// BotAPIReply is a one-level, runtime-only reply snapshot. It is attached
 	// after the authoritative message has been written, excluded from Redis and
 	// broker JSON, and used only to project a valid Bot API reply_to_message.
@@ -116,7 +118,8 @@ type SendBotEphemeralRequest struct {
 	ActionMessageID int
 	// CallbackQueryID authorizes a response to a callback originating from a
 	// bot→user ephemeral message. The shared action record owns the target device.
-	CallbackQueryID int64
+	CallbackQueryID             int64
+	ReplaceCallbackQueryMessage bool
 }
 
 type EphemeralCallback struct {
@@ -130,15 +133,16 @@ type EphemeralCallback struct {
 }
 
 type EphemeralCallbackAction struct {
-	QueryID      int64
-	BotUserID    int64
-	UserID       int64
-	Peer         Peer
-	MessageID    int
-	TopMessageID int
-	Device       EphemeralDevice
-	CreatedAt    time.Time
-	ExpiresAt    time.Time
+	QueryID       int64
+	BotUserID     int64
+	UserID        int64
+	Peer          Peer
+	MessageID     int
+	FromEphemeral bool
+	TopMessageID  int
+	Device        EphemeralDevice
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
 }
 
 // EphemeralReportEvidence is the durable, device-identity-free snapshot kept
@@ -209,33 +213,46 @@ type EditEphemeralFields struct {
 }
 
 type BotAPIFileInput struct {
-	LocationKey string
-	RemoteURL   string
-	FileName    string
-	MimeType    string
-	Bytes       []byte
-	Width       int
-	Height      int
-	Duration    int
-	Title       string
-	Performer   string
-	Emoji       string
+	LocationKey                 string
+	RemoteURL                   string
+	FileName                    string
+	MimeType                    string
+	Bytes                       []byte
+	Width                       int
+	Height                      int
+	Duration                    int
+	Title                       string
+	Performer                   string
+	Emoji                       string
+	HasSpoiler                  bool
+	ShowCaptionAboveMedia       bool
+	SupportsStreaming           bool
+	DisableContentTypeDetection bool
+	Thumbnail                   *BotAPIFileInput
+	VideoCover                  *BotAPIFileInput
+	StartTimestamp              float64
 }
 
 type BotAPIEphemeralSendInput struct {
-	BotUserID          int64
-	ChatID             int64
-	ReceiverUserID     int64
-	CallbackQueryID    int64
-	ReplyToEphemeralID int
-	TopMessageID       int
-	Kind               string
-	Text               string
-	Entities           []MessageEntity
-	ReplyMarkup        *MessageReplyMarkup
-	File               BotAPIFileInput
-	SecondaryFile      BotAPIFileInput
-	DirectMedia        *MessageMedia
+	BotUserID                   int64
+	ChatID                      int64
+	ReceiverUserID              int64
+	CallbackQueryID             int64
+	ReplaceCallbackQueryMessage bool
+	ReplyToEphemeralID          int
+	TopMessageID                int
+	Kind                        string
+	Text                        string
+	Entities                    []MessageEntity
+	ReplyMarkup                 *MessageReplyMarkup
+	File                        BotAPIFileInput
+	SecondaryFile               BotAPIFileInput
+	DirectMedia                 *MessageMedia
+	Rich                        BotAPIRichMessageInput
+	ReplyToMessageID            int
+	Silent                      bool
+	ProtectContent              bool
+	EffectID                    int64
 }
 
 type BotAPIEphemeralEditInput struct {
@@ -275,6 +292,10 @@ func (m EphemeralMessage) ValidateStored() error {
 		m.TopMessageID < 0 || m.TopMessageID > MaxMessageBoxID ||
 		m.ReplyToEphemeralID < 0 || m.ReplyToEphemeralID > MaxMessageBoxID || m.ReplyToEphemeralID == m.ID ||
 		m.PayloadHash == ([32]byte{}) {
+		return ErrEphemeralInvalid
+	}
+	if m.ReplaceMessageID < 0 || m.ReplaceMessageID > MaxMessageBoxID ||
+		(m.ReplaceMessageID != 0 && (m.OriginDevice.UserID != m.ReceiverUserID || m.OriginDevice.BusinessAuthKeyID == ([8]byte{}) || m.OriginDevice.SessionID == 0)) {
 		return ErrEphemeralInvalid
 	}
 	zeroDevice := m.OriginDevice == (EphemeralDevice{})
@@ -338,7 +359,8 @@ func validEphemeralEntityBounds(message string, entities []MessageEntity) bool {
 
 func validEphemeralMedia(media *MessageMedia) bool {
 	if media == nil || media.IsZero() || media.ServiceAction != nil || media.Dice != nil || media.Poll != nil ||
-		media.GeoLive != nil || media.Todo != nil || media.Story != nil || media.WebPage != nil {
+		media.GeoLive != nil || media.Todo != nil || media.Story != nil || media.WebPage != nil || media.Game != nil || media.PaidMedia != nil ||
+		media.Giveaway != nil || media.Invoice != nil || media.ProductInvoice != nil {
 		return false
 	}
 	switch media.Kind {

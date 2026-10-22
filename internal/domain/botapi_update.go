@@ -17,18 +17,22 @@ const (
 	BotAPIUpdateMyChatMember BotAPIUpdateKind = "my_chat_member"
 	// BotAPIUpdateChatMember 是群里其他成员的状态变化。官方规则：只有 allowed_updates
 	// 显式写了 chat_member 才投递，空列表/未设置都不包含它。
-	BotAPIUpdateChatMember BotAPIUpdateKind = "chat_member"
+	BotAPIUpdateChatMember           BotAPIUpdateKind = "chat_member"
+	BotAPIUpdateMessageReaction      BotAPIUpdateKind = "message_reaction"
+	BotAPIUpdateMessageReactionCount BotAPIUpdateKind = "message_reaction_count"
+	BotAPIUpdateChatJoinRequest      BotAPIUpdateKind = "chat_join_request"
 )
 
 // 成员更新只服务 Bot API 队列投影，不写账号 pts。
 const (
-	UpdateEventBotMyChatMember UpdateEventType = "bot_my_chat_member"
-	UpdateEventBotChatMember   UpdateEventType = "bot_chat_member"
+	UpdateEventBotMyChatMember    UpdateEventType = "bot_my_chat_member"
+	UpdateEventBotChatMember      UpdateEventType = "bot_chat_member"
+	UpdateEventBotChatJoinRequest UpdateEventType = "bot_chat_join_request"
 )
 
 // BotAPIUpdateKindNeedsOptIn 报告该类更新是否只在 allowed_updates 显式列出时投递。
 func BotAPIUpdateKindNeedsOptIn(kind BotAPIUpdateKind) bool {
-	return kind == BotAPIUpdateChatMember
+	return kind == BotAPIUpdateChatMember || kind == BotAPIUpdateMessageReaction || kind == BotAPIUpdateMessageReactionCount
 }
 
 // BotChatMemberSnapshot 是成员状态的最小快照：只保留投影 ChatMember 需要的字段，
@@ -74,6 +78,7 @@ type BotChatMemberUpdated struct {
 	// Viewer 是收件机器人入队时自己的成员状态，用来按它的视角算 can_be_edited。
 	// 旧行没有该字段时为零值，投影退化为 can_be_edited=false。
 	Viewer BotChatMemberSnapshot `json:"viewer,omitzero"`
+	Invite *ChannelInvite        `json:"invite,omitempty"`
 	// ViaJoinRequest：管理员批准了入群申请。
 	ViaJoinRequest bool `json:"via_join_request,omitempty"`
 	// ViaChatFolderInviteLink：通过 chatlist（文件夹）邀请链接加入。
@@ -160,6 +165,8 @@ type BotCallbackQuery struct {
 	MessageID     int
 	ChatInstance  int64
 	Data          []byte
+	GameShortName string
+	TopMessageID  int `json:"-"`
 	InlineMessage *BotInlineMessageID
 	// ClientSession is available only to an in-process service bot. It must not
 	// become part of a durable/public Bot API CallbackQuery payload.
@@ -296,7 +303,10 @@ type BotAPIUpdate struct {
 	PreCheckout *BotPreCheckoutQuery
 	Ephemeral   *BotAPIEphemeralPayload
 	// ChatMember 携带 my_chat_member / chat_member 载荷；Peer 是群/频道，MessageID 为零。
-	ChatMember *BotChatMemberUpdated
+	ChatMember  *BotChatMemberUpdated
+	Reaction    *BotMessageReactionUpdated
+	JoinRequest *BotChatJoinRequest
+	Object      *BotAPIObject
 }
 
 // EnqueueBotAPIUpdateRequest describes a message-like update that should be
@@ -312,5 +322,8 @@ type EnqueueBotAPIUpdateRequest struct {
 	PreCheckout *BotPreCheckoutQuery
 	Ephemeral   *BotAPIEphemeralPayload
 	// ChatMember 携带 my_chat_member / chat_member 载荷；Peer 是群/频道，MessageID 为零。
-	ChatMember *BotChatMemberUpdated
+	ChatMember  *BotChatMemberUpdated
+	Reaction    *BotMessageReactionUpdated
+	JoinRequest *BotChatJoinRequest
+	Object      *BotAPIObject
 }

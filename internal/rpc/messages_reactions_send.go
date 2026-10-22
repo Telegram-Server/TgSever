@@ -34,14 +34,26 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		return nil, premiumAccountRequiredErr()
 	}
 	date := int(r.clock.Now().Unix())
+	addToRecent := req.GetAddToRecent() && !r.userIsBot(ctx, userID)
 	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
+		actor := domain.Peer{Type: domain.PeerTypeUser, ID: userID}
+		if !r.userIsBot(ctx, userID) {
+			sendAs, err := r.resolveSendAsPeer(ctx, userID, peer, nil)
+			if err != nil {
+				return nil, err
+			}
+			if sendAs != nil {
+				actor = *sendAs
+			}
+		}
 		res, err := r.deps.Channels.SetMessageReactions(ctx, userID, domain.SetChannelMessageReactionsRequest{
 			UserID:              userID,
+			Actor:               actor,
 			ChannelID:           peer.ID,
 			MessageID:           req.MsgID,
 			Reactions:           reactions,
 			Big:                 req.Big,
-			AddToRecent:         req.GetAddToRecent(),
+			AddToRecent:         addToRecent,
 			Date:                date,
 			ReactionsPerUserMax: perUserMax,
 		})
@@ -49,6 +61,7 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 			return nil, channelReactionErr(err)
 		}
 		updates := r.channelMessageReactionsUpdates(ctx, userID, res)
+		r.enqueueChannelBotReaction(ctx, res, date)
 		// 官方保证消息作者收到 updateMessageReactions：作者进 explicit 收件人，
 		// 不依赖在线 viewer 采样（fan-out 封顶后作者可能被挤出采样集）。
 		ids := []int{res.Message.ID}
@@ -58,6 +71,9 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		return updates, nil
 	}
 	if peer.Type == domain.PeerTypeUser && r.deps.Messages != nil {
+		if err := r.validatePrivateReactionSelection(ctx, userID, peer, req.MsgID, reactions); err != nil {
+			return nil, err
+		}
 		if peer.ID != userID && len(reactions) == 0 && r.shouldSuppressTransientPrivateReactionClear(userID, peer, req.MsgID, date) {
 			res, err := r.deps.Messages.GetMessageReactions(ctx, userID, domain.PrivateMessageReactionsRequest{
 				OwnerUserID: userID,
@@ -78,7 +94,7 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 			MessageID:           req.MsgID,
 			Reactions:           reactions,
 			Big:                 req.Big,
-			AddToRecent:         req.GetAddToRecent(),
+			AddToRecent:         addToRecent,
 			Date:                date,
 			ReactionsPerUserMax: perUserMax,
 		})
@@ -90,11 +106,12 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		}
 		// Saved Messages reactions are private tags, not ordinary reaction usage.
 		if peer.ID != userID {
-			if err := r.recordMessageReactionUse(ctx, userID, reactions, req.GetAddToRecent(), date); err != nil {
+			if err := r.recordMessageReactionUse(ctx, userID, reactions, addToRecent, date); err != nil {
 				return nil, internalErr()
 			}
 		}
 		updates := r.privateMessageReactionsUpdates(ctx, userID, peer, res)
+		r.enqueuePrivateBotReaction(ctx, userID, res, date)
 		r.pushUserUpdates(ctx, userID, updates)
 		for _, msg := range res.Messages {
 			if msg.OwnerUserID == 0 || msg.OwnerUserID == userID {

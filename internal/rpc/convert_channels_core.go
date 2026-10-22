@@ -82,7 +82,7 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		return nil
 	}
 	peer := &tg.PeerChannel{ChannelID: m.ChannelID}
-	outgoing := m.SenderUserID == viewerUserID && viewerUserID != 0 && (m.SavedPeer.ID != 0 || m.From.Type != domain.PeerTypeChannel)
+	outgoing := m.GuestChatViaFrom.ID == 0 && m.SenderUserID == viewerUserID && viewerUserID != 0 && (m.SavedPeer.ID != 0 || m.From.Type != domain.PeerTypeChannel)
 	from := tg.PeerClass(nil)
 	if (!m.Post || m.ShowMessageSender) && m.SendAs != nil && m.SendAs.ID != 0 {
 		from = tgPeer(*m.SendAs)
@@ -177,6 +177,11 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	if m.ViaBotID != 0 {
 		msg.SetViaBotID(m.ViaBotID)
 	}
+	if m.GuestChatViaFrom.ID != 0 {
+		if caller := tgPeer(m.GuestChatViaFrom); caller != nil {
+			msg.SetGuestchatViaFrom(caller)
+		}
+	}
 	if m.GroupedID != 0 {
 		msg.SetGroupedID(m.GroupedID)
 	}
@@ -228,6 +233,8 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 		return &tg.MessageActionChatAddUser{Users: append([]int64(nil), action.UserIDs...)}
 	case domain.ChannelActionChatJoinedByLink:
 		return &tg.MessageActionChatJoinedByLink{InviterID: action.InviterUserID}
+	case domain.ChannelActionChatJoinedByRequest:
+		return &tg.MessageActionChatJoinedByRequest{}
 	case domain.ChannelActionChatDelete:
 		var userID int64
 		if len(action.UserIDs) > 0 {
@@ -554,6 +561,7 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		CanViewParticipants: channelMemberIsAdmin(view.Self) || !ch.MembersListAdminOnly(),
 		CanSetUsername:      view.Self.Role == domain.ChannelRoleCreator,
 		CanDeleteChannel:    view.Self.Role == domain.ChannelRoleCreator,
+		CanSetStickers:      ch.Megagroup && !ch.Broadcast && (ch.ParticipantsCount >= domain.MinChannelStickerSetParticipants || ch.StickerSetID != 0) && view.Self.Status == domain.ChannelMemberActive && channelMemberCanChangeInfo(view.Self),
 		// TDesktop only exposes the Statistics entry after channelFull.can_view_stats.
 		// The stats RPCs enforce the same creator/admin boundary, so project the
 		// capability from the membership instead of leaving a reachable service
@@ -659,10 +667,6 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		full.SetReactionsLimit(ch.ReactionPolicy.Limit)
 	}
 	if ch.Broadcast && !ch.Megagroup {
-		// Android uses paid_media_allowed as the capability gate for showing the
-		// paid-reaction setting; paid_reactions_available below remains the saved
-		// on/off state.
-		full.SetPaidMediaAllowed(true)
 		full.SetStargiftsAvailable(true)
 	}
 	// paid_reactions_available reflects the saved chat policy, not mere broadcast
@@ -739,7 +743,51 @@ func tgPeerColor(color domain.ChannelPeerColor) tg.PeerColorClass {
 	return out
 }
 
+// The store supplies this identity only after authorizing access to the target
+// group's ban list. Ordinary source-channel lookups retain their privacy gate.
+func tgBannedSenderChats(members []domain.ChannelMember) []tg.ChatClass {
+	var chats []tg.ChatClass
+	for _, member := range members {
+		if member.Peer.Type != domain.PeerTypeChannel || member.Peer.ID == 0 {
+			continue
+		}
+		identity := member.SenderChannelIdentity
+		if identity.AccessHash == 0 {
+			continue
+		}
+		chats = append(chats, tgChannelChatMin(0, domain.Channel{ID: member.Peer.ID, AccessHash: identity.AccessHash, Title: identity.Title, Broadcast: identity.Broadcast, Megagroup: identity.Megagroup}))
+	}
+	return chats
+}
+
 func tgChannelParticipant(selfUserID int64, member domain.ChannelMember) tg.ChannelParticipantClass {
+	if member.Peer.Type == domain.PeerTypeChannel && member.Peer.ID != 0 {
+		if member.Status == domain.ChannelMemberKicked {
+			return &tg.ChannelParticipantBanned{Left: true, Peer: tgPeer(member.Peer), KickedBy: member.InviterUserID, Date: member.LeftAt, BannedRights: tgChatBannedRights(member.BannedRights)}
+		}
+		return &tg.ChannelParticipantLeft{Peer: tgPeer(member.Peer)}
+	}
+	if member.UserID == 0 {
+		return nil
+	}
+	restrictions := member.BannedRights
+	restrictions.UntilDate = 0
+	if member.Status == domain.ChannelMemberKicked || member.Status == domain.ChannelMemberBanned || !zeroChannelBannedRights(restrictions) {
+		out := &tg.ChannelParticipantBanned{
+			Left:         member.Status != domain.ChannelMemberActive,
+			Peer:         &tg.PeerUser{UserID: member.UserID},
+			KickedBy:     member.InviterUserID,
+			Date:         member.LeftAt,
+			BannedRights: tgChatBannedRights(member.BannedRights),
+		}
+		if member.Rank != "" {
+			out.SetRank(member.Rank)
+		}
+		return out
+	}
+	if member.Status == domain.ChannelMemberLeft {
+		return &tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: member.UserID}}
+	}
 	switch member.Role {
 	case domain.ChannelRoleCreator:
 		out := &tg.ChannelParticipantCreator{
@@ -830,15 +878,15 @@ func tgChannelAdminLogEvent(viewerUserID int64, event domain.ChannelAdminLogEven
 			return tg.ChannelAdminLogEvent{}, false
 		}
 		action = &tg.ChannelAdminLogEventActionParticipantInvite{
-			Participant: tgChannelParticipantForUpdate(viewerUserID, *event.Participant),
+			Participant: tgChannelParticipant(viewerUserID, *event.Participant),
 		}
 	case domain.ChannelAdminLogParticipantPromote, domain.ChannelAdminLogParticipantDemote:
 		if event.PrevParticipant == nil || event.NewParticipant == nil {
 			return tg.ChannelAdminLogEvent{}, false
 		}
 		action = &tg.ChannelAdminLogEventActionParticipantToggleAdmin{
-			PrevParticipant: tgChannelParticipantForUpdate(viewerUserID, *event.PrevParticipant),
-			NewParticipant:  tgChannelParticipantForUpdate(viewerUserID, *event.NewParticipant),
+			PrevParticipant: tgChannelParticipant(viewerUserID, *event.PrevParticipant),
+			NewParticipant:  tgChannelParticipant(viewerUserID, *event.NewParticipant),
 		}
 	case domain.ChannelAdminLogParticipantEditRank:
 		if event.Participant == nil {
@@ -854,8 +902,8 @@ func tgChannelAdminLogEvent(viewerUserID int64, event domain.ChannelAdminLogEven
 			return tg.ChannelAdminLogEvent{}, false
 		}
 		action = &tg.ChannelAdminLogEventActionParticipantToggleBan{
-			PrevParticipant: tgChannelParticipantForUpdate(viewerUserID, *event.PrevParticipant),
-			NewParticipant:  tgChannelParticipantForUpdate(viewerUserID, *event.NewParticipant),
+			PrevParticipant: tgChannelParticipant(viewerUserID, *event.PrevParticipant),
+			NewParticipant:  tgChannelParticipant(viewerUserID, *event.NewParticipant),
 		}
 	case domain.ChannelAdminLogUpdatePinned:
 		action = &tg.ChannelAdminLogEventActionUpdatePinned{Message: tgAdminLogMessage(viewerUserID, event.ChannelID, event.Message)}

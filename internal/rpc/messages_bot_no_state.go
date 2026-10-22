@@ -112,9 +112,23 @@ func (r *Router) onMessagesEditInlineBotMessage(ctx context.Context, req *tg.Mes
 }
 
 func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, target domain.Message, req *tg.MessagesEditInlineBotMessageRequest) (bool, error) {
-	newMedia, err := r.inlineEditMedia(ctx, target.OwnerUserID, req)
+	newMedia, err := r.inlineEditMedia(ctx, target.OwnerUserID, target.Media, target.Date, req)
 	if err != nil {
 		return false, err
+	}
+	blocked, err := r.peerBlocksUser(ctx, botID, target.Peer.ID)
+	if err != nil {
+		return false, err
+	}
+	if blocked {
+		return false, messageEditForbiddenErr()
+	}
+	blocked, err = r.peerBlocksUser(ctx, botID, target.OwnerUserID)
+	if err != nil {
+		return false, err
+	}
+	if blocked {
+		return false, messageEditForbiddenErr()
 	}
 	message := target.Body
 	entities := append([]domain.MessageEntity(nil), target.Entities...)
@@ -168,7 +182,7 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 			return false, replyMarkupErr(err)
 		}
 	}
-	_, err = r.deps.Messages.EditMessage(ctx, target.OwnerUserID, domain.EditMessageRequest{
+	res, err := r.deps.Messages.EditMessage(ctx, target.OwnerUserID, domain.EditMessageRequest{
 		OwnerUserID:     target.OwnerUserID,
 		Peer:            target.Peer,
 		ID:              target.ID,
@@ -185,6 +199,7 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 	if err != nil {
 		return false, messageEditErr(err)
 	}
+	r.enqueueBotAPIPrivateEditUpdatesAsync(ctx, res)
 	return true, nil
 }
 
@@ -192,7 +207,7 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 	if r.deps.Channels == nil {
 		return false, messageIDInvalidErr()
 	}
-	newMedia, err := r.inlineEditMedia(ctx, target.SenderUserID, req)
+	newMedia, err := r.inlineEditMedia(ctx, target.SenderUserID, target.Media, target.Date, req)
 	if err != nil {
 		return false, err
 	}
@@ -282,10 +297,13 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 	return true, nil
 }
 
-func (r *Router) inlineEditMedia(ctx context.Context, userID int64, req *tg.MessagesEditInlineBotMessageRequest) (*domain.MessageMedia, error) {
+func (r *Router) inlineEditMedia(ctx context.Context, userID int64, current *domain.MessageMedia, date int, req *tg.MessagesEditInlineBotMessageRequest) (*domain.MessageMedia, error) {
 	input, ok := req.GetMedia()
 	if !ok || editMessageMediaCanDegradeToText(input) {
 		return nil, nil
+	}
+	if live, ok := input.(*tg.InputMediaGeoLive); ok {
+		return editLiveLocationMedia(current, date, int(r.clock.Now().Unix()), live)
 	}
 	media, err := r.resolveInputMedia(ctx, userID, input)
 	if err != nil {
@@ -294,6 +312,7 @@ func (r *Router) inlineEditMedia(ctx context.Context, userID int64, req *tg.Mess
 	if !inlineEditMediaAllowed(media) {
 		return nil, mediaInvalidErr()
 	}
+	media.InvertMedia = req.InvertMedia
 	return media, nil
 }
 

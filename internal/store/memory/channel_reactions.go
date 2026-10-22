@@ -40,6 +40,13 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 			return domain.ChannelMessageReactionsResult{}, domain.ErrChannelInvalid
 		}
 	}
+	if req.Actor.Type == "" {
+		req.Actor = domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}
+	}
+	if !domain.ReactionActorValid(req.Actor) || req.Actor.Type == domain.PeerTypeUser && req.Actor.ID != req.UserID {
+		return domain.ChannelMessageReactionsResult{}, domain.ErrChannelInvalid
+	}
+	actorKey := domain.ReactionActorKey(req.Actor)
 	req.Reactions = domain.TrimMessageReactionsToUserMax(req.Reactions, req.ReactionsPerUserMax)
 	if req.Date == 0 {
 		req.Date = int(time.Now().Unix())
@@ -49,6 +56,18 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 	channel, member, _, err := s.channelForViewerLocked(req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
+	}
+	if req.Actor.Type == domain.PeerTypeChannel {
+		if req.Actor.ID == req.ChannelID {
+			if member.Role != domain.ChannelRoleCreator && !(member.Role == domain.ChannelRoleAdmin && member.AdminRights.Anonymous) {
+				return domain.ChannelMessageReactionsResult{}, domain.ErrChannelAdminRequired
+			}
+		} else {
+			actorChannel, actorMember, err := s.channelAndMemberLocked(req.UserID, req.Actor.ID)
+			if err != nil || !actorChannel.Broadcast || actorMember.Role != domain.ChannelRoleCreator && !actorMember.AdminRights.PostMessages {
+				return domain.ChannelMessageReactionsResult{}, domain.ErrChannelAdminRequired
+			}
+		}
 	}
 	if len(req.Reactions) > 0 {
 		selfBoostsApplied := 0
@@ -64,13 +83,31 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
 	msg := s.messages[req.ChannelID][idx]
+	if msg.GroupedID != 0 {
+		for candidateIndex, candidate := range s.messages[req.ChannelID] {
+			if candidate.GroupedID == msg.GroupedID && !candidate.Deleted && (msg.Deleted || candidate.ID < msg.ID) {
+				idx, msg = candidateIndex, candidate
+			}
+		}
+		req.MessageID = msg.ID
+	}
 	if msg.Deleted || msg.Action != nil || msg.ID <= member.AvailableMinID ||
 		!channelMessageVisibleToViewerLocked(channel, member, req.UserID, msg) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
 	// 仅新增/替换受策略约束；空向量是撤销，策略收紧后也必须允许撤销存量 reaction。
 	for _, reaction := range req.Reactions {
-		if !channel.ReactionPolicy.AllowsReaction(reaction) {
+		allowed := channel.ReactionPolicy.AllowsReaction(reaction)
+		if !allowed && reaction.Type == domain.MessageReactionCustomEmoji && channel.ReactionPolicy.Type != domain.ChannelReactionPolicyNone {
+			for _, rows := range s.reactions[req.ChannelID][req.MessageID] {
+				for _, row := range rows {
+					if row.Reaction.Key() == reaction.Key() {
+						allowed = true
+					}
+				}
+			}
+		}
+		if !allowed {
 			return domain.ChannelMessageReactionsResult{}, domain.ErrReactionInvalid
 		}
 	}
@@ -84,7 +121,7 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 			for _, row := range rows {
 				key := messageReactionKey(row.Reaction)
 				existing[key] = struct{}{}
-				if userID != req.UserID {
+				if userID != actorKey {
 					final[key] = struct{}{}
 				}
 			}
@@ -107,10 +144,11 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 	if s.reactions[req.ChannelID][req.MessageID] == nil {
 		s.reactions[req.ChannelID][req.MessageID] = make(map[int64][]domain.ChannelMessagePeerReaction)
 	}
+	old := reactionSelection(s.reactions[req.ChannelID][req.MessageID][actorKey])
 	// 广播频道 reaction 匿名（官方语义），作者不收 unread 角标，不写 unread 簿记。
 	unreadEligible := !channel.Broadcast || channel.Megagroup
 	if len(req.Reactions) == 0 {
-		delete(s.reactions[req.ChannelID][req.MessageID], req.UserID)
+		delete(s.reactions[req.ChannelID][req.MessageID], actorKey)
 	} else {
 		rows := make([]domain.ChannelMessagePeerReaction, 0, len(req.Reactions))
 		for i, reaction := range req.Reactions {
@@ -118,7 +156,8 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 				ChannelID:    req.ChannelID,
 				MessageID:    req.MessageID,
 				SenderUserID: msg.SenderUserID,
-				UserID:       req.UserID,
+				UserID:       positiveReactionActorID(actorKey),
+				ActorChatID:  positiveReactionActorID(-actorKey),
 				Reaction:     reaction,
 				Big:          req.Big,
 				Unread:       unreadEligible && msg.SenderUserID != 0 && msg.SenderUserID != req.UserID,
@@ -126,7 +165,7 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 				Date:         req.Date,
 			})
 		}
-		s.reactions[req.ChannelID][req.MessageID][req.UserID] = rows
+		s.reactions[req.ChannelID][req.MessageID][actorKey] = rows
 		if s.top[req.UserID] == nil {
 			s.top[req.UserID] = make(map[string]domain.TopMessageReaction)
 		}
@@ -160,11 +199,12 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 	msg.Reactions = cloneChannelMessageReactionsPtr(&reactions)
 	// sendReaction 实时推送走在线 viewer scope（rpc 层封顶），不预热全量成员列表。
 	return domain.ChannelMessageReactionsResult{
-		Channel:    cloneChannel(channel),
-		Message:    msg,
-		Messages:   []domain.ChannelMessage{msg},
-		Reactions:  cloneChannelMessageReactions(reactions),
-		Recipients: []int64{req.UserID},
+		MessageReactionChange: domain.ReactionChangeForActor(req.MessageID, req.Actor, old, append([]domain.MessageReaction(nil), req.Reactions...)),
+		Channel:               cloneChannel(channel),
+		Message:               msg,
+		Messages:              []domain.ChannelMessage{msg},
+		Reactions:             cloneChannelMessageReactions(reactions),
+		Recipients:            []int64{req.UserID},
 	}, nil
 }
 
@@ -411,7 +451,7 @@ func (s *ChannelStore) aggregatePaidReactionsLocked(channelID int64, messageID i
 }
 
 func (s *ChannelStore) DeleteChannelParticipantReaction(_ context.Context, req domain.DeleteChannelParticipantReactionRequest) (domain.ChannelMessageReactionsResult, error) {
-	if req.UserID == 0 || req.ChannelID == 0 || req.MessageID <= 0 || req.MessageID > domain.MaxMessageBoxID || req.ParticipantUserID == 0 {
+	if req.UserID == 0 || req.ChannelID == 0 || req.MessageID <= 0 || req.MessageID > domain.MaxMessageBoxID || !domain.ReactionActorValid(req.Participant) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrChannelInvalid
 	}
 	s.mu.Lock()
@@ -420,31 +460,33 @@ func (s *ChannelStore) DeleteChannelParticipantReaction(_ context.Context, req d
 	if err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
 	}
-	if !canDeleteAnyChannelMessage(member) {
+	if !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrChannelAdminRequired
 	}
 	msg, ok := s.findMessageLocked(req.ChannelID, req.MessageID)
 	if !ok || msg.Deleted || msg.ID <= member.AvailableMinID {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
+	old := reactionSelection(s.reactions[req.ChannelID][req.MessageID][domain.ReactionActorKey(req.Participant)])
 	if s.reactions[req.ChannelID] != nil && s.reactions[req.ChannelID][req.MessageID] != nil {
-		delete(s.reactions[req.ChannelID][req.MessageID], req.ParticipantUserID)
+		delete(s.reactions[req.ChannelID][req.MessageID], domain.ReactionActorKey(req.Participant))
 	}
 	s.refreshChannelUnreadReactionsDialogLocked(msg.SenderUserID, req.ChannelID)
 	reactions := s.channelMessageReactionsLocked(req.UserID, channel, req.MessageID)
 	outMsg := cloneChannelMessage(msg)
 	outMsg.Reactions = cloneChannelMessageReactionsPtr(&reactions)
 	return domain.ChannelMessageReactionsResult{
-		Channel:    cloneChannel(channel),
-		Message:    outMsg,
-		Messages:   []domain.ChannelMessage{outMsg},
-		Reactions:  cloneChannelMessageReactions(reactions),
-		Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0),
+		MessageReactionChange: domain.ReactionChangeForActor(req.MessageID, req.Participant, old, nil),
+		Channel:               cloneChannel(channel),
+		Message:               outMsg,
+		Messages:              []domain.ChannelMessage{outMsg},
+		Reactions:             cloneChannelMessageReactions(reactions),
+		Recipients:            s.activeMemberIDsLocked(req.ChannelID, 0, 0),
 	}, nil
 }
 
 func (s *ChannelStore) DeleteChannelParticipantReactions(_ context.Context, req domain.DeleteChannelParticipantReactionsRequest) (domain.DeleteChannelParticipantReactionsResult, error) {
-	if req.UserID == 0 || req.ChannelID == 0 || req.ParticipantUserID == 0 {
+	if req.UserID == 0 || req.ChannelID == 0 || !domain.ReactionActorValid(req.Participant) {
 		return domain.DeleteChannelParticipantReactionsResult{}, domain.ErrChannelInvalid
 	}
 	if req.Limit <= 0 || req.Limit > domain.MaxDeleteParticipantReactionsBatch {
@@ -456,7 +498,7 @@ func (s *ChannelStore) DeleteChannelParticipantReactions(_ context.Context, req 
 	if err != nil {
 		return domain.DeleteChannelParticipantReactionsResult{}, err
 	}
-	if !canDeleteAnyChannelMessage(member) {
+	if !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelParticipantReactionsResult{}, domain.ErrChannelAdminRequired
 	}
 	type reactionMsg struct {
@@ -466,7 +508,7 @@ func (s *ChannelStore) DeleteChannelParticipantReactions(_ context.Context, req 
 	}
 	candidates := make([]reactionMsg, 0)
 	for msgID, byUser := range s.reactions[req.ChannelID] {
-		rows := byUser[req.ParticipantUserID]
+		rows := byUser[domain.ReactionActorKey(req.Participant)]
 		if len(rows) == 0 {
 			continue
 		}
@@ -493,9 +535,11 @@ func (s *ChannelStore) DeleteChannelParticipantReactions(_ context.Context, req 
 	}
 	owners := make(map[int64]struct{})
 	ids := make([]int, 0, len(candidates))
+	changes := make([]domain.MessageReactionChange, 0, len(candidates))
 	for _, item := range candidates {
+		changes = append(changes, domain.ReactionChangeForActor(item.id, req.Participant, reactionSelection(s.reactions[req.ChannelID][item.id][domain.ReactionActorKey(req.Participant)]), nil))
 		if s.reactions[req.ChannelID] != nil && s.reactions[req.ChannelID][item.id] != nil {
-			delete(s.reactions[req.ChannelID][item.id], req.ParticipantUserID)
+			delete(s.reactions[req.ChannelID][item.id], domain.ReactionActorKey(req.Participant))
 		}
 		if item.sender != 0 {
 			owners[item.sender] = struct{}{}
@@ -518,6 +562,7 @@ func (s *ChannelStore) DeleteChannelParticipantReactions(_ context.Context, req 
 	}
 	sort.Slice(messages, func(i, j int) bool { return messages[i].ID > messages[j].ID })
 	return domain.DeleteChannelParticipantReactionsResult{
+		Changes:    changes,
 		Channel:    cloneChannel(channel),
 		Messages:   messages,
 		Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0),
@@ -599,8 +644,8 @@ func (s *ChannelStore) ListChannelMessageReactions(_ context.Context, req domain
 		if rows[i].Date != rows[j].Date {
 			return rows[i].Date > rows[j].Date
 		}
-		if rows[i].UserID != rows[j].UserID {
-			return rows[i].UserID > rows[j].UserID
+		if rows[i].ActorKey() != rows[j].ActorKey() {
+			return rows[i].ActorKey() > rows[j].ActorKey()
 		}
 		return messageReactionKey(rows[i].Reaction) < messageReactionKey(rows[j].Reaction)
 	})
@@ -1072,8 +1117,8 @@ func (s *ChannelStore) channelMessageReactionsLocked(viewerUserID int64, channel
 		if rows[i].Date != rows[j].Date {
 			return rows[i].Date > rows[j].Date
 		}
-		if rows[i].UserID != rows[j].UserID {
-			return rows[i].UserID > rows[j].UserID
+		if rows[i].ActorKey() != rows[j].ActorKey() {
+			return rows[i].ActorKey() > rows[j].ActorKey()
 		}
 		return messageReactionKey(rows[i].Reaction) < messageReactionKey(rows[j].Reaction)
 	})
@@ -1107,7 +1152,7 @@ func (s *ChannelStore) channelMessageReactionRowsLocked(channelID int64, message
 }
 
 func memoryReactionOffset(row domain.ChannelMessagePeerReaction) string {
-	return strconv.Itoa(row.Date) + ":" + strconv.FormatInt(row.UserID, 10) + ":" + string(row.Reaction.Type) + ":" + row.Reaction.Value()
+	return strconv.Itoa(row.Date) + ":" + strconv.FormatInt(row.ActorKey(), 10) + ":" + string(row.Reaction.Type) + ":" + row.Reaction.Value()
 }
 
 func messageReactionKey(reaction domain.MessageReaction) string {
@@ -1124,7 +1169,7 @@ func parseMemoryReactionOffset(offset string) (memoryReactionCursor, bool) {
 		return memoryReactionCursor{}, false
 	}
 	userID, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil || userID < 0 {
+	if err != nil || userID == 0 {
 		return memoryReactionCursor{}, false
 	}
 	if len(parts) == 3 {
@@ -1137,8 +1182,8 @@ func memoryReactionAfterOffset(row domain.ChannelMessagePeerReaction, cursor mem
 	if row.Date != cursor.date {
 		return row.Date < cursor.date
 	}
-	if row.UserID != cursor.userID {
-		return row.UserID < cursor.userID
+	if row.ActorKey() != cursor.userID {
+		return row.ActorKey() < cursor.userID
 	}
 	if cursor.legacyValue {
 		return row.Reaction.Value() > cursor.value
@@ -1173,4 +1218,11 @@ func cloneChannelPeerReactions(in []domain.ChannelMessagePeerReaction) []domain.
 		return nil
 	}
 	return append([]domain.ChannelMessagePeerReaction(nil), in...)
+}
+
+func positiveReactionActorID(value int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return 0
 }

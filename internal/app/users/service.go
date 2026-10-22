@@ -350,6 +350,18 @@ func (s *Service) UpdateUsername(ctx context.Context, userID int64, username str
 
 // UpdateProfile 修改当前用户的基础资料。未设置的字段保持原值。
 func (s *Service) UpdateProfile(ctx context.Context, userID int64, update domain.UserProfileUpdate) (domain.User, error) {
+	return s.updateProfile(ctx, userID, update, 0)
+}
+
+// UpdateBusinessProfile is the trusted delegation path. The caller must verify
+// the active business connection and the exact edit right before invoking it.
+// Unlike ordinary profile editing, Bot API business bios allow 140 characters
+// even when the account's Premium subscription has expired.
+func (s *Service) UpdateBusinessProfile(ctx context.Context, userID int64, update domain.UserProfileUpdate) (domain.User, error) {
+	return s.updateProfile(ctx, userID, update, maxProfileAboutRunesPremium)
+}
+
+func (s *Service) updateProfile(ctx context.Context, userID int64, update domain.UserProfileUpdate, aboutLimit int) (domain.User, error) {
 	self, err := s.loadSelf(ctx, userID)
 	if err != nil {
 		return domain.User{}, err
@@ -369,9 +381,11 @@ func (s *Service) UpdateProfile(ctx context.Context, userID int64, update domain
 	if firstName == "" || utf8.RuneCountInString(firstName) > maxProfileNameRunes || utf8.RuneCountInString(lastName) > maxProfileNameRunes {
 		return domain.User{}, domain.ErrFirstNameInvalid
 	}
-	aboutLimit := maxProfileAboutRunes
-	if self.PremiumActiveAt(time.Now().Unix()) {
-		aboutLimit = maxProfileAboutRunesPremium
+	if aboutLimit == 0 {
+		aboutLimit = maxProfileAboutRunes
+		if self.PremiumActiveAt(time.Now().Unix()) {
+			aboutLimit = maxProfileAboutRunesPremium
+		}
 	}
 	if utf8.RuneCountInString(about) > aboutLimit {
 		return domain.User{}, domain.ErrAboutTooLong

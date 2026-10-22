@@ -172,15 +172,11 @@ func (r *Router) onMessagesUnpinAllMessages(ctx context.Context, req *tg.Message
 		if peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 			return r.affectedHistory(ctx, authKeyID, userID, 0)
 		}
-		if topMsgID, ok := req.GetTopMsgID(); ok && topMsgID > 0 {
-			// 私聊无 forum topic 维度，按无置顶可清处理。
-			return r.affectedHistory(ctx, authKeyID, userID, 0)
-		}
 		if _, ok := req.GetSavedPeerID(); ok {
 			// Saved Messages 子会话置顶维度未实现，避免误清全局置顶。
 			return r.affectedHistory(ctx, authKeyID, userID, 0)
 		}
-		return r.unpinAllPrivateMessages(ctx, userID, peer)
+		return r.unpinAllPrivateMessages(ctx, userID, peer, req.TopMsgID)
 	}
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
@@ -189,15 +185,13 @@ func (r *Router) onMessagesUnpinAllMessages(ctx context.Context, req *tg.Message
 	if err != nil {
 		return nil, channelAdminErr(err)
 	}
-	if topMsgID, ok := req.GetTopMsgID(); ok && topMsgID > 0 {
-		return &tg.MessagesAffectedHistory{Pts: view.Channel.Pts, Offset: 0}, nil
-	}
 	if _, ok := req.GetSavedPeerID(); ok {
 		return &tg.MessagesAffectedHistory{Pts: view.Channel.Pts, Offset: 0}, nil
 	}
 	res, err := r.deps.Channels.UnpinAllMessages(ctx, userID, domain.UnpinAllChannelMessagesRequest{
 		UserID:    userID,
 		ChannelID: peer.ID,
+		TopicID:   req.TopMsgID,
 		Date:      int(r.clock.Now().Unix()),
 	})
 	if err != nil {
@@ -515,7 +509,7 @@ func (r *Router) inviteManagementChannelView(ctx context.Context, peer tg.InputP
 	if err != nil {
 		return 0, domain.ChannelView{}, err
 	}
-	if view.Self.Role != domain.ChannelRoleCreator && view.Self.Role != domain.ChannelRoleAdmin {
+	if view.Self.Role != domain.ChannelRoleCreator && (view.Self.Role != domain.ChannelRoleAdmin || !view.Self.AdminRights.InviteUsers) {
 		return 0, domain.ChannelView{}, tgerr400("CHAT_ADMIN_REQUIRED")
 	}
 	return userID, view, nil
@@ -717,6 +711,10 @@ func (r *Router) channelIDFromLegacyInputPeerChecked(ctx context.Context, userID
 
 func channelInvalidErr(err error) error {
 	switch {
+	case errors.Is(err, domain.ErrQuoteTextInvalid):
+		return quoteTextInvalidErr()
+	case errors.Is(err, domain.ErrChannelSenderBanned):
+		return sendAsPeerInvalidErr()
 	case errors.Is(err, domain.ErrUserFrozen):
 		return frozenMethodInvalidErr()
 	case errors.Is(err, domain.ErrChannelTitleInvalid):

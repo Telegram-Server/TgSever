@@ -26,9 +26,6 @@ func (r *Router) onMessagesExportChatInvite(ctx context.Context, req *tg.Message
 	if peer.Type != domain.PeerTypeChannel || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
-	if req.UsageLimit < 0 || req.ExpireDate < 0 || len(req.Title) > domain.MaxChannelInviteTitleLength {
-		return nil, limitInvalidErr()
-	}
 	res, err := r.deps.Channels.ExportInvite(ctx, userID, domain.ExportChannelInviteRequest{
 		UserID:                userID,
 		ChannelID:             peer.ID,
@@ -87,6 +84,30 @@ func (r *Router) onMessagesCheckChatInvite(ctx context.Context, hash string) (tg
 	// third-party mark is part of what identifies the peer, so the preview a
 	// non-member sees has to carry it as well.
 	r.applyBotVerificationToChatInvite(ctx, invite, res.Channel.ID)
+	if r.deps.BotCommerce != nil {
+		offer, err := r.deps.BotCommerce.SubscriptionInvite(ctx, hash)
+		if err == nil {
+			subs, err := r.deps.BotCommerce.UserSubscriptions(ctx, userID)
+			if err != nil {
+				return nil, internalErr()
+			}
+			for _, sub := range subs {
+				if sub.ChannelID == offer.ChannelID && sub.Active && sub.Until > int(r.clock.Now().Unix()) {
+					invite.SetSubscriptionPricing(tg.StarsSubscriptionPricing{Period: offer.SubscriptionPeriod, Amount: offer.Amount})
+					invite.SetCanRefulfillSubscription(true)
+					return invite, nil
+				}
+			}
+			checkout, err := r.deps.BotCommerce.CreateInvoiceCheckout(ctx, offer.Slug, userID, int(r.clock.Now().Unix()))
+			if err != nil {
+				return nil, commerceError(err)
+			}
+			invite.SetSubscriptionPricing(tg.StarsSubscriptionPricing{Period: offer.SubscriptionPeriod, Amount: offer.Amount})
+			invite.SetSubscriptionFormID(botInvoiceFormID(checkout))
+		} else if !errors.Is(err, domain.ErrCommerceNotFound) {
+			return nil, internalErr()
+		}
+	}
 	return invite, nil
 }
 
@@ -125,11 +146,18 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
+			if result, queryErr := r.startChatJoinQuery(ctx, res); queryErr != nil {
+				return nil, queryErr
+			} else if result != nil {
+				return result, nil
+			}
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+			r.deliverChatJoinRequest(ctx, res)
 		}
 		return nil, channelInviteErr(err)
 	}
 	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
+	r.prepareChannelInviteViewers(ctx, &res)
 	updates := r.channelOperationUpdates(ctx, userID, res)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
@@ -222,9 +250,6 @@ func (r *Router) onMessagesEditExportedChatInvite(ctx context.Context, req *tg.M
 	if err != nil {
 		return nil, err
 	}
-	if req.ExpireDate < 0 || req.UsageLimit < 0 || len(req.Title) > domain.MaxChannelInviteTitleLength {
-		return nil, limitInvalidErr()
-	}
 	expireDate, hasExpireDate := req.GetExpireDate()
 	usageLimit, hasUsageLimit := req.GetUsageLimit()
 	requestNeeded, hasRequestNeeded := req.GetRequestNeeded()
@@ -283,6 +308,7 @@ func (r *Router) onMessagesDeleteRevokedExportedChatInvites(ctx context.Context,
 		return false, channelInviteErr(err)
 	}
 	r.invalidateRPCProjectionForChannel(view.Channel.ID)
+	r.pushPendingJoinRequestsToAdmins(ctx, view.Channel)
 	return true, nil
 }
 
@@ -303,6 +329,7 @@ func (r *Router) onMessagesDeleteExportedChatInvite(ctx context.Context, req *tg
 		return false, channelInviteErr(err)
 	}
 	r.invalidateRPCProjectionForChannel(view.Channel.ID)
+	r.pushPendingJoinRequestsToAdmins(ctx, view.Channel)
 	return true, nil
 }
 
@@ -393,6 +420,12 @@ func createChatInviteMemberIDs(ids []int64, selfUserID int64) []int64 {
 }
 
 func (r *Router) tgExportedChannelInvite(invite domain.ChannelInvite) tg.ExportedChatInviteClass {
+	if r.deps.BotCommerce != nil && invite.SubscriptionPeriod == 0 {
+		if offer, err := r.deps.BotCommerce.SubscriptionInvite(context.Background(), invite.Hash); err == nil {
+			invite.SubscriptionPeriod = offer.SubscriptionPeriod
+			invite.SubscriptionPrice = offer.Amount
+		}
+	}
 	return tgExportedChannelInvite(invite, r.cfg.PublicBaseURL)
 }
 
@@ -404,6 +437,9 @@ func tgExportedChannelInvite(invite domain.ChannelInvite, publicBaseURL string) 
 		Link:          publicLinkWithBaseURL(publicBaseURL, "+"+invite.Hash),
 		AdminID:       invite.AdminUserID,
 		Date:          invite.Date,
+	}
+	if invite.Date > 0 {
+		out.SetStartDate(invite.Date)
 	}
 	if invite.Title != "" {
 		out.SetTitle(invite.Title)
@@ -419,6 +455,9 @@ func tgExportedChannelInvite(invite domain.ChannelInvite, publicBaseURL string) 
 	}
 	if invite.RequestedCount > 0 {
 		out.SetRequested(invite.RequestedCount)
+	}
+	if invite.SubscriptionPeriod > 0 {
+		out.SetSubscriptionPricing(tg.StarsSubscriptionPricing{Period: invite.SubscriptionPeriod, Amount: invite.SubscriptionPrice})
 	}
 	return out
 }
@@ -462,6 +501,12 @@ func channelInviteHashFromLink(link string) (string, error) {
 
 func channelInviteErr(err error) error {
 	switch {
+	case errors.Is(err, domain.ErrInviteExpireDateInvalid):
+		return tgerr400("EXPIRE_DATE_INVALID")
+	case errors.Is(err, domain.ErrInviteUsageLimitInvalid):
+		return tgerr400("USAGE_LIMIT_INVALID")
+	case errors.Is(err, domain.ErrInviteTitleInvalid):
+		return limitInvalidErr()
 	case errors.Is(err, domain.ErrInviteHashEmpty):
 		return tgerr400("INVITE_HASH_EMPTY")
 	case errors.Is(err, domain.ErrInviteHashInvalid):

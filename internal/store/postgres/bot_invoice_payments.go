@@ -49,7 +49,7 @@ func (s *MessageStore) PayBotInvoice(ctx context.Context, invoiceID, payerID int
 			Kind: domain.MessageServiceActionPayment, Payment: &domain.MessagePaymentAction{Currency: invoice.Currency, TotalAmount: invoice.Amount, Payload: invoice.Payload, ChargeID: chargeID, ProviderChargeID: chargeID, Title: invoice.Title, Description: invoice.Description}}},
 	}
 	return s.sendPrivateTextWithHooks(ctx, req, privateSendTxHooks{
-		before: func(ctx context.Context, tx pgx.Tx, _ *domain.SendPrivateTextRequest) error {
+		before: func(ctx context.Context, tx pgx.Tx, sending *domain.SendPrivateTextRequest) error {
 			locked, err := scanBotInvoice(tx.QueryRow(ctx, `SELECT `+botInvoiceColumns+` FROM bot_invoices WHERE id=$1 FOR UPDATE`, invoiceID))
 			if err != nil {
 				return err
@@ -58,11 +58,23 @@ func (s *MessageStore) PayBotInvoice(ctx context.Context, invoiceID, payerID int
 				return domain.ErrBotInvoiceSettled
 			}
 			peer := domain.Peer{Type: domain.PeerTypeUser, ID: invoice.BotUserID}
+			offer, err := commerceInvoiceOfferTx(ctx, tx, locked.ID)
+			if err != nil {
+				return err
+			}
+			if offer.ChannelID > 0 {
+				peer = domain.Peer{Type: domain.PeerTypeChannel, ID: offer.ChannelID}
+			}
 			if _, err := NewStarsStore(tx).Debit(ctx, payerID, invoice.Amount, domain.StarsReasonBotInvoice, peer, date, invoice.Title, ""); err != nil {
 				return err
 			}
-			lifecycle := &StarGiftLifecycleStore{db: tx}
-			if _, err := lifecycle.applyBotStarsWalletTx(ctx, tx, domain.BotStarsCredit{BotUserID: invoice.BotUserID, PayerUserID: payerID, Amount: invoice.Amount, Reason: domain.StarsReasonBotInvoice, InvoiceKey: chargeID, Date: date}); err != nil {
+			if err := creditCommerceInvoiceTx(ctx, tx, locked, date); err != nil {
+				return err
+			}
+			if err := activateCommerceInvoiceTx(ctx, tx, locked, date); err != nil {
+				return err
+			}
+			if err := applyCommercePaymentReceiptTx(ctx, tx, locked, sending.Media.ServiceAction.Payment); err != nil {
 				return err
 			}
 			_, err = tx.Exec(ctx, `UPDATE bot_invoices SET paid=true,charge_id=$2,payer_user_id=$3,paid_at=$4 WHERE id=$1`, invoiceID, chargeID, payerID, date)
@@ -98,11 +110,18 @@ func (s *MessageStore) RefundBotInvoice(ctx context.Context, botID, payerID int6
 		if invoice.Refunded {
 			return nil
 		}
-		lifecycle := &StarGiftLifecycleStore{db: tx}
-		if _, err := lifecycle.applyBotStarsWalletTx(ctx, tx, domain.BotStarsCredit{BotUserID: botID, PayerUserID: payerID, Amount: -invoice.Amount, Reason: domain.StarsReasonBotRefund, InvoiceKey: chargeID + "-refund", Date: date}); err != nil {
+		if err := refundCommerceInvoiceTx(ctx, tx, invoice, date); err != nil {
 			return err
 		}
-		if _, err := NewStarsStore(tx).Credit(ctx, payerID, invoice.Amount, domain.StarsReasonBotRefund, domain.Peer{Type: domain.PeerTypeUser, ID: botID}, date, invoice.Title, ""); err != nil {
+		offer, err := commerceInvoiceOfferTx(ctx, tx, invoice.ID)
+		if err != nil {
+			return err
+		}
+		peer := domain.Peer{Type: domain.PeerTypeUser, ID: botID}
+		if offer.ChannelID > 0 {
+			peer = domain.Peer{Type: domain.PeerTypeChannel, ID: offer.ChannelID}
+		}
+		if _, err := NewStarsStore(tx).Credit(ctx, payerID, invoice.Amount, domain.StarsReasonBotRefund, peer, date, invoice.Title, ""); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE bot_invoices SET refunded=true WHERE id=$1`, invoice.ID)

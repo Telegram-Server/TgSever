@@ -255,6 +255,9 @@ func domainReplyKeyboardButton(button tg.KeyboardButton) (domain.MarkupButton, e
 		base.Type = domain.MarkupButtonRequestPeer
 		base.ButtonID, base.MaxQuantity = b.ButtonID, b.MaxQuantity
 		base.RequestPeerType, base.RequestPeerFilter = domainRequestPeerFilter(b.PeerType)
+		if created, ok := b.PeerType.(*tg.RequestPeerTypeCreateBot); ok {
+			base.SuggestedName, base.SuggestedUsername = created.SuggestedName, created.SuggestedUsername
+		}
 	case *tg.ButtonTypeSimpleWebView:
 		base.Type, base.URL = domain.MarkupButtonSimpleWebView, b.URL
 	default:
@@ -287,6 +290,8 @@ func domainMarkupButton(btn tg.KeyboardInlineButton, buttonID int) (domain.Marku
 		return domain.MarkupButton{}, err
 	}
 	switch b := btn.Type.(type) {
+	case *tg.InlineButtonTypeGame:
+		return domain.MarkupButton{Type: domain.MarkupButtonGame, Text: btn.Text, Style: style, IconCustomEmojiID: icon}, nil
 	case *tg.InlineButtonTypeCallback:
 		return domain.MarkupButton{
 			Type:              domain.MarkupButtonCallback,
@@ -332,7 +337,6 @@ func domainMarkupButton(btn tg.KeyboardInlineButton, buttonID int) (domain.Marku
 	case *tg.InlineButtonTypeCopy:
 		return domain.MarkupButton{Type: domain.MarkupButtonCopy, Text: btn.Text, CopyText: b.CopyText, Style: style, IconCustomEmojiID: icon}, nil
 	default:
-		// webview/game/url_auth/request_*/switch_inline/buy 等 P3 未实现按钮类型。
 		return domain.MarkupButton{}, domain.ErrButtonTypeInvalid
 	}
 }
@@ -431,6 +435,8 @@ func tgReplyMarkup(m *domain.MessageReplyMarkup) tg.ReplyMarkupClass {
 func tgMarkupButton(btn domain.MarkupButton) tg.KeyboardInlineButton {
 	out := tg.KeyboardInlineButton{Text: btn.Text}
 	switch btn.Type {
+	case domain.MarkupButtonGame:
+		out.Type = &tg.InlineButtonTypeGame{}
 	case domain.MarkupButtonURL:
 		out.Type = &tg.InlineButtonTypeURL{URL: btn.URL}
 	case domain.MarkupButtonLoginURL:
@@ -480,7 +486,7 @@ func tgReplyKeyboardButton(btn domain.MarkupButton) tg.KeyboardButton {
 		}
 		out.Type = button
 	case domain.MarkupButtonRequestPeer:
-		out.Type = &tg.ButtonTypeRequestPeer{ButtonID: btn.ButtonID, PeerType: tgRequestPeerTypeWithFilter(btn.RequestPeerType, btn.RequestPeerFilter), MaxQuantity: btn.MaxQuantity}
+		out.Type = &tg.ButtonTypeRequestPeer{ButtonID: btn.ButtonID, PeerType: requestedButtonPeerType(domain.BotRequestedWebViewButton{PeerType: btn.RequestPeerType, PeerFilter: btn.RequestPeerFilter, SuggestedName: btn.SuggestedName, SuggestedUsername: btn.SuggestedUsername}), MaxQuantity: btn.MaxQuantity}
 	case domain.MarkupButtonSimpleWebView:
 		out.Type = &tg.ButtonTypeSimpleWebView{URL: btn.URL}
 	default:
@@ -495,6 +501,11 @@ func tgReplyKeyboardButton(btn domain.MarkupButton) tg.KeyboardButton {
 func domainRequestPeerFilter(peerType tg.RequestPeerTypeClass) (string, *domain.BotRequestPeerFilter) {
 	filter := &domain.BotRequestPeerFilter{}
 	switch v := peerType.(type) {
+	case *tg.RequestPeerTypeCreateBot:
+		if v.BotManaged {
+			return "managed_bot", nil
+		}
+		return "", nil
 	case *tg.RequestPeerTypeUser:
 		if value, ok := v.GetBot(); ok {
 			filter.UserIsBotSet, filter.UserIsBot = true, value

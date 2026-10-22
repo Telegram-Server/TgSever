@@ -78,6 +78,9 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		if liveMedia, isLive := media.(*tg.InputMediaGeoLive); isLive {
 			return r.onEditMessageLiveLocation(ctx, req, liveMedia)
 		}
+		if todoMedia, isTodo := media.(*tg.InputMediaTodo); isTodo {
+			return r.onEditMessageTodo(ctx, req, todoMedia)
+		}
 		if !editMessageMediaCanDegradeToText(media) {
 			return nil, mediaInvalidErr()
 		}
@@ -94,26 +97,9 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			return nil, messageEmptyErr()
 		}
 	}
-	// reply_markup（bot inline keyboard）：仅 bot 编辑自己消息时替换/清空（非 bot 丢弃，
-	// 不报错）。P3 仅私聊；markup-only 编辑（无文本）暂不支持——须随文本一起编辑。
-	// 携带 inline markup（即便空 rows）即视为「设置」：空 inline 表示清空键盘，
-	// 否则替换；非 inline（reply keyboard 等）或非 bot 一律不设置（保留原 markup）。
-	var replyMarkup *domain.MessageReplyMarkup
-	var setReplyMarkup bool
-	if req.ReplyMarkup != nil {
-		isBot := r.userIsBot(ctx, userID)
-		replyMarkup, err = domainReplyMarkupForSender(req.ReplyMarkup, isBot)
-		if err != nil {
-			return nil, replyMarkupErr(err)
-		}
-		if _, isInline := req.ReplyMarkup.(*tg.ReplyInlineMarkup); isInline && isBot {
-			setReplyMarkup = true
-		}
-	}
-	if setReplyMarkup {
-		if err := r.validateReplyMarkupForPeer(ctx, userID, peer, replyMarkup); err != nil {
-			return nil, err
-		}
+	replyMarkup, setReplyMarkup, err := r.editReplyMarkup(ctx, userID, peer, req.ReplyMarkup)
+	if err != nil {
+		return nil, err
 	}
 	if peer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
@@ -173,6 +159,30 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 	if err != nil {
 		return nil, messageEditErr(err)
 	}
+	return r.privateEditMessageUpdates(ctx, userID, res)
+}
+
+func (r *Router) editReplyMarkup(ctx context.Context, userID int64, peer domain.Peer, input tg.ReplyMarkupClass) (*domain.MessageReplyMarkup, bool, error) {
+	if input == nil {
+		return nil, false, nil
+	}
+	isBot := r.userIsBot(ctx, userID)
+	markup, err := domainReplyMarkupForSender(input, isBot)
+	if err != nil {
+		return nil, false, replyMarkupErr(err)
+	}
+	_, inline := input.(*tg.ReplyInlineMarkup)
+	if !inline || !isBot {
+		return nil, false, nil
+	}
+	if err := r.validateReplyMarkupForPeer(ctx, userID, peer, markup); err != nil {
+		return nil, false, err
+	}
+	return markup, true, nil
+}
+
+// 普通编辑、实时位置与清单共用同一个 Bot API 投递入口。
+func (r *Router) privateEditMessageUpdates(ctx context.Context, userID int64, res domain.EditMessageResult) (tg.UpdatesClass, error) {
 	r.enqueueBotAPIPrivateEditUpdatesAsync(ctx, res)
 	self := res.Self()
 	if self.Event.Pts == 0 || self.Message.ID == 0 {

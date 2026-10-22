@@ -253,8 +253,23 @@ func (s *Service) SetAttachMenuState(ctx context.Context, state domain.BotAttach
 }
 
 func (s *Service) SaveRequestedWebViewButton(ctx context.Context, button domain.BotRequestedWebViewButton) (domain.BotRequestedWebViewButton, error) {
-	if s == nil || s.bots == nil || button.BotUserID == 0 || button.UserID == 0 || button.ButtonID == 0 {
+	if s == nil || s.bots == nil || button.BotUserID == 0 || button.UserID == 0 {
 		return domain.BotRequestedWebViewButton{}, domain.ErrBotRequestedButtonInvalid
+	}
+	if button.MaxQuantity == 0 {
+		button.MaxQuantity = 1
+	}
+	if err := domain.ValidateReplyMarkup(&domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupKeyboard, Keyboard: [][]domain.MarkupButton{{{Type: domain.MarkupButtonRequestPeer, Text: button.Text, ButtonID: button.ButtonID, RequestPeerType: button.PeerType, MaxQuantity: button.MaxQuantity, RequestPeerFilter: button.PeerFilter, NameRequested: button.NameRequested, UsernameRequested: button.UsernameRequested, PhotoRequested: button.PhotoRequested, Style: button.Style, IconCustomEmojiID: button.IconCustomEmojiID, SuggestedName: button.SuggestedName, SuggestedUsername: button.SuggestedUsername}}}}); err != nil {
+		return domain.BotRequestedWebViewButton{}, err
+	}
+	if button.PeerType == "managed_bot" {
+		enabled, err := s.CanManageBots(ctx, button.BotUserID)
+		if err != nil {
+			return domain.BotRequestedWebViewButton{}, err
+		}
+		if !enabled {
+			return domain.BotRequestedWebViewButton{}, domain.ErrBotManagerInvalid
+		}
 	}
 	if button.WebAppReqID == "" {
 		rnd, err := randomInt64()
@@ -262,12 +277,6 @@ func (s *Service) SaveRequestedWebViewButton(ctx context.Context, button domain.
 			return domain.BotRequestedWebViewButton{}, err
 		}
 		button.WebAppReqID = hex.EncodeToString([]byte(fmt.Sprintf("%d:%d:%d", button.BotUserID, button.UserID, rnd)))
-	}
-	if button.MaxQuantity <= 0 {
-		button.MaxQuantity = 1
-	}
-	if button.MaxQuantity > domain.MaxBotRequestedPeerQuantity {
-		return domain.BotRequestedWebViewButton{}, domain.ErrBotRequestedButtonInvalid
 	}
 	now := s.now()
 	if button.CreatedAt.IsZero() {
@@ -287,6 +296,13 @@ func (s *Service) GetRequestedWebViewButton(ctx context.Context, botUserID, user
 		return domain.BotRequestedWebViewButton{}, false, nil
 	}
 	return s.bots.GetRequestedWebViewButton(ctx, botUserID, userID, reqID)
+}
+
+func (s *Service) ConsumeRequestedWebViewButton(ctx context.Context, botUserID, userID int64, reqID string) (domain.BotRequestedWebViewButton, bool, error) {
+	if s == nil || s.bots == nil {
+		return domain.BotRequestedWebViewButton{}, false, nil
+	}
+	return s.bots.ConsumeRequestedWebViewButton(ctx, botUserID, userID, reqID)
 }
 
 func (s *Service) DeleteRequestedWebViewButton(ctx context.Context, botUserID, userID int64, reqID string) error {

@@ -47,6 +47,11 @@ type BotAPIUpdateRetentionStore interface {
 	DeleteDeliveredOrExpired(ctx context.Context, confirmedGrace, maxAge time.Duration, limit int) (int, error)
 }
 
+// BotSubscriptionProcessor settles due renewals through the same router used by RPCs.
+type BotSubscriptionProcessor interface {
+	ProcessBotSubscriptions(ctx context.Context, date, limit int) error
+}
+
 // UserUpdateEventRetentionStore 只回收所有当前授权设备都明确确认过的账号事件前缀。
 // 它不是普通 TTL：任一授权缺 state 时确认水位为 0，不得删除该设备可能仍需的事件。
 type UserUpdateEventRetentionStore interface {
@@ -109,6 +114,7 @@ type RetentionWorker struct {
 	tempKeys                    TempAuthKeyRetentionStore // 可为 nil（不回收 temp key 绑定）
 	authKeySessionLayers        AuthKeySessionLayerRetentionStore
 	botAPIUpdates               BotAPIUpdateRetentionStore // 可为 nil（不回收 Bot API 队列）
+	botSubscriptions            BotSubscriptionProcessor
 	userUpdates                 UserUpdateEventRetentionStore
 	channelUpdates              ChannelUpdateEventRetentionStore
 	loginCodeDeliveries         LoginCodeDeliveryRetentionStore
@@ -177,6 +183,11 @@ func (w *RetentionWorker) WithBotAPIUpdateRetention(store BotAPIUpdateRetentionS
 	}
 	w.botAPIUpdates = store
 	w.botAPIRetention = retention
+	return w
+}
+
+func (w *RetentionWorker) WithBotSubscriptions(processor BotSubscriptionProcessor) *RetentionWorker {
+	w.botSubscriptions = processor
 	return w
 }
 
@@ -249,13 +260,20 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 	poisonTicker := time.NewTicker(w.outboxPoisonInterval)
 	defer poisonTicker.Stop()
 	var (
-		heartbeatTicker *time.Ticker
-		heartbeatC      <-chan time.Time
+		heartbeatTicker    *time.Ticker
+		heartbeatC         <-chan time.Time
+		subscriptionTicker *time.Ticker
+		subscriptionC      <-chan time.Time
 	)
 	if interval := w.orphanHeartbeatInterval(); interval > 0 {
 		heartbeatTicker = time.NewTicker(interval)
 		heartbeatC = heartbeatTicker.C
 		defer heartbeatTicker.Stop()
+	}
+	if w.botSubscriptions != nil {
+		subscriptionTicker = time.NewTicker(time.Minute)
+		subscriptionC = subscriptionTicker.C
+		defer subscriptionTicker.Stop()
 	}
 	for {
 		select {
@@ -267,6 +285,8 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 			w.runOutboxPoisonOnce(ctx)
 		case <-heartbeatC:
 			w.heartbeatActiveAuthKeys(ctx)
+		case <-subscriptionC:
+			w.runBotSubscriptions(ctx)
 		}
 	}
 }
@@ -274,6 +294,16 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 func (w *RetentionWorker) runOnce(ctx context.Context) {
 	w.runOutboxPoisonOnce(ctx)
 	w.runRetentionOnce(ctx)
+	w.runBotSubscriptions(ctx)
+}
+
+func (w *RetentionWorker) runBotSubscriptions(ctx context.Context) {
+	if w.botSubscriptions == nil || ctx.Err() != nil {
+		return
+	}
+	if err := w.botSubscriptions.ProcessBotSubscriptions(ctx, int(time.Now().Unix()), 100); err != nil && ctx.Err() == nil {
+		w.logger.Warn("process bot subscriptions failed", zap.Error(err))
+	}
 }
 
 func (w *RetentionWorker) runOutboxPoisonOnce(ctx context.Context) {

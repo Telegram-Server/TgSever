@@ -116,12 +116,17 @@ func newInlineBotRPCTestFixture(t *testing.T) inlineBotRPCTestFixture {
 	if _, err := bots.SetInlinePlaceholder(ctx, bot.ID, "Search inline"); err != nil {
 		t.Fatalf("set inline placeholder: %v", err)
 	}
+	feedback := memory.NewBotGuestQueryStore()
+	if err := feedback.SetInlineFeedback(ctx, bot.ID, 100); err != nil {
+		t.Fatal(err)
+	}
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
-		Users:    appusers.NewService(users),
-		Bots:     bots,
-		Messages: messages,
-		Channels: channels,
-		Files:    files,
+		Users:             appusers.NewService(users),
+		Bots:              bots,
+		Messages:          messages,
+		Channels:          channels,
+		Files:             files,
+		BotInlineFeedback: feedback,
 	}, zaptest.NewLogger(t), clock.System)
 	return inlineBotRPCTestFixture{router: r, bots: bots, channels: channels, files: files, owner: owner, peer: peer, bot: bot, photo: photo, document: document}
 }
@@ -1946,7 +1951,6 @@ func TestInlineBotValidation(t *testing.T) {
 		result tg.InputBotInlineResultClass
 		want   string
 	}{
-		{name: "geo live fields", result: inlineGeoResultWithPeriod("geo-live", 1, 2), want: "MEDIA_INVALID"},
 		{name: "empty venue title", result: inlineVenueResult("venue-empty", "", 1, 2), want: "MEDIA_EMPTY"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

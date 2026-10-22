@@ -38,6 +38,14 @@ func TestValidateEphemeralContentBoundsAllRetainedVectors(t *testing.T) {
 	if err := ValidateEphemeralContent(badMedia); !errors.Is(err, ErrEphemeralInvalid) {
 		t.Fatalf("media shape err=%v", err)
 	}
+	for _, media := range []*MessageMedia{
+		{Kind: MessageMediaKindPhoto, Photo: &Photo{}, Game: &BotGame{}},
+		{Kind: MessageMediaKindPhoto, Photo: &Photo{}, PaidMedia: &PaidMedia{}},
+	} {
+		if err := ValidateEphemeralContent(EphemeralContent{Media: media}); !errors.Is(err, ErrEphemeralInvalid) {
+			t.Fatalf("side-loaded media bypassed private shape validation: %v", err)
+		}
+	}
 }
 
 func TestEphemeralStoredStateRejectsPartialDeviceAndInvalidTombstone(t *testing.T) {

@@ -85,7 +85,7 @@ func (s *Service) createStickerSet(ctx context.Context, req domain.CreateSticker
 	if len(req.Items) == 0 {
 		return domain.StickerSet{}, nil, domain.ErrStickerSetEmpty
 	}
-	if len(req.Items) > domain.MaxStickerSetItems {
+	if len(req.Items) > stickerSetCapacity(kind, req.CreatorBotID) {
 		return domain.StickerSet{}, nil, domain.ErrStickerSetTooMuch
 	}
 	shortName := normalizeStickerSetShortName(req.ShortName)
@@ -96,7 +96,7 @@ func (s *Service) createStickerSet(ctx context.Context, req domain.CreateSticker
 			return domain.StickerSet{}, nil, err
 		}
 	} else {
-		if err := validateStickerSetShortName(shortName); err != nil {
+		if err := validateCreatedStickerSetName(shortName, req.CreatorBotID); err != nil {
 			return domain.StickerSet{}, nil, err
 		}
 		available, err := s.media.StickerSetShortNameAvailable(ctx, shortName)
@@ -153,6 +153,7 @@ func (s *Service) createStickerSet(ctx context.Context, req domain.CreateSticker
 		TextColor:     kind == domain.StickerSetKindEmoji && req.TextColor,
 		Creator:       true,
 		CreatorUserID: req.CreatorUserID,
+		CreatorBotID:  req.CreatorBotID,
 		Software:      strings.TrimSpace(req.Software),
 	}
 
@@ -168,9 +169,9 @@ func (s *Service) createStickerSet(ctx context.Context, req domain.CreateSticker
 		if err != nil {
 			return domain.StickerSet{}, nil, err
 		}
+		doc = applyStickerInputMetadata(doc, item)
 		set.DocumentIDs = append(set.DocumentIDs, doc.ID)
-		set.Packs = addDocumentToStickerPacks(set.Packs, item.Emoji, doc.ID)
-		set.Keywords = upsertStickerKeywords(set.Keywords, parseStickerKeywords(doc.ID, item.Keywords))
+		set.Packs, set.Keywords = stickerInputIndexes(set.Packs, set.Keywords, doc.ID, item)
 		finalBySourceID[item.DocumentID] = doc
 		updatedDocs = append(updatedDocs, doc)
 	}
@@ -190,6 +191,7 @@ func (s *Service) createStickerSet(ctx context.Context, req domain.CreateSticker
 			set.ThumbVersion = 1
 		}
 	}
+	updateBotStickerSetFormats(&set, updatedDocs)
 	set.Hash = stickerSetHash(set)
 	if err := s.media.CreateStickerSet(ctx, set, updatedDocs); err != nil {
 		if errors.Is(err, domain.ErrStickerSetShortNameOccupied) {
@@ -355,7 +357,7 @@ func (s *Service) ensureStickerMaterialShape(ctx context.Context, doc domain.Doc
 				H:    512,
 			})
 		}
-	case stickerMaterialMimeWebP:
+	case stickerMaterialMimeWebP, "image/png":
 		var err error
 		doc, err = s.ensureStickerMaterialMIME(ctx, doc, stickerMaterialMimeWebP)
 		if err != nil {
@@ -678,6 +680,15 @@ func stickerSetHash(set domain.StickerSet) int {
 			_, _ = h.Write(buf[:])
 		}
 	}
+	for _, kw := range set.Keywords {
+		binary.LittleEndian.PutUint64(buf[:], uint64(kw.DocumentID))
+		_, _ = h.Write(buf[:])
+		for _, word := range kw.Keywords {
+			writeHashString(h, word)
+		}
+	}
+	binary.LittleEndian.PutUint64(buf[:], uint64(set.ThumbDocumentID))
+	_, _ = h.Write(buf[:])
 	sum := int(h.Sum32() & 0x7fffffff)
 	if sum == 0 {
 		return 1

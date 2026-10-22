@@ -27,6 +27,13 @@ const (
 	MaxChannelParticipantsQueryLength = 128
 	// MaxChannelInviteUsers limits a single inviteToChannel/createChat member batch.
 	MaxChannelInviteUsers = 200
+	// MinChannelStickerSetParticipants matches Telegram's published group sticker
+	// threshold: https://telegram.org/blog/replies-mentions-stickers#stickers-of-the-group.
+	// TDLib set_channel_sticker_set / TDesktop canEditStickers consume the server's
+	// can_set_stickers flag rather than deriving this threshold in the client:
+	// https://github.com/tdlib/td/blob/master/td/telegram/ChatManager.cpp
+	// https://github.com/telegramdesktop/tdesktop/blob/dev/Telegram/SourceFiles/data/data_channel.cpp
+	MinChannelStickerSetParticipants = 100
 	// MaxChannelRealtimeFanout caps best-effort realtime channel pushes until a presence/subscription index exists.
 	MaxChannelRealtimeFanout = 2000
 	// MaxSynchronousChannelDialogFanout bounds per-member channel_dialogs writes in the send transaction.
@@ -43,7 +50,7 @@ const (
 	// MaxChannelTypingFanout caps transient typing fanout.
 	MaxChannelTypingFanout = MaxChannelRealtimeFanout
 	// MaxChannelAdminRankLength limits custom admin rank text.
-	MaxChannelAdminRankLength = 32
+	MaxChannelAdminRankLength = 16
 	// MaxChannelInviteTitleLength limits invite link admin-only labels.
 	MaxChannelInviteTitleLength = 32
 	// MaxChannelInviteListLimit limits invite management pages.
@@ -441,6 +448,7 @@ type Channel struct {
 	PreHistoryHidden         bool
 	ParticipantsHidden       bool
 	AntiSpam                 bool
+	GuardBotID               int64
 	// HasLink 表示频道/群存在未撤销的导出邀请链接。Android send-as 入口会用
 	// megagroup && (public || has_geo || has_link) 判定是否拉取候选列表。
 	HasLink      bool
@@ -455,6 +463,7 @@ type Channel struct {
 	LinkedMonoforumID   int64
 	SlowmodeSeconds     int
 	BoostsUnrestrict    int
+	StickerSetID        int64
 	DefaultBannedRights ChannelBannedRights
 	ReactionPolicy      ChannelReactionPolicy
 	Color               ChannelPeerColor
@@ -493,18 +502,22 @@ func (c Channel) MembersListAdminOnly() bool {
 
 // ChannelMember is one user's channel membership and read state.
 type ChannelMember struct {
-	ChannelID       int64
-	UserID          int64
-	InviterUserID   int64
-	Role            ChannelMemberRole
-	Status          ChannelMemberStatus
-	JoinedAt        int
-	LeftAt          int
-	AdminRights     ChannelAdminRights
-	BannedRights    ChannelBannedRights
-	Rank            string
-	AvailableMinID  int
-	AvailableMinPts int
+	ChannelID int64
+	UserID    int64
+	// Peer is set only for banned channel identities; ordinary members use UserID.
+	Peer Peer
+	// SenderChannelIdentity is populated only through an authorized sender-ban read.
+	SenderChannelIdentity ChannelSenderIdentity
+	InviterUserID         int64
+	Role                  ChannelMemberRole
+	Status                ChannelMemberStatus
+	JoinedAt              int
+	LeftAt                int
+	AdminRights           ChannelAdminRights
+	BannedRights          ChannelBannedRights
+	Rank                  string
+	AvailableMinID        int
+	AvailableMinPts       int
 	// HistoryClearAnchorID/Date identify an owner-local channels.deleteHistory
 	// boundary. They are deliberately separate from AvailableMinID: joining a
 	// hidden-prehistory channel also advances AvailableMinID but must not
@@ -616,10 +629,11 @@ const (
 	ChannelActionChatJoined   ChannelMessageActionType = "chat_joined"
 	// ChannelActionChatJoinedByLink 是经邀请链接加入的服务消息，
 	// 渲染为 "X joined the group via invite link"。
-	ChannelActionChatJoinedByLink ChannelMessageActionType = "chat_joined_by_link"
-	ChannelActionEditTitle        ChannelMessageActionType = "chat_edit_title"
-	ChannelActionTopicCreate      ChannelMessageActionType = "topic_create"
-	ChannelActionTopicEdit        ChannelMessageActionType = "topic_edit"
+	ChannelActionChatJoinedByLink    ChannelMessageActionType = "chat_joined_by_link"
+	ChannelActionChatJoinedByRequest ChannelMessageActionType = "chat_joined_by_request"
+	ChannelActionEditTitle           ChannelMessageActionType = "chat_edit_title"
+	ChannelActionTopicCreate         ChannelMessageActionType = "topic_create"
+	ChannelActionTopicEdit           ChannelMessageActionType = "topic_edit"
 	// ChannelActionTodoCompletions / ChannelActionTodoAppendTasks 映射
 	// messageActionTodoCompletions / messageActionTodoAppendTasks：超级群
 	// checklist 协作生成的服务消息，经 reply_to 指向原 checklist 消息。
@@ -690,9 +704,9 @@ type ChannelMessageAction struct {
 	Wallpaper *Wallpaper
 	// Photo 仅 chat_edit_photo 服务消息使用。
 	Photo *Photo
-	// Suggested-post lifecycle actions share the immutable price snapshot.  The
-	// approval action additionally uses the reject/balance/schedule fields;
-	// refund uses PayerInitiated.
+	// Approval actions retain the immutable quoted price; success actions carry
+	// the channel's net income after commission. Approval additionally uses
+	// reject/balance/schedule fields; refund uses PayerInitiated.
 	SuggestedPostRejected       bool
 	SuggestedPostBalanceTooLow  bool
 	SuggestedPostRejectComment  string
@@ -727,6 +741,7 @@ type ChannelMessage struct {
 	ReplyTo           *MessageReply
 	Forward           *MessageForward
 	ViaBotID          int64
+	GuestChatViaFrom  Peer
 	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
@@ -879,6 +894,7 @@ type ChannelMessagePeerReaction struct {
 	MessageID    int
 	SenderUserID int64
 	UserID       int64
+	ActorChatID  int64
 	Reaction     MessageReaction
 	Big          bool
 	Unread       bool
@@ -903,6 +919,7 @@ type ChannelMessageReactions struct {
 // SetChannelMessageReactionsRequest replaces the current user's reactions for one message.
 type SetChannelMessageReactionsRequest struct {
 	UserID      int64
+	Actor       Peer
 	ChannelID   int64
 	MessageID   int
 	Reactions   []MessageReaction
@@ -916,6 +933,7 @@ type SetChannelMessageReactionsRequest struct {
 
 // ChannelMessageReactionsResult describes one reaction update.
 type ChannelMessageReactionsResult struct {
+	MessageReactionChange
 	Channel    Channel
 	Message    ChannelMessage
 	Messages   []ChannelMessage
@@ -925,24 +943,25 @@ type ChannelMessageReactionsResult struct {
 
 // DeleteChannelParticipantReactionRequest removes one participant reaction on one message.
 type DeleteChannelParticipantReactionRequest struct {
-	UserID            int64
-	ChannelID         int64
-	MessageID         int
-	ParticipantUserID int64
-	Date              int
+	UserID      int64
+	ChannelID   int64
+	MessageID   int
+	Participant Peer
+	Date        int
 }
 
 // DeleteChannelParticipantReactionsRequest removes a bounded page of one participant's reactions.
 type DeleteChannelParticipantReactionsRequest struct {
-	UserID            int64
-	ChannelID         int64
-	ParticipantUserID int64
-	Limit             int
-	Date              int
+	UserID      int64
+	ChannelID   int64
+	Participant Peer
+	Limit       int
+	Date        int
 }
 
 // DeleteChannelParticipantReactionsResult describes moderation reaction clears.
 type DeleteChannelParticipantReactionsResult struct {
+	Changes    []MessageReactionChange
 	Channel    Channel
 	Messages   []ChannelMessage
 	Recipients []int64
@@ -1440,14 +1459,29 @@ type CreateChannelResult struct {
 	Members []ChannelMember
 	// Previous 是加入/退出类结果里 Members 各成员变化前的真实记录（按 UserID），由 store 在
 	// 同一事务/锁内读出。此前从未有过成员记录的用户不在其中，按 left 处理。
-	Previous   map[int64]ChannelMember
-	Message    ChannelMessage
-	Event      ChannelUpdateEvent
-	Recipients []int64
+	Previous map[int64]ChannelMember
+	// Joins 保留每位新成员的邀请、审批与服务消息快照，批量批准时不能覆盖。
+	Joins map[int64]ChannelMemberJoin
+	// InviteViewers is prepared once for recipient-specific invite projection.
+	// It is transient and never changes the committed join snapshots.
+	InviteViewers          map[int64]struct{} `json:"-"`
+	JoinRequest            *BotChatJoinRequest
+	PendingRequestsChanged bool
+	Message                ChannelMessage
+	Event                  ChannelUpdateEvent
+	Recipients             []int64
+}
+
+type ChannelMemberJoin struct {
+	Invite         *ChannelInvite
+	ApprovedBy     int64
+	ViaJoinRequest bool
+	Message        ChannelMessage
+	Event          ChannelUpdateEvent
 }
 
 // MergeJoined 把批量批准入群中的一次结果并入累计结果：Channel/Message/Event/Recipients 取
-// 最新一次，Members 与 Previous 累加，保证每个被批准的人都出现在结果里。
+// 最新一次，Members、Previous 与 Joins 累加，保留每个人的邀请及服务消息。
 func (r CreateChannelResult) MergeJoined(next CreateChannelResult) CreateChannelResult {
 	members := append(append([]ChannelMember(nil), r.Members...), next.Members...)
 	var previous map[int64]ChannelMember
@@ -1458,6 +1492,14 @@ func (r CreateChannelResult) MergeJoined(next CreateChannelResult) CreateChannel
 		}
 		for userID, member := range next.Previous {
 			previous[userID] = member
+		}
+	}
+	if len(r.Joins) > 0 {
+		if next.Joins == nil {
+			next.Joins = make(map[int64]ChannelMemberJoin, len(r.Joins))
+		}
+		for userID, join := range r.Joins {
+			next.Joins[userID] = join
 		}
 	}
 	next.Members, next.Previous = members, previous
@@ -1588,6 +1630,8 @@ type EditChannelDefaultBannedRightsRequest struct {
 
 // EditChannelBannedResult describes the participant transition.
 type EditChannelBannedResult struct {
+	// NoChange marks an idempotent removal; callers must not emit updates.
+	NoChange    bool
 	Channel     Channel
 	Previous    ChannelMember
 	Participant ChannelMember
@@ -1655,9 +1699,10 @@ type DeleteChannelResult struct {
 
 // SendChannelMessageRequest sends one channel/supergroup message.
 type SendChannelMessageRequest struct {
-	UserID    int64
-	ChannelID int64
-	RandomID  int64
+	UserID     int64
+	ChannelID  int64
+	GuestBotID int64
+	RandomID   int64
 	// IdempotencyFingerprint is the SHA-256 of the immutable client send intent. RPC callers
 	// provide a raw-TL per-item value; internal callers leave it empty for the store fallback.
 	IdempotencyFingerprint []byte
@@ -1703,6 +1748,8 @@ type SendMonoforumMessageRequest struct {
 	Message                string
 	Entities               []MessageEntity
 	Media                  *MessageMedia
+	RichMessage            *MessageRichMessage
+	ReplyMarkup            *MessageReplyMarkup
 	ReplyTo                *MessageReply
 	Forward                *MessageForward
 	Silent                 bool
@@ -2018,7 +2065,7 @@ type DeleteChannelForumTopicHistoryRequest struct {
 }
 
 // EditChannelMessageRequest edits one text message in a channel/supergroup.
-// Media 非 nil 时整体替换消息媒体快照（当前唯一调用方是 live location 续报/停止）。
+// Media 非 nil 时替换消息媒体快照。
 type EditChannelMessageRequest struct {
 	UserID    int64
 	ChannelID int64
@@ -2034,6 +2081,9 @@ type EditChannelMessageRequest struct {
 	RichMessage    *MessageRichMessage
 	// ViaBotEditBotID 非零时要求目标消息 via_bot_id 匹配对应 bot。
 	ViaBotEditBotID int64
+	// ReplaceTodo 仅替换清单定义，store 持锁保留当前仍存在 ID 的完整完成记录；
+	// append/toggle 不置位。
+	ReplaceTodo bool
 	// AllowTodoParticipantMutation 允许非作者普通成员在 checklist 的
 	// others_can_* 授权下仅替换 todo media 快照；不放开普通文本/媒体编辑。
 	AllowTodoParticipantMutation bool
@@ -2069,6 +2119,10 @@ type DeleteChannelMessagesRequest struct {
 	Date            int
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64
+	// SkipUnauthorized skips only existing messages the actor cannot delete.
+	// Missing/deleted messages keep their usual no-op behavior; invalid IDs and
+	// all other errors still fail the batch. False keeps atomic MTProto deletion.
+	SkipUnauthorized bool
 	// Audit 声明删除归属；零值表示 UserID 从当前会话自己删除。
 	Audit DeletionAudit
 }
@@ -2150,24 +2204,29 @@ type UpdateChannelPinnedMessageResult struct {
 type UnpinAllChannelMessagesRequest struct {
 	UserID    int64
 	ChannelID int64
+	TopicID   int
 	Date      int
 }
 
 // ChannelInvite is an exported invite link without TL dependencies.
 type ChannelInvite struct {
-	ChannelID      int64
-	InviteID       int64
-	Hash           string
-	AdminUserID    int64
-	Title          string
-	Permanent      bool
-	Revoked        bool
-	RequestNeeded  bool
-	ExpireDate     int
-	UsageLimit     int
-	UsageCount     int
-	RequestedCount int
-	Date           int
+	ChannelID int64
+	InviteID  int64
+	Hash      string
+	// Link is the public URL captured for an outbound update; storage uses Hash.
+	Link               string
+	AdminUserID        int64
+	Title              string
+	Permanent          bool
+	Revoked            bool
+	RequestNeeded      bool
+	ExpireDate         int
+	UsageLimit         int
+	UsageCount         int
+	RequestedCount     int
+	SubscriptionPeriod int
+	SubscriptionPrice  int64
+	Date               int
 }
 
 // ExportChannelInviteRequest creates one invite link.

@@ -12,19 +12,23 @@ const (
 )
 
 type BotInlineResult struct {
-	ID          string
-	Type        string
-	Title       string
-	Description string
-	URL         string
-	Thumb       *BotInlineWebDocument
-	Content     *BotInlineWebDocument
-	Message     string
-	Entities    []MessageEntity
-	ReplyMarkup *MessageReplyMarkup
-	NoWebpage   bool
-	MediaAuto   bool
-	Media       *MessageMedia
+	ID               string
+	Type             string
+	Title            string
+	Description      string
+	URL              string
+	Thumb            *BotInlineWebDocument
+	Content          *BotInlineWebDocument
+	Message          string
+	Entities         []MessageEntity
+	ReplyMarkup      *MessageReplyMarkup
+	NoWebpage        bool
+	MediaAuto        bool
+	Media            *MessageMedia
+	RichMessage      *MessageRichMessage
+	RichMessageInput *BotAPIRichMessageInput
+	InvertMedia      bool
+	InvoicePayload   string `json:"-"`
 }
 
 type BotInlineWebDocument struct {

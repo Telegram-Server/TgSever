@@ -37,6 +37,9 @@ func (r *Router) onMessagesStartBot(ctx context.Context, req *tg.MessagesStartBo
 	if !found || !bot.Bot {
 		return nil, botInvalidErr()
 	}
+	if err := r.ensureBotAccess(ctx, bot.ID, userID); err != nil {
+		return nil, err
+	}
 	// P3 仅私聊启动：peer 必须解析为该 bot（深链 start 的 peer=bot）。群启动（加 bot
 	// 进群）属 P4 群内 bot，此处拒绝而非静默改写语义。
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)

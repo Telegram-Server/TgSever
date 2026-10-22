@@ -104,6 +104,9 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 	if !found || !botUser.Bot {
 		return nil, botInvalidErr()
 	}
+	if err := r.ensureBotAccess(ctx, botUser.ID, userID); err != nil {
+		return nil, err
+	}
 	webAppReqID, fromWebApp := req.GetWebappReqID()
 	idempotencyKey := webAppReqID
 	var button domain.BotRequestedWebViewButton
@@ -143,12 +146,35 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 		peers = append(peers, resolved)
 	}
 	details, err := r.requestedPeerDetails(ctx, userID, peers, button)
+	var managedBot *domain.User
+	if button.PeerType == "managed_bot" {
+		if len(peers) != 1 {
+			return nil, buttonDataInvalidErr()
+		}
+		bot, matches, err := r.requestedManagedBotMatches(ctx, userID, botUser.ID, peers[0].ID)
+		if err != nil {
+			return nil, err
+		}
+		if !matches {
+			return nil, buttonDataInvalidErr()
+		}
+		managedBot = &bot
+	}
 	if err != nil {
 		return nil, internalErr()
 	}
 	recipientBlocked, err := r.peerBlocksUser(ctx, userID, botUser.ID)
 	if err != nil {
 		return nil, err
+	}
+	if fromWebApp {
+		claimed, found, err := r.deps.Bots.ConsumeRequestedWebViewButton(ctx, botUser.ID, userID, webAppReqID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		if !found || claimed.ButtonID != button.ButtonID {
+			return nil, buttonDataInvalidErr()
+		}
 	}
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
@@ -166,6 +192,7 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 					NameRequested:     button.NameRequested,
 					UsernameRequested: button.UsernameRequested,
 					PhotoRequested:    button.PhotoRequested,
+					ManagedBot:        managedBot,
 				},
 			},
 		},
@@ -179,9 +206,6 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 		return nil, internalErr()
 	}
 	r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
-	if fromWebApp {
-		_ = r.deps.Bots.DeleteRequestedWebViewButton(ctx, botUser.ID, userID, webAppReqID)
-	}
 	var users []tg.UserClass
 	var chats []tg.ChatClass
 	if !res.Duplicate {
@@ -285,7 +309,7 @@ func (r *Router) requestedPeerDetails(ctx context.Context, viewerUserID int64, p
 }
 
 func (r *Router) requestPeerButtonFromMessage(ctx context.Context, userID, botUserID int64, messageID, buttonID int) (domain.BotRequestedWebViewButton, error) {
-	if messageID <= 0 || messageID > domain.MaxMessageBoxID || buttonID == 0 {
+	if messageID <= 0 || messageID > domain.MaxMessageBoxID {
 		return domain.BotRequestedWebViewButton{}, buttonDataInvalidErr()
 	}
 	message, found, err := r.lookupOwnerMessage(ctx, userID, messageID)
@@ -307,6 +331,7 @@ func (r *Router) requestPeerButtonFromMessage(ctx context.Context, userID, botUs
 				PeerType: item.RequestPeerType, MaxQuantity: item.MaxQuantity, PeerFilter: item.RequestPeerFilter,
 				NameRequested: item.NameRequested, UsernameRequested: item.UsernameRequested,
 				PhotoRequested: item.PhotoRequested,
+				SuggestedName:  item.SuggestedName, SuggestedUsername: item.SuggestedUsername,
 			}, nil
 		}
 	}
@@ -315,7 +340,7 @@ func (r *Router) requestPeerButtonFromMessage(ctx context.Context, userID, botUs
 
 func requestedPeerTypeMatches(kind string, peer domain.Peer) bool {
 	switch kind {
-	case "user", "":
+	case "user", "managed_bot", "":
 		return peer.Type == domain.PeerTypeUser
 	case "chat", "broadcast":
 		return peer.Type == domain.PeerTypeChannel
@@ -327,6 +352,10 @@ func requestedPeerTypeMatches(kind string, peer domain.Peer) bool {
 func (r *Router) requestedPeerMatches(ctx context.Context, userID, botUserID int64, button domain.BotRequestedWebViewButton, peer domain.Peer) (bool, error) {
 	if !requestedPeerTypeMatches(button.PeerType, peer) {
 		return false, nil
+	}
+	if button.PeerType == "managed_bot" {
+		_, matches, err := r.requestedManagedBotMatches(ctx, userID, botUserID, peer.ID)
+		return matches, err
 	}
 	filter := button.PeerFilter
 	if filter == nil {
@@ -468,6 +497,9 @@ func (r *Router) botUserFromInput(ctx context.Context, userID int64, bot tg.Inpu
 	}
 	if !found || !u.Bot {
 		return domain.User{}, botInvalidErr()
+	}
+	if err := r.ensureBotAccess(ctx, u.ID, userID); err != nil {
+		return domain.User{}, err
 	}
 	return u, nil
 }

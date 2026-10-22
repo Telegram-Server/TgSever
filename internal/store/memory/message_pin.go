@@ -127,6 +127,11 @@ func (s *MessageStore) UnpinAllPrivateMessages(_ context.Context, req domain.Unp
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if req.TopicID != 0 {
+		if _, err := s.privateForumTopicLocked(req.OwnerUserID, req.Peer.ID, req.TopicID); err != nil {
+			return res, err
+		}
+	}
 	events := s.updateEvents
 	if events == nil {
 		return res, store.ErrDeliveryOutboxRequired
@@ -136,7 +141,7 @@ func (s *MessageStore) UnpinAllPrivateMessages(_ context.Context, req domain.Unp
 	// 与 PG 同语义：按 box_id 降序取一批清除，剩余批次以 Offset=1 续清。
 	pinnedIdx := make([]int, 0)
 	for i, msg := range s.m[req.OwnerUserID] {
-		if msg.Peer == req.Peer && msg.Pinned {
+		if msg.Peer == req.Peer && msg.Pinned && (req.TopicID == 0 || domain.PrivateForumMessageTopic(msg) == req.TopicID) {
 			pinnedIdx = append(pinnedIdx, i)
 		}
 	}

@@ -19,16 +19,20 @@ type botInvoiceKey struct {
 }
 
 type botInvoiceLedger struct {
-	mu       sync.Mutex
-	nextID   int64
-	byMsg    map[botInvoiceKey]domain.BotInvoice
-	byCharge map[string]botInvoiceKey
+	mu            sync.Mutex
+	nextID        int64
+	byMsg         map[botInvoiceKey]domain.BotInvoice
+	byCharge      map[string]botInvoiceKey
+	linked        map[int64]domain.BotInvoice
+	linkedCharges map[string]int64
 }
 
 func newBotInvoiceLedger() *botInvoiceLedger {
 	return &botInvoiceLedger{
-		byMsg:    make(map[botInvoiceKey]domain.BotInvoice),
-		byCharge: make(map[string]botInvoiceKey),
+		byMsg:         make(map[botInvoiceKey]domain.BotInvoice),
+		byCharge:      make(map[string]botInvoiceKey),
+		linked:        make(map[int64]domain.BotInvoice),
+		linkedCharges: make(map[string]int64),
 	}
 }
 
@@ -55,6 +59,9 @@ func (l *botInvoiceLedger) byMessage(botUserID, chatID int64, messageID int) (do
 func (l *botInvoiceLedger) byChargeID(chargeID string) (domain.BotInvoice, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if id, found := l.linkedCharges[chargeID]; found {
+		return l.linked[id], nil
+	}
 	key, found := l.byCharge[chargeID]
 	if !found {
 		return domain.BotInvoice{}, domain.ErrBotInvoiceNotFound

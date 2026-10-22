@@ -184,6 +184,10 @@ func (s *Service) sendFromBot(ctx context.Context, request domain.SendBotEphemer
 	}
 	now := s.now()
 	var targetDevice domain.EphemeralDevice
+	replaceMessageID := 0
+	if request.ReplaceCallbackQueryMessage && request.CallbackQueryID == 0 {
+		return domain.EphemeralMessage{}, false, domain.ErrEphemeralInvalid
+	}
 	var replyTarget *domain.EphemeralMessage
 	if request.ActionMessageID != 0 && request.CallbackQueryID != 0 {
 		return domain.EphemeralMessage{}, false, domain.ErrEphemeralInvalid
@@ -197,6 +201,12 @@ func (s *Service) sendFromBot(ctx context.Context, request domain.SendBotEphemer
 			return domain.EphemeralMessage{}, false, domain.ErrEphemeralReplyExpired
 		}
 		targetDevice = action.Device
+		if request.ReplaceCallbackQueryMessage {
+			if action.FromEphemeral {
+				return domain.EphemeralMessage{}, false, domain.ErrEphemeralInvalid
+			}
+			replaceMessageID = action.MessageID
+		}
 		if request.TopMessageID != 0 && request.TopMessageID != action.TopMessageID {
 			return domain.EphemeralMessage{}, false, domain.ErrEphemeralPeerInvalid
 		}
@@ -273,6 +283,7 @@ func (s *Service) sendFromBot(ctx context.Context, request domain.SendBotEphemer
 		RandomID:           request.RandomID,
 		TopMessageID:       request.TopMessageID,
 		ReplyToEphemeralID: request.ReplyToEphemeralID,
+		ReplaceMessageID:   replaceMessageID,
 		Content:            request.Content,
 		OriginDevice:       targetDevice,
 		PayloadHash:        botPayloadHash(request),

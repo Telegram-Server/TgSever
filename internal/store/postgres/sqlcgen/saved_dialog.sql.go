@@ -289,6 +289,9 @@ SELECT
   m.media_unread,
   m.reaction_unread,
   m.via_bot_id,
+  m.guestchat_via_from,
+  m.business_connection_id,
+  m.business_bot_id,
   m.grouped_id,
   m.effect,
   m.reply_markup::text AS reply_markup_json,
@@ -348,6 +351,9 @@ type ListPinnedSavedDialogTopsRow struct {
 	MediaUnread          bool
 	ReactionUnread       bool
 	ViaBotID             int64
+	GuestchatViaFrom     int64
+	BusinessConnectionID string
+	BusinessBotID        int64
 	GroupedID            int64
 	Effect               int64
 	ReplyMarkupJson      string
@@ -407,6 +413,9 @@ func (q *Queries) ListPinnedSavedDialogTops(ctx context.Context, ownerUserID int
 			&i.MediaUnread,
 			&i.ReactionUnread,
 			&i.ViaBotID,
+			&i.GuestchatViaFrom,
+			&i.BusinessConnectionID,
+			&i.BusinessBotID,
 			&i.GroupedID,
 			&i.Effect,
 			&i.ReplyMarkupJson,
@@ -478,6 +487,9 @@ SELECT
   m.media_unread,
   m.reaction_unread,
   m.via_bot_id,
+  m.guestchat_via_from,
+  m.business_connection_id,
+  m.business_bot_id,
   m.grouped_id,
   m.effect,
   m.reply_markup::text AS reply_markup_json,
@@ -547,6 +559,9 @@ type ListSavedDialogTopsRow struct {
 	MediaUnread          bool
 	ReactionUnread       bool
 	ViaBotID             int64
+	GuestchatViaFrom     int64
+	BusinessConnectionID string
+	BusinessBotID        int64
 	GroupedID            int64
 	Effect               int64
 	ReplyMarkupJson      string
@@ -615,6 +630,9 @@ func (q *Queries) ListSavedDialogTops(ctx context.Context, arg ListSavedDialogTo
 			&i.MediaUnread,
 			&i.ReactionUnread,
 			&i.ViaBotID,
+			&i.GuestchatViaFrom,
+			&i.BusinessConnectionID,
+			&i.BusinessBotID,
 			&i.GroupedID,
 			&i.Effect,
 			&i.ReplyMarkupJson,
@@ -694,6 +712,9 @@ SELECT
   m.media_unread,
   m.reaction_unread,
   m.via_bot_id,
+  m.guestchat_via_from,
+  m.business_connection_id,
+  m.business_bot_id,
   m.grouped_id,
   m.effect,
   m.reply_markup::text AS reply_markup_json,
@@ -759,6 +780,9 @@ type ListSavedDialogTopsByPeersRow struct {
 	MediaUnread          bool
 	ReactionUnread       bool
 	ViaBotID             int64
+	GuestchatViaFrom     int64
+	BusinessConnectionID string
+	BusinessBotID        int64
 	GroupedID            int64
 	Effect               int64
 	ReplyMarkupJson      string
@@ -818,6 +842,9 @@ func (q *Queries) ListSavedDialogTopsByPeers(ctx context.Context, arg ListSavedD
 			&i.MediaUnread,
 			&i.ReactionUnread,
 			&i.ViaBotID,
+			&i.GuestchatViaFrom,
+			&i.BusinessConnectionID,
+			&i.BusinessBotID,
 			&i.GroupedID,
 			&i.Effect,
 			&i.ReplyMarkupJson,

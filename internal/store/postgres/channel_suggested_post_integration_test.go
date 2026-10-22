@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -78,6 +79,9 @@ func TestSuggestedPostLifecyclePostgres(t *testing.T) {
 	if err != nil || !replay.Duplicate || replay.OriginalEvent.Type != domain.ChannelUpdateEditMessage || replay.ServiceEvent.Type != domain.ChannelUpdateNewMessage || replay.Published == nil {
 		t.Fatalf("approval replay=%+v err=%v", replay, err)
 	}
+	if _, err := channels.ToggleSuggestedPostApproval(ctx, domain.ToggleSuggestedPostApprovalRequest{UserID: owner.ID, MonoforumID: monoID, MessageID: suggestion.Message.ID, Reject: true, Date: 1_700_000_202}); !errors.Is(err, domain.ErrSuggestedPostAlreadyHandled) {
+		t.Fatalf("decline of approved post=%v", err)
+	}
 	var state string
 	var scheduleDate int
 	var debit, channelBalance int64
@@ -140,6 +144,9 @@ WHERE monoforum_id=$1 AND suggestion_message_id=$2`, monoID, suggestion.Message.
 	resolved, err = channels.ProcessSuggestedPostLifecycle(ctx, domain.SuggestedPostLifecycleRequest{Now: due + 2, Limit: 10})
 	if err != nil || len(resolved) != 1 || resolved[0].State != domain.SuggestedPostStateCompleted || resolved[0].ServiceMessage.Action == nil || resolved[0].ServiceMessage.Action.Type != domain.ChannelActionSuggestedPostSuccess {
 		t.Fatalf("late settlement=%+v err=%v", resolved, err)
+	}
+	if got := resolved[0].ServiceMessage.Action.SuggestedPostPrice.Amount; got != 8 {
+		t.Fatalf("paid service amount=%d, want channel receipt 8", got)
 	}
 	if err := pool.QueryRow(ctx, `SELECT balance FROM stars_balances WHERE user_id=$1`, subscriber.ID).Scan(&debit); err != nil {
 		t.Fatal(err)

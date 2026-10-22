@@ -119,6 +119,7 @@ type User struct {
 	// user TL 是否携带 bot_info_version 字段，且与 bot flag 共用 bit14）。
 	Bot            bool
 	BotInfoVersion int
+	BotGuestChat   bool
 	// PremiumUntil 是会员到期 Unix 秒；0 表示非会员。premium 状态的唯一权威
 	// 来源是该字段，由读取路径经 PremiumActiveAt 即时派生——到期后无需等
 	// 后台 sweeper 翻转即停止下发 premium（sweeper 只负责清理与通知推送）。

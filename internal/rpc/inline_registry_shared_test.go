@@ -246,6 +246,20 @@ func (s *testInlineRegistryStore) PutInlineResult(_ context.Context, results dom
 	return nil
 }
 
+func (s *testInlineRegistryStore) ClaimInlineResult(_ context.Context, results domain.BotInlineResults, ttl time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, exists := s.pending[results.QueryID]
+	if !exists || testInlineExpired(p.expiresAt) || p.value.BotUserID != results.BotUserID || p.value.UserID != results.UserID || p.value.Peer != results.Peer {
+		return false, nil
+	}
+	if v, exists := s.results[results.QueryID]; exists && !testInlineExpired(v.expiresAt) {
+		return false, nil
+	}
+	s.results[results.QueryID] = testInlineValue[domain.BotInlineResults]{value: cloneInlineResults(results), expiresAt: testInlineExpires(ttl)}
+	return true, nil
+}
+
 func (s *testInlineRegistryStore) GetInlineResult(_ context.Context, queryID int64) (domain.BotInlineResults, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

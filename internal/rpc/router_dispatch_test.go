@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 	"reflect"
 	"sync"
+	accountapp "telesrv/internal/app/account"
 	appauth "telesrv/internal/app/auth"
 	appdialogs "telesrv/internal/app/dialogs"
 	"telesrv/internal/domain"
@@ -1263,6 +1264,7 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 			Phone:      "15550000000",
 		}},
 		LangPack: seededLangPackService(t),
+		Account:  accountapp.NewService(memory.NewPasswordStore()),
 	}, zaptest.NewLogger(t), clock.System)
 
 	tests := []struct {
@@ -1319,7 +1321,6 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 		{name: "payments.getStarsGiftOptions", req: &tg.PaymentsGetStarsGiftOptionsRequest{}},
 		{name: "payments.getStarsGiveawayOptions", req: &tg.PaymentsGetStarsGiveawayOptionsRequest{}},
 		{name: "payments.getStarsStatus", req: &tg.PaymentsGetStarsStatusRequest{Peer: &tg.InputPeerSelf{}}},
-		{name: "payments.getStarsSubscriptions", req: &tg.PaymentsGetStarsSubscriptionsRequest{Peer: &tg.InputPeerSelf{}}},
 		{name: "updates.getDifference", req: &tg.UpdatesGetDifferenceRequest{}},
 		{name: "users.getFullUser", req: &tg.UsersGetFullUserRequest{ID: &tg.InputUserSelf{}}},
 		{name: "users.getRequirementsToContact", req: &tg.UsersGetRequirementsToContactRequest{ID: []tg.InputUserClass{&tg.InputUserSelf{}}}},

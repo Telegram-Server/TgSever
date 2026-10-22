@@ -203,11 +203,7 @@ func (s *ChannelStore) GetPremiumUserBoosts(ctx context.Context, viewerUserID, c
 	if err != nil {
 		return domain.PremiumBoostList{}, err
 	}
-	users, err := listUsersByIDs(ctx, s.db, []int64{targetUserID})
-	if err != nil {
-		return domain.PremiumBoostList{}, err
-	}
-	return domain.PremiumBoostList{Count: len(items), Boosts: items, Users: users}, nil
+	return domain.PremiumBoostList{Count: len(items), Boosts: items}, nil
 }
 
 func (s *ChannelStore) SetBoostsToUnblockRestrictions(ctx context.Context, userID, channelID int64, boosts int) (domain.Channel, error) {
@@ -473,15 +469,7 @@ LIMIT $5`, args...)
 		next = formatBoostCursor(last)
 		items = items[:limit]
 	}
-	userIDs := make([]int64, 0, len(items))
-	for _, item := range items {
-		userIDs = append(userIDs, item.UserID)
-	}
-	users, err := listUsersByIDs(ctx, db, uniqueNonZeroInt64s(userIDs...))
-	if err != nil {
-		return domain.PremiumBoostList{}, err
-	}
-	return domain.PremiumBoostList{Count: count, Boosts: items, Users: users, NextOffset: next}, nil
+	return domain.PremiumBoostList{Count: count, Boosts: items, NextOffset: next}, nil
 }
 
 func scanPremiumBoostSlots(rows pgx.Rows) ([]domain.PremiumBoostSlot, error) {

@@ -68,11 +68,12 @@ func (r *Router) botAPISendOneMedia(ctx context.Context, botID, chatID int64, me
 // BotAPIInputMediaItem 是一项 Bot API InputMedia。与 botapi.InputMediaItem 是同一个
 // 匿名 struct 的别名，因此网关接口两边类型一致而无需新增 domain 类型。
 type BotAPIInputMediaItem = struct {
-	Kind     string // photo / video / audio / document / animation
-	File     domain.BotAPIFileInput
-	Caption  string
-	Entities []domain.MessageEntity
-	Spoiler  bool
+	Kind          string // photo / video / audio / document / animation
+	File          domain.BotAPIFileInput
+	SecondaryFile domain.BotAPIFileInput
+	Caption       string
+	Entities      []domain.MessageEntity
+	Spoiler       bool
 }
 
 // botAPIStoredInputMedia 先把文件落库（上传、URL 抓取或 file_id 查找），再以
@@ -82,15 +83,26 @@ func (r *Router) botAPIStoredInputMedia(ctx context.Context, botID int64, item B
 	if r.deps.Files == nil {
 		return nil, errors.New("MEDIA_INVALID")
 	}
-	media, err := r.botAPIEphemeralMedia(ctx, botID, item.Kind, item.File, domain.BotAPIFileInput{})
+	media, err := r.botAPIEphemeralMedia(ctx, botID, item.Kind, item.File, item.SecondaryFile)
 	if err != nil {
 		return nil, err
 	}
 	switch {
 	case media.Photo != nil:
-		return &tg.InputMediaPhoto{ID: &tg.InputPhoto{ID: media.Photo.ID, AccessHash: media.Photo.AccessHash}, Spoiler: item.Spoiler}, nil
+		out := &tg.InputMediaPhoto{ID: &tg.InputPhoto{ID: media.Photo.ID, AccessHash: media.Photo.AccessHash}, Spoiler: item.Spoiler}
+		if media.LivePhotoVideo != nil {
+			out.SetVideo(&tg.InputDocument{ID: media.LivePhotoVideo.ID, AccessHash: media.LivePhotoVideo.AccessHash})
+		}
+		return out, nil
 	case media.Document != nil:
-		return &tg.InputMediaDocument{ID: &tg.InputDocument{ID: media.Document.ID, AccessHash: media.Document.AccessHash}, Spoiler: item.Spoiler}, nil
+		out := &tg.InputMediaDocument{ID: &tg.InputDocument{ID: media.Document.ID, AccessHash: media.Document.AccessHash}, Spoiler: item.Spoiler}
+		if media.VideoCover != nil {
+			out.SetVideoCover(&tg.InputPhoto{ID: media.VideoCover.ID, AccessHash: media.VideoCover.AccessHash})
+		}
+		if media.VideoTimestamp != 0 {
+			out.SetVideoTimestamp(int(media.VideoTimestamp))
+		}
+		return out, nil
 	default:
 		return nil, errors.New("MEDIA_INVALID")
 	}
@@ -140,6 +152,10 @@ func (r *Router) botAPIReloadMessage(ctx context.Context, botID int64, peer doma
 // BotAPISendPoll 实现 sendPoll：组装 InputMediaPoll 走 messages.sendMedia；is_closed
 // 的投票先发出再立即关闭（与客户端"发送后停止投票"同一路径）。
 func (r *Router) BotAPISendPoll(ctx context.Context, botID, chatID int64, poll domain.MessagePoll, correctOptionIDs []int, explanation string, explanationEntities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int) (domain.Message, error) {
+	return r.BotAPISendPollWithOptions(ctx, botID, chatID, poll, correctOptionIDs, explanation, explanationEntities, replyMarkup, silent, protectContent, replyToMessageID, domain.BotAPIMessageOptions{})
+}
+
+func (r *Router) BotAPISendPollWithOptions(ctx context.Context, botID, chatID int64, poll domain.MessagePoll, correctOptionIDs []int, explanation string, explanationEntities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int, options domain.BotAPIMessageOptions) (domain.Message, error) {
 	wire := tg.Poll{
 		PublicVoters:   poll.PublicVoters,
 		MultipleChoice: poll.MultipleChoice,
@@ -166,14 +182,18 @@ func (r *Router) BotAPISendPoll(ctx context.Context, botID, chatID int64, poll d
 			media.SetSolutionEntities(tgMessageEntities(explanationEntities))
 		}
 	}
-	msg, err := r.botAPISendOneMedia(ctx, botID, chatID, media, "", nil, replyMarkup, silent, protectContent, replyToMessageID)
+	msg, err := r.botAPISendOneMediaWithOptions(ctx, botID, chatID, media, "", nil, replyMarkup, silent, protectContent, replyToMessageID, options)
 	if err != nil || !poll.Closed {
 		return msg, err
 	}
-	if err := r.botAPIClosePoll(ctx, botID, chatID, msg.ID); err != nil {
+	if err := r.botAPIClosePoll(ctx, msg.OwnerUserID, chatID, msg.ID); err != nil {
 		return domain.Message{}, err
 	}
-	return r.botAPIReloadMessage(ctx, botID, msg.Peer, msg.ID)
+	closed, err := r.botAPIReloadMessage(ctx, msg.OwnerUserID, msg.Peer, msg.ID)
+	if err == nil && options.BusinessConnectionID != "" {
+		r.botAPIEnqueueBusinessMessage(ctx, botID, options.BusinessConnectionID, closed, true)
+	}
+	return closed, err
 }
 
 // botAPIClosePoll 走 messages.editMessage + InputMediaPoll(closed)，即 TDesktop 的

@@ -15,9 +15,9 @@ const paidMessageChannelCommissionPermille int64 = 850
 // SendMonoforumMessage 向 monoforum(频道私信)虚拟频道发一条消息,按 saved_peer 分订阅者子会话。
 // 与 postgres 行为一致:复用 channel pts/事件;订阅者无需成员记录且只能写自己的 saved_peer，
 // 母频道管理员可以回复任意订阅者。
-func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error) {
+func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.MonoforumID == 0 || req.SenderUserID == 0 || req.SavedPeer.ID == 0 ||
-		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" && req.Media == nil {
+		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" && req.Media == nil && req.RichMessage.IsZero() {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	if req.AllowPaidStars < 0 {
@@ -32,6 +32,16 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		}
 		req.IdempotencyFingerprint = fingerprint
 	}
+	commerce, broadcast, err := lockMemoryBroadcast(ctx)
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	if commerce != nil {
+		defer commerce.mu.Unlock()
+		if commerce.channels != s {
+			return domain.SendChannelMessageResult{}, domain.ErrBotBroadcastReservation
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if req.RandomID != 0 {
@@ -42,6 +52,9 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 			RandomID:               req.RandomID,
 			IdempotencyFingerprint: fingerprint,
 		}); replayErr != nil || found {
+			if replayErr == nil && commerce != nil {
+				commerce.commitBroadcastLocked(broadcast, nil, &replay.Message, true)
+			}
 			return replay, replayErr
 		}
 	}
@@ -62,15 +75,21 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		if req.ReplyTo.MessageID <= 0 || req.ReplyTo.Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}) {
 			return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
 		}
-		found := false
-		for _, candidate := range s.messages[channel.ID] {
-			if candidate.ID == req.ReplyTo.MessageID && !candidate.Deleted && candidate.SavedPeer == req.SavedPeer {
-				found = true
-				break
-			}
-		}
-		if !found {
+		source, found := s.findMessageLocked(channel.ID, req.ReplyTo.MessageID)
+		if found && source.SavedPeer != req.SavedPeer {
 			return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
+		}
+		if !found || source.Deleted {
+			if !req.ReplyTo.AllowMissing {
+				return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
+			}
+			req.ReplyTo = nil
+		} else {
+			if err := domain.ValidateBotAPIReplySource(req.ReplyTo, replyChannelMessage(source)); err != nil {
+				return domain.SendChannelMessageResult{}, err
+			}
+			req.ReplyTo = domain.CloneMessageReply(req.ReplyTo)
+			req.ReplyTo.AllowMissing = false
 		}
 	}
 	var senderBalance *domain.StarsBalance
@@ -118,6 +137,8 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		Body:             req.Message,
 		Entities:         append([]domain.MessageEntity(nil), req.Entities...),
 		Media:            req.Media,
+		RichMessage:      req.RichMessage,
+		ReplyMarkup:      req.ReplyMarkup,
 		ReplyTo:          req.ReplyTo,
 		Forward:          req.Forward,
 		GroupedID:        req.GroupedID,
@@ -162,6 +183,9 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		if member.CanManageDirectMessages() {
 			recipients = append(recipients, userID)
 		}
+	}
+	if commerce != nil {
+		commerce.commitBroadcastLocked(broadcast, nil, &msg, false)
 	}
 	return domain.SendChannelMessageResult{Channel: cloneChannel(channel), Message: cloneChannelMessage(msg), Event: cloneChannelEvent(event), Recipients: uniqueNonZero(recipients, 0), SenderStarsBalance: senderBalance}, nil
 }

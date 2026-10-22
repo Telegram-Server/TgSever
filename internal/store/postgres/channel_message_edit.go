@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
@@ -47,6 +48,11 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 	channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.EditChannelMessageResult{}, err
+	}
+	// Channel writers reserve PTS by locking this row. Take the same lock
+	// before reading media so a queued edit cannot overwrite a committed stop.
+	if _, err := sqlcgen.New(tx).LockChannelForMessageEdit(ctx, req.ChannelID); err != nil {
+		return domain.EditChannelMessageResult{}, fmt.Errorf("lock channel for message edit: %w", err)
 	}
 	msg, err := s.getChannelMessage(ctx, tx, req.ChannelID, req.ID)
 	if err != nil {
@@ -123,6 +129,15 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 	canWriteEdit := viaBotEdit || msg.SenderUserID == req.UserID || canEditChannelMessage(member) || participantTodoEdit
 	if !canWriteEdit {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindGeoLive && msg.Media != nil && msg.Media.Kind == domain.MessageMediaKindGeoLive && !msg.Media.GeoLive.Active(msg.Date, req.EditDate) {
+		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
+	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindTodo && (!req.AllowTodoParticipantMutation || req.ReplaceTodo) && !viaBotEdit && msg.SenderUserID != req.UserID {
+		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+	}
+	if req.ReplaceTodo {
+		req.Media = req.Media.WithTodoCompletionsFrom(msg.Media)
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
 	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
@@ -284,7 +299,7 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON); err != ni
 }
 
 func isChannelTodoParticipantEdit(req domain.EditChannelMessageRequest, msg domain.ChannelMessage) bool {
-	if !req.AllowTodoParticipantMutation || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
+	if !req.AllowTodoParticipantMutation || req.ReplaceTodo || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
 		return false
 	}
 	if msg.Media == nil || msg.Media.Kind != domain.MessageMediaKindTodo || msg.Media.Todo == nil {
@@ -444,25 +459,43 @@ func (s *ChannelStore) UnpinAllChannelMessages(ctx context.Context, req domain.U
 	if !canPinChannelMessages(channel, member) {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelAdminRequired
 	}
-	rows, err := tx.Query(ctx, `
+	var cleared []int
+	if req.TopicID != 0 {
+		if !channel.Forum {
+			return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelForumMissing
+		}
+		if req.TopicID != domain.ForumGeneralTopicID {
+			if _, err := s.getForumTopic(ctx, tx, req.ChannelID, req.TopicID); err != nil {
+				return domain.UpdateChannelPinnedMessageResult{}, err
+			}
+		}
+		ids, err := sqlcgen.New(tx).UnpinForumChannelMessages(ctx, sqlcgen.UnpinForumChannelMessagesParams{ChannelID: req.ChannelID, TopicID: int32(req.TopicID)})
+		if err != nil {
+			return domain.UpdateChannelPinnedMessageResult{}, err
+		}
+		for _, id := range ids {
+			cleared = append(cleared, int(id))
+		}
+	} else {
+		rows, err := tx.Query(ctx, `
 UPDATE channel_messages SET pinned = false
 WHERE channel_id = $1 AND pinned AND NOT deleted
 RETURNING id`, req.ChannelID)
-	if err != nil {
-		return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("unpin all channel messages: %w", err)
-	}
-	cleared := []int(nil)
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+		if err != nil {
+			return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("unpin all channel messages: %w", err)
+		}
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return domain.UpdateChannelPinnedMessageResult{}, err
+			}
+			cleared = append(cleared, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
 			return domain.UpdateChannelPinnedMessageResult{}, err
 		}
-		cleared = append(cleared, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return domain.UpdateChannelPinnedMessageResult{}, err
 	}
 	if len(cleared) == 0 {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelNotModified
@@ -472,12 +505,16 @@ RETURNING id`, req.ChannelID)
 	if err != nil {
 		return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("allocate channel unpin-all pts: %w", err)
 	}
+	pinnedID, err := sqlcgen.New(tx).HighestPinnedForumChannelMessage(ctx, req.ChannelID)
+	if err != nil {
+		return domain.UpdateChannelPinnedMessageResult{}, err
+	}
 	if _, err := tx.Exec(ctx, `
-UPDATE channels SET pinned_message_id = 0, pts = $2, updated_at = now()
-WHERE id = $1`, req.ChannelID, pts); err != nil {
+UPDATE channels SET pinned_message_id = $3, pts = $2, updated_at = now()
+WHERE id = $1`, req.ChannelID, pts, pinnedID); err != nil {
 		return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("clear channel pinned message: %w", err)
 	}
-	channel.PinnedMessageID = 0
+	channel.PinnedMessageID = int(pinnedID)
 	channel.Pts = pts
 	event := domain.ChannelUpdateEvent{
 		ChannelID:    req.ChannelID,

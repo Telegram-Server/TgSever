@@ -178,8 +178,8 @@ func TestBroadcastChannelAcceptsFullReactionCatalog(t *testing.T) {
 	if fullChannel.GetPaidReactionsAvailable() {
 		t.Fatalf("full channel paid reactions = true, want false without paid_enabled flag")
 	}
-	if !fullChannel.GetPaidMediaAllowed() {
-		t.Fatalf("broadcast full channel paid_media_allowed = false, want true for Android paid reaction editor")
+	if fullChannel.GetPaidMediaAllowed() {
+		t.Fatal("paid media advertised without a paid-media implementation")
 	}
 }
 
@@ -256,8 +256,8 @@ func TestSetChatAvailableReactionsPreservesOptionalFlags(t *testing.T) {
 	if fullChannel.GetPaidReactionsAvailable() {
 		t.Fatalf("paid reactions after explicit false = true, want false")
 	}
-	if !fullChannel.GetPaidMediaAllowed() {
-		t.Fatalf("broadcast paid_media_allowed after paid disable = false, want capability preserved")
+	if fullChannel.GetPaidMediaAllowed() {
+		t.Fatal("paid media advertised after disabling paid reactions")
 	}
 }
 
@@ -359,8 +359,8 @@ func TestChannelFullPaidReactionCapabilityOnlyBroadcast(t *testing.T) {
 		t.Fatalf("get broadcast full channel: %v", err)
 	}
 	broadcastFullChannel := broadcastFull.FullChat.(*tg.ChannelFull)
-	if !broadcastFullChannel.GetPaidMediaAllowed() {
-		t.Fatalf("broadcast paid_media_allowed = false, want true")
+	if broadcastFullChannel.GetPaidMediaAllowed() {
+		t.Fatal("broadcast advertises unsupported paid media")
 	}
 	if broadcastFullChannel.GetPaidReactionsAvailable() {
 		t.Fatalf("broadcast paid_reactions_available = true before paid_enabled, want false")
@@ -379,9 +379,12 @@ func TestChannelFullPaidReactionCapabilityOnlyBroadcast(t *testing.T) {
 		t.Fatalf("get broadcast full channel after paid enable: %v", err)
 	}
 	broadcastFullChannel = broadcastFull.FullChat.(*tg.ChannelFull)
-	if !broadcastFullChannel.GetPaidMediaAllowed() || !broadcastFullChannel.GetPaidReactionsAvailable() {
-		t.Fatalf("broadcast flags after enable: paid_media_allowed=%v paid_reactions_available=%v, want both true",
+	if broadcastFullChannel.GetPaidMediaAllowed() || !broadcastFullChannel.GetPaidReactionsAvailable() {
+		t.Fatalf("broadcast flags after enable: paid_media_allowed=%v paid_reactions_available=%v, want false/true",
 			broadcastFullChannel.GetPaidMediaAllowed(), broadcastFullChannel.GetPaidReactionsAvailable())
+	}
+	if !broadcastFullChannel.GetStargiftsAvailable() {
+		t.Fatal("disabling paid media must not disable gifts")
 	}
 
 	megaCreated, err := r.onChannelsCreateChannel(WithUserID(ctx, owner.ID), &tg.ChannelsCreateChannelRequest{

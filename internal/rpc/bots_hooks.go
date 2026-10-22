@@ -88,15 +88,16 @@ func (r *Router) PushBotTextDraft(ctx context.Context, botUserID, userID, random
 	if botUserID == 0 || userID == 0 || randomID == 0 || text == "" {
 		return
 	}
-	r.pushUserMessageTransient(context.WithoutCancel(ctx), userID, "push bot text draft", &tg.UpdateShort{
-		Update: &tg.UpdateUserTyping{
-			UserID: botUserID,
-			Action: &tg.SendMessageTextDraftAction{
-				RandomID: randomID,
-				Text:     tg.TextWithEntities{Text: text},
-			},
+	input, _, err := r.botAPIInputPeer(ctx, botUserID, userID)
+	if err != nil {
+		return
+	}
+	_, _ = r.onMessagesSetTyping(WithUserID(context.WithoutCancel(ctx), botUserID), &tg.MessagesSetTypingRequest{
+		Peer: input,
+		Action: &tg.SendMessageTextDraftAction{
+			RandomID: randomID,
+			Text:     tg.TextWithEntities{Text: text},
 		},
-		Date: int(r.clock.Now().Unix()),
 	})
 }
 

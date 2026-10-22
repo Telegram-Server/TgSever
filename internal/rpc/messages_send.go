@@ -538,6 +538,8 @@ func messageSendErr(err error) error {
 		return balanceTooLowErr()
 	case errors.Is(err, domain.ErrUserFrozen):
 		return frozenMethodInvalidErr()
+	case errors.Is(err, domain.ErrBotAccessDenied):
+		return tgerr.New(403, "BOT_ACCESS_DENIED")
 	case errors.Is(err, domain.ErrChatForwardsRestricted):
 		return chatForwardsRestrictedErr()
 	case errors.Is(err, domain.ErrQuoteTextInvalid):
@@ -601,11 +603,10 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 	if _, ok := reply.GetMonoforumPeerID(); ok {
 		return nil, replyToMonoforumPeerInvalidErr()
 	}
-	if _, ok := reply.GetTodoItemID(); ok {
+	todoItemID, _ := reply.GetTodoItemID()
+	pollOption, _ := reply.GetPollOption()
+	if todoItemID < 0 || todoItemID > domain.MaxMessageBoxID || todoItemID != 0 && len(pollOption) > 0 {
 		return nil, replyMessageIDInvalidErr()
-	}
-	if _, ok := reply.GetPollOption(); ok {
-		return nil, pollOptionInvalidErr()
 	}
 	replyPeer := peer
 	if inputPeer, ok := reply.GetReplyToPeerID(); ok {
@@ -654,12 +655,14 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 		return nil, replyMessageIDInvalidErr()
 	}
 	return &domain.MessageReply{
-		MessageID:     reply.ReplyToMsgID,
-		Peer:          replyPeer,
-		TopMessageID:  topMsgID,
-		QuoteText:     quoteText,
-		QuoteEntities: domainMessageEntities(quoteEntities),
-		QuoteOffset:   quoteOffset,
+		MessageID:       reply.ReplyToMsgID,
+		Peer:            replyPeer,
+		TopMessageID:    topMsgID,
+		QuoteText:       quoteText,
+		QuoteEntities:   domainMessageEntities(quoteEntities),
+		QuoteOffset:     quoteOffset,
+		ChecklistTaskID: todoItemID,
+		PollOption:      append([]byte(nil), pollOption...),
 	}, nil
 }
 
@@ -1079,6 +1082,10 @@ func appendMessageUserIDs(ids []int64, seen map[int64]struct{}, msg domain.Messa
 		add(msg.Forward.From.ID)
 	}
 	add(msg.ViaBotID)
+	add(msg.BusinessBotID)
+	if msg.GuestChatViaFrom.Type == domain.PeerTypeUser {
+		add(msg.GuestChatViaFrom.ID)
+	}
 	if msg.ReplyTo != nil && msg.ReplyTo.Peer.Type == domain.PeerTypeUser {
 		add(msg.ReplyTo.Peer.ID)
 	}

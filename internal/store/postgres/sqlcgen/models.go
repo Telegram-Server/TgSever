@@ -80,6 +80,7 @@ type AccountPassword struct {
 	RecoveryEmail           string
 	LoginEmail              string
 	PasswordChangedAt       pgtype.Timestamptz
+	SecureSettings          []byte
 }
 
 type AccountPrivacyRule struct {
@@ -364,20 +365,34 @@ type BootstrapUpdateJob struct {
 }
 
 type Bot struct {
-	BotUserID         int64
-	OwnerUserID       int64
-	TokenSecret       string
-	Description       string
-	Commands          []byte
-	BotChatHistory    bool
-	BotNochats        bool
-	InlinePlaceholder string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	MenuButtonType    int16
-	MenuButtonText    string
-	MenuButtonUrl     string
-	BotInlineGeo      bool
+	BotUserID                int64
+	OwnerUserID              int64
+	TokenSecret              string
+	Description              string
+	Commands                 []byte
+	BotChatHistory           bool
+	BotNochats               bool
+	InlinePlaceholder        string
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	MenuButtonType           int16
+	MenuButtonText           string
+	MenuButtonUrl            string
+	BotInlineGeo             bool
+	GroupAdminRights         []byte
+	BroadcastAdminRights     []byte
+	GuestChat                bool
+	CanManageBots            bool
+	InlineFeedbackPercentage int32
+}
+
+type BotApiInstance struct {
+	BotUserID   int64
+	InstanceID  string
+	Cloud       bool
+	StartedAt   pgtype.Timestamptz
+	ClosedAt    pgtype.Timestamptz
+	LoggedOutAt pgtype.Timestamptz
 }
 
 type BotApiUpdate struct {
@@ -401,6 +416,10 @@ type BotApiUpdate struct {
 	EphemeralPayload         []byte
 	PreCheckoutPayload       []byte
 	MemberPayload            []byte
+	ReactionPayload          []byte
+	JoinRequestPayload       []byte
+	ObjectPayload            []byte
+	GameShortName            string
 }
 
 type BotApiUpdateState struct {
@@ -468,11 +487,51 @@ type BotAppSetting struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+type BotBroadcastReservation struct {
+	BotUserID   int64
+	RequestKey  string
+	State       string
+	CreatedAt   pgtype.Timestamptz
+	CompletedAt pgtype.Timestamptz
+	Data        []byte
+}
+
+type BotBusinessGameMessage struct {
+	BotUserID    int64
+	ChatID       int64
+	MessageID    int32
+	OwnerUserID  int64
+	ConnectionID string
+}
+
 type BotChatState struct {
 	BotUserID int64
 	UserID    int64
 	State     []byte
 	UpdatedAt pgtype.Timestamptz
+}
+
+type BotCommerceCheckout struct {
+	InvoiceID      int64
+	Slug           string
+	SubscriptionID string
+}
+
+type BotCommerceOffer struct {
+	Slug       string
+	BotID      int64
+	InviteHash string
+	Data       []byte
+}
+
+type BotCommerceSubscription struct {
+	ID        string
+	BotID     int64
+	UserID    int64
+	ChannelID int64
+	UntilDate int32
+	Active    bool
+	Data      []byte
 }
 
 type BotEmojiStatusPermission struct {
@@ -481,6 +540,33 @@ type BotEmojiStatusPermission struct {
 	Allowed   bool
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type BotGame struct {
+	ID        int64
+	BotUserID int64
+	ShortName string
+	Game      []byte
+}
+
+type BotGameScore struct {
+	GameID          int64
+	ChatID          int64
+	InlineOwnerID   int64
+	InlineMessageID int32
+	UserID          int64
+	Score           int32
+}
+
+type BotGuestQuery struct {
+	ID           int64
+	BotUserID    int64
+	CallerUserID int64
+	PeerType     string
+	PeerID       int64
+	MessageID    int32
+	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type BotInvoice struct {
@@ -499,6 +585,7 @@ type BotInvoice struct {
 	Refunded    bool
 	PaidAt      int32
 	Date        int32
+	LinkSlug    *string
 }
 
 type BotLoginAllowedUrl struct {
@@ -533,10 +620,47 @@ type BotLoginNativeApp struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+type BotManagement struct {
+	BotUserID          int64
+	ManagerBotID       *int64
+	IsAccessRestricted bool
+	AddedUserIds       []int64
+}
+
+type BotPaidBroadcastSetting struct {
+	BotUserID int64
+	Enabled   bool
+}
+
+type BotPaidMediaFile struct {
+	MediaID     string
+	LocationKey string
+}
+
+type BotPaidMediaPurchase struct {
+	MediaID string
+	UserID  int64
+	Amount  int64
+	Date    int32
+}
+
+type BotPaidMedium struct {
+	ID      string
+	BotID   int64
+	OwnerID int64
+	Data    []byte
+}
+
+type BotPassportPublicKey struct {
+	BotUserID int64
+	PublicKey string
+}
+
 type BotStarsBalance struct {
 	BotUserID int64
 	Balance   int64
 	UpdatedAt pgtype.Timestamptz
+	Nanos     int32
 }
 
 type BotStarsPayment struct {
@@ -558,6 +682,15 @@ type BotStarsTransaction struct {
 	PeerID      int64
 	InvoiceKey  *string
 	Date        int32
+	Nanos       int32
+}
+
+type BotStoryOwner struct {
+	OwnerPeerType        string
+	OwnerPeerID          int64
+	StoryID              int32
+	BotUserID            int64
+	BusinessConnectionID string
 }
 
 type BotUserMenuButton struct {
@@ -636,6 +769,14 @@ type BusinessAutomationDelivery struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
+type BusinessBotConnection struct {
+	ConnectionID string
+	OwnerUserID  int64
+	BotUserID    int64
+	Snapshot     []byte
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type BusinessChatLink struct {
 	Slug        string
 	OwnerUserID int64
@@ -649,12 +790,13 @@ type BusinessChatLink struct {
 }
 
 type BusinessConnectedBot struct {
-	OwnerUserID int64
-	BotUserID   int64
-	Recipients  []byte
-	Rights      []byte
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	OwnerUserID  int64
+	BotUserID    int64
+	Recipients   []byte
+	Rights       []byte
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	ConnectionID string
 }
 
 type BusinessConnectedBotPeerState struct {
@@ -732,6 +874,7 @@ type Channel struct {
 	Fake                          bool
 	Gigagroup                     bool
 	SignatureProfiles             bool
+	StickerSetID                  int64
 }
 
 type ChannelAdminLogEvent struct {
@@ -833,6 +976,11 @@ type ChannelForumTopic struct {
 	Deleted              bool
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+}
+
+type ChannelGuardBot struct {
+	ChannelID int64
+	BotUserID int64
 }
 
 type ChannelInvite struct {
@@ -954,6 +1102,7 @@ type ChannelMessage struct {
 	SuggestedPost       []byte
 	PaidMessageStars    int64
 	ShowMessageSender   bool
+	GuestchatViaFrom    int64
 }
 
 type ChannelMessageMedium struct {
@@ -975,18 +1124,20 @@ type ChannelMessagePaidReaction struct {
 }
 
 type ChannelMessageReaction struct {
-	ChannelID     int64
-	MessageID     int32
-	ReactedUserID int64
-	SenderUserID  int64
-	ReactionType  string
-	ReactionValue string
-	Big           bool
-	Unread        bool
-	ChosenOrder   int32
-	ReactionDate  int32
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	ChannelID      int64
+	MessageID      int32
+	ReactedUserID  int64
+	SenderUserID   int64
+	ReactionType   string
+	ReactionValue  string
+	Big            bool
+	Unread         bool
+	ChosenOrder    int32
+	ReactionDate   int32
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	ActorUserID    *int64
+	ActorChannelID *int64
 }
 
 type ChannelMessageViewer struct {
@@ -1050,6 +1201,13 @@ type ChannelRevenueWithdrawal struct {
 	UserTransactionID    *int64
 	ChannelBalanceAfter  *int64
 	UserBalanceAfter     *int64
+}
+
+type ChannelSenderBan struct {
+	ChannelID       int64
+	SenderChannelID int64
+	BannedBy        int64
+	BannedAt        int32
 }
 
 type ChannelStarsBalance struct {
@@ -1135,6 +1293,17 @@ type ChannelUpdateEvent struct {
 	UserIds      []byte
 	Payload      []byte
 	CreatedAt    pgtype.Timestamptz
+}
+
+type ChatJoinQuery struct {
+	ID          int64
+	ChannelID   int64
+	BotUserID   int64
+	UserID      int64
+	RequestDate int32
+	ExpiresAt   int32
+	State       string
+	WebAppUrl   string
 }
 
 type ChatlistInvite struct {
@@ -1802,6 +1971,9 @@ type MessageBox struct {
 	Effect               int64
 	HideEdited           bool
 	ReplyExternal        []byte
+	GuestchatViaFrom     int64
+	BusinessConnectionID string
+	BusinessBotID        int64
 }
 
 type MessageBoxMedium struct {
@@ -1997,6 +2169,11 @@ type PasskeyCredential struct {
 	LastUsedAt   pgtype.Timestamptz
 }
 
+type PassportUserDatum struct {
+	UserID int64
+	Data   []byte
+}
+
 type PeerStarGift struct {
 	ID                       int64
 	OwnerPeerID              int64
@@ -2164,6 +2341,18 @@ type PremiumPlan struct {
 	StoreQuantity int32
 }
 
+type PrivateForumTopic struct {
+	OwnerUserID int64
+	PeerUserID  int64
+	TopicID     int32
+	PeerTopicID int32
+	Name        string
+	IconColor   int32
+	IconEmojiID int64
+	Date        int32
+	Deleted     bool
+}
+
 type PrivateMediaCategoryCount struct {
 	OwnerUserID int64
 	PeerID      int64
@@ -2217,6 +2406,9 @@ type PrivateMessage struct {
 	SenderDeleteDate       int32
 	SenderDeleteMessageIds []byte
 	ReplyExternal          []byte
+	GuestchatViaFrom       int64
+	BusinessConnectionID   string
+	BusinessBotID          int64
 }
 
 type PrivateMessageReaction struct {
@@ -3032,6 +3224,7 @@ type StickerSet struct {
 	Software        string
 	Keywords        []byte
 	UpdatedAt       pgtype.Timestamptz
+	CreatorBotID    int64
 }
 
 type Story struct {
@@ -3621,6 +3814,10 @@ type WebviewRequestedButton struct {
 	NameRequested     bool
 	UsernameRequested bool
 	PhotoRequested    bool
+	Style             string
+	IconCustomEmojiID int64
+	SuggestedName     string
+	SuggestedUsername string
 }
 
 type WelcomeMessage struct {

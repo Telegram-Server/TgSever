@@ -31,6 +31,8 @@ type BotStore struct {
 	customMethod   map[string]domain.BotWebViewCustomMethodQuery
 	invoices       *botInvoiceLedger
 	userMenus      map[[2]int64]domain.BotMenuButton
+	management     map[int64]domain.BotManagement
+	instances      map[domain.BotAPIInstanceKey]domain.BotAPIInstance
 }
 
 type botAppShortKey struct {
@@ -62,6 +64,8 @@ func NewBotStore(users *UserStore) *BotStore {
 		customMethod:   make(map[string]domain.BotWebViewCustomMethodQuery),
 		invoices:       newBotInvoiceLedger(),
 		userMenus:      make(map[[2]int64]domain.BotMenuButton),
+		management:     make(map[int64]domain.BotManagement),
+		instances:      make(map[domain.BotAPIInstanceKey]domain.BotAPIInstance),
 	}
 	s.byID[domain.BotFatherUserID] = botFatherSeedProfile()
 	s.byID[domain.StickersBotUserID] = stickersSeedProfile()
@@ -75,9 +79,10 @@ func NewBotStore(users *UserStore) *BotStore {
 
 func botFatherSeedProfile() domain.BotProfile {
 	return domain.BotProfile{
-		BotUserID:   domain.BotFatherUserID,
-		OwnerUserID: domain.BotFatherUserID,
-		Description: "BotFather is the one bot to rule them all. Use it to create new bot accounts and manage your existing bots.",
+		BotUserID:     domain.BotFatherUserID,
+		OwnerUserID:   domain.BotFatherUserID,
+		CanManageBots: true,
+		Description:   "BotFather is the one bot to rule them all. Use it to create new bot accounts and manage your existing bots.",
 		Commands: []domain.BotCommand{
 			{Command: "newbot", Description: "create a new bot"},
 			{Command: "mybots", Description: "edit your bots"},
@@ -127,6 +132,14 @@ func chatBotSeedProfile() domain.BotProfile {
 }
 
 func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile) (domain.User, domain.BotProfile, error) {
+	return s.createBotAccount(ctx, user, profile, 0)
+}
+
+func (s *BotStore) CreateManagedBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile, managerID int64) (domain.User, domain.BotProfile, error) {
+	return s.createBotAccount(ctx, user, profile, managerID)
+}
+
+func (s *BotStore) createBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile, managerID int64) (domain.User, domain.BotProfile, error) {
 	user.Phone = ""
 	user.Username = strings.TrimSpace(strings.TrimPrefix(user.Username, "@"))
 	user.Bot = true
@@ -138,6 +151,11 @@ func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profi
 	// BotStore.mu → UserStore.mu（UserStore 不反向引用 BotStore，无死锁）。
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if managerID != 0 {
+		if p, ok := s.byID[managerID]; !ok || !p.CanManageBots {
+			return domain.User{}, domain.BotProfile{}, domain.ErrBotManagerInvalid
+		}
+	}
 	owned := 0
 	for _, p := range s.byID {
 		if p.OwnerUserID == profile.OwnerUserID && p.BotUserID != p.OwnerUserID {
@@ -153,6 +171,12 @@ func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profi
 	}
 	profile.BotUserID = created.ID
 	s.byID[created.ID] = cloneBotProfile(profile)
+	if managerID != 0 {
+		if s.management == nil {
+			s.management = make(map[int64]domain.BotManagement)
+		}
+		s.management[created.ID] = domain.BotManagement{BotUserID: created.ID, ManagerBotID: managerID}
+	}
 	return created, profile, nil
 }
 
@@ -618,10 +642,15 @@ func (s *BotStore) SetAttachMenuState(_ context.Context, state domain.BotAttachM
 }
 
 func (s *BotStore) SaveRequestedWebViewButton(_ context.Context, button domain.BotRequestedWebViewButton) error {
-	if button.BotUserID == 0 || button.UserID == 0 || button.WebAppReqID == "" || button.ButtonID == 0 {
+	if button.BotUserID == 0 || button.UserID == 0 || button.WebAppReqID == "" || button.ExpiresAt.IsZero() {
 		return domain.ErrBotRequestedButtonInvalid
 	}
+	button.PeerFilter = cloneRequestedButtonFilter(button.PeerFilter)
 	s.mu.Lock()
+	if _, exists := s.requestButtons[requestedButtonKey{botUserID: button.BotUserID, userID: button.UserID, reqID: button.WebAppReqID}]; exists {
+		s.mu.Unlock()
+		return domain.ErrBotRequestedButtonInvalid
+	}
 	s.requestButtons[requestedButtonKey{botUserID: button.BotUserID, userID: button.UserID, reqID: button.WebAppReqID}] = button
 	s.mu.Unlock()
 	return nil
@@ -639,6 +668,39 @@ func (s *BotStore) GetRequestedWebViewButton(_ context.Context, botUserID, userI
 	if !ok {
 		return domain.BotRequestedWebViewButton{}, false, nil
 	}
+	button.PeerFilter = cloneRequestedButtonFilter(button.PeerFilter)
+	return button, true, nil
+}
+
+func cloneRequestedButtonFilter(in *domain.BotRequestPeerFilter) *domain.BotRequestPeerFilter {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.UserAdminRights != nil {
+		rights := *in.UserAdminRights
+		out.UserAdminRights = &rights
+	}
+	if in.BotAdminRights != nil {
+		rights := *in.BotAdminRights
+		out.BotAdminRights = &rights
+	}
+	return &out
+}
+
+func (s *BotStore) ConsumeRequestedWebViewButton(_ context.Context, botUserID, userID int64, id string) (domain.BotRequestedWebViewButton, bool, error) {
+	key := requestedButtonKey{botUserID: botUserID, userID: userID, reqID: id}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	button, ok := s.requestButtons[key]
+	if !ok {
+		return domain.BotRequestedWebViewButton{}, false, nil
+	}
+	delete(s.requestButtons, key)
+	if !button.ExpiresAt.After(time.Now()) {
+		return domain.BotRequestedWebViewButton{}, false, nil
+	}
+	button.PeerFilter = cloneRequestedButtonFilter(button.PeerFilter)
 	return button, true, nil
 }
 

@@ -220,12 +220,13 @@ type DocumentAttribute struct {
 	H int `json:"h,omitempty"`
 
 	// sticker / custom_emoji
-	Alt                  string `json:"alt,omitempty"`
-	Mask                 bool   `json:"mask,omitempty"`
-	StickerSetID         int64  `json:"sticker_set_id,omitempty"`
-	StickerSetAccessHash int64  `json:"sticker_set_access_hash,omitempty"`
-	Free                 bool   `json:"free,omitempty"`       // custom_emoji
-	TextColor            bool   `json:"text_color,omitempty"` // custom_emoji
+	Alt                  string               `json:"alt,omitempty"`
+	Mask                 bool                 `json:"mask,omitempty"`
+	MaskPosition         *StickerMaskPosition `json:"mask_position,omitempty"`
+	StickerSetID         int64                `json:"sticker_set_id,omitempty"`
+	StickerSetAccessHash int64                `json:"sticker_set_access_hash,omitempty"`
+	Free                 bool                 `json:"free,omitempty"`       // custom_emoji
+	TextColor            bool                 `json:"text_color,omitempty"` // custom_emoji
 
 	// video
 	Duration          float64 `json:"duration,omitempty"`
@@ -256,6 +257,35 @@ type Document struct {
 	DCID          int                 `json:"dc_id,omitempty"`
 	Attributes    []DocumentAttribute `json:"attributes,omitempty"`
 	Thumbs        []PhotoSize         `json:"thumbs,omitempty"`
+}
+
+// CloneDocumentAttributes isolates mutable attribute payloads in cached snapshots.
+func CloneDocumentAttributes(attributes []DocumentAttribute) []DocumentAttribute {
+	out := append([]DocumentAttribute(nil), attributes...)
+	for i := range out {
+		out[i].Waveform = append([]byte(nil), attributes[i].Waveform...)
+		if attributes[i].MaskPosition != nil {
+			position := *attributes[i].MaskPosition
+			out[i].MaskPosition = &position
+		}
+	}
+	return out
+}
+
+func CloneDocumentPtr(document *Document) *Document {
+	if document == nil {
+		return nil
+	}
+	out := *document
+	out.FileReference = append([]byte(nil), document.FileReference...)
+	out.Attributes = CloneDocumentAttributes(document.Attributes)
+	out.Thumbs = append([]PhotoSize(nil), document.Thumbs...)
+	for i := range out.Thumbs {
+		out.Thumbs[i].Bytes = append([]byte(nil), document.Thumbs[i].Bytes...)
+		out.Thumbs[i].Sizes = append([]int(nil), document.Thumbs[i].Sizes...)
+		out.Thumbs[i].BackgroundColors = append([]int(nil), document.Thumbs[i].BackgroundColors...)
+	}
+	return &out
 }
 
 // StickerSetRef 返回该文档归属的贴纸集引用（若有 sticker/custom_emoji 属性）。
@@ -312,7 +342,7 @@ const MaxStickerMaterialDocumentSize int64 = 20 << 20
 
 // IsStickerSetMaterial reports whether an existing Document can be used as an
 // input item for stickers.createStickerSet/stickers.addStickerToSet. Already
-// tagged sticker/custom emoji documents always pass. Untagged TGS/WebP/Lottie
+// tagged sticker/custom emoji documents always pass. Untagged TGS/PNG/WebP/Lottie
 // JSON uploads can be shaped later from their MIME/body; video uploads must
 // already carry a video attribute because this layer does not transcode or
 // probe containers.
@@ -324,7 +354,7 @@ func (d Document) IsStickerSetMaterial() bool {
 		return false
 	}
 	switch d.stickerMaterialMimeOrExt() {
-	case "application/x-tgsticker", "image/webp", "application/json":
+	case "application/x-tgsticker", "image/png", "image/webp", "application/json":
 		return true
 	case "video/webm", "video/mp4":
 		return d.hasDocumentAttribute(DocAttrVideo)
@@ -351,7 +381,7 @@ func (d Document) StickerSetMaterialMime() string {
 func (d Document) stickerMaterialMimeOrExt() string {
 	mimeType := strings.ToLower(strings.TrimSpace(d.MimeType))
 	switch mimeType {
-	case "application/x-tgsticker", "image/webp", "video/webm", "video/mp4",
+	case "application/x-tgsticker", "image/png", "image/webp", "video/webm", "video/mp4",
 		"application/json", "application/lottie+json", "text/json":
 		if mimeType == "application/lottie+json" || mimeType == "text/json" {
 			return "application/json"
@@ -365,6 +395,8 @@ func (d Document) stickerMaterialMimeOrExt() string {
 		switch strings.ToLower(filepath.Ext(strings.TrimSpace(attr.FileName))) {
 		case ".tgs":
 			return "application/x-tgsticker"
+		case ".png":
+			return "image/png"
 		case ".webp":
 			return "image/webp"
 		case ".json":
@@ -428,21 +460,23 @@ func ClonePhotoPtr(photo *Photo) *Photo {
 type MessageMediaKind string
 
 const (
-	MessageMediaKindNone     MessageMediaKind = ""
-	MessageMediaKindPhoto    MessageMediaKind = "photo"
-	MessageMediaKindDocument MessageMediaKind = "document"
-	MessageMediaKindContact  MessageMediaKind = "contact"
-	MessageMediaKindService  MessageMediaKind = "service"
-	MessageMediaKindGeo      MessageMediaKind = "geo"
-	MessageMediaKindVenue    MessageMediaKind = "venue"
-	MessageMediaKindDice     MessageMediaKind = "dice"
-	MessageMediaKindPoll     MessageMediaKind = "poll"
-	MessageMediaKindGeoLive  MessageMediaKind = "geo_live"
-	MessageMediaKindTodo     MessageMediaKind = "todo"
-	MessageMediaKindStory    MessageMediaKind = "story"
-	MessageMediaKindWebPage  MessageMediaKind = "web_page"
-	MessageMediaKindGiveaway MessageMediaKind = "giveaway"
-	MessageMediaKindInvoice  MessageMediaKind = "invoice"
+	MessageMediaKindNone      MessageMediaKind = ""
+	MessageMediaKindPhoto     MessageMediaKind = "photo"
+	MessageMediaKindDocument  MessageMediaKind = "document"
+	MessageMediaKindContact   MessageMediaKind = "contact"
+	MessageMediaKindService   MessageMediaKind = "service"
+	MessageMediaKindGeo       MessageMediaKind = "geo"
+	MessageMediaKindVenue     MessageMediaKind = "venue"
+	MessageMediaKindDice      MessageMediaKind = "dice"
+	MessageMediaKindPoll      MessageMediaKind = "poll"
+	MessageMediaKindGeoLive   MessageMediaKind = "geo_live"
+	MessageMediaKindTodo      MessageMediaKind = "todo"
+	MessageMediaKindStory     MessageMediaKind = "story"
+	MessageMediaKindWebPage   MessageMediaKind = "web_page"
+	MessageMediaKindGiveaway  MessageMediaKind = "giveaway"
+	MessageMediaKindInvoice   MessageMediaKind = "invoice"
+	MessageMediaKindGame      MessageMediaKind = "game"
+	MessageMediaKindPaidMedia MessageMediaKind = "paid_media"
 )
 
 // MessageGiveaway is the immutable launch-card snapshot shown in the boost
@@ -516,7 +550,13 @@ type MessageGeoLive struct {
 	Geo                         MessageGeoPoint `json:"geo"`
 	Heading                     int             `json:"heading,omitempty"`
 	Period                      int             `json:"period"`
+	Stopped                     bool            `json:"stopped,omitempty"`
 	ProximityNotificationRadius int             `json:"proximity_notification_radius,omitempty"`
+}
+
+func (g *MessageGeoLive) Active(date, now int) bool {
+	return g != nil && !g.Stopped && g.Period > 0 &&
+		(g.Period == 0x7fffffff || int64(date)+int64(g.Period) > int64(now))
 }
 
 // MessageStory is a story shared as messageMediaStory. Peer+ID are the stable
@@ -621,7 +661,8 @@ const (
 	MessageServiceActionGiftPremium           MessageServiceActionKind = "gift_premium"
 	// MessageServiceActionPayment is messageActionPaymentSentMe: a payer settled
 	// an invoice of ours.
-	MessageServiceActionPayment MessageServiceActionKind = "payment_sent_me"
+	MessageServiceActionPayment      MessageServiceActionKind = "payment_sent_me"
+	MessageServiceActionPassportData MessageServiceActionKind = "passport_data"
 )
 
 // MessagePhoneCallAction 是 messageActionPhoneCall 的协议中立载荷。
@@ -673,6 +714,7 @@ type MessageRequestedPeerAction struct {
 	NameRequested     bool                          `json:"name_requested,omitempty"`
 	UsernameRequested bool                          `json:"username_requested,omitempty"`
 	PhotoRequested    bool                          `json:"photo_requested,omitempty"`
+	ManagedBot        *User                         `json:"managed_bot,omitempty"`
 }
 
 type MessageRequestedPeerDetails struct {
@@ -711,6 +753,69 @@ type MessageServiceAction struct {
 	StarGiftOfferDeclined *MessageStarGiftOfferDeclinedAction `json:"star_gift_offer_declined,omitempty"`
 	GiftPremium           *MessageGiftPremiumAction           `json:"gift_premium,omitempty"`
 	Payment               *MessagePaymentAction               `json:"payment,omitempty"`
+	ForumTopic            *ChannelMessageAction               `json:"forum_topic,omitempty"`
+	PassportData          *PassportAuthorization              `json:"passport_data,omitempty"`
+}
+
+func CloneBotGame(game BotGame) BotGame {
+	game.Photo = *ClonePhotoPtr(&game.Photo)
+	game.Animation = CloneDocumentPtr(game.Animation)
+	return game
+}
+
+func ClonePassportUserData(data PassportUserData) PassportUserData {
+	data.Elements = ClonePassportElements(data.Elements)
+	data.Authorizations = append([]PassportAuthorization(nil), data.Authorizations...)
+	for i := range data.Authorizations {
+		data.Authorizations[i] = *ClonePassportAuthorization(&data.Authorizations[i])
+	}
+	return data
+}
+
+// ClonePassportAuthorization keeps a delivered encrypted authorization immutable.
+func ClonePassportAuthorization(value *PassportAuthorization) *PassportAuthorization {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	out.CredentialsData = append([]byte(nil), value.CredentialsData...)
+	out.CredentialsHash = append([]byte(nil), value.CredentialsHash...)
+	out.CredentialsSecret = append([]byte(nil), value.CredentialsSecret...)
+	out.Elements = ClonePassportElements(value.Elements)
+	out.Errors = append([]PassportError(nil), value.Errors...)
+	for i := range out.Errors {
+		out.Errors[i].FileHashes = append([]string(nil), value.Errors[i].FileHashes...)
+	}
+	return &out
+}
+
+func ClonePassportElements(elements []PassportElement) []PassportElement {
+	cloneFiles := func(files []PassportFile) []PassportFile {
+		cloned := append([]PassportFile(nil), files...)
+		for i := range cloned {
+			cloned[i].Secret = append([]byte(nil), files[i].Secret...)
+		}
+		return cloned
+	}
+	cloneFile := func(file *PassportFile) *PassportFile {
+		if file == nil {
+			return nil
+		}
+		cloned := *file
+		cloned.Secret = append([]byte(nil), file.Secret...)
+		return &cloned
+	}
+	out := append([]PassportElement(nil), elements...)
+	for i := range out {
+		element := &out[i]
+		element.ValueTL = append([]byte(nil), elements[i].ValueTL...)
+		element.Files = cloneFiles(element.Files)
+		element.Translation = cloneFiles(element.Translation)
+		element.FrontSide = cloneFile(element.FrontSide)
+		element.ReverseSide = cloneFile(element.ReverseSide)
+		element.Selfie = cloneFile(element.Selfie)
+	}
+	return out
 }
 
 // MessagePaymentAction is projected as messageActionPaymentSentMe, which is what
@@ -720,13 +825,16 @@ type MessageServiceAction struct {
 // Without it a payment settles but stays invisible to the bot, so refundStarPayment
 // would be unreachable: nothing would ever supply telegram_payment_charge_id.
 type MessagePaymentAction struct {
-	Currency         string `json:"currency"`
-	TotalAmount      int64  `json:"total_amount"`
-	Payload          string `json:"payload,omitempty"`
-	ChargeID         string `json:"charge_id"`
-	ProviderChargeID string `json:"provider_charge_id"`
-	Title            string `json:"title,omitempty"`
-	Description      string `json:"description,omitempty"`
+	Currency                   string `json:"currency"`
+	TotalAmount                int64  `json:"total_amount"`
+	Payload                    string `json:"payload,omitempty"`
+	ChargeID                   string `json:"charge_id"`
+	ProviderChargeID           string `json:"provider_charge_id"`
+	Title                      string `json:"title,omitempty"`
+	Description                string `json:"description,omitempty"`
+	SubscriptionExpirationDate int    `json:"subscription_expiration_date,omitempty"`
+	IsRecurring                bool   `json:"is_recurring,omitempty"`
+	IsFirstRecurring           bool   `json:"is_first_recurring,omitempty"`
 }
 
 // MessageGiftPremiumAction is projected as
@@ -826,6 +934,8 @@ type MessageMedia struct {
 	Photo          *Photo                `json:"photo,omitempty"`
 	LivePhotoVideo *Document             `json:"live_photo_video,omitempty"`
 	Document       *Document             `json:"document,omitempty"`
+	VideoCover     *Photo                `json:"video_cover,omitempty"`
+	VideoTimestamp float64               `json:"video_timestamp,omitempty"`
 	Contact        *MessageContact       `json:"contact,omitempty"`
 	ServiceAction  *MessageServiceAction `json:"service_action,omitempty"`
 	Geo            *MessageGeoPoint      `json:"geo,omitempty"`
@@ -838,6 +948,8 @@ type MessageMedia struct {
 	WebPage        *MessageWebPage       `json:"web_page,omitempty"`
 	Giveaway       *MessageGiveaway      `json:"giveaway,omitempty"`
 	Invoice        *PremiumInvoice       `json:"invoice,omitempty"`
+	Game           *BotGame              `json:"game,omitempty"`
+	PaidMedia      *PaidMedia            `json:"paid_media,omitempty"`
 	// ProductInvoice is the generic bot sale shape. It is separate from Invoice
 	// because a Premium invoice carries a plan, not a product, and the two
 	// validate against different rules.
@@ -875,6 +987,31 @@ type MessageContact struct {
 // IsZero 表示无媒体（用于落库时跳过空快照、转换时回退 MessageMediaEmpty）。
 func (m *MessageMedia) IsZero() bool {
 	return m == nil || m.Kind == MessageMediaKindNone
+}
+
+// WithTodoCompletionsFrom 替换清单定义时，仅继承当前清单中仍存在任务的完成记录。
+// 调用方须在写锁内传入当前媒体；返回独立快照，不改输入或信任替换中的 completions。
+func (m *MessageMedia) WithTodoCompletionsFrom(current *MessageMedia) *MessageMedia {
+	if m == nil || m.Kind != MessageMediaKindTodo || m.Todo == nil {
+		return m
+	}
+	media := *m
+	todo := *m.Todo
+	todo.Completions = nil
+	media.Todo = &todo
+	if current == nil || current.Kind != MessageMediaKindTodo || current.Todo == nil || len(current.Todo.Completions) == 0 {
+		return &media
+	}
+	ids := make(map[int]struct{}, len(todo.Items))
+	for _, item := range todo.Items {
+		ids[item.ID] = struct{}{}
+	}
+	for _, completion := range current.Todo.Completions {
+		if _, keep := ids[completion.ID]; keep {
+			todo.Completions = append(todo.Completions, completion)
+		}
+	}
+	return &media
 }
 
 // HasUnreadPayload 表示该媒体是否参与 media_unread（"未听"）状态。
@@ -939,6 +1076,7 @@ type StickerSet struct {
 	TextColor       bool             `json:"text_color,omitempty"`
 	Creator         bool             `json:"creator,omitempty"`
 	CreatorUserID   int64            `json:"creator_user_id,omitempty"`
+	CreatorBotID    int64            `json:"creator_bot_id,omitempty"`
 	Installed       bool             `json:"installed,omitempty"`
 	Archived        bool             `json:"archived,omitempty"`
 	Deleted         bool             `json:"deleted,omitempty"`
@@ -970,10 +1108,14 @@ type StickerSetItemInput struct {
 	DocumentAccessHash int64
 	Emoji              string
 	Keywords           string
+	EmojiList          []string
+	KeywordsList       []string
+	MaskPosition       *StickerMaskPosition
 }
 
 type CreateStickerSetRequest struct {
 	CreatorUserID   int64
+	CreatorBotID    int64
 	Title           string
 	ShortName       string
 	Kind            StickerSetKind

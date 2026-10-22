@@ -356,6 +356,8 @@ type BotsService interface {
 	GetBotInfo(ctx context.Context, botUserID int64) (name, about, description string, err error)
 	SetBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (int, error)
 	GetBotMenuButton(ctx context.Context, botUserID int64) (domain.BotMenuButton, error)
+	SetBotDefaultAdminRights(ctx context.Context, botUserID int64, broadcast bool, rights domain.ChannelAdminRights) (bool, error)
+	GetBotDefaultAdminRights(ctx context.Context, botUserID int64, broadcast bool) (domain.ChannelAdminRights, error)
 	// SetBotMenuButtonForUser 设置单个用户的专属菜单按钮（default = 删除，回落到全局默认）。
 	SetBotMenuButtonForUser(ctx context.Context, botUserID, userID int64, button domain.BotMenuButton) error
 	// BotMenuButtonForUser 返回 userID 看到的菜单按钮：专属按钮优先，否则全局默认。
@@ -381,6 +383,7 @@ type BotsService interface {
 	SetAttachMenuState(ctx context.Context, state domain.BotAttachMenuState) (domain.BotAttachMenuState, error)
 	SaveRequestedWebViewButton(ctx context.Context, button domain.BotRequestedWebViewButton) (domain.BotRequestedWebViewButton, error)
 	GetRequestedWebViewButton(ctx context.Context, botUserID, userID int64, reqID string) (domain.BotRequestedWebViewButton, bool, error)
+	ConsumeRequestedWebViewButton(ctx context.Context, botUserID, userID int64, reqID string) (domain.BotRequestedWebViewButton, bool, error)
 	DeleteRequestedWebViewButton(ctx context.Context, botUserID, userID int64, reqID string) error
 	SetBotEmojiStatusPermission(ctx context.Context, botUserID, userID int64, allowed bool) error
 	BotEmojiStatusPermission(ctx context.Context, botUserID, userID int64) (bool, error)
@@ -515,6 +518,7 @@ type AccountBusinessAutomationService interface {
 	DeleteQuickReplyShortcut(ctx context.Context, userID int64, shortcutID int) (domain.QuickReplyMutation, error)
 	DeleteQuickReplyMessages(ctx context.Context, userID int64, shortcutID int, ids []int) (domain.QuickReplyMutation, error)
 	GetConnectedBusinessBot(ctx context.Context, ownerUserID int64) (domain.ConnectedBusinessBot, bool, error)
+	GetBusinessBotConnection(ctx context.Context, connectionID string) (domain.ConnectedBusinessBot, bool, error)
 	SaveConnectedBusinessBot(ctx context.Context, ownerUserID int64, bot domain.ConnectedBusinessBot) (domain.ConnectedBusinessBot, error)
 	DeleteConnectedBusinessBot(ctx context.Context, ownerUserID, botUserID int64) (bool, error)
 	SetConnectedBusinessBotPaused(ctx context.Context, ownerUserID, peerUserID int64, paused bool) (domain.ConnectedBusinessBotPeerState, error)
@@ -762,6 +766,14 @@ type ChannelsService interface {
 	GetJoinableChannel(ctx context.Context, userID, channelID int64) (domain.Channel, error)
 	GetParticipants(ctx context.Context, userID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error)
 	GetParticipant(ctx context.Context, userID, channelID, participantUserID int64) (domain.ChannelMember, error)
+	GetMessageRanks(ctx context.Context, authors []domain.ChannelMessageAuthor) (map[domain.ChannelMessageAuthor]string, error)
+	GetChannelSenderBan(ctx context.Context, userID, channelID, senderChannelID int64) (domain.ChannelMember, error)
+	SetChannelGuardBot(ctx context.Context, actor, channel, bot int64, enabled bool) (domain.Channel, error)
+	GetChannelGuardBot(ctx context.Context, channel int64) (int64, error)
+	CreateChatJoinQuery(ctx context.Context, channel, bot, user int64, date, now int) (domain.ChatJoinQuery, error)
+	GetChatJoinQuery(ctx context.Context, id int64) (domain.ChatJoinQuery, error)
+	ResolveChatJoinQuery(ctx context.Context, bot, id int64, result, url string, now int) (domain.ChatJoinQuery, domain.CreateChannelResult, error)
+	ExpireChatJoinQueries(ctx context.Context, now, limit int) ([]domain.ChatJoinQueryOutcome, error)
 	FutureCreatorAfterLeave(ctx context.Context, userID, channelID int64) (domain.ChannelMember, error)
 	InviteToChannel(ctx context.Context, userID, channelID int64, userIDs []int64, date int) (domain.CreateChannelResult, error)
 	JoinChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
@@ -793,6 +805,7 @@ type ChannelsService interface {
 	SetPaidMessagesPrice(ctx context.Context, userID, channelID int64, stars int64, broadcastMessagesAllowed bool) (domain.ChannelPaidMessagesPriceResult, error)
 	SetAntiSpam(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetSlowMode(ctx context.Context, userID, channelID int64, seconds int) (domain.Channel, error)
+	SetStickers(ctx context.Context, userID, channelID, stickerSetID int64) (domain.Channel, error)
 	SetBoostsToUnblockRestrictions(ctx context.Context, userID, channelID int64, boosts int) (domain.Channel, error)
 	SetNoForwards(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetJoinToSend(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
@@ -859,6 +872,7 @@ type ChannelsService interface {
 	SetDiscussionGroup(ctx context.Context, userID, broadcastID, groupID int64) (domain.DiscussionGroupUpdateResult, error)
 	SetViewForumAsMessages(ctx context.Context, userID, channelID int64, enabled bool) (bool, error)
 	GetHistory(ctx context.Context, userID int64, filter domain.ChannelHistoryFilter) (domain.ChannelHistory, error)
+	GetPersonalChannelHistory(ctx context.Context, botUserID, ownerUserID int64, filter domain.ChannelHistoryFilter) (domain.ChannelHistory, error)
 	SearchChannelMedia(ctx context.Context, userID, channelID int64, req domain.MediaSearchRequest) (domain.ChannelHistory, error)
 	CountChannelMediaCategories(ctx context.Context, userID, channelID int64) (domain.MediaCategoryCounts, error)
 	GetStats(ctx context.Context, userID int64, req domain.ChannelStatsRequest) (domain.ChannelStats, error)
@@ -974,6 +988,9 @@ type FilesService interface {
 	// getWebPagePreview 已解析过，则 echo 直接带 done 卡片（与官方一致），不依赖异步换卡。
 	LookupWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, bool)
 	CreateAvatarFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error)
+	// 专用头像字节入口，保留 s/a/c renditions，不使用消息照片尺寸规则。
+	CreateAvatarFromBytes(ctx context.Context, data []byte) (domain.Photo, error)
+	CreateAvatarVideoFromBytes(ctx context.Context, data []byte, videoStartTs float64) (domain.Photo, error)
 	CreateAvatarVideoFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64) (domain.Photo, error)
 	CreateAvatarVideoMarkupFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, markup domain.PhotoSize) (domain.Photo, error)
 	CreateAvatarMarkup(ctx context.Context, size domain.PhotoSize) (domain.Photo, error)
@@ -985,6 +1002,8 @@ type FilesService interface {
 	UploadProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, file domain.UploadedFileRef, date int) (domain.Photo, error)
 	SetCurrentProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int) (domain.Photo, bool, error)
 	SetCurrentProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64, date int) (domain.Photo, bool, error)
+	ProfilePhotoInHistory(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64) (bool, error)
+	OfferProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int) error
 	CurrentProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID int64) (domain.Photo, bool, error)
 	CurrentProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind) (domain.Photo, bool, error)
 	GetProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerID int64, offset, limit int, maxID int64) (photos []domain.Photo, total int, err error)
@@ -1169,6 +1188,7 @@ type Deps struct {
 	AICompose                    AIComposeService
 	Ephemeral                    EphemeralService
 	EphemeralPush                store.EphemeralPushBroker
+	MessageDrafts                store.MessageDraftStore
 	WelcomeMessages              WelcomeMessageService
 	Moderation                   ModerationService
 	Users                        UsersService
@@ -1181,6 +1201,11 @@ type Deps struct {
 	BootstrapUpdates             store.BootstrapUpdateJobStore
 	BotAPIUpdates                store.BotAPIUpdateStore
 	BotCallbacks                 store.BotCallbackRegistryStore
+	GamesPassport                store.BotGamesPassportStore
+	BotCommerce                  store.BotCommerce
+	BotBroadcast                 store.BotBroadcastStore
+	BotGuestQueries              store.BotGuestQueryStore
+	BotInlineFeedback            store.BotInlineFeedbackStore
 	// PushDevices 保存 account.registerDevice 的设备推送登记（与 APNs 是否配置无关）。
 	// 为 nil 时 registerDevice/unregisterDevice 只回 true、不保存。
 	PushDevices             store.PushDeviceStore

@@ -5,6 +5,7 @@ import (
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 	"strings"
 	appchannels "telesrv/internal/app/channels"
@@ -266,6 +267,10 @@ func TestChannelSendHistoryAndDifferenceRPC(t *testing.T) {
 		RandomID: []int64{100},
 	}
 	forwardReq.SetReplyTo(forwardReplyTo)
+	if _, err := r.onMessagesForwardMessages(WithUserID(ctx, friend.ID), forwardReq); !tgerr.Is(err, "QUOTE_TEXT_INVALID") {
+		t.Fatalf("forward invalid quote: %v, want QUOTE_TEXT_INVALID", err)
+	}
+	forwardReplyTo.SetQuoteOffset(7)
 	forwarded, err := r.onMessagesForwardMessages(WithUserID(ctx, friend.ID), forwardReq)
 	if err != nil {
 		t.Fatalf("forward channel message: %v", err)

@@ -236,11 +236,20 @@ func (s *MessageStore) UnpinAllPrivateMessages(ctx context.Context, req domain.U
 	if err := lockDispatchOutboxAppendFences(ctx, tx, []int64{req.OwnerUserID, req.Peer.ID}); err != nil {
 		return res, fmt.Errorf("lock unpin dispatch append fences: %w", err)
 	}
+	if req.TopicID != 0 {
+		if _, err := qtx.GetPrivateForumTopic(ctx, sqlcgen.GetPrivateForumTopicParams{OwnerUserID: req.OwnerUserID, PeerUserID: req.Peer.ID, TopicID: int32(req.TopicID)}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				err = domain.ErrMessageIDInvalid
+			}
+			return res, err
+		}
+	}
 	ownRows, err := qtx.UnpinAllMessageBoxesByPeer(ctx, sqlcgen.UnpinAllMessageBoxesByPeerParams{
 		OwnerUserID: req.OwnerUserID,
 		PeerType:    string(req.Peer.Type),
 		PeerID:      req.Peer.ID,
 		LimitCount:  domain.MaxUnpinAllBatch,
+		TopicID:     int32(req.TopicID),
 	})
 	if err != nil {
 		return res, fmt.Errorf("unpin own messages: %w", err)
@@ -257,6 +266,7 @@ func (s *MessageStore) UnpinAllPrivateMessages(ctx context.Context, req domain.U
 			OwnerUserID: req.OwnerUserID,
 			PeerType:    string(req.Peer.Type),
 			PeerID:      req.Peer.ID,
+			TopicID:     int32(req.TopicID),
 		})
 		if moreErr != nil {
 			return res, fmt.Errorf("check remaining pinned after unpin all: %w", moreErr)

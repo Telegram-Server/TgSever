@@ -33,7 +33,15 @@ func (r *Router) BotAPISendInvoice(
 	botID, chatID int64,
 	title, description, payload string,
 	amount int64,
+	allowPaid bool,
 ) (domain.Message, error) {
+	randomID := randomNonZeroInt64()
+	return r.botAPIBroadcastMessage(ctx, botID, fmt.Sprintf("invoice:%d", randomID), allowPaid, func(sendCtx context.Context) (domain.Message, error) {
+		return r.botAPISendInvoice(sendCtx, botID, chatID, title, description, payload, amount, randomID)
+	})
+}
+
+func (r *Router) botAPISendInvoice(ctx context.Context, botID, chatID int64, title, description, payload string, amount, randomID int64) (domain.Message, error) {
 	if r == nil || r.deps.Messages == nil || r.deps.Bots == nil || botID == 0 {
 		return domain.Message{}, errors.New("BOT_INVALID")
 	}
@@ -54,13 +62,13 @@ func (r *Router) BotAPISendInvoice(
 	if utf8.RuneCountInString(description) > domain.BotInvoiceMaxDescription {
 		return domain.Message{}, errors.New("DESCRIPTION_INVALID")
 	}
-	if len(payload) > domain.BotInvoiceMaxPayload {
+	if len(payload) == 0 || len(payload) > domain.BotInvoiceMaxPayload {
 		return domain.Message{}, errors.New("PAYLOAD_INVALID")
 	}
 	// telesrv models no fiat checkout, so an invoice can only be settled in XTR.
 	// Reject anything else here instead of storing a price nothing can pay.
 	invoice := &domain.Invoice{
-		Title: title, Description: description, AmountStars: amount, StartParam: payload,
+		Title: title, Description: description, AmountStars: amount,
 	}
 	if !invoice.Valid() {
 		return domain.Message{}, errors.New("INVOICE_INVALID")
@@ -100,7 +108,7 @@ func (r *Router) BotAPISendInvoice(
 	}
 	result, err := payments.CreateBotInvoiceMessage(ctx, domain.BotInvoice{
 		BotUserID: botID, ChatID: peer.ID, Title: title, Description: description, Amount: amount, Currency: domain.PremiumCurrencyStars, Payload: payload, Date: now,
-	}, domain.SendPrivateTextRequest{SenderUserID: botID, RecipientUserID: peer.ID, RandomID: randomNonZeroInt64(), Media: media, ReplyMarkup: markup, Date: now})
+	}, domain.SendPrivateTextRequest{SenderUserID: botID, RecipientUserID: peer.ID, RandomID: randomID, Media: media, ReplyMarkup: markup, Date: now})
 	if err != nil {
 		return domain.Message{}, invoiceStoreErr(err)
 	}
@@ -175,6 +183,9 @@ func isInvoiceLookupMiss(err error) bool { return errors.Is(err, errBotInvoiceNo
 func (r *Router) botInvoicePaymentForm(ctx context.Context, viewerID int64, peer tg.InputPeerClass, msgID int) (tg.PaymentsPaymentFormClass, error) {
 	invoice, err := r.botInvoiceForMessage(ctx, viewerID, peer, msgID)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.ensureBotAccess(ctx, invoice.BotUserID, viewerID); err != nil {
 		return nil, err
 	}
 	if invoice.Paid {

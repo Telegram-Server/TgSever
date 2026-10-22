@@ -3,7 +3,7 @@ package botapi
 import "telesrv/internal/domain"
 
 // apiChatMember 把一条频道成员记录投影成官方 ChatMember 的六种形态之一。判定顺序与
-// MTProto 的 tgChannelParticipantForUpdate 一致：封禁（含 view_messages 禁令）先于
+// MTProto 的 tgChannelParticipant 一致：封禁（含 view_messages 禁令）先于
 // 退出，退出先于角色。canBeEdited 只对 administrator 有意义，由调用方按查看者算出。
 func apiChatMember(member domain.ChannelMember, user domain.User, canBeEdited bool) map[string]any {
 	if user.ID == 0 {
@@ -41,6 +41,9 @@ func apiChatMember(member domain.ChannelMember, user domain.User, canBeEdited bo
 		out["until_date"] = banned.UntilDate
 	default:
 		out["status"] = "member"
+	}
+	if (out["status"] == "member" || out["status"] == "restricted") && member.Rank != "" {
+		out["tag"] = member.Rank
 	}
 	return out
 }

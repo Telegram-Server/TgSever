@@ -123,6 +123,7 @@ func CloneMessageReply(in *MessageReply) *MessageReply {
 	}
 	out := *in
 	out.QuoteEntities = append([]MessageEntity(nil), in.QuoteEntities...)
+	out.PollOption = append([]byte(nil), in.PollOption...)
 	if in.External != nil {
 		x := *in.External
 		x.Entities = append([]MessageEntity(nil), x.Entities...)

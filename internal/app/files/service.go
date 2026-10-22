@@ -67,6 +67,7 @@ type Service struct {
 	blobRangeSF        singleflight.Group
 	stickerSetCache    *stickerSetFullCache
 	stickerSetNegCache *stickerSetNegativeCache
+	botStickerMu       sync.Mutex
 	uploadQuota        domain.UploadPartQuota
 	mapTiles           *mapTileProxy
 	externalMedia      *externalMediaFetcher

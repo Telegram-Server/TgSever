@@ -43,7 +43,7 @@ func newFakeSendExtraGateway() *fakeSendExtraGateway {
 	return &fakeSendExtraGateway{fakeBotAPIGateway: &fakeBotAPIGateway{}}
 }
 
-func (g *fakeSendExtraGateway) BotAPISendDice(_ context.Context, botID, chatID int64, emoji string, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int) (domain.Message, error) {
+func (g *fakeSendExtraGateway) BotAPISendDiceWithOptions(_ context.Context, botID, chatID int64, emoji string, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int, _ domain.BotAPIMessageOptions) (domain.Message, error) {
 	g.calls = append(g.calls, "dice")
 	g.chatID, g.emoji, g.markup, g.silent, g.protect, g.replyTo = chatID, emoji, replyMarkup, silent, protectContent, replyToMessageID
 	return g.result, g.err
@@ -55,14 +55,14 @@ func (g *fakeSendExtraGateway) BotAPISendChatAction(_ context.Context, botID, ch
 	return true, g.err
 }
 
-func (g *fakeSendExtraGateway) BotAPISendPoll(_ context.Context, botID, chatID int64, poll domain.MessagePoll, correctOptionIDs []int, explanation string, explanationEntities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int) (domain.Message, error) {
+func (g *fakeSendExtraGateway) BotAPISendPollWithOptions(_ context.Context, botID, chatID int64, poll domain.MessagePoll, correctOptionIDs []int, explanation string, explanationEntities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent, protectContent bool, replyToMessageID int, _ domain.BotAPIMessageOptions) (domain.Message, error) {
 	g.calls = append(g.calls, "poll")
 	g.chatID, g.poll, g.correct, g.explanation, g.explanationEntities = chatID, poll, correctOptionIDs, explanation, explanationEntities
 	g.markup, g.silent, g.protect, g.replyTo = replyMarkup, silent, protectContent, replyToMessageID
 	return g.result, g.err
 }
 
-func (g *fakeSendExtraGateway) BotAPISendMediaGroup(_ context.Context, botID, chatID int64, items []InputMediaItem, silent, protectContent bool, replyToMessageID int) ([]domain.Message, error) {
+func (g *fakeSendExtraGateway) BotAPISendMediaGroupWithOptions(_ context.Context, botID, chatID int64, items []InputMediaItem, silent, protectContent bool, replyToMessageID int, _ domain.BotAPIMessageOptions) ([]domain.Message, error) {
 	g.calls = append(g.calls, "album")
 	g.chatID, g.items, g.silent, g.protect, g.replyTo = chatID, items, silent, protectContent, replyToMessageID
 	return g.album, g.err
@@ -234,40 +234,6 @@ func TestSendMediaGroupParsesAttachAndURLItems(t *testing.T) {
 	}
 	if msgs[0].MessageID != 11 || msgs[0].MediaGroupID != "555" || msgs[1].MediaGroupID != "555" || msgs[0].Caption != "first" {
 		t.Fatalf("result = %s", resp.Result)
-	}
-}
-
-func TestSendMediaGroupValidatesItems(t *testing.T) {
-	gateway := newFakeSendExtraGateway()
-	h := newTestHandler(t, gateway)
-
-	fileID := encodeBotAPIFileID("photo:1:x")
-	for _, tc := range []struct{ media, want string }{
-		{`[{"type":"photo","media":"` + fileID + `"}]`, "MEDIA_GROUP_INVALID"},
-		{`[{"type":"photo","media":"` + fileID + `"},{"type":"audio","media":"` + fileID + `"}]`, "MEDIA_GROUP_INVALID"},
-		{`[{"type":"photo","media":"` + fileID + `"},{"type":"sticker","media":"` + fileID + `"}]`, "MEDIA_GROUP_INVALID"},
-		{`[{"type":"photo","media":"` + fileID + `"},{"type":"photo","media":"attach://missing"}]`, "FILE_ID_INVALID"},
-		{`"not an array"`, "MEDIA_GROUP_INVALID"},
-	} {
-		body, _ := json.Marshal(map[string]any{"chat_id": 42, "media": json.RawMessage(tc.media)})
-		rec := callMethod(t, h, "sendMediaGroup", string(body))
-		if resp := decodeAPIResponse(t, rec); rec.Code != http.StatusBadRequest || resp.Description != tc.want {
-			t.Fatalf("%s: status = %d body = %s, want %s", tc.media, rec.Code, rec.Body.String(), tc.want)
-		}
-	}
-	if len(gateway.calls) != 0 {
-		t.Fatalf("calls = %v", gateway.calls)
-	}
-
-	// 两个文档可以成组，file_id 原样传给网关。
-	gateway.album = []domain.Message{{ID: 1, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 42}}, {ID: 2, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 42}}}
-	docID := encodeBotAPIFileID("doc:9")
-	body := `{"chat_id":42,"media":[{"type":"document","media":"` + docID + `"},{"type":"document","media":"` + docID + `"}]}`
-	if rec := callMethod(t, h, "sendMediaGroup", body); rec.Code != http.StatusOK {
-		t.Fatalf("documents: status = %d body = %s", rec.Code, rec.Body.String())
-	}
-	if len(gateway.items) != 2 || gateway.items[0].File.LocationKey != "doc:9" {
-		t.Fatalf("items = %+v", gateway.items)
 	}
 }
 

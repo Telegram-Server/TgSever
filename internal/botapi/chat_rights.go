@@ -109,6 +109,7 @@ var adminRightFields = []struct {
 	{"can_edit_messages", func(r *domain.ChannelAdminRights) *bool { return &r.EditMessages }},
 	{"can_pin_messages", func(r *domain.ChannelAdminRights) *bool { return &r.PinMessages }},
 	{"can_manage_topics", func(r *domain.ChannelAdminRights) *bool { return &r.ManageTopics }},
+	{"can_manage_tags", func(r *domain.ChannelAdminRights) *bool { return &r.ManageRanks }},
 	{"can_manage_direct_messages", func(r *domain.ChannelAdminRights) *bool { return &r.ManageDirectMessages }},
 }
 

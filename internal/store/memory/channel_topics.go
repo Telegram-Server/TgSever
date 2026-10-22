@@ -181,19 +181,21 @@ func (s *ChannelStore) EditForumTopic(ctx context.Context, req domain.EditChanne
 		return domain.EditChannelForumTopicResult{}, domain.ErrChannelInvalid
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	channel, err := s.channelForMemberLocked(req.UserID, req.ChannelID)
 	if err != nil {
-		s.mu.Unlock()
 		return domain.EditChannelForumTopicResult{}, err
 	}
 	member, _ := s.effectiveMemberLocked(req.ChannelID, req.UserID, restrictionNow(0))
 	topic, ok := s.topics[req.ChannelID][req.TopicID]
+	if req.TopicID == domain.ForumGeneralTopicID && !ok {
+		topic = domain.ChannelForumTopic{ChannelID: req.ChannelID, TopicID: domain.ForumGeneralTopicID, CreatorUserID: channel.CreatorUserID, Title: "General", IconColor: domain.DefaultForumTopicIconColor, Date: channel.Date}
+		ok = true
+	}
 	if !channel.Forum {
-		s.mu.Unlock()
 		return domain.EditChannelForumTopicResult{}, domain.ErrChannelForumMissing
 	}
 	if !ok {
-		s.mu.Unlock()
 		return domain.EditChannelForumTopicResult{}, domain.ErrMessageIDInvalid
 	}
 	selfBoostsApplied := 0
@@ -205,16 +207,28 @@ func (s *ChannelStore) EditForumTopic(ctx context.Context, req domain.EditChanne
 		selfBoostsApplied = s.selfBoostsAppliedLocked(req.UserID, req.ChannelID, now)
 	}
 	if !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
-		s.mu.Unlock()
 		return domain.EditChannelForumTopicResult{}, domain.ErrChannelAdminRequired
 	}
 	next := topic
+	if req.Hidden != nil && req.TopicID != domain.ForumGeneralTopicID {
+		return domain.EditChannelForumTopicResult{}, domain.ErrChannelInvalid
+	}
+	if req.TopicID == domain.ForumGeneralTopicID && req.IconEmojiID != nil {
+		return domain.EditChannelForumTopicResult{}, domain.ErrChannelInvalid
+	}
+	if req.Hidden != nil && *req.Hidden {
+		closed := true
+		req.Closed = &closed
+	}
+	if req.Closed != nil && !*req.Closed && req.TopicID == domain.ForumGeneralTopicID {
+		hidden := false
+		req.Hidden = &hidden
+	}
 	action := domain.ChannelMessageAction{Type: domain.ChannelActionTopicEdit}
 	changed := false
 	if req.Title != nil {
 		title := strings.TrimSpace(*req.Title)
 		if title == "" {
-			s.mu.Unlock()
 			return domain.EditChannelForumTopicResult{}, domain.ErrChannelInvalid
 		}
 		if next.Title != title {
@@ -239,28 +253,31 @@ func (s *ChannelStore) EditForumTopic(ctx context.Context, req domain.EditChanne
 		action.Hidden = boolPtr(*req.Hidden)
 		changed = true
 	}
-	s.mu.Unlock()
 	if !changed {
 		return domain.EditChannelForumTopicResult{}, domain.ErrChannelNotModified
 	}
 
-	res, err := s.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+	// General has no root service message. Use a thread-only reply so its edits
+	// never depend on message 1 still being present in history.
+	if s.topics[req.ChannelID] == nil {
+		s.topics[req.ChannelID] = make(map[int]domain.ChannelForumTopic)
+	}
+	s.topics[req.ChannelID][req.TopicID] = topic
+	res, err := s.sendChannelMessageLocked(domain.SendChannelMessageRequest{
 		UserID:    req.UserID,
 		ChannelID: req.ChannelID,
 		ReplyTo: &domain.MessageReply{
 			Peer:         domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID},
-			MessageID:    req.TopicID,
+			MessageID:    0,
 			TopMessageID: req.TopicID,
 		},
 		Action: &action,
 		Date:   req.Date,
-	})
+	}, nil)
 	if err != nil {
 		return domain.EditChannelForumTopicResult{}, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	channel = s.channels[req.ChannelID]
 	if _, ok := s.topics[req.ChannelID][req.TopicID]; !ok {
 		return domain.EditChannelForumTopicResult{}, domain.ErrChannelForumMissing
@@ -367,6 +384,9 @@ func (s *ChannelStore) DeleteForumTopicHistory(_ context.Context, req domain.Del
 	if req.UserID == 0 || req.ChannelID == 0 || req.TopicID <= 0 {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelInvalid
 	}
+	if req.TopicID == domain.ForumGeneralTopicID {
+		return domain.DeleteChannelHistoryResult{}, domain.ErrMessageIDInvalid
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	channel, err := s.channelForMemberLocked(req.UserID, req.ChannelID)
@@ -381,7 +401,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(_ context.Context, req domain.Del
 	if !ok {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrMessageIDInvalid
 	}
-	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !canDeleteAnyChannelMessage(member) {
+	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
 	ids := make([]int, 0, domain.MaxDeleteHistoryBatch)
@@ -399,7 +419,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(_ context.Context, req domain.Del
 		}
 	}
 	audit := domain.UserDeletionAudit(domain.DeletionSourceTopicHistory, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
-	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit)
+	deleted, event, channel, err := s.deleteChannelMessagesLocked(channel, member, ids, req.UserID, req.Date, audit, false)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
@@ -435,7 +455,7 @@ func (s *ChannelStore) ListForumTopics(_ context.Context, viewerUserID int64, fi
 	query := strings.TrimSpace(strings.ToLower(filter.Query))
 	all := make([]domain.ChannelForumTopic, 0, len(s.topics[filter.ChannelID]))
 	for _, topic := range s.topics[filter.ChannelID] {
-		if topic.TopicID <= member.AvailableMinID {
+		if topic.TopicID == domain.ForumGeneralTopicID || topic.TopicID <= member.AvailableMinID {
 			continue
 		}
 		if query != "" && !strings.Contains(strings.ToLower(topic.Title), query) {
@@ -585,9 +605,10 @@ func (s *ChannelStore) channelMessageRepliesLocked(viewerUserID, channelID int64
 		rootID = msg.Discussion.MessageID
 		stats.Comments = true
 		stats.ChannelID = msg.Discussion.ChannelID
-	} else if channel, ok := s.channels[channelID]; ok && channel.Broadcast && channel.LinkedChatID != 0 && msg.Post {
-		stats.Comments = true
-		stats.ChannelID = channel.LinkedChatID
+	} else if channel, ok := s.channels[channelID]; ok && channel.Broadcast && msg.Post {
+		// A linked channel does not imply that this particular post has a
+		// discussion root (for example when its sender identity is banned).
+		return nil
 	}
 	if rootID <= 0 {
 		return nil
@@ -631,13 +652,11 @@ func (s *ChannelStore) channelMessageRepliesLocked(viewerUserID, channelID int64
 }
 
 func canManageForumTopic(channel domain.Channel, member domain.ChannelMember, topic domain.ChannelForumTopic, userID int64, selfBoostsApplied int) bool {
-	if domain.ChannelBannedRightsBlockManageTopics(channel, member, selfBoostsApplied) {
-		return false
-	}
-	if topic.CreatorUserID == userID {
+	if member.Role == domain.ChannelRoleCreator || (member.Role == domain.ChannelRoleAdmin && member.AdminRights.ManageTopics) {
 		return true
 	}
-	return canPinChannelMessages(channel, member)
+	return topic.TopicID != domain.ForumGeneralTopicID && topic.CreatorUserID == userID &&
+		!domain.ChannelBannedRightsBlockManageTopics(channel, member, selfBoostsApplied)
 }
 
 func cloneChannelForumTopic(in domain.ChannelForumTopic) domain.ChannelForumTopic {

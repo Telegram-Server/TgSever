@@ -12,6 +12,8 @@ import (
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
+	accountapp "telesrv/internal/app/account"
+	"telesrv/internal/store/memory"
 )
 
 type rateWindowCall struct {
@@ -268,7 +270,7 @@ func TestDispatchSensitiveRPCRateLimitedBeforeHandler(t *testing.T) {
 	r := New(Config{
 		SRPRateLimit:  1,
 		SRPRateWindow: time.Minute,
-	}, Deps{Limiter: limiter}, zaptest.NewLogger(t), clock.System)
+	}, Deps{Limiter: limiter, Account: accountapp.NewService(memory.NewPasswordStore())}, zaptest.NewLogger(t), clock.System)
 
 	ctx := WithUserID(context.Background(), 42)
 	var req bin.Buffer

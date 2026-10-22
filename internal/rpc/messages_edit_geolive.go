@@ -33,55 +33,29 @@ func (r *Router) onEditMessageLiveLocation(ctx context.Context, req *tg.Messages
 		return nil, messageIDInvalidErr()
 	}
 	now := int(r.clock.Now().Unix())
-	next := *current.media.GeoLive
-	if media.Stopped {
-		// 立即过期：elapsed 至少 1 秒；forever 共享停止后同样按 elapsed 收口。
-		elapsed := now - current.date
-		if elapsed < 1 {
-			elapsed = 1
-		}
-		next.Period = elapsed
-	} else {
-		geo, err := domainGeoPointFromInput(media.GeoPoint)
-		if err != nil {
-			return nil, err
-		}
-		// 保留首发 access_hash：客户端可能继续用旧 hash 拉地图缩略。
-		geo.AccessHash = next.Geo.AccessHash
-		next.Geo = *geo
-		if heading, ok := media.GetHeading(); ok {
-			if heading < 0 || heading > maxLiveLocationHeading {
-				return nil, mediaInvalidErr()
-			}
-			next.Heading = heading
-		}
-		if period, ok := media.GetPeriod(); ok {
-			if period != foreverLiveLocationPeriod && (period < minLiveLocationPeriod || period > maxLiveLocationPeriod) {
-				return nil, mediaInvalidErr()
-			}
-			next.Period = period
-		}
-		if radius, ok := media.GetProximityNotificationRadius(); ok {
-			if radius < 0 || radius > maxProximityRadiusMeters {
-				return nil, mediaInvalidErr()
-			}
-			next.ProximityNotificationRadius = radius
-		}
+	newMedia, err := editLiveLocationMedia(current.media, current.date, now, media)
+	if err != nil {
+		return nil, err
 	}
-	newMedia := &domain.MessageMedia{Kind: domain.MessageMediaKindGeoLive, GeoLive: &next}
+	replyMarkup, setReplyMarkup, err := r.editReplyMarkup(ctx, userID, peer, req.ReplyMarkup)
+	if err != nil {
+		return nil, err
+	}
 
 	if peer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
 		}
 		res, err := r.deps.Channels.EditMessage(ctx, userID, domain.EditChannelMessageRequest{
-			UserID:    userID,
-			ChannelID: peer.ID,
-			ID:        req.ID,
-			Message:   current.body,
-			Entities:  current.entities,
-			Media:     newMedia,
-			EditDate:  now,
+			UserID:         userID,
+			ChannelID:      peer.ID,
+			ID:             req.ID,
+			Message:        current.body,
+			Entities:       current.entities,
+			Media:          newMedia,
+			EditDate:       now,
+			SetReplyMarkup: setReplyMarkup,
+			ReplyMarkup:    replyMarkup,
 		})
 		if err != nil {
 			return nil, channelEditErr(err)
@@ -93,6 +67,13 @@ func (r *Router) onEditMessageLiveLocation(ctx context.Context, req *tg.Messages
 	if peer.Type != domain.PeerTypeUser || r.deps.Messages == nil {
 		return nil, peerIDInvalidErr()
 	}
+	blocked, err := r.peerBlocksUser(ctx, userID, peer.ID)
+	if err != nil {
+		return nil, err
+	}
+	if blocked {
+		return nil, messageEditForbiddenErr()
+	}
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.EditMessage(ctx, userID, domain.EditMessageRequest{
 		OwnerUserID:     userID,
@@ -102,19 +83,89 @@ func (r *Router) onEditMessageLiveLocation(ctx context.Context, req *tg.Messages
 		Entities:        current.entities,
 		Media:           newMedia,
 		EditDate:        now,
+		SetReplyMarkup:  setReplyMarkup,
+		ReplyMarkup:     replyMarkup,
 		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,
 	})
 	if err != nil {
 		return nil, messageEditErr(err)
 	}
-	self := res.Self()
-	if self.Event.Pts == 0 || self.Message.ID == 0 {
+	return r.privateEditMessageUpdates(ctx, userID, res)
+}
+
+// period 是相对首发日期的总有效期；每次最多加一天，总计最多 90 天。
+// stopped 独立持久化，保证首发同秒停止也不能在下一秒前被复活。
+func editLiveLocationMedia(current *domain.MessageMedia, date, now int, input *tg.InputMediaGeoLive) (*domain.MessageMedia, error) {
+	if current == nil || current.Kind != domain.MessageMediaKindGeoLive || current.GeoLive == nil {
 		return nil, messageIDInvalidErr()
 	}
-	users := r.usersForMessageUpdate(ctx, userID, self.Message)
-	chats := r.chatsForMessageUpdate(ctx, userID, self.Message)
-	return tgEditMessageUpdates(self.Event, self.Message, users, chats), nil
+	if !current.GeoLive.Active(date, now) {
+		return nil, messageNotModifiedErr()
+	}
+	next := *current.GeoLive
+	if input.Stopped {
+		next.Stopped = true
+		next.Period = max(0, now-date)
+	} else {
+		if _, empty := input.GeoPoint.(*tg.InputGeoPointEmpty); !empty {
+			geo, err := domainGeoPointFromInput(input.GeoPoint)
+			if err != nil {
+				return nil, err
+			}
+			geo.AccessHash = next.Geo.AccessHash
+			next.Geo = *geo
+		}
+		if heading, ok := input.GetHeading(); ok {
+			if heading < 0 || heading > maxLiveLocationHeading {
+				return nil, mediaInvalidErr()
+			}
+			next.Heading = heading
+		}
+		if period, ok := input.GetPeriod(); ok {
+			if period != foreverLiveLocationPeriod && (period < minLiveLocationPeriod || int64(date)+int64(period) > int64(now)+90*86400 || int64(date)+int64(period) <= int64(now) || int64(period) > int64(next.Period)+86400) {
+				return nil, mediaInvalidErr()
+			}
+			next.Period = period
+		}
+		if radius, ok := input.GetProximityNotificationRadius(); ok {
+			if radius < 0 || radius > maxProximityRadiusMeters {
+				return nil, mediaInvalidErr()
+			}
+			next.ProximityNotificationRadius = radius
+		}
+	}
+	return &domain.MessageMedia{Kind: domain.MessageMediaKindGeoLive, GeoLive: &next}, nil
+}
+
+func domainLiveLocationFromInput(input *tg.InputMediaGeoLive) (*domain.MessageMedia, error) {
+	if input.Stopped {
+		return nil, mediaInvalidErr()
+	}
+	geo, err := domainGeoPointFromInput(input.GeoPoint)
+	if err != nil {
+		return nil, err
+	}
+	live := &domain.MessageGeoLive{Geo: *geo, Period: minLiveLocationPeriod}
+	if period, ok := input.GetPeriod(); ok {
+		if period != foreverLiveLocationPeriod && (period < minLiveLocationPeriod || period > maxLiveLocationPeriod) {
+			return nil, mediaInvalidErr()
+		}
+		live.Period = period
+	}
+	if heading, ok := input.GetHeading(); ok {
+		if heading < 0 || heading > maxLiveLocationHeading {
+			return nil, mediaInvalidErr()
+		}
+		live.Heading = heading
+	}
+	if radius, ok := input.GetProximityNotificationRadius(); ok {
+		if radius < 0 || radius > maxProximityRadiusMeters {
+			return nil, mediaInvalidErr()
+		}
+		live.ProximityNotificationRadius = radius
+	}
+	return &domain.MessageMedia{Kind: domain.MessageMediaKindGeoLive, GeoLive: live}, nil
 }
 
 type liveLocationTarget struct {

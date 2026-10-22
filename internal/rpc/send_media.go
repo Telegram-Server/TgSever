@@ -120,6 +120,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			r.pushChannelDiscussionUpdate(ctx, userID, res.Discussion)
 			// 频道链接预览 pending 占位：带外解析并就地替换（异步，不阻塞发送 echo）。
 			r.maybeEnqueueWebPageResolve(userID, peer, res.Message.ID, res.Message.Media)
+			r.enqueueGuestQueries(ctx, userID, peer, botAPIMessageFromChannel(userID, res.Message))
 		}
 		if p.clearDraft && !res.Duplicate {
 			r.clearDraftAfterSend(ctx, userID, peer, replyTo)
@@ -222,9 +223,15 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		r.clearDraftAfterSendWithPeerObjects(ctx, userID, peer, replyTo, users, chats)
 	}
 	if !res.Duplicate {
+		threadID := 0
+		if replyTo != nil {
+			threadID = replyTo.TopMessageID
+		}
+		r.finishMessageDraftAfterSend(ctx, userID, peer.ID, threadID)
 		// 链接预览 pending 占位：带外解析并就地替换（异步，不阻塞发送 echo）。
 		r.maybeEnqueueWebPageResolve(userID, peer, res.SenderMessage.ID, res.SenderMessage.Media)
 		r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
+		r.enqueueGuestQueries(ctx, userID, peer, res.SenderMessage)
 	}
 	return tgPrivateSendResultUpdates(res, p.randomID, true, users, chats), res.Duplicate, nil
 }
@@ -745,6 +752,8 @@ func (r *Router) sendMultiMediaToMonoforum(ctx context.Context, userID int64, pe
 // 返回 nil 表示 InputMediaEmpty（调用方退化为纯文本）。
 func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.InputMediaClass) (*domain.MessageMedia, error) {
 	switch in := input.(type) {
+	case *tg.InputMediaGame:
+		return r.resolveInputGame(ctx, userID, in.ID)
 	case *tg.InputMediaEmpty:
 		return nil, nil
 	case *tg.InputMediaContact:
@@ -842,7 +851,18 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 		if !found {
 			return nil, photoInvalidErr()
 		}
-		return &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &photo, Spoiler: in.Spoiler, TTLSeconds: in.TTLSeconds}, nil
+		media := &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &photo, Spoiler: in.Spoiler, TTLSeconds: in.TTLSeconds}
+		if video, ok := in.GetVideo(); ok {
+			resolved, err := r.resolveInputMedia(ctx, userID, &tg.InputMediaDocument{ID: video})
+			if err != nil {
+				return nil, err
+			}
+			if resolved.Document == nil || !botAPIDocumentMatchesKind(*resolved.Document, "video") {
+				return nil, mediaInvalidErr()
+			}
+			media.LivePhotoVideo = resolved.Document
+		}
+		return media, nil
 	case *tg.InputMediaDocument:
 		if r.deps.Files == nil {
 			return nil, mediaInvalidErr()
@@ -868,7 +888,18 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 			r.log.Warn("sendMedia references unknown document", zap.Int64s("doc_ids", docIDs), zap.Int64("user_id", userID))
 			return nil, mediaInvalidErr()
 		}
-		return messageMediaFromDocument(doc, in.Spoiler, in.TTLSeconds), nil
+		media := messageMediaFromDocument(doc, in.Spoiler, in.TTLSeconds)
+		if cover, ok := in.GetVideoCover(); ok {
+			resolved, err := r.resolveInputMedia(ctx, userID, &tg.InputMediaPhoto{ID: cover})
+			if err != nil {
+				return nil, err
+			}
+			media.VideoCover = resolved.Photo
+		}
+		if timestamp, ok := in.GetVideoTimestamp(); ok {
+			media.VideoTimestamp = float64(timestamp)
+		}
+		return media, nil
 	case *tg.InputMediaGeoPoint:
 		geo, err := domainGeoPointFromInput(in.GeoPoint)
 		if err != nil {
@@ -913,34 +944,7 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 			Value:    value,
 		}}, nil
 	case *tg.InputMediaGeoLive:
-		if in.Stopped {
-			// stopped 只在 editMessage 停止共享时有意义，发送即停没有客户端路径。
-			return nil, mediaInvalidErr()
-		}
-		geo, err := domainGeoPointFromInput(in.GeoPoint)
-		if err != nil {
-			return nil, err
-		}
-		live := &domain.MessageGeoLive{Geo: *geo, Period: minLiveLocationPeriod}
-		if period, ok := in.GetPeriod(); ok {
-			if period != foreverLiveLocationPeriod && (period < minLiveLocationPeriod || period > maxLiveLocationPeriod) {
-				return nil, mediaInvalidErr()
-			}
-			live.Period = period
-		}
-		if heading, ok := in.GetHeading(); ok {
-			if heading < 0 || heading > maxLiveLocationHeading {
-				return nil, mediaInvalidErr()
-			}
-			live.Heading = heading
-		}
-		if radius, ok := in.GetProximityNotificationRadius(); ok {
-			if radius < 0 || radius > maxProximityRadiusMeters {
-				return nil, mediaInvalidErr()
-			}
-			live.ProximityNotificationRadius = radius
-		}
-		return &domain.MessageMedia{Kind: domain.MessageMediaKindGeoLive, GeoLive: live}, nil
+		return domainLiveLocationFromInput(in)
 	case *tg.InputMediaPoll:
 		if r.deps.Polls == nil {
 			return nil, mediaInvalidErr()
@@ -1211,6 +1215,9 @@ func domainDocumentAttributes(attrs []tg.DocumentAttributeClass) []domain.Docume
 			if id, hash, ok := inputStickerSetIDs(v.Stickerset); ok {
 				attr.StickerSetID = id
 				attr.StickerSetAccessHash = hash
+			}
+			if coords, ok := v.GetMaskCoords(); ok {
+				attr.MaskPosition = domainStickerMaskPosition(coords)
 			}
 			out = append(out, attr)
 		case *tg.DocumentAttributeVideo:

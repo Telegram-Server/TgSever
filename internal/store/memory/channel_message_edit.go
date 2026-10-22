@@ -77,6 +77,15 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	if !viaBotEdit && msg.SenderUserID != req.UserID && !canEditChannelMessage(member) && !participantTodoEdit {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindGeoLive && msg.Media != nil && msg.Media.Kind == domain.MessageMediaKindGeoLive && !msg.Media.GeoLive.Active(msg.Date, req.EditDate) {
+		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
+	}
+	if req.Media != nil && req.Media.Kind == domain.MessageMediaKindTodo && (!req.AllowTodoParticipantMutation || req.ReplaceTodo) && !viaBotEdit && msg.SenderUserID != req.UserID {
+		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+	}
+	if req.ReplaceTodo {
+		req.Media = req.Media.WithTodoCompletionsFrom(msg.Media)
+	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
 	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
@@ -92,7 +101,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 		msg.ReplyMarkup = cloneReplyMarkup(req.ReplyMarkup)
 	}
 	if req.SetRichMessage {
-		msg.RichMessage = cloneRichMessage(req.RichMessage)
+		msg.RichMessage = domain.CloneRichMessage(req.RichMessage)
 	}
 	msg.EditDate = req.EditDate
 	msg.Pts = pts
@@ -224,7 +233,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 }
 
 func isChannelTodoParticipantEdit(req domain.EditChannelMessageRequest, msg domain.ChannelMessage) bool {
-	if !req.AllowTodoParticipantMutation || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
+	if !req.AllowTodoParticipantMutation || req.ReplaceTodo || req.SetReplyMarkup || req.Media == nil || req.Media.Kind != domain.MessageMediaKindTodo || req.Media.Todo == nil {
 		return false
 	}
 	if msg.Media == nil || msg.Media.Kind != domain.MessageMediaKindTodo || msg.Media.Todo == nil {
@@ -347,8 +356,22 @@ func (s *ChannelStore) UnpinAllChannelMessages(_ context.Context, req domain.Unp
 	if !canPinChannelMessages(channel, member) {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelAdminRequired
 	}
+	if req.TopicID != 0 {
+		if !channel.Forum {
+			return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelForumMissing
+		}
+		if req.TopicID != domain.ForumGeneralTopicID {
+			if _, ok := s.topics[req.ChannelID][req.TopicID]; !ok {
+				return domain.UpdateChannelPinnedMessageResult{}, domain.ErrMessageIDInvalid
+			}
+		}
+	}
 	cleared := []int(nil)
 	for i := range s.messages[req.ChannelID] {
+		msg := s.messages[req.ChannelID][i]
+		if req.TopicID != 0 && !(req.TopicID > 1 && msg.ID == req.TopicID) && !s.channelMessageInTopicLocked(req.ChannelID, msg, req.TopicID) {
+			continue
+		}
 		if s.messages[req.ChannelID][i].Pinned && !s.messages[req.ChannelID][i].Deleted {
 			s.messages[req.ChannelID][i].Pinned = false
 			cleared = append(cleared, s.messages[req.ChannelID][i].ID)
@@ -360,6 +383,11 @@ func (s *ChannelStore) UnpinAllChannelMessages(_ context.Context, req domain.Unp
 	sort.Ints(cleared)
 	pts := s.nextChannelPtsLocked(req.ChannelID)
 	channel.PinnedMessageID = 0
+	for _, msg := range s.messages[req.ChannelID] {
+		if msg.Pinned && !msg.Deleted && msg.ID > channel.PinnedMessageID {
+			channel.PinnedMessageID = msg.ID
+		}
+	}
 	channel.Pts = pts
 	s.channels[req.ChannelID] = channel
 	event := domain.ChannelUpdateEvent{

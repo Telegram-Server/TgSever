@@ -31,7 +31,7 @@ func channelTopicMessageCond(topicID int, placeholder string) string {
 		// General 归并 reply_to_top_id ∈ {placeholder,0}，但排除其它话题的根服务消息
 		// （它们 reply_to_top_id=0，但 id 是某话题根，不属于 General）。
 		return "(cm.reply_to_top_id = " + placeholder + " OR cm.reply_to_top_id = 0)" +
-			" AND NOT EXISTS (SELECT 1 FROM channel_forum_topics gt WHERE gt.channel_id = cm.channel_id AND gt.topic_id = cm.id AND NOT gt.deleted)"
+			" AND NOT EXISTS (SELECT 1 FROM channel_forum_topics gt WHERE gt.channel_id = cm.channel_id AND gt.topic_id = cm.id AND gt.topic_id <> 1 AND NOT gt.deleted)"
 	}
 	return "cm.reply_to_top_id = " + placeholder
 }
@@ -228,10 +228,17 @@ SELECT COUNT(*)::int FROM (
 ) g`, channelID, gid, water.Inbox, viewerUserID, domain.MaxDialogUnreadCount).Scan(&unread); err != nil {
 		return domain.ChannelForumTopic{}, fmt.Errorf("general unread: %w", err)
 	}
+	metadata, err := s.getForumTopic(ctx, s.db, channelID, gid)
+	if err != nil {
+		return domain.ChannelForumTopic{}, err
+	}
 	return domain.ChannelForumTopic{
 		ChannelID:            channelID,
 		TopicID:              gid,
-		Title:                "General",
+		Title:                metadata.Title,
+		IconColor:            domain.DefaultForumTopicIconColor,
+		Closed:               metadata.Closed,
+		Hidden:               metadata.Hidden,
 		CreatorUserID:        channel.CreatorUserID,
 		Date:                 channel.Date,
 		TopMessageID:         topMsg,

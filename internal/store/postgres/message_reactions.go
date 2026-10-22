@@ -51,6 +51,14 @@ func (s *MessageStore) SetMessageReactions(ctx context.Context, req domain.SetPr
 	if err := lockUsersForUpdate(ctx, tx, req.UserID, req.Peer.ID); err != nil {
 		return domain.PrivateMessageReactionsResult{}, fmt.Errorf("lock set message reactions users: %w", err)
 	}
+	albumID, err := qtx.ResolvePrivateReactionAlbumTarget(ctx, sqlcgen.ResolvePrivateReactionAlbumTargetParams{OwnerUserID: req.UserID, BoxID: int32(req.MessageID), PeerID: req.Peer.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
+	}
+	if err != nil {
+		return domain.PrivateMessageReactionsResult{}, err
+	}
+	req.MessageID = int(albumID)
 
 	var target struct {
 		boxID            int32
@@ -71,6 +79,25 @@ FOR UPDATE`, req.UserID, int32(req.MessageID), string(req.Peer.Type), req.Peer.I
 			return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
 		}
 		return domain.PrivateMessageReactionsResult{}, fmt.Errorf("get message for reactions: %w", err)
+	}
+	service, err := qtx.IsPrivateReactionServiceMessage(ctx, sqlcgen.IsPrivateReactionServiceMessageParams{OwnerUserID: req.UserID, BoxID: int32(req.MessageID)})
+	if err != nil {
+		return domain.PrivateMessageReactionsResult{}, err
+	}
+	if service {
+		return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
+	}
+	oldRows, err := qtx.ListActorPrivateReactions(ctx, sqlcgen.ListActorPrivateReactionsParams{MessageSenderID: target.messageSenderID, PrivateMessageID: target.privateMessageID, UserID: req.UserID})
+	if err != nil {
+		return domain.PrivateMessageReactionsResult{}, err
+	}
+	old := make([]domain.MessageReaction, 0, len(oldRows))
+	for _, row := range oldRows {
+		reaction, ok := domain.MessageReactionFromValue(domain.MessageReactionType(row.ReactionType), row.ReactionValue)
+		if !ok {
+			return domain.PrivateMessageReactionsResult{}, fmt.Errorf("invalid persisted private reaction")
+		}
+		old = append(old, reaction)
 	}
 	if _, err := tx.Exec(ctx, `
 DELETE FROM private_message_reactions
@@ -152,6 +179,7 @@ WHERE d.user_id = $1
 		return domain.PrivateMessageReactionsResult{}, fmt.Errorf("list visible reaction boxes: %w", err)
 	}
 	res := domain.PrivateMessageReactionsResult{Messages: make([]domain.Message, 0, len(boxes))}
+	res.MessageReactionChange = domain.MessageReactionChange{MessageID: req.MessageID, ActorUserID: req.UserID, OldReactions: old, NewReactions: append([]domain.MessageReaction(nil), req.Reactions...)}
 	for _, box := range boxes {
 		msg, err := messageFromVisibleBoxRow(box)
 		if err != nil {

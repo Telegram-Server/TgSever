@@ -313,10 +313,11 @@ func (r *Router) onMessagesGetExtendedMedia(ctx context.Context, req *tg.Message
 	if err := validateMessageIDVector(req.ID); err != nil {
 		return nil, err
 	}
-	if _, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer); err != nil {
+	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	if err != nil {
 		return nil, err
 	}
-	return tgEmptyUpdates(int(r.clock.Now().Unix())), nil
+	return r.paidExtendedMediaUpdates(ctx, userID, peer, req.ID)
 }
 
 func (r *Router) onMessagesGetWebPagePreview(ctx context.Context, req *tg.MessagesGetWebPagePreviewRequest) (*tg.MessagesWebPagePreview, error) {

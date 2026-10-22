@@ -204,6 +204,10 @@ func (r *inlineRegistry) resolveContext(ctx context.Context, now time.Time, call
 	r.mu.Lock()
 	r.pruneLocked(now)
 	p, ok := r.pending[queryID]
+	if ok && p.results != nil {
+		r.mu.Unlock()
+		return false
+	}
 	if ok && p.botUserID == callerBotID {
 		results.QueryID = queryID
 		results.BotUserID = p.botUserID
@@ -218,6 +222,13 @@ func (r *inlineRegistry) resolveContext(ctx context.Context, now time.Time, call
 			}
 		}
 		clone := cloneInlineResults(results)
+		if r.shared != nil {
+			claimed, err := r.shared.ClaimInlineResult(ctx, clone, r.ttl)
+			if err != nil || !claimed {
+				r.mu.Unlock()
+				return false
+			}
+		}
 		p.results = &clone
 		r.storeWebDocumentsLocked(now, clone)
 		r.storeCacheLocked(now, p.cacheKey, clone)
@@ -250,6 +261,10 @@ func (r *inlineRegistry) resolveContext(ctx context.Context, now time.Time, call
 		}
 	}
 	clone := cloneInlineResults(results)
+	claimed, err := r.shared.ClaimInlineResult(ctx, clone, r.ttl)
+	if err != nil || !claimed {
+		return false
+	}
 	r.putSharedResolved(ctx, now, inlineCacheKeyFromStore(sharedPending.CacheKey), clone)
 	return true
 }
@@ -457,6 +472,9 @@ func (r *inlineRegistry) storeWebDocumentsLocked(now time.Time, results domain.B
 	for _, item := range results.Results {
 		r.storeWebDocumentLocked(item.Thumb, expiresAt)
 		r.storeWebDocumentLocked(item.Content, expiresAt)
+		if item.Media != nil && item.Media.ProductInvoice != nil {
+			r.storeWebDocumentLocked(item.Media.ProductInvoice.Photo, expiresAt)
+		}
 	}
 }
 
@@ -546,7 +564,7 @@ func (r *inlineRegistry) putSharedPending(ctx context.Context, queryID int64, p 
 }
 
 func (r *inlineRegistry) putSharedResolved(ctx context.Context, now time.Time, key inlineCacheKey, results domain.BotInlineResults) {
-	r.putSharedResult(ctx, results, r.ttl)
+	// ClaimInlineResult already published the result atomically.
 	r.putSharedCache(ctx, key, results)
 	r.putSharedWebDocuments(ctx, now, results)
 }
@@ -582,6 +600,9 @@ func (r *inlineRegistry) putSharedWebDocuments(ctx context.Context, now time.Tim
 	for _, item := range results.Results {
 		r.putSharedWebDocument(ctx, item.Thumb, ttl)
 		r.putSharedWebDocument(ctx, item.Content, ttl)
+		if item.Media != nil && item.Media.ProductInvoice != nil {
+			r.putSharedWebDocument(ctx, item.Media.ProductInvoice.Photo, ttl)
+		}
 	}
 	_ = now
 }
@@ -712,11 +733,18 @@ func cloneInlineResult(in domain.BotInlineResult) domain.BotInlineResult {
 	}
 	in.ReplyMarkup = cloneInlineReplyMarkup(in.ReplyMarkup)
 	in.Media = cloneInlineMedia(in.Media)
+	in.RichMessage = domain.CloneRichMessage(in.RichMessage)
+	if in.RichMessageInput != nil {
+		input := *in.RichMessageInput
+		input.BlocksJSON = append([]byte(nil), input.BlocksJSON...)
+		input.MediaJSON = append([]byte(nil), input.MediaJSON...)
+		in.RichMessageInput = &input
+	}
 	return in
 }
 
 func cloneInlineWebDocument(in domain.BotInlineWebDocument) domain.BotInlineWebDocument {
-	in.Attributes = append([]domain.DocumentAttribute(nil), in.Attributes...)
+	in.Attributes = domain.CloneDocumentAttributes(in.Attributes)
 	return in
 }
 
@@ -724,7 +752,7 @@ func cloneInlineReplyMarkup(in *domain.MessageReplyMarkup) *domain.MessageReplyM
 	if in == nil {
 		return nil
 	}
-	out := domain.MessageReplyMarkup{}
+	out := *in
 	if in.Inline != nil {
 		out.Inline = make([][]domain.MarkupButton, len(in.Inline))
 		for i, row := range in.Inline {
@@ -732,6 +760,7 @@ func cloneInlineReplyMarkup(in *domain.MessageReplyMarkup) *domain.MessageReplyM
 			for j, button := range row {
 				out.Inline[i][j] = button
 				out.Inline[i][j].Data = append([]byte(nil), button.Data...)
+				out.Inline[i][j].PeerTypes = append([]string(nil), button.PeerTypes...)
 			}
 		}
 	}
@@ -743,22 +772,32 @@ func cloneInlineMedia(in *domain.MessageMedia) *domain.MessageMedia {
 		return nil
 	}
 	out := *in
-	if in.Photo != nil {
-		photo := *in.Photo
-		photo.FileReference = append([]byte(nil), in.Photo.FileReference...)
-		photo.Sizes = cloneInlinePhotoSizes(in.Photo.Sizes)
-		out.Photo = &photo
+	out.Photo = domain.ClonePhotoPtr(in.Photo)
+	out.Document = domain.CloneDocumentPtr(in.Document)
+	out.VideoCover = domain.ClonePhotoPtr(in.VideoCover)
+	out.LivePhotoVideo = domain.CloneDocumentPtr(in.LivePhotoVideo)
+	out.PaidMedia = domain.ClonePaidMedia(in.PaidMedia)
+	if in.Game != nil {
+		game := *in.Game
+		game.Photo = *domain.ClonePhotoPtr(&in.Game.Photo)
+		game.Animation = domain.CloneDocumentPtr(in.Game.Animation)
+		out.Game = &game
 	}
-	if in.Document != nil {
-		doc := *in.Document
-		doc.FileReference = append([]byte(nil), in.Document.FileReference...)
-		doc.Attributes = append([]domain.DocumentAttribute(nil), in.Document.Attributes...)
-		doc.Thumbs = cloneInlinePhotoSizes(in.Document.Thumbs)
-		out.Document = &doc
+	if in.ProductInvoice != nil {
+		invoice := *in.ProductInvoice
+		if invoice.Photo != nil {
+			photo := cloneInlineWebDocument(*invoice.Photo)
+			invoice.Photo = &photo
+		}
+		out.ProductInvoice = &invoice
 	}
 	if in.Geo != nil {
 		geo := *in.Geo
 		out.Geo = &geo
+	}
+	if in.GeoLive != nil {
+		live := *in.GeoLive
+		out.GeoLive = &live
 	}
 	if in.Venue != nil {
 		venue := *in.Venue
@@ -769,17 +808,4 @@ func cloneInlineMedia(in *domain.MessageMedia) *domain.MessageMedia {
 		out.Contact = &contact
 	}
 	return &out
-}
-
-func cloneInlinePhotoSizes(in []domain.PhotoSize) []domain.PhotoSize {
-	if len(in) == 0 {
-		return nil
-	}
-	out := append([]domain.PhotoSize(nil), in...)
-	for i := range out {
-		out[i].Bytes = append([]byte(nil), in[i].Bytes...)
-		out[i].Sizes = append([]int(nil), in[i].Sizes...)
-		out[i].BackgroundColors = append([]int(nil), in[i].BackgroundColors...)
-	}
-	return out
 }

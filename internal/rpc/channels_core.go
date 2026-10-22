@@ -188,6 +188,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 			return nil, channelInvalidErr(domain.ErrChannelPrivate)
 		}
 		full := cached.full
+		if err := r.applyGuardBotToChannelFull(ctx, ref.ID, &full); err != nil {
+			return nil, err
+		}
 		if err := r.applyWelcomeMessagesToFullChat(ctx, ref.ID, &full); err != nil {
 			return nil, err
 		}
@@ -220,6 +223,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		return nil, err
 	}
 	full := tgChannelFull(view, r.cfg.PublicBaseURL)
+	if err := r.applyStickerSetToChannelFull(ctx, view.Channel, full); err != nil {
+		return nil, err
+	}
 	r.applyChannelStatsCapability(full)
 	r.applyStarGiftsCountToChannelFull(ctx, view.Channel.ID, full)
 	userIDs := []int64{view.Channel.CreatorUserID, view.Self.UserID}
@@ -264,6 +270,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	// After StoreIfEpoch on purpose: the mark stays out of the per-(viewer,channel)
 	// projection cache so a revoked badge cannot outlive the change by a cache TTL.
 	r.applyBotVerificationToChannelFull(ctx, view.Channel.ID, full)
+	if err := r.applyGuardBotToChannelFull(ctx, view.Channel.ID, full); err != nil {
+		return nil, err
+	}
 	r.applyAndroidChannelReactionEditorCompat(ctx, full, canChangeInfo)
 	users := r.tgUsersForIDs(ctx, userID, userIDs)
 	r.applyPeerReadModels(ctx, userID, users, chats)

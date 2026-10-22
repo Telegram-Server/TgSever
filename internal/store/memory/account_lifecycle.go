@@ -139,6 +139,14 @@ func (s *AccountLifecycleStore) ExecuteAccountDeletion(ctx context.Context, user
 		Deleted:    true,
 		DeletedAt:  now.Unix(),
 	}
+	if business, ok := s.passwords.(interface {
+		DeleteBusinessConnectionsForUser(context.Context, int64) error
+	}); ok {
+		if err := business.DeleteBusinessConnectionsForUser(ctx, userID); err != nil {
+			s.users.mu.Unlock()
+			return domain.AccountDeletionResult{}, err
+		}
+	}
 	s.users.byID[userID] = tombstone
 	if s.loginPasswords != nil {
 		s.loginPasswords.mu.Lock()

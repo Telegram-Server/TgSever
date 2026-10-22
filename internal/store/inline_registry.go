@@ -91,6 +91,7 @@ type InlineRegistryStore interface {
 	DeleteInlinePending(ctx context.Context, queryID int64) error
 
 	PutInlineResult(ctx context.Context, results domain.BotInlineResults, ttl time.Duration) error
+	ClaimInlineResult(ctx context.Context, results domain.BotInlineResults, ttl time.Duration) (bool, error)
 	GetInlineResult(ctx context.Context, queryID int64) (domain.BotInlineResults, bool, error)
 	DeleteInlineResult(ctx context.Context, queryID int64) error
 

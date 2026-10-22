@@ -22,19 +22,20 @@ import (
 // 需要管理员身份的测试用 promote/promoteBot 提升）。文件服务与投票服务默认就绪，
 // 媒体组、投票、媒体编辑和群头像测试直接可用。
 type botAPIBridgeFixture struct {
-	ctx      context.Context
-	owner    domain.User
-	member   domain.User
-	bot      domain.User
-	channel  domain.Channel
-	chatID   int64 // channel 的 Bot API chat_id（-100 前缀）
-	router   *Router
-	users    *appusers.Service
-	channels *appchannels.Service
-	messages *appmessages.Service
-	bots     *appbots.Service
-	sessions *captureSessions
-	files    *fakeFiles
+	ctx       context.Context
+	owner     domain.User
+	member    domain.User
+	bot       domain.User
+	channel   domain.Channel
+	chatID    int64 // channel 的 Bot API chat_id（-100 前缀）
+	router    *Router
+	users     *appusers.Service
+	userStore *memory.UserStore
+	channels  *appchannels.Service
+	messages  *appmessages.Service
+	bots      *appbots.Service
+	sessions  *captureSessions
+	files     *fakeFiles
 }
 
 func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
@@ -55,6 +56,7 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 	messageStore.AttachPollStore(pollStore)
 	channelStore := memory.NewChannelStore()
 	channelStore.AttachPollStore(pollStore)
+	memory.AttachMessageReplyStores(messageStore, channelStore)
 	botStore := memory.NewBotStore(userStore)
 	bot, _, err := botStore.CreateBotAccount(ctx, domain.User{AccessHash: 2101, FirstName: "BridgeBot", Username: "BridgeBot"}, domain.BotProfile{
 		OwnerUserID: owner.ID,
@@ -84,6 +86,7 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 	messagesService := appmessages.NewService(messageStore, dialogStore)
 	sessions := &captureSessions{channelMembers: map[int64][]int64{channel.ID: {owner.ID, member.ID, bot.ID}}}
 	files := &fakeFiles{photos: map[int64]domain.Photo{}, docs: map[int64]domain.Document{}}
+	commerce := memory.NewBotCommerceStore(memory.NewStarsStore(), botStore, messageStore, channelStore)
 	router := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
 		Users:         usersService,
 		Messages:      messagesService,
@@ -92,22 +95,25 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 		Files:         files,
 		Polls:         apppolls.NewService(pollStore),
 		BotAPIUpdates: memory.NewBotAPIUpdateStore(),
+		BotCommerce:   commerce,
+		BotBroadcast:  commerce,
 		Sessions:      sessions,
 	}, zaptest.NewLogger(t), clock.System)
 	return botAPIBridgeFixture{
-		ctx:      ctx,
-		owner:    owner,
-		member:   member,
-		bot:      bot,
-		channel:  channel,
-		chatID:   -botAPIChannelChatIDBase - channel.ID,
-		router:   router,
-		users:    usersService,
-		channels: channelsService,
-		messages: messagesService,
-		bots:     botsService,
-		sessions: sessions,
-		files:    files,
+		ctx:       ctx,
+		owner:     owner,
+		member:    member,
+		bot:       bot,
+		channel:   channel,
+		chatID:    -botAPIChannelChatIDBase - channel.ID,
+		router:    router,
+		users:     usersService,
+		userStore: userStore,
+		channels:  channelsService,
+		messages:  messagesService,
+		bots:      botsService,
+		sessions:  sessions,
+		files:     files,
 	}
 }
 

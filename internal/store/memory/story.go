@@ -24,6 +24,7 @@ type StoryStore struct {
 	blocked   map[int64]map[int64]bool
 	channels  *ChannelStore
 	members   map[int64]map[int64]bool
+	botOwners map[storyKey]domain.BotStoryOwner
 }
 
 type storyKey struct {
@@ -159,6 +160,10 @@ func (s *StoryStore) CreateStory(_ context.Context, req domain.StoryCreateReques
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createStoryLocked(req)
+}
+
+func (s *StoryStore) createStoryLocked(req domain.StoryCreateRequest) (domain.StoryCreateResult, error) {
 	for _, existing := range s.stories {
 		if existing.Owner == req.Owner && existing.RandomID == req.RandomID {
 			return domain.StoryCreateResult{Story: cloneStory(existing), Duplicate: true}, nil
@@ -191,7 +196,7 @@ func (s *StoryStore) CreateStory(_ context.Context, req domain.StoryCreateReques
 		DisallowUserIDs:  append([]int64(nil), req.DisallowUserIDs...),
 		Caption:          req.Caption,
 		Entities:         append([]domain.MessageEntity(nil), req.Entities...),
-		Media:            req.Media,
+		Media:            cloneRequestedPeerMedia(req.Media),
 		MediaAreas:       cloneStoryMediaAreas(req.MediaAreas),
 		Forward:          cloneStoryForward(req.Forward),
 	}
@@ -889,7 +894,7 @@ func (s *StoryStore) EditStory(_ context.Context, req domain.StoryEditRequest) (
 	}
 	updated := cloneStory(story)
 	if req.UpdateMedia {
-		updated.Media = req.Media
+		updated.Media = cloneRequestedPeerMedia(req.Media)
 	}
 	if req.UpdateCaption {
 		updated.Caption = req.Caption
@@ -1395,6 +1400,7 @@ func cloneStory(story domain.Story) domain.Story {
 	story.AllowUserIDs = append([]int64(nil), story.AllowUserIDs...)
 	story.DisallowUserIDs = append([]int64(nil), story.DisallowUserIDs...)
 	story.Entities = append([]domain.MessageEntity(nil), story.Entities...)
+	story.Media = cloneRequestedPeerMedia(story.Media)
 	story.MediaAreas = cloneStoryMediaAreas(story.MediaAreas)
 	story.Forward = cloneStoryForward(story.Forward)
 	story.Views.Reactions = append([]domain.ChannelMessageReactionCount(nil), story.Views.Reactions...)

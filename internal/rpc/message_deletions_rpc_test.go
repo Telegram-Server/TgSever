@@ -7,6 +7,7 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -117,7 +118,13 @@ func TestMessagesDeleteMessagesRecordsTheDeletingSession(t *testing.T) {
 func TestBotAPIDeleteMessageRecordsTheBot(t *testing.T) {
 	f := newDeletionLogFixture(t)
 	bot := f.bob
-	sent := f.send(t, bot, f.alice, 310_003, "stale menu")
+	sent, err := f.messages.SendPrivateText(f.ctx, domain.SendPrivateTextRequest{
+		SenderUserID: bot.ID, RecipientUserID: f.alice.ID, RandomID: 310_003,
+		Message: "stale menu", Date: int(f.router.clock.Now().Unix()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if ok, err := f.router.BotAPIDeleteMessage(f.ctx, bot.ID, f.alice.ID, sent.SenderMessage.ID); err != nil || !ok {
 		t.Fatalf("BotAPIDeleteMessage = %v, %v", ok, err)
@@ -131,6 +138,33 @@ func TestBotAPIDeleteMessageRecordsTheBot(t *testing.T) {
 		if row.Source != domain.DeletionSourceBot || row.ActorType != domain.DeletionActorBot || row.Scope != domain.DeletionScopeBoth {
 			t.Fatalf("deletion = %+v, want a bot api deletion by bot %d", row, bot.ID)
 		}
+	}
+}
+
+// 群里经 Bot API 的删除同样记为机器人删除，而不是普通用户会话删除。
+func TestBotAPIDeleteChannelMessageRecordsTheBot(t *testing.T) {
+	f := newChannelDeletionLogFixture(t)
+	bot := f.member
+	sent, err := f.store.SendChannelMessage(f.ctx, domain.SendChannelMessageRequest{
+		UserID: bot, ChannelID: f.channel.ID, RandomID: 320_103,
+		Message: "stale group menu", Date: int(f.router.clock.Now().Unix()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := sent.Message
+
+	chatID := -botAPIChannelChatIDBase - f.channel.ID
+	if ok, err := f.router.BotAPIDeleteMessage(f.ctx, bot, chatID, msg.ID); err != nil || !ok {
+		t.Fatalf("BotAPIDeleteMessage = %v, %v", ok, err)
+	}
+
+	got, err := f.deletions.ListMessageDeletions(f.ctx, domain.MessageDeletionFilter{ActorUserID: bot, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessageDeletions: %v", err)
+	}
+	if len(got) != 1 || got[0].MessageID != msg.ID || got[0].Source != domain.DeletionSourceBot || got[0].ActorType != domain.DeletionActorBot {
+		t.Fatalf("deletions = %+v, want a bot api deletion of message %d by bot %d", got, msg.ID, bot)
 	}
 }
 
@@ -214,6 +248,69 @@ func TestChannelsDeleteMessagesRecordsTheDeletingSession(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].MessageID != msg.ID || got[0].OriginAuthKeyID != authKeyID || got[0].OriginSessionID != 88 {
 		t.Fatalf("deletions = %+v, want message %d from session %x/88", got, msg.ID, authKeyID)
+	}
+}
+
+func TestChannelsDeleteMessagesDefaultRejectsMixedBatchAtomically(t *testing.T) {
+	f := newChannelDeletionLogFixture(t)
+	own := f.send(t, f.member, 320_148, "member's own message")
+	other := f.send(t, f.owner, 320_149, "owner's message")
+	before, err := f.store.GetChannel(f.ctx, f.member, f.channel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &tg.ChannelsDeleteMessagesRequest{
+		Channel: &tg.InputChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash},
+		ID:      []int{own.ID, other.ID},
+	}
+	var in bin.Buffer
+	if err := req.Encode(&in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.router.Dispatch(WithUserID(f.ctx, f.member), [8]byte{48}, 48, &in); !tgerr.Is(err, "MESSAGE_DELETE_FORBIDDEN") {
+		t.Fatalf("mixed MTProto deletion error = %v, want MESSAGE_DELETE_FORBIDDEN", err)
+	}
+	history, err := f.store.GetChannelMessages(f.ctx, f.owner, f.channel.ID, []int{own.ID, other.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Messages) != 2 {
+		t.Fatalf("messages after rejected batch = %+v, want both unchanged", history.Messages)
+	}
+	byID := make(map[int]string, len(history.Messages))
+	for _, message := range history.Messages {
+		byID[message.ID] = message.Body
+	}
+	if byID[own.ID] != own.Body || byID[other.ID] != other.Body || history.Channel.Pts != before.Channel.Pts {
+		t.Fatalf("rejected batch changed history = %+v", history)
+	}
+	diff, err := f.store.ListChannelDifference(f.ctx, domain.ChannelDifferenceRequest{
+		UserID: f.owner, ChannelID: f.channel.ID, Pts: before.Channel.Pts, Limit: 100,
+	})
+	if err != nil || diff.Pts != before.Channel.Pts || len(diff.OtherUpdates) != 0 || len(diff.NewMessages) != 0 {
+		t.Fatalf("difference after rejected batch = %+v, %v; want no update", diff, err)
+	}
+	rows, err := f.deletions.ListMessageDeletions(f.ctx, domain.MessageDeletionFilter{ActorUserID: f.member, Limit: 10})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("audit after rejected batch = %+v, %v; want no deletion", rows, err)
+	}
+	// The application-only opt-in must not leak into the default MTProto route.
+	// It uses the same service but deliberately permits this partial batch.
+	skipped, err := f.service.DeleteMessages(f.ctx, f.member, domain.DeleteChannelMessagesRequest{
+		ChannelID: f.channel.ID, IDs: []int{own.ID, other.ID}, SkipUnauthorized: true, Date: 1_700_320_048,
+	})
+	if err != nil || len(skipped.DeletedIDs) != 1 || skipped.DeletedIDs[0] != own.ID ||
+		skipped.Event.PtsCount != 1 || skipped.Event.Pts != before.Channel.Pts+1 {
+		t.Fatalf("application opt-in deletion = %+v, %v; want only own message", skipped, err)
+	}
+	req.ID = []int{other.ID}
+	if _, err := f.router.onChannelsDeleteMessages(WithUserID(f.ctx, f.member), req); !tgerr.Is(err, "MESSAGE_DELETE_FORBIDDEN") {
+		t.Fatalf("MTProto after opt-in error = %v, want MESSAGE_DELETE_FORBIDDEN", err)
+	}
+	history, err = f.store.GetChannelMessages(f.ctx, f.owner, f.channel.ID, []int{own.ID, other.ID})
+	if err != nil || len(history.Messages) != 1 || history.Messages[0].ID != other.ID ||
+		history.Channel.Pts != before.Channel.Pts+1 {
+		t.Fatalf("history after opt-in = %+v, %v; want preserved other author's message", history, err)
 	}
 }
 

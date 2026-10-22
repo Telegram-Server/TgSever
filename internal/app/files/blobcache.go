@@ -313,12 +313,7 @@ func copyStickerSet(set domain.StickerSet) domain.StickerSet {
 func copyDocuments(docs []domain.Document) []domain.Document {
 	out := append([]domain.Document(nil), docs...)
 	for i := range out {
-		out[i].FileReference = append([]byte(nil), out[i].FileReference...)
-		out[i].Attributes = append([]domain.DocumentAttribute(nil), out[i].Attributes...)
-		for j := range out[i].Attributes {
-			out[i].Attributes[j].Waveform = append([]byte(nil), out[i].Attributes[j].Waveform...)
-		}
-		out[i].Thumbs = copyPhotoSizes(out[i].Thumbs)
+		out[i] = *domain.CloneDocumentPtr(&docs[i])
 	}
 	return out
 }

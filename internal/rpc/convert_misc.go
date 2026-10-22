@@ -136,6 +136,13 @@ func domainPasswordInputSettings(in tg.AccountPasswordInputSettings) (domain.Pas
 		out.Email = email
 		out.HasEmail = true
 	}
+	if secure, ok := in.GetNewSecureSettings(); ok {
+		parsed, err := domainPassportSecret(secure)
+		if err != nil {
+			return out, err
+		}
+		out.NewSecureSettings = parsed
+	}
 	return out, nil
 }
 
@@ -143,6 +150,9 @@ func tgPasswordSettings(settings domain.PrivatePasswordSettings) *tg.AccountPass
 	out := &tg.AccountPasswordSettings{}
 	if settings.Email != "" {
 		out.Email = settings.Email
+	}
+	if settings.SecureSettings != nil {
+		out.SetSecureSettings(tgPassportSecret(*settings.SecureSettings))
 	}
 	return out
 }

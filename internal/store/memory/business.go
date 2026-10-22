@@ -354,16 +354,45 @@ func (s *PasswordStore) GetConnectedBusinessBot(_ context.Context, ownerUserID i
 	return cloneConnectedBusinessBot(bot), ok, nil
 }
 
+func (s *PasswordStore) GetBusinessBotConnection(_ context.Context, connectionID string) (domain.ConnectedBusinessBot, bool, error) {
+	s.mu.RLock()
+	bot, ok := s.businessBotConnections[connectionID]
+	s.mu.RUnlock()
+	return cloneConnectedBusinessBot(bot), ok, nil
+}
+
 func (s *PasswordStore) SaveConnectedBusinessBot(_ context.Context, bot domain.ConnectedBusinessBot) (domain.ConnectedBusinessBot, error) {
 	if bot.OwnerUserID == 0 || bot.BotUserID == 0 {
 		return domain.ConnectedBusinessBot{}, domain.ErrBotBusinessMissing
 	}
 	s.mu.Lock()
-	if prev, ok := s.connectedBusinessBots[bot.OwnerUserID]; ok && bot.CreatedAtUnix == 0 {
-		bot.CreatedAtUnix = prev.CreatedAtUnix
+	defer s.mu.Unlock()
+	prev, hasPrevious := s.connectedBusinessBots[bot.OwnerUserID]
+	bot.ConnectionID = prev.ConnectionID
+	if !hasPrevious || prev.BotUserID != bot.BotUserID {
+		var err error
+		bot.ConnectionID, err = domain.NewBusinessConnectionID()
+		if err != nil {
+			return domain.ConnectedBusinessBot{}, err
+		}
+	}
+	bot.Disabled = false
+	if hasPrevious {
+		if prev.BotUserID == bot.BotUserID {
+			bot.ConnectionID = prev.ConnectionID
+			bot.CreatedAtUnix = prev.CreatedAtUnix
+		} else {
+			prev.Disabled = true
+			s.businessBotConnections[prev.ConnectionID] = cloneConnectedBusinessBot(prev)
+			for key := range s.connectedBusinessBotPeerStates {
+				if key.ownerUserID == bot.OwnerUserID {
+					delete(s.connectedBusinessBotPeerStates, key)
+				}
+			}
+		}
 	}
 	s.connectedBusinessBots[bot.OwnerUserID] = cloneConnectedBusinessBot(bot)
-	s.mu.Unlock()
+	s.businessBotConnections[bot.ConnectionID] = cloneConnectedBusinessBot(bot)
 	return cloneConnectedBusinessBot(bot), nil
 }
 
@@ -374,6 +403,8 @@ func (s *PasswordStore) DeleteConnectedBusinessBot(_ context.Context, ownerUserI
 	if !ok || bot.BotUserID != botUserID {
 		return false, nil
 	}
+	bot.Disabled = true
+	s.businessBotConnections[bot.ConnectionID] = cloneConnectedBusinessBot(bot)
 	delete(s.connectedBusinessBots, ownerUserID)
 	for key := range s.connectedBusinessBotPeerStates {
 		if key.ownerUserID == ownerUserID {
@@ -598,4 +629,27 @@ func cloneConnectedBusinessBot(in domain.ConnectedBusinessBot) domain.ConnectedB
 	out.Recipients.Users = append([]int64(nil), in.Recipients.Users...)
 	out.Recipients.ExcludeUsers = append([]int64(nil), in.Recipients.ExcludeUsers...)
 	return out
+}
+
+func (s *PasswordStore) DeleteBusinessConnectionsForUser(_ context.Context, userID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owners := map[int64]bool{userID: true}
+	for ownerID, connection := range s.connectedBusinessBots {
+		if ownerID == userID || connection.BotUserID == userID {
+			owners[ownerID] = true
+			delete(s.connectedBusinessBots, ownerID)
+		}
+	}
+	for id, connection := range s.businessBotConnections {
+		if connection.OwnerUserID == userID || connection.BotUserID == userID {
+			delete(s.businessBotConnections, id)
+		}
+	}
+	for key := range s.connectedBusinessBotPeerStates {
+		if owners[key.ownerUserID] || key.peerUserID == userID {
+			delete(s.connectedBusinessBotPeerStates, key)
+		}
+	}
+	return nil
 }

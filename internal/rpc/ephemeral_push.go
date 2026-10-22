@@ -59,6 +59,12 @@ func (r *Router) deliverEphemeralPushLocal(ctx context.Context, event store.Ephe
 	if r == nil || r.deps.Sessions == nil || event.TargetUserID <= 0 || event.Message.ID <= 0 {
 		return
 	}
+	if event.Message.ReplaceMessageID != 0 && event.Message.ValidateStored() != nil {
+		return
+	}
+	if event.Message.OriginDevice.UserID == event.TargetUserID && event.Message.OriginDevice.BusinessAuthKeyID != ([8]byte{}) {
+		event.TargetBusinessAuthKey = event.Message.OriginDevice.BusinessAuthKeyID
+	}
 	if online, ok := r.deps.Sessions.(OnlineUserProvider); ok && !online.IsUserOnline(event.TargetUserID) {
 		return
 	}

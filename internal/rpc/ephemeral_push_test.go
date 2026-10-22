@@ -167,7 +167,9 @@ func TestEphemeralPushMultiInstanceSourceDedupAndLayerRouting(t *testing.T) {
 
 func TestEphemeralMessageUpdatesAreTransientAndPtsFree(t *testing.T) {
 	now := time.Now()
+	sessions := &ephemeralPushSessions{online: true}
 	router := New(Config{}, Deps{
+		Sessions: sessions,
 		Users: mapUsersService{users: map[int64]domain.User{
 			1001: {ID: 1001, FirstName: "Bot", Bot: true},
 			2001: {ID: 2001, FirstName: "Alice"},
@@ -182,13 +184,19 @@ func TestEphemeralMessageUpdatesAreTransientAndPtsFree(t *testing.T) {
 		SenderUserID: 1001, ReceiverUserID: 2001, Date: int(now.Unix()), RandomID: 78,
 		Content: domain.EphemeralContent{Message: "private"}, PayloadHash: [32]byte{1}, Version: 1,
 		CreatedAt: now, ExpiresAt: now.Add(domain.EphemeralMessageRetention),
+		ReplaceMessageID: 73,
+		OriginDevice:     domain.EphemeralDevice{UserID: 2001, BusinessAuthKeyID: [8]byte{1}, SessionID: 99},
 	}
 	updates, err := router.ephemeralMessageUpdates(context.Background(), 2001, message, false)
 	if err != nil || updates.Seq != 0 || len(updates.Updates) != 1 {
 		t.Fatalf("updates=%#v err=%v", updates, err)
 	}
-	if _, ok := updates.Updates[0].(*tg.UpdateNewEphemeralMessage); !ok {
+	if added, ok := updates.Updates[0].(*tg.UpdateNewEphemeralMessage); !ok || added.Message.AnchorMsgID != 73 {
 		t.Fatalf("update type=%T", updates.Updates[0])
+	}
+	router.deliverEphemeralPushLocal(context.Background(), store.EphemeralPush{Kind: store.EphemeralPushNew, TargetUserID: 2001, Message: message})
+	if broadcast, targeted := sessions.counts(); broadcast != 0 || targeted != 1 || sessions.targeted[0].authKey != message.OriginDevice.BusinessAuthKeyID {
+		t.Fatalf("replacement escaped triggering device: broadcast=%d targeted=%d", broadcast, targeted)
 	}
 	deleted := ephemeralDeleteUpdates(domain.EphemeralMessage{ID: message.ID, Peer: message.Peer}, int(now.Unix()))
 	if deleted.Seq != 0 {

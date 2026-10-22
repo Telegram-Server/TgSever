@@ -67,6 +67,7 @@ func (r *Router) onStickersCreateStickerSet(ctx context.Context, req *tg.Sticker
 			DocumentAccessHash: accessHash,
 			Emoji:              item.Emoji,
 			Keywords:           item.Keywords,
+			MaskPosition:       inputStickerItemMaskPosition(item),
 		})
 	}
 	thumbID, thumbAccessHash, ok := inputDocumentRef(req.Thumb)
@@ -156,6 +157,7 @@ func (r *Router) onStickersAddStickerToSet(ctx context.Context, req *tg.Stickers
 		DocumentAccessHash: accessHash,
 		Emoji:              req.Sticker.Emoji,
 		Keywords:           req.Sticker.Keywords,
+		MaskPosition:       inputStickerItemMaskPosition(req.Sticker),
 	})
 	if err != nil {
 		return nil, stickerSetManagementErr(err)

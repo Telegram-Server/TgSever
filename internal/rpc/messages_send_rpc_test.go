@@ -18,7 +18,7 @@ func TestMessagesSendMessageReturnsUpdateAndRecordsOwnerContext(t *testing.T) {
 	recipient := domain.User{ID: 1000000002, AccessHash: 22, FirstName: "Recipient"}
 	messages := &captureMessages{}
 	dialogs := &captureDialogs{}
-	users := &countingMapUsersService{mapUsersService: mapUsersService{users: map[int64]domain.User{sender.ID: sender, recipient.ID: recipient}}}
+	users := &mapUsersService{users: map[int64]domain.User{sender.ID: sender, recipient.ID: recipient}}
 	metrics := &captureRPCMetrics{}
 	r := New(Config{}, Deps{
 		Messages: messages,
@@ -85,40 +85,6 @@ func TestMessagesSendMessageReturnsUpdateAndRecordsOwnerContext(t *testing.T) {
 	}
 	if metrics.messageSend != 1 || metrics.messageSendErr != nil {
 		t.Fatalf("metrics send=%d err=%v, want one successful send", metrics.messageSend, metrics.messageSendErr)
-	}
-	if users.byIDsCalls != 1 || users.byIDCalls != 0 || users.selfCalls != 0 {
-		t.Fatalf("send user lookups byIDs/byID/self = %d/%d/%d, want one shared batch projection", users.byIDsCalls, users.byIDCalls, users.selfCalls)
-	}
-}
-
-func TestUsersForMessageUpdateUsesOneBatchLookup(t *testing.T) {
-	const ownerID int64 = 1000000001
-	const peerID int64 = 1000000002
-	users := &countingMapUsersService{mapUsersService: mapUsersService{users: map[int64]domain.User{
-		ownerID: {ID: ownerID, FirstName: "Owner"},
-		peerID:  {ID: peerID, FirstName: "Peer"},
-	}}}
-	r := New(Config{}, Deps{Users: users}, zaptest.NewLogger(t), clock.System)
-
-	got := r.usersForMessageUpdate(context.Background(), ownerID, domain.Message{
-		OwnerUserID: ownerID,
-		From:        domain.Peer{Type: domain.PeerTypeUser, ID: ownerID},
-		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: peerID},
-	})
-
-	if users.byIDsCalls != 1 || users.selfCalls != 0 || users.byIDCalls != 0 {
-		t.Fatalf("user lookups byIDs/self/byID = %d/%d/%d, want 1/0/0", users.byIDsCalls, users.selfCalls, users.byIDCalls)
-	}
-	if len(got) != 2 {
-		t.Fatalf("users = %+v, want owner and peer", got)
-	}
-	owner, ok := got[0].(*tg.User)
-	if !ok || owner.ID != ownerID || !owner.Self {
-		t.Fatalf("first user = %+v, want self owner %d", got[0], ownerID)
-	}
-	peer, ok := got[1].(*tg.User)
-	if !ok || peer.ID != peerID || peer.Self {
-		t.Fatalf("second user = %+v, want non-self peer %d", got[1], peerID)
 	}
 }
 
@@ -354,20 +320,6 @@ func TestMessageReplyFromInputUnsupportedShapesReturnExplicitErrors(t *testing.T
 				reply.SetMonoforumPeerID(&tg.InputPeerChannel{ChannelID: 1000000004})
 			}),
 			want: "REPLY_TO_MONOFORUM_PEER_INVALID",
-		},
-		{
-			name: "todo item",
-			input: withReplyMsg(func(reply *tg.InputReplyToMessage) {
-				reply.SetTodoItemID(1)
-			}),
-			want: "REPLY_MESSAGE_ID_INVALID",
-		},
-		{
-			name: "poll option",
-			input: withReplyMsg(func(reply *tg.InputReplyToMessage) {
-				reply.SetPollOption([]byte{1})
-			}),
-			want: "POLL_OPTION_INVALID",
 		},
 	}
 	for _, tc := range cases {

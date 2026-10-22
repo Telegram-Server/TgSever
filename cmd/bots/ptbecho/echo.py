@@ -152,7 +152,7 @@ async def send_echo(message: object, bot: Bot, prefix: str, ephemeral_prefix: st
         chat_id=message.chat_id,
         text=ephemeral_prefix + text,
         api_kwargs={
-            "receiver_user_id": sender.id,
+            "ephemeral_message_parameters": {"receiver_user_id": sender.id},
             "reply_parameters": {"ephemeral_message_id": transient_id},
         },
     )

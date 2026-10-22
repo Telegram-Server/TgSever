@@ -52,6 +52,10 @@ func (s *ChannelStore) DeleteChannel(_ context.Context, req domain.DeleteChannel
 	if member.Role != domain.ChannelRoleCreator {
 		return domain.DeleteChannelResult{}, domain.ErrChannelAdminRequired
 	}
+	if err := s.finishDeletedChannelSuggestedPostsLocked(channel, req.Date); err != nil {
+		return domain.DeleteChannelResult{}, err
+	}
+	channel = s.channels[req.ChannelID]
 	recipients := s.activeMemberIDsLocked(req.ChannelID, 0, 0)
 	channel.Deleted = true
 	channel.Username = ""
@@ -522,6 +526,13 @@ func channelReplyBelongsToRoot(msg domain.ChannelMessage, channelID int64, rootI
 }
 
 func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRequest, member domain.ChannelMember, channel domain.Channel, selfBoostsApplied int) (*domain.MessageReply, error) {
+	if channel.Forum && req.ReplyTo == nil && req.Action == nil {
+		if topic, ok := s.topics[req.ChannelID][domain.ForumGeneralTopicID]; ok {
+			if err := forumTopicWriteError(channel, member, topic, req.UserID, selfBoostsApplied, req.Action); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if req.ReplyTo == nil {
 		return nil, nil
 	}
@@ -534,7 +545,33 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 		peer = channelPeer
 	}
 	if peer != channelPeer {
-		return nil, domain.ErrReplyMessageIDInvalid
+		reply := cloneMessageReply(req.ReplyTo)
+		if channel.Forum && req.Action == nil {
+			id := reply.TopMessageID
+			if id <= 0 {
+				id = domain.ForumGeneralTopicID
+			}
+			topic, ok := s.topics[req.ChannelID][id]
+			if !ok && id == domain.ForumGeneralTopicID {
+				topic = domain.ChannelForumTopic{TopicID: id, CreatorUserID: channel.CreatorUserID, Title: "General"}
+				ok = true
+			}
+			if !ok {
+				return nil, domain.ErrReplyMessageIDInvalid
+			}
+			if err := forumTopicWriteError(channel, member, topic, req.UserID, selfBoostsApplied, req.Action); err != nil {
+				return nil, err
+			}
+			reply.TopMessageID, reply.ForumTopic = topic.TopicID, true
+		}
+		switch peer.Type {
+		case domain.PeerTypeUser:
+			return s.externalPrivateReplyLocked(req.UserID, reply)
+		case domain.PeerTypeChannel:
+			return s.externalChannelReplyLocked(req.UserID, reply)
+		default:
+			return nil, domain.ErrReplyMessageIDInvalid
+		}
 	}
 	if req.ReplyTo.MessageID == 0 {
 		if req.ReplyTo.TopMessageID <= 0 {
@@ -558,11 +595,15 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 			return reply, nil
 		}
 		topic, ok := s.topics[req.ChannelID][req.ReplyTo.TopMessageID]
-		if !ok || topic.Hidden {
+		if !ok && req.ReplyTo.TopMessageID == domain.ForumGeneralTopicID {
+			topic = domain.ChannelForumTopic{TopicID: domain.ForumGeneralTopicID, CreatorUserID: channel.CreatorUserID, Title: "General"}
+			ok = true
+		}
+		if !ok {
 			return nil, domain.ErrReplyMessageIDInvalid
 		}
-		if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
-			return nil, domain.ErrChannelWriteForbidden
+		if err := forumTopicWriteError(channel, member, topic, req.UserID, selfBoostsApplied, req.Action); err != nil {
+			return nil, err
 		}
 		reply := cloneMessageReply(req.ReplyTo)
 		reply.MessageID = 0
@@ -573,7 +614,13 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 	}
 	target, ok := s.findMessageLocked(req.ChannelID, req.ReplyTo.MessageID)
 	if !ok || target.Deleted || target.ID <= member.AvailableMinID {
+		if req.ReplyTo.AllowMissing && !channel.Forum && !req.ReplyTo.ForumTopic && req.ReplyTo.TopMessageID == 0 {
+			return nil, nil
+		}
 		return nil, domain.ErrReplyMessageIDInvalid
+	}
+	if err := domain.ValidateBotAPIReplySource(req.ReplyTo, replyChannelMessage(target)); err != nil {
+		return nil, err
 	}
 	reply := cloneMessageReply(req.ReplyTo)
 	reply.MessageID = target.ID
@@ -585,15 +632,32 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 	// 与 postgres ChannelStore 同口径:top_msg_id 只是话题落点提示,不是回复有效性判据,
 	// reply_to_msg_id 已唯一指向存在的消息,线程根由服务端推导。客户端带无关 top_msg_id
 	// (TDesktop 发媒体回复时下发)不再拒绝整个回复。
-	if channel.Forum && reply.TopMessageID > 0 {
-		if topic, ok := s.topics[req.ChannelID][reply.TopMessageID]; ok && !topic.Hidden {
-			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
-				return nil, domain.ErrChannelWriteForbidden
+	if channel.Forum {
+		topic, ok := s.topics[req.ChannelID][reply.TopMessageID]
+		if !ok {
+			if target.ReplyTo != nil && target.ReplyTo.ForumTopic && reply.TopMessageID != domain.ForumGeneralTopicID {
+				return nil, domain.ErrReplyMessageIDInvalid
 			}
-			reply.ForumTopic = true
+			topic, ok = s.topics[req.ChannelID][domain.ForumGeneralTopicID]
+			if !ok {
+				topic = domain.ChannelForumTopic{TopicID: domain.ForumGeneralTopicID, CreatorUserID: channel.CreatorUserID, Title: "General"}
+			}
 		}
+		if err := forumTopicWriteError(channel, member, topic, req.UserID, selfBoostsApplied, req.Action); err != nil {
+			return nil, err
+		}
+		reply.TopMessageID, reply.ForumTopic = topic.TopicID, true
 	}
 	return reply, nil
+}
+
+func forumTopicWriteError(channel domain.Channel, member domain.ChannelMember, topic domain.ChannelForumTopic, userID int64, boosts int, action *domain.ChannelMessageAction) error {
+	manage := canManageForumTopic(channel, member, topic, userID, boosts)
+	editing := action != nil && action.Type == domain.ChannelActionTopicEdit
+	if topic.Hidden && !(editing && manage) || topic.Closed && !manage {
+		return domain.ErrChannelWriteForbidden
+	}
+	return nil
 }
 
 func inactiveChannelDate(dialog domain.Dialog, channel domain.Channel, member domain.ChannelMember) int {

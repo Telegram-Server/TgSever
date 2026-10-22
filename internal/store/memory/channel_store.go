@@ -74,15 +74,16 @@ func (w channelReadWatermark) advance(userID int64, maxID int) channelReadWaterm
 
 // ChannelStore is an in-memory channel/supergroup store for tests and local development.
 type ChannelStore struct {
-	mu        sync.RWMutex
-	nextID    int64
-	nextHash  int64
-	channels  map[int64]domain.Channel
-	members   map[int64]map[int64]domain.ChannelMember
-	dialogs   map[int64]map[int64]domain.ChannelDialog
-	topics    map[int64]map[int]domain.ChannelForumTopic
-	messages  map[int64][]domain.ChannelMessage
-	reactions map[int64]map[int]map[int64][]domain.ChannelMessagePeerReaction
+	mu         sync.RWMutex
+	nextID     int64
+	nextHash   int64
+	channels   map[int64]domain.Channel
+	members    map[int64]map[int64]domain.ChannelMember
+	senderBans map[int64]map[int64]domain.ChannelMember
+	dialogs    map[int64]map[int64]domain.ChannelDialog
+	topics     map[int64]map[int]domain.ChannelForumTopic
+	messages   map[int64][]domain.ChannelMessage
+	reactions  map[int64]map[int]map[int64][]domain.ChannelMessagePeerReaction
 	// paidReactions 是 per-(channel,message,user) 付费 reaction 累计星数 + 匿名标志。
 	paidReactions        map[int64]map[int]map[int64]memoryPaidReaction
 	paidReactionCommands map[paidReactionCommandKey]memoryPaidReactionReceipt
@@ -104,6 +105,7 @@ type ChannelStore struct {
 	adminLogs              map[int64][]domain.ChannelAdminLogEvent
 	invites                map[string]domain.ChannelInvite
 	importers              map[int64]map[int64]domain.ChannelInviteImporter
+	joinQueries            map[int64]domain.ChatJoinQuery
 	msgSeq                 map[int64]int
 	ptsSeq                 map[int64]int
 	logSeq                 map[int64]int64
@@ -123,6 +125,8 @@ type ChannelStore struct {
 	// polls 是共享 poll 权威（与 MessageStore 同一实例）；nil 时 poll 链路按未接入处理。
 	polls            *PollStore
 	usernameRegistry *CollectibleUsernameStore
+	commerce         *BotCommerceStore
+	replyMessages    *MessageStore
 	// deletions 是删除记录（与 MessageStore 共用同一实例）；nil 时不记录。
 	deletions *MessageDeletionStore
 }

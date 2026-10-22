@@ -9,6 +9,7 @@ import (
 	"strings"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func (s *ChannelStore) SendChannelMessage(ctx context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error) {
@@ -40,6 +41,13 @@ func (s *ChannelStore) sendChannelMessageWithHooks(ctx context.Context, req doma
 	var lastErr error
 	for attempt := 0; attempt < retryableChannelTxAttempts; attempt++ {
 		res, err := s.sendChannelMessageOnce(ctx, req, requestFingerprint, hooks)
+		if err == nil && res.Duplicate {
+			if _, ok := store.BotBroadcastFromContext(ctx); ok {
+				err = withTx(ctx, s.db, "complete channel broadcast replay", func(tx pgx.Tx) error {
+					return commitBotBroadcastTx(ctx, tx, nil, &res.Message, true)
+				})
+			}
+		}
 		if err == nil || !isRetryablePostgresTxError(err) || ctx.Err() != nil {
 			return res, err
 		}
@@ -98,6 +106,27 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
+	if req.GuestBotID != 0 {
+		if !channel.Megagroup || channel.Broadcast || req.SendAs != nil {
+			return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
+		}
+		bot, botErr := getChannelMemberByID(ctx, tx, req.ChannelID, req.GuestBotID)
+		if botErr != nil && !errors.Is(botErr, domain.ErrChannelPrivate) {
+			return domain.SendChannelMessageResult{}, botErr
+		}
+		if botErr == nil && (bot.Status == domain.ChannelMemberBanned || bot.Status == domain.ChannelMemberKicked || domain.ChannelBannedRightsBlockMessage(req, channel, bot, 0)) {
+			return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
+		}
+	}
+	if req.SendAs != nil && req.SendAs.Type == domain.PeerTypeChannel {
+		banned, err := sqlcgen.New(tx).IsChannelSenderOwnerBanned(ctx, sqlcgen.IsChannelSenderOwnerBannedParams{ChannelID: req.ChannelID, SenderChannelID: req.SendAs.ID})
+		if err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		if banned {
+			return domain.SendChannelMessageResult{}, domain.ErrChannelSenderBanned
+		}
+	}
 	if member.Guest && channel.JoinToSend {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
 	}
@@ -153,8 +182,12 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 	var discussion *domain.SendChannelDiscussionResult
 	var discussionRef *domain.ChannelDiscussionRef
 	if channel.Broadcast && channel.LinkedChatID != 0 && req.Action == nil {
+		banned, banErr := sqlcgen.New(tx).IsChannelSenderOwnerBanned(ctx, sqlcgen.IsChannelSenderOwnerBannedParams{ChannelID: channel.LinkedChatID, SenderChannelID: channel.ID})
+		if banErr != nil {
+			return domain.SendChannelMessageResult{}, banErr
+		}
 		linked, err := getChannelByID(ctx, tx, channel.LinkedChatID)
-		if err == nil && !linked.Deleted && linked.Megagroup {
+		if err == nil && !linked.Deleted && linked.Megagroup && !banned {
 			discussionMsgID, err := s.msgIDs.NextChannelMessageID(ctx, linked.ID)
 			if err != nil {
 				return domain.SendChannelMessageResult{}, fmt.Errorf("allocate discussion message id: %w", err)
@@ -224,7 +257,7 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 		ID:                msgID,
 		RandomID:          req.RandomID,
 		SenderUserID:      req.UserID,
-		From:              domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID},
+		From:              domain.Peer{Type: domain.PeerTypeUser, ID: domain.GuestSenderUserID(req.UserID, req.GuestBotID)},
 		Date:              req.Date,
 		Post:              channel.Broadcast,
 		ShowMessageSender: channel.Broadcast && channel.SignatureProfiles && sendAs != nil && !(sendAs.Type == domain.PeerTypeChannel && sendAs.ID == channel.ID),
@@ -247,6 +280,9 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 		Action:            cloneChannelMessageAction(req.Action),
 		FromBoostsApplied: fromBoostsApplied,
 		Pts:               pts,
+	}
+	if req.GuestBotID != 0 {
+		msg.GuestChatViaFrom = domain.GuestChatPeer(req.UserID)
 	}
 	if discussionRef != nil {
 		msg.Replies = &domain.ChannelMessageReplies{Comments: true, ChannelID: discussionRef.ChannelID, RepliesPts: discussion.Event.Pts}
@@ -357,6 +393,9 @@ WHERE channel_id = $1 AND user_id = $2 AND unread_mark`, req.ChannelID, req.User
 		if err := hooks.after(ctx, tx, txResult); err != nil {
 			return domain.SendChannelMessageResult{}, err
 		}
+	}
+	if err := commitBotBroadcastTx(ctx, tx, nil, &txResult.Message, false); err != nil {
+		return domain.SendChannelMessageResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("commit send channel: %w", err)
@@ -512,7 +551,12 @@ WHERE channel_id = $1 AND id = $2`, msg.ChannelID, msg.ID).Scan(
 }
 
 func (s *ChannelStore) insertServiceMessage(ctx context.Context, tx pgx.Tx, channel domain.Channel, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.ChannelMessage, domain.ChannelUpdateEvent, error) {
-	msgID, err := s.msgIDs.NextChannelMessageID(ctx, channel.ID)
+	allocator := s.msgIDs
+	if _, fallback := allocator.(pgChannelMessageIDAllocator); fallback {
+		// MAX(id) 必须包含当前事务已写入的服务消息；pool 看不到同批先前未提交的 ID。
+		allocator = pgChannelMessageIDAllocator{db: tx}
+	}
+	msgID, err := allocator.NextChannelMessageID(ctx, channel.ID)
 	if err != nil {
 		return domain.ChannelMessage{}, domain.ChannelUpdateEvent{}, fmt.Errorf("allocate channel service message id: %w", err)
 	}
@@ -662,6 +706,13 @@ INSERT INTO channel_messages (
 		msg.Body, entities, reply, replyMsgID, replyPeerType, replyPeerID, replyTopID,
 		forward, discussionChannelID, discussionMessageID, action, msg.Pts, msg.Deleted, media, replyMarkup, richMessage, msg.TTLPeriod, msg.ExpiresAt, msg.PostAuthor, msg.ViaBotID, msg.FromBoostsApplied, msg.GroupedID, string(msg.SavedPeer.Type), msg.SavedPeer.ID, msg.PaidMessageStars, suggestedPost, sendSnapshot, requestFingerprint, msg.ShowMessageSender); err != nil {
 		return fmt.Errorf("insert channel message: %w", err)
+	}
+	if msg.GuestChatViaFrom.ID != 0 {
+		if err := sqlcgen.New(tx).SetChannelGuestMessageProvenance(ctx, sqlcgen.SetChannelGuestMessageProvenanceParams{
+			ChannelID: msg.ChannelID, MessageID: int32(msg.ID), GuestchatViaFrom: msg.GuestChatViaFrom.ID,
+		}); err != nil {
+			return fmt.Errorf("persist channel guest provenance: %w", err)
+		}
 	}
 	// 共享媒体索引(迁移 0118):创建即按媒体类别建索引行,供 messages.search 媒体标签页。
 	if err := insertChannelMediaIndexTx(ctx, tx, msg.ChannelID, msg.ID, msg.Date, msg.Media, msg.Entities); err != nil {

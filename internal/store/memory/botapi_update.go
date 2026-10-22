@@ -47,6 +47,11 @@ func (s *BotAPIUpdateStore) SetBotAPIWebhook(_ context.Context, config domain.Bo
 	if config.BotUserID <= 0 || config.URL == "" || config.MaxConnections < 1 || config.MaxConnections > 100 {
 		return fmt.Errorf("invalid bot api webhook")
 	}
+	for _, kind := range config.AllowedUpdates {
+		if !domain.BotAPIUpdateKindKnown(kind) {
+			return fmt.Errorf("invalid bot api allowed update kind %q", kind)
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !config.AllowedUpdatesSet {
@@ -239,7 +244,7 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 	} else if domain.BotAPIUpdateKindNeedsOptIn(req.Kind) {
 		return domain.BotAPIUpdate{}, false, nil
 	}
-	if req.ChatMember != nil {
+	if req.ChatMember != nil || req.Reaction != nil || req.JoinRequest != nil || req.Object != nil {
 		// 成员变化没有消息去重键，每次变化都是独立的一条。
 		key = fmt.Sprintf("%d:%s:member:%d", req.BotUserID, req.Kind, s.nextID)
 	}
@@ -262,6 +267,9 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 		PreCheckout: cloneBotAPIPreCheckout(req.PreCheckout),
 		Ephemeral:   cloneBotAPIEphemeral(req.Ephemeral),
 		ChatMember:  cloneBotAPIChatMember(req.ChatMember),
+		Reaction:    req.Reaction.Clone(),
+		JoinRequest: req.JoinRequest.Clone(),
+		Object:      req.Object.Clone(),
 	}
 	s.nextID++
 	s.rows = append(s.rows, row)
@@ -363,6 +371,11 @@ func (s *BotAPIUpdateStore) ConfirmBotAPIUpdates(_ context.Context, botUserID, c
 }
 
 func (s *BotAPIUpdateStore) SetBotAPIAllowedUpdates(_ context.Context, botUserID int64, allowed []domain.BotAPIUpdateKind) error {
+	for _, kind := range allowed {
+		if !domain.BotAPIUpdateKindKnown(kind) {
+			return fmt.Errorf("invalid bot api allowed update kind %q", kind)
+		}
+	}
 	if botUserID == 0 {
 		return nil
 	}
@@ -426,6 +439,34 @@ func (s *BotAPIUpdateStore) ConfirmedBotAPIUpdateID(_ context.Context, botUserID
 func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	if req.BotUserID == 0 {
 		return fmt.Errorf("invalid bot api update")
+	}
+	if req.Callback != nil && (len(req.Callback.GameShortName) > 64 || (req.Callback.GameShortName != "" && len(req.Callback.Data) != 0)) {
+		return fmt.Errorf("invalid game callback")
+	}
+	if err := domain.ValidateBotAPIObjectRequest(req); err != nil {
+		return err
+	}
+	if req.Object != nil {
+		return nil
+	}
+	if req.PreCheckout != nil || req.Kind == domain.BotAPIUpdatePreCheckoutQuery {
+		q := req.PreCheckout
+		if q == nil || req.Kind != domain.BotAPIUpdatePreCheckoutQuery || q.BotUserID != req.BotUserID || q.ID == 0 || q.UserID <= 0 || q.Currency == "" || q.TotalAmount <= 0 || req.Peer != (domain.Peer{}) || req.MessageID != 0 || req.SourcePts != 0 || req.Date <= 0 || req.Callback != nil || req.ChatMember != nil || req.Reaction != nil || req.JoinRequest != nil || req.Ephemeral != nil {
+			return fmt.Errorf("invalid bot api pre checkout query")
+		}
+		return nil
+	}
+	if err := domain.ValidateBotAPIJoinRequest(req); err != nil {
+		return err
+	}
+	if req.JoinRequest != nil {
+		return nil
+	}
+	if err := domain.ValidateBotAPIReactionRequest(req); err != nil {
+		return err
+	}
+	if req.Reaction != nil {
+		return nil
 	}
 	// A pre-checkout query is message-less by design: the bot is asked before any
 	// payment exists, so it carries no peer and no message id.
@@ -504,6 +545,9 @@ func cloneBotAPIUpdate(row domain.BotAPIUpdate) domain.BotAPIUpdate {
 	row.PreCheckout = cloneBotAPIPreCheckout(row.PreCheckout)
 	row.Ephemeral = cloneBotAPIEphemeral(row.Ephemeral)
 	row.ChatMember = cloneBotAPIChatMember(row.ChatMember)
+	row.Reaction = row.Reaction.Clone()
+	row.JoinRequest = row.JoinRequest.Clone()
+	row.Object = row.Object.Clone()
 	return row
 }
 
@@ -512,6 +556,10 @@ func cloneBotAPIChatMember(in *domain.BotChatMemberUpdated) *domain.BotChatMembe
 		return nil
 	}
 	out := *in
+	if in.Invite != nil {
+		invite := *in.Invite
+		out.Invite = &invite
+	}
 	return &out
 }
 
@@ -535,6 +583,7 @@ func cloneBotAPICallback(in *domain.BotCallbackQuery) *domain.BotCallbackQuery {
 		return nil
 	}
 	out := *in
+	out.ClientSession = domain.ClientSessionMetadata{}
 	out.Data = append([]byte(nil), in.Data...)
 	if in.InlineMessage != nil {
 		inline := *in.InlineMessage

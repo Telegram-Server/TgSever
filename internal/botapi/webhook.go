@@ -32,6 +32,7 @@ type webhookDispatcher struct {
 	logger  *zap.Logger
 	botSem  chan struct{}
 	httpSem chan struct{}
+	admit   func(context.Context, int64) error
 }
 
 func newWebhookHTTPClient() *http.Client {
@@ -56,7 +57,7 @@ func newWebhookHTTPClient() *http.Client {
 	}
 }
 
-func runWebhookDispatcher(ctx context.Context, control GatewayWebhookControl, gateway GatewayService, client *http.Client, logger *zap.Logger) {
+func runWebhookDispatcher(ctx context.Context, control GatewayWebhookControl, gateway GatewayService, client *http.Client, logger *zap.Logger, admit func(context.Context, int64) error) {
 	if control == nil || gateway == nil {
 		return
 	}
@@ -69,6 +70,7 @@ func runWebhookDispatcher(ctx context.Context, control GatewayWebhookControl, ga
 	d := &webhookDispatcher{
 		control: control, gateway: gateway, client: client, logger: logger,
 		botSem: make(chan struct{}, webhookBotWorkers), httpSem: make(chan struct{}, webhookHTTPWorkers),
+		admit: admit,
 	}
 	d.scan(ctx)
 	ticker := time.NewTicker(webhookScanInterval)
@@ -105,6 +107,11 @@ func (d *webhookDispatcher) scan(ctx context.Context) {
 func (d *webhookDispatcher) deliver(parent context.Context, candidate domain.BotAPIWebhook) {
 	ctx, cancel := context.WithTimeout(parent, webhookLeaseTTL)
 	defer cancel()
+	if d.admit != nil {
+		if err := d.admit(ctx, candidate.BotUserID); err != nil {
+			return
+		}
+	}
 	owner := randomBotAPIOwner()
 	acquired, err := d.control.AcquireBotAPIWebhookLease(ctx, candidate.BotUserID, owner, webhookLeaseTTL)
 	if err != nil {
@@ -159,14 +166,18 @@ func (d *webhookDispatcher) deliver(parent context.Context, candidate domain.Bot
 	}
 	results := make(chan delivery, limit)
 	for i := 0; i < limit; i++ {
+		updateID := events[i].BotAPIUpdateID
+		if updateID <= 0 {
+			updateID = int64(events[i].Pts)
+		}
 		item, _, ok := apiUpdate(events[i])
 		if !ok {
-			results <- delivery{index: i, updateID: int64(events[i].Pts), err: errors.New("update projection failed")}
+			results <- delivery{index: i, updateID: updateID, err: errors.New("update projection failed")}
 			continue
 		}
 		payload, err := json.Marshal(item)
 		if err != nil {
-			results <- delivery{index: i, updateID: int64(events[i].Pts), err: err}
+			results <- delivery{index: i, updateID: updateID, err: err}
 			continue
 		}
 		go func(index int, updateID int64, payload []byte) {
@@ -178,7 +189,7 @@ func (d *webhookDispatcher) deliver(parent context.Context, candidate domain.Bot
 				return
 			}
 			results <- delivery{index: index, updateID: updateID, err: d.post(ctx, config, payload)}
-		}(i, int64(events[i].Pts), payload)
+		}(i, updateID, payload)
 	}
 	deliveries := make([]delivery, limit)
 	for i := 0; i < limit; i++ {
@@ -216,6 +227,11 @@ func (d *webhookDispatcher) deliver(parent context.Context, candidate domain.Bot
 }
 
 func (d *webhookDispatcher) post(ctx context.Context, config domain.BotAPIWebhook, payload []byte) error {
+	if d.admit != nil {
+		if err := d.admit(ctx, config.BotUserID); err != nil {
+			return err
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.URL, bytes.NewReader(payload))
 	if err != nil {
 		return err

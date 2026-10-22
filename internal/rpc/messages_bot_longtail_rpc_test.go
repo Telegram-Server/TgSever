@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -9,10 +11,38 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 
+	"telesrv/internal/botapi"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
+
+func nativeBotUpdatesHTTP(t *testing.T, f inlineBotRPCTestFixture) []map[string]any {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server, err := botapi.Start(ctx, "127.0.0.1:0", f.bots, nil, nil, nil, f.router, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	profile, found, err := f.bots.BotInfo(ctx, f.bot.ID)
+	if err != nil || !found {
+		t.Fatalf("bot profile: found=%v err=%v", found, err)
+	}
+	req := httptest.NewRequest("POST", "/bot"+domain.FormatBotToken(f.bot.ID, profile.TokenSecret)+"/getUpdates", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, req)
+	var decoded struct {
+		OK     bool             `json:"ok"`
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil || !decoded.OK {
+		t.Fatalf("getUpdates: %s err=%v", response.Body.String(), err)
+	}
+	return decoded.Result
+}
 
 func TestMessagesSendWebViewDataServiceMessageRoundTrip(t *testing.T) {
 	ctx := context.Background()
@@ -48,12 +78,17 @@ func TestMessagesSendWebViewDataServiceMessageRoundTrip(t *testing.T) {
 	if service.PeerID.(*tg.PeerUser).UserID != f.bot.ID || service.FromID.(*tg.PeerUser).UserID != f.owner.ID {
 		t.Fatalf("service peer/from = %+v/%+v, want bot/user", service.PeerID, service.FromID)
 	}
-	botAPIEvents, err := f.router.BotAPIUpdates(ctx, f.bot.ID, 0)
-	if err != nil || len(botAPIEvents) != 1 || botAPIEvents[0].Message.Media == nil ||
-		botAPIEvents[0].Message.Media.ServiceAction == nil ||
-		botAPIEvents[0].Message.Media.ServiceAction.WebViewData == nil ||
-		botAPIEvents[0].Message.Media.ServiceAction.WebViewData.Data != `{"ok":true}` {
-		t.Fatalf("bot api webview events=%#v err=%v", botAPIEvents, err)
+	botAPIUpdates := nativeBotUpdatesHTTP(t, f)
+	if len(botAPIUpdates) != 1 {
+		t.Fatalf("webview updates=%v", botAPIUpdates)
+	}
+	message, ok := botAPIUpdates[0]["message"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing message: %v", botAPIUpdates[0])
+	}
+	data, ok := message["web_app_data"].(map[string]any)
+	if !ok || data["data"] != `{"ok":true}` || data["button_text"] != "Open" {
+		t.Fatalf("public web_app_data=%v", message)
 	}
 
 	botHistory, err := f.router.deps.Messages.GetHistory(ctx, f.bot.ID, domain.MessageFilter{
@@ -172,15 +207,25 @@ func TestMessagesSendBotRequestedPeerQueuesBotAPIResponse(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("send requested peer: %v", err)
 	}
-	events, err := f.router.BotAPIUpdates(ctx, f.bot.ID, 0)
-	if err != nil || len(events) != 1 {
-		t.Fatalf("bot api requested-peer events=%#v err=%v", events, err)
+	updates := nativeBotUpdatesHTTP(t, f)
+	if len(updates) != 1 {
+		t.Fatalf("requested-peer updates=%v", updates)
 	}
-	action := events[0].Message.Media.ServiceAction.RequestedPeer
-	if action == nil || action.ButtonID != 77 || len(action.Peers) != 1 || action.Peers[0].ID != f.peer.ID ||
-		len(action.Details) != 1 || action.Details[0].Peer != action.Peers[0] || action.Details[0].FirstName != f.peer.FirstName ||
-		!action.NameRequested || !action.UsernameRequested {
-		t.Fatalf("requested-peer action=%#v", action)
+	message, ok := updates[0]["message"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing service message: %v", updates[0])
+	}
+	shared, ok := message["users_shared"].(map[string]any)
+	if !ok || shared["request_id"] != float64(77) {
+		t.Fatalf("public sharing response=%v", message)
+	}
+	users, ok := shared["users"].([]any)
+	if !ok || len(users) != 1 {
+		t.Fatalf("shared users=%v", shared)
+	}
+	user, ok := users[0].(map[string]any)
+	if !ok || user["user_id"] != float64(f.peer.ID) || user["first_name"] != f.peer.FirstName {
+		t.Fatalf("public shared user=%v", users)
 	}
 }
 

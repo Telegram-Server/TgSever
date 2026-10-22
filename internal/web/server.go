@@ -41,6 +41,7 @@ type Config struct {
 	GiftClaim          http.Handler
 	GiftClaimTest      http.Handler
 	MiniApps           http.Handler
+	InvoiceLinks       http.Handler
 	ModerationAppeals  ModerationAppealResolver
 	// AllowDevPayments registers the local dev/fiat Stars/Premium checkout
 	// (/payments/dev-stars). Denied by default; enable only in dev/test. The
@@ -201,6 +202,7 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		revenueWithdrawals: cfg.RevenueWithdrawals,
 		customFragment:     cfg.CustomFragment,
 		appeals:            cfg.ModerationAppeals,
+		invoiceLinks:       cfg.InvoiceLinks,
 		publicBaseURL:      cfg.PublicBaseURL,
 		appLinks:           appLinks,
 		webBaseURL:         cfg.WebBaseURL,
@@ -301,10 +303,14 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	}
 	mux.HandleFunc("GET /{username}", h.usernameLink)
 	mux.HandleFunc("GET /{username}/{$}", h.usernameLink)
-	if cfg.Updates != nil {
-		return publicSecurityHeaders(withUpdatesRoutes(mux, cfg.Updates, publicRoutePrefix)), nil
+	var routes http.Handler = mux
+	if cfg.InvoiceLinks != nil && publicRoutePrefix != "" {
+		routes = withInvoiceLinkRoutes(routes, cfg.InvoiceLinks, publicRoutePrefix)
 	}
-	return publicSecurityHeaders(mux), nil
+	if cfg.Updates != nil {
+		routes = withUpdatesRoutes(routes, cfg.Updates, publicRoutePrefix)
+	}
+	return publicSecurityHeaders(routes), nil
 }
 
 // publicBaseRoutePrefix returns the escaped path used by net/http patterns.
@@ -324,6 +330,22 @@ func publicBaseRoutePrefix(publicBaseURL string) (string, error) {
 		return "", fmt.Errorf("path must be absolute")
 	}
 	return prefix, nil
+}
+
+// Prefix dispatch precedes ServeMux so configured roots such as /nft cannot
+// collide with an existing one-segment wildcard route.
+func withInvoiceLinkRoutes(next, invoices http.Handler, basePrefix string) http.Handler {
+	prefix, _ := url.PathUnescape(basePrefix)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix+"/"), "/")
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			strings.HasPrefix(r.URL.Path, prefix+"/$") && !strings.Contains(username, "/") {
+			r.SetPathValue("username", username)
+			invoices.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // withUpdatesRoutes 把 /_updates/ 下的请求剥离前缀后转发给更新服务，其余请求交给
@@ -376,6 +398,7 @@ type handler struct {
 	revenueWithdrawals ChannelRevenueWithdrawalResolver
 	customFragment     CustomFragmentHandler
 	appeals            ModerationAppealResolver
+	invoiceLinks       http.Handler
 	publicBaseURL      string
 	appLinks           links.AppLinkBuilder
 	webBaseURL         string
@@ -771,7 +794,19 @@ func (h *handler) uniqueGift(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *handler) invoiceLink(w http.ResponseWriter, r *http.Request) {
+	if h.invoiceLinks == nil || !strings.HasPrefix(r.PathValue("username"), "$") {
+		http.NotFound(w, r)
+		return
+	}
+	h.invoiceLinks.ServeHTTP(w, r)
+}
+
 func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
+	if h.invoiceLinks != nil && strings.HasPrefix(r.PathValue("username"), "$") {
+		h.invoiceLink(w, r)
+		return
+	}
 	username := strings.TrimSpace(r.PathValue("username"))
 	if !validUsernamePath(username) {
 		h.serveUsernameNotFound(w, username)

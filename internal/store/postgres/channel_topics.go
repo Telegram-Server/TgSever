@@ -195,101 +195,91 @@ func (s *ChannelStore) EditForumTopic(ctx context.Context, req domain.EditChanne
 	if req.UserID == 0 || req.ChannelID == 0 || req.TopicID <= 0 {
 		return domain.EditChannelForumTopicResult{}, domain.ErrChannelInvalid
 	}
-	channel, member, err := s.getChannelForMember(ctx, s.db, req.UserID, req.ChannelID)
-	if err != nil {
-		return domain.EditChannelForumTopicResult{}, err
+	var next domain.ChannelForumTopic
+	send := domain.SendChannelMessageRequest{
+		UserID: req.UserID, ChannelID: req.ChannelID, Date: req.Date,
+		Action:  &domain.ChannelMessageAction{Type: domain.ChannelActionTopicEdit},
+		ReplyTo: &domain.MessageReply{TopMessageID: req.TopicID, ForumTopic: true},
 	}
-	if !channel.Forum {
-		return domain.EditChannelForumTopicResult{}, domain.ErrChannelForumMissing
-	}
-	topic, err := s.getForumTopic(ctx, s.db, req.ChannelID, req.TopicID)
-	if err != nil {
-		return domain.EditChannelForumTopicResult{}, err
-	}
-	selfBoostsApplied := 0
-	if channel.Megagroup {
-		now := req.Date
-		if now <= 0 {
-			now = nowUnix()
-		}
-		selfBoostsApplied, err = s.countActiveUserBoostsForPeer(ctx, s.db, req.UserID, domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}, now)
-		if err != nil {
-			return domain.EditChannelForumTopicResult{}, err
-		}
-	}
-	if !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
-		return domain.EditChannelForumTopicResult{}, domain.ErrChannelAdminRequired
-	}
-	next := topic
-	action := domain.ChannelMessageAction{Type: domain.ChannelActionTopicEdit}
-	changed := false
-	if req.Title != nil {
-		title := strings.TrimSpace(*req.Title)
-		if title == "" {
-			return domain.EditChannelForumTopicResult{}, domain.ErrChannelInvalid
-		}
-		if next.Title != title {
-			next.Title = title
-			action.Title = title
-			changed = true
-		}
-	}
-	if req.IconEmojiID != nil && next.IconEmojiID != *req.IconEmojiID {
-		next.IconEmojiID = *req.IconEmojiID
-		action.IconEmojiID = *req.IconEmojiID
-		action.IconEmojiIDSet = true
-		changed = true
-	}
-	if req.Closed != nil && next.Closed != *req.Closed {
-		next.Closed = *req.Closed
-		action.Closed = boolPtr(*req.Closed)
-		changed = true
-	}
-	if req.Hidden != nil && next.Hidden != *req.Hidden {
-		next.Hidden = *req.Hidden
-		action.Hidden = boolPtr(*req.Hidden)
-		changed = true
-	}
-	if !changed {
-		return domain.EditChannelForumTopicResult{}, domain.ErrChannelNotModified
-	}
-	res, err := s.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
-		UserID:    req.UserID,
-		ChannelID: req.ChannelID,
-		ReplyTo: &domain.MessageReply{
-			Peer:         domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID},
-			MessageID:    req.TopicID,
-			TopMessageID: req.TopicID,
+	res, err := s.sendChannelMessageWithHooks(ctx, send, channelSendTxHooks{
+		before: func(ctx context.Context, tx pgx.Tx, send *domain.SendChannelMessageRequest) error {
+			q := sqlcgen.New(tx)
+			if err := q.LockForumTopicChannel(ctx, req.ChannelID); err != nil {
+				return err
+			}
+			channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
+			if err != nil {
+				return err
+			}
+			if !channel.Forum {
+				return domain.ErrChannelForumMissing
+			}
+			if req.TopicID == domain.ForumGeneralTopicID {
+				if err := q.EnsureGeneralForumTopic(ctx, req.ChannelID); err != nil {
+					return err
+				}
+			}
+			topic, err := s.getForumTopic(ctx, tx, req.ChannelID, req.TopicID)
+			if err != nil {
+				return err
+			}
+			boosts, err := s.countActiveUserBoostsForPeer(ctx, tx, req.UserID, domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}, send.Date)
+			if err != nil {
+				return err
+			}
+			if !canManageForumTopic(channel, member, topic, req.UserID, boosts) {
+				return domain.ErrChannelAdminRequired
+			}
+			if req.Hidden != nil && req.TopicID != domain.ForumGeneralTopicID || req.IconEmojiID != nil && req.TopicID == domain.ForumGeneralTopicID {
+				return domain.ErrChannelInvalid
+			}
+			if req.Hidden != nil && *req.Hidden {
+				closed := true
+				req.Closed = &closed
+			}
+			if req.Closed != nil && !*req.Closed && req.TopicID == domain.ForumGeneralTopicID {
+				hidden := false
+				req.Hidden = &hidden
+			}
+			next = topic
+			action := domain.ChannelMessageAction{Type: domain.ChannelActionTopicEdit}
+			changed := false
+			if req.Title != nil {
+				title := strings.TrimSpace(*req.Title)
+				if title == "" {
+					return domain.ErrChannelInvalid
+				}
+				if next.Title != title {
+					next.Title, action.Title, changed = title, title, true
+				}
+			}
+			if req.IconEmojiID != nil && next.IconEmojiID != *req.IconEmojiID {
+				next.IconEmojiID, action.IconEmojiID, action.IconEmojiIDSet, changed = *req.IconEmojiID, *req.IconEmojiID, true, true
+			}
+			if req.Closed != nil && next.Closed != *req.Closed {
+				next.Closed, action.Closed, changed = *req.Closed, boolPtr(*req.Closed), true
+			}
+			if req.Hidden != nil && next.Hidden != *req.Hidden {
+				next.Hidden, action.Hidden, changed = *req.Hidden, boolPtr(*req.Hidden), true
+			}
+			if !changed {
+				return domain.ErrChannelNotModified
+			}
+			send.Action = &action
+			return nil
 		},
-		Action: &action,
-		Date:   req.Date,
+		after: func(ctx context.Context, tx pgx.Tx, res domain.SendChannelMessageResult) error {
+			next.TopMessageID = maxInt(next.TopMessageID, res.Message.ID)
+			return sqlcgen.New(tx).UpdateForumTopicMetadata(ctx, sqlcgen.UpdateForumTopicMetadataParams{
+				ChannelID: req.ChannelID, TopicID: int32(req.TopicID), Title: next.Title,
+				IconEmojiID: next.IconEmojiID, Closed: next.Closed, Hidden: next.Hidden, TopMessageID: int32(res.Message.ID),
+			})
+		},
 	})
 	if err != nil {
 		return domain.EditChannelForumTopicResult{}, err
 	}
-	if _, err := s.db.Exec(ctx, `
-UPDATE channel_forum_topics
-SET title = $3,
-    icon_emoji_id = $4,
-    closed = $5,
-    hidden = $6,
-    top_message_id = GREATEST(top_message_id, $7),
-    updated_at = now()
-WHERE channel_id = $1 AND topic_id = $2 AND NOT deleted`,
-		req.ChannelID, req.TopicID, next.Title, next.IconEmojiID, next.Closed, next.Hidden, res.Message.ID); err != nil {
-		return domain.EditChannelForumTopicResult{}, fmt.Errorf("update forum topic: %w", err)
-	}
-	topic, err = s.getForumTopic(ctx, s.db, req.ChannelID, req.TopicID)
-	if err != nil {
-		return domain.EditChannelForumTopicResult{}, err
-	}
-	return domain.EditChannelForumTopicResult{
-		Channel:    res.Channel,
-		Topic:      topic,
-		Message:    res.Message,
-		Event:      res.Event,
-		Recipients: res.Recipients,
-	}, nil
+	return domain.EditChannelForumTopicResult{Channel: res.Channel, Topic: next, Message: res.Message, Event: res.Event, Recipients: res.Recipients}, nil
 }
 
 func (s *ChannelStore) UpdatePinnedForumTopic(ctx context.Context, req domain.UpdateChannelForumTopicPinnedRequest) (domain.UpdateChannelForumTopicPinnedResult, error) {
@@ -387,6 +377,9 @@ func (s *ChannelStore) DeleteForumTopicHistory(ctx context.Context, req domain.D
 	if req.UserID == 0 || req.ChannelID == 0 || req.TopicID <= 0 {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelInvalid
 	}
+	if req.TopicID == domain.ForumGeneralTopicID {
+		return domain.DeleteChannelHistoryResult{}, domain.ErrMessageIDInvalid
+	}
 	if req.Date == 0 {
 		req.Date = nowUnix()
 	}
@@ -415,7 +408,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(ctx context.Context, req domain.D
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
-	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !canDeleteAnyChannelMessage(member) {
+	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !domain.CanDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
 	rows, err := tx.Query(ctx, `
@@ -442,7 +435,7 @@ LIMIT $3`, req.ChannelID, req.TopicID, domain.MaxDeleteHistoryBatch)
 	}
 	rows.Close()
 	audit := domain.UserDeletionAudit(domain.DeletionSourceTopicHistory, req.UserID, req.OriginAuthKeyID, req.OriginSessionID)
-	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date, audit)
+	deleted, event, channel, err := s.deleteChannelMessagesTx(ctx, tx, channel, member, ids, req.UserID, req.Date, audit, false)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
@@ -487,14 +480,14 @@ func (s *ChannelStore) ListForumTopics(ctx context.Context, viewerUserID int64, 
 	countSQL := `
 SELECT COUNT(*)::int
 FROM channel_forum_topics
-WHERE channel_id = $1 AND NOT deleted AND topic_id > $2
+WHERE channel_id = $1 AND NOT deleted AND topic_id > $2 AND topic_id <> 1
   AND ($3 = '' OR POSITION($3 IN LOWER(title)) > 0)`
 	var total int
 	if err := s.db.QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
 		return domain.ChannelForumTopicList{}, fmt.Errorf("count forum topics: %w", err)
 	}
 	args := []any{filter.ChannelID, member.AvailableMinID, query}
-	where := `channel_id = $1 AND NOT deleted AND topic_id > $2 AND ($3 = '' OR POSITION($3 IN LOWER(title)) > 0)`
+	where := `channel_id = $1 AND NOT deleted AND topic_id > $2 AND topic_id <> 1 AND ($3 = '' OR POSITION($3 IN LOWER(title)) > 0)`
 	offsetID := filter.OffsetTopic
 	if offsetID == 0 {
 		offsetID = filter.OffsetID
@@ -657,6 +650,13 @@ func (s *ChannelStore) getForumTopic(ctx context.Context, db sqlcgen.DBTX, chann
 SELECT `+channelForumTopicColumns+`
 FROM channel_forum_topics
 WHERE channel_id = $1 AND topic_id = $2 AND NOT deleted`, channelID, topicID))
+	if errors.Is(err, pgx.ErrNoRows) && topicID == domain.ForumGeneralTopicID {
+		channel, channelErr := getChannelByID(ctx, db, channelID)
+		if channelErr != nil {
+			return domain.ChannelForumTopic{}, channelErr
+		}
+		return domain.ChannelForumTopic{ChannelID: channelID, TopicID: topicID, Title: "General", IconColor: domain.DefaultForumTopicIconColor, CreatorUserID: channel.CreatorUserID, Date: channel.Date}, nil
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ChannelForumTopic{}, domain.ErrMessageIDInvalid
 	}
@@ -736,9 +736,10 @@ func (s *ChannelStore) populateChannelMessageReplies(ctx context.Context, db sql
 			rootID = messages[i].Discussion.MessageID
 			replies.Comments = true
 			replies.ChannelID = messages[i].Discussion.ChannelID
-		} else if channel.Broadcast && channel.LinkedChatID != 0 && messages[i].Post {
-			replies.Comments = true
-			replies.ChannelID = channel.LinkedChatID
+		} else if channel.Broadcast && messages[i].Post {
+			// Only the persisted discussion reference proves a comments root.
+			messages[i].Replies = nil
+			continue
 		}
 		if _, ok := readMaxByChannel[targetChannelID]; !ok {
 			readInbox, _ := s.channelReadWatermarks(ctx, targetChannelID, viewerUserID)
@@ -1049,11 +1050,9 @@ func scanChannelForumTopic(row rowScanner) (domain.ChannelForumTopic, error) {
 }
 
 func canManageForumTopic(channel domain.Channel, member domain.ChannelMember, topic domain.ChannelForumTopic, userID int64, selfBoostsApplied int) bool {
-	if domain.ChannelBannedRightsBlockManageTopics(channel, member, selfBoostsApplied) {
-		return false
-	}
-	if topic.CreatorUserID == userID {
+	if member.Role == domain.ChannelRoleCreator || (member.Role == domain.ChannelRoleAdmin && member.AdminRights.ManageTopics) {
 		return true
 	}
-	return canPinChannelMessages(channel, member)
+	return topic.TopicID != domain.ForumGeneralTopicID && topic.CreatorUserID == userID &&
+		!domain.ChannelBannedRightsBlockManageTopics(channel, member, selfBoostsApplied)
 }

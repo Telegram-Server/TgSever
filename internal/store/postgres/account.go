@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,22 +36,29 @@ SELECT
   email_unconfirmed_pattern, login_email_pattern, secure_random,
   current_algo_salt1, current_algo_salt2, current_algo_g, current_algo_p,
   srp_id, srp_verifier, srp_b_secret, srp_b,
-  recovery_email, login_email
+  recovery_email, login_email, secure_settings
 FROM account_passwords
 WHERE user_id = $1`, userID)
 	var settings domain.PasswordSettings
 	var salt1, salt2, p []byte
+	var secureJSON []byte
 	if err := row.Scan(
 		&settings.HasRecovery, &settings.HasSecureValues, &settings.HasPassword, &settings.Hint,
 		&settings.EmailUnconfirmedPattern, &settings.LoginEmailPattern, &settings.SecureRandom,
 		&salt1, &salt2, &settings.NewAlgo.G, &p,
 		&settings.SRPID, &settings.SRPVerifier, &settings.SRPBSecret, &settings.SRPB,
 		&settings.RecoveryEmail, &settings.LoginEmail,
+		&secureJSON,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.PasswordSettings{}, false, nil
 		}
 		return domain.PasswordSettings{}, false, fmt.Errorf("get account password: %w", err)
+	}
+	if len(secureJSON) > 0 && string(secureJSON) != "null" {
+		if err := json.Unmarshal(secureJSON, &settings.SecureSettings); err != nil {
+			return domain.PasswordSettings{}, false, err
+		}
 	}
 	if len(salt1) > 0 || len(salt2) > 0 || len(p) > 0 || settings.NewAlgo.G != 0 {
 		settings.CurrentAlgo = &domain.PasswordKDFAlgo{
@@ -97,15 +105,19 @@ func (s *PasswordStore) Save(ctx context.Context, userID int64, settings domain.
 	if settings.CurrentAlgo != nil {
 		algo = *settings.CurrentAlgo
 	}
-	_, err := s.db.Exec(ctx, `
+	secureJSON, err := json.Marshal(settings.SecureSettings)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
 INSERT INTO account_passwords (
   user_id, has_recovery, has_secure_values, has_password, hint,
   email_unconfirmed_pattern, login_email_pattern, secure_random,
   current_algo_salt1, current_algo_salt2, current_algo_g, current_algo_p,
   srp_id, srp_verifier, srp_b_secret, srp_b,
-  recovery_email, login_email
+  recovery_email, login_email, secure_settings
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 ON CONFLICT (user_id) DO UPDATE SET
   has_recovery = EXCLUDED.has_recovery,
   has_secure_values = EXCLUDED.has_secure_values,
@@ -124,6 +136,7 @@ ON CONFLICT (user_id) DO UPDATE SET
   srp_b = EXCLUDED.srp_b,
   recovery_email = EXCLUDED.recovery_email,
   login_email = EXCLUDED.login_email,
+  secure_settings = EXCLUDED.secure_settings,
   updated_at = now()`,
 		userID,
 		settings.HasRecovery, settings.HasSecureValues, settings.HasPassword, settings.Hint,
@@ -131,6 +144,7 @@ ON CONFLICT (user_id) DO UPDATE SET
 		nonNilBytea(algo.Salt1), nonNilBytea(algo.Salt2), algo.G, nonNilBytea(algo.P),
 		settings.SRPID, nonNilBytea(settings.SRPVerifier), nonNilBytea(settings.SRPBSecret), nonNilBytea(settings.SRPB),
 		settings.RecoveryEmail, settings.LoginEmail,
+		secureJSON,
 	)
 	if err != nil {
 		if isAccountPasswordLoginEmailUnique(err) {

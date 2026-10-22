@@ -348,9 +348,6 @@ func TestBotFatherSetInlineFlow(t *testing.T) {
 	if p, _, _ := bots.GetBot(ctx, bot.ID); p.InlineGeo {
 		t.Fatalf("inline_geo = true, want disabled")
 	}
-	if reply := sendToBotFather(t, svc, messages, owner, "/setinlinefeedback"); !strings.Contains(reply, "not supported yet") {
-		t.Fatalf("/setinlinefeedback reply = %q, want explicit stub", reply)
-	}
 }
 
 func TestRevokeBotTokenRevokesSessions(t *testing.T) {

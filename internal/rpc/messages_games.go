@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/iamxvbaba/td/tg"
+	"telesrv/internal/domain"
 )
 
 func (r *Router) onMessagesGetEmojiGameInfo(ctx context.Context) (tg.MessagesEmojiGameInfoClass, error) {
@@ -13,58 +14,101 @@ func (r *Router) onMessagesGetEmojiGameInfo(ctx context.Context) (tg.MessagesEmo
 	return &tg.MessagesEmojiGameUnavailable{}, nil
 }
 
+func (r *Router) gameScoreUser(ctx context.Context, botID int64, in tg.InputUserClass) (int64, error) {
+	u, found, err := r.userFromInput(ctx, botID, in)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, userIDInvalidErr()
+	}
+	return u.ID, nil
+}
+func gameScoreChatID(peer domain.Peer) int64 {
+	if peer.Type == domain.PeerTypeChannel {
+		return -botAPIChannelChatIDBase - peer.ID
+	}
+	return peer.ID
+}
+func tgGameHighScores(scores []domain.BotAPIGameHighScore) *tg.MessagesHighScores {
+	out := &tg.MessagesHighScores{Scores: []tg.HighScore{}, Users: []tg.UserClass{}}
+	for _, s := range scores {
+		out.Scores = append(out.Scores, tg.HighScore{Pos: s.Position, UserID: s.User.ID, Score: s.Score})
+		out.Users = append(out.Users, tgUser(s.User))
+	}
+	return out
+}
 func (r *Router) onMessagesGetGameHighScores(ctx context.Context, req *tg.MessagesGetGameHighScoresRequest) (*tg.MessagesHighScores, error) {
 	botID, err := r.callerBotID(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if req.ID <= 0 {
-		return nil, messageIDInvalidErr()
-	}
-	if _, err := r.checkedDomainPeerFromInputPeer(ctx, botID, req.Peer); err != nil {
+	peer, err := r.checkedDomainPeerFromInputPeer(ctx, botID, req.Peer)
+	if err != nil {
 		return nil, err
 	}
-	if err := r.validateInputUser(ctx, req.UserID); err != nil {
+	userID, err := r.gameScoreUser(ctx, botID, req.UserID)
+	if err != nil {
 		return nil, err
 	}
-	return nil, messageIDInvalidErr()
+	scores, err := r.BotAPIGetGameHighScores(ctx, botID, gameScoreChatID(peer), req.ID, userID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return tgGameHighScores(scores), nil
 }
-
 func (r *Router) onMessagesGetInlineGameHighScores(ctx context.Context, req *tg.MessagesGetInlineGameHighScoresRequest) (*tg.MessagesHighScores, error) {
-	if _, err := r.callerBotID(ctx); err != nil {
+	botID, err := r.callerBotID(ctx)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateInputBotInlineMessageID(req.ID); err != nil {
 		return nil, err
 	}
-	if err := r.validateInputUser(ctx, req.UserID); err != nil {
+	userID, err := r.gameScoreUser(ctx, botID, req.UserID)
+	if err != nil {
 		return nil, err
 	}
-	return nil, messageIDInvalidErr()
+	id, ok := req.ID.(*tg.InputBotInlineMessageID64)
+	if !ok {
+		return nil, messageIDInvalidErr()
+	}
+	inline := domainInlineMessageID(id)
+	scores, err := r.BotAPIGetGameHighScores(ctx, botID, 0, 0, userID, inline)
+	if err != nil {
+		return nil, err
+	}
+	return tgGameHighScores(scores), nil
 }
-
 func (r *Router) onMessagesSetGameScore(ctx context.Context, req *tg.MessagesSetGameScoreRequest) (tg.UpdatesClass, error) {
 	botID, err := r.callerBotID(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if req.ID <= 0 {
-		return nil, messageIDInvalidErr()
-	}
 	if req.Score < 0 {
 		return nil, scoreInvalidErr()
 	}
-	if _, err := r.checkedDomainPeerFromInputPeer(ctx, botID, req.Peer); err != nil {
+	peer, err := r.checkedDomainPeerFromInputPeer(ctx, botID, req.Peer)
+	if err != nil {
 		return nil, err
 	}
-	if err := r.validateInputUser(ctx, req.UserID); err != nil {
+	userID, err := r.gameScoreUser(ctx, botID, req.UserID)
+	if err != nil {
 		return nil, err
 	}
-	return nil, messageIDInvalidErr()
+	msg, err := r.BotAPISetGameScore(ctx, botID, gameScoreChatID(peer), req.ID, userID, req.Score, req.Force, !req.EditMessage, nil)
+	if err != nil {
+		return nil, err
+	}
+	out := &tg.Updates{Date: int(r.clock.Now().Unix())}
+	if req.EditMessage {
+		out.Updates = []tg.UpdateClass{&tg.UpdateEditMessage{Message: tgMessage(msg), Pts: msg.Pts, PtsCount: 1}}
+	}
+	return out, nil
 }
-
 func (r *Router) onMessagesSetInlineGameScore(ctx context.Context, req *tg.MessagesSetInlineGameScoreRequest) (bool, error) {
-	if _, err := r.callerBotID(ctx); err != nil {
+	botID, err := r.callerBotID(ctx)
+	if err != nil {
 		return false, err
 	}
 	if err := validateInputBotInlineMessageID(req.ID); err != nil {
@@ -73,10 +117,17 @@ func (r *Router) onMessagesSetInlineGameScore(ctx context.Context, req *tg.Messa
 	if req.Score < 0 {
 		return false, scoreInvalidErr()
 	}
-	if err := r.validateInputUser(ctx, req.UserID); err != nil {
+	userID, err := r.gameScoreUser(ctx, botID, req.UserID)
+	if err != nil {
 		return false, err
 	}
-	return false, messageIDInvalidErr()
+	id, ok := req.ID.(*tg.InputBotInlineMessageID64)
+	if !ok {
+		return false, messageIDInvalidErr()
+	}
+	inline := domainInlineMessageID(id)
+	_, err = r.BotAPISetGameScore(ctx, botID, 0, 0, userID, req.Score, req.Force, !req.EditMessage, inline)
+	return err == nil, err
 }
 
 func validateInputBotInlineMessageID(id tg.InputBotInlineMessageIDClass) error {

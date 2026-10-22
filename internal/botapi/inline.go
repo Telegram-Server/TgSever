@@ -26,30 +26,27 @@ func inlineResultFromAPI(raw string) (domain.BotInlineResult, error) {
 		return domain.BotInlineResult{}, errors.New("RESULT_ID_INVALID")
 	}
 	if payload.Type != "article" {
-		return domain.BotInlineResult{}, errors.New("RESULT_TYPE_INVALID")
+		return inlineNonArticleResultFromAPI(raw, payload)
 	}
-	if payload.URL != "" && !validBotAPIHTTPSURL(payload.URL) {
+	if payload.URL != "" && !validInlineResultURL(payload.URL) {
 		return domain.BotInlineResult{}, errors.New("BUTTON_URL_INVALID")
-	}
-	message, entities, noWebpage, err := inputTextMessageContentFromAPI(payload)
-	if err != nil {
-		return domain.BotInlineResult{}, err
 	}
 	markup, err := inlineReplyMarkupFromAPI(payload.ReplyMarkup)
 	if err != nil {
 		return domain.BotInlineResult{}, err
 	}
-	return domain.BotInlineResult{
-		ID:          payload.ID,
-		Type:        payload.Type,
-		Title:       payload.Title,
-		Description: payload.Description,
-		URL:         payload.URL,
-		Message:     message,
-		Entities:    entities,
-		ReplyMarkup: markup,
-		NoWebpage:   noWebpage,
-	}, nil
+	out := domain.BotInlineResult{ID: payload.ID, Type: payload.Type, Title: payload.Title, Description: payload.Description, URL: payload.URL, ReplyMarkup: markup}
+	if payload.ThumbnailURL != "" {
+		if !validInlineResultURL(payload.ThumbnailURL) || payload.ThumbnailWidth < 0 || payload.ThumbnailHeight < 0 {
+			return out, errors.New("WEBDOCUMENT_INVALID")
+		}
+		out.Thumb = &domain.BotInlineWebDocument{URL: payload.ThumbnailURL, MimeType: "image/jpeg", Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrImageSize, W: payload.ThumbnailWidth, H: payload.ThumbnailHeight}}}
+	}
+	if len(payload.InputMessageContent) > 0 && string(payload.InputMessageContent) != "null" {
+		return inlineOverrideContent(out, payload)
+	}
+	out.Message, out.Entities, out.NoWebpage, err = inputTextMessageContentFromAPI(payload)
+	return out, err
 }
 
 func inputTextMessageContentFromAPI(payload apiInlineResult) (string, []domain.MessageEntity, bool, error) {
@@ -314,6 +311,9 @@ func replyKeyboardMarkupFromAPI(raw json.RawMessage) (*domain.MessageReplyMarkup
 				}
 				item.MaxQuantity, item.NameRequested, item.UsernameRequested, item.PhotoRequested = 1, button.RequestTitle, button.RequestUsername, button.RequestPhoto
 				item.RequestPeerFilter = button.RequestPeerFilter
+			case "request_managed_bot":
+				item.Type, item.ButtonID, item.RequestPeerType, item.MaxQuantity = domain.MarkupButtonRequestPeer, button.RequestID, "managed_bot", 1
+				item.SuggestedName, item.SuggestedUsername = button.SuggestedName, button.SuggestedUsername
 			case "web_app":
 				item.Type, item.URL = domain.MarkupButtonSimpleWebView, button.WebAppURL
 			}
@@ -350,12 +350,18 @@ func markupButtonFromAPI(button apiInlineKeyboardButton) (domain.MarkupButton, e
 	if button.LoginURLSet {
 		constructors++
 	}
+	if button.CallbackGameSet {
+		constructors++
+	}
 	if constructors != 1 {
 		return domain.MarkupButton{}, errors.New("BUTTON_INVALID")
 	}
 	style, icon, err := markupButtonDecorationFromAPI(button.Style, button.IconCustomEmojiID, button.IconCustomEmojiIDSet)
 	if err != nil {
 		return domain.MarkupButton{}, err
+	}
+	if button.CallbackGameSet {
+		return domain.MarkupButton{Type: domain.MarkupButtonGame, Text: button.Text, Style: style, IconCustomEmojiID: icon}, nil
 	}
 	if button.URLSet {
 		return domain.MarkupButton{Type: domain.MarkupButtonURL, Text: button.Text, URL: button.URL, Style: style, IconCustomEmojiID: icon}, nil
@@ -455,6 +461,9 @@ type apiInlineResult struct {
 	MessageText         string          `json:"message_text"`
 	InputMessageContent json.RawMessage `json:"input_message_content"`
 	ReplyMarkup         json.RawMessage `json:"reply_markup"`
+	ThumbnailURL        string          `json:"thumbnail_url"`
+	ThumbnailWidth      int             `json:"thumbnail_width"`
+	ThumbnailHeight     int             `json:"thumbnail_height"`
 }
 
 type apiInputTextMessageContent struct {
@@ -511,6 +520,8 @@ type apiKeyboardButton struct {
 	ChatIsChannel        bool
 	WebAppURL            string
 	RequestPeerFilter    *domain.BotRequestPeerFilter
+	SuggestedName        string
+	SuggestedUsername    string
 }
 
 type apiChatAdministratorRights struct {
@@ -611,7 +622,7 @@ func (b *apiKeyboardButton) UnmarshalJSON(data []byte) error {
 			RequestUsername bool  `json:"request_username"`
 			RequestPhoto    bool  `json:"request_photo"`
 		}
-		if json.Unmarshal(raw, &request) != nil || request.RequestID == 0 {
+		if json.Unmarshal(raw, &request) != nil || !jsonObjectHasField(raw, "request_id") {
 			b.Unsupported = true
 		} else {
 			b.Kind, b.RequestID, b.MaxQuantity, b.RequestName, b.RequestUsername, b.RequestPhoto = "request_users", request.RequestID, request.MaxQuantity, request.RequestName, request.RequestUsername, request.RequestPhoto
@@ -642,7 +653,7 @@ func (b *apiKeyboardButton) UnmarshalJSON(data []byte) error {
 			RequestUsername         bool                        `json:"request_username"`
 			RequestPhoto            bool                        `json:"request_photo"`
 		}
-		if json.Unmarshal(raw, &request) != nil || request.RequestID == 0 || (request.ChatIsChannel && (request.ChatIsForum != nil || request.BotIsMember)) {
+		if json.Unmarshal(raw, &request) != nil || !jsonObjectHasField(raw, "request_id") || (request.ChatIsChannel && (request.ChatIsForum != nil || request.BotIsMember)) {
 			b.Unsupported = true
 		} else {
 			b.Kind, b.RequestID, b.ChatIsChannel, b.RequestTitle, b.RequestUsername, b.RequestPhoto = "request_chat", request.RequestID, request.ChatIsChannel, request.RequestTitle, request.RequestUsername, request.RequestPhoto
@@ -657,6 +668,19 @@ func (b *apiKeyboardButton) UnmarshalJSON(data []byte) error {
 			if request.ChatHasUsername != nil {
 				b.RequestPeerFilter.ChatHasUsernameSet, b.RequestPeerFilter.ChatHasUsername = true, *request.ChatHasUsername
 			}
+			actions++
+		}
+	}
+	if raw, ok := fields["request_managed_bot"]; ok {
+		var request struct {
+			RequestID         *int   `json:"request_id"`
+			SuggestedName     string `json:"suggested_name"`
+			SuggestedUsername string `json:"suggested_username"`
+		}
+		if json.Unmarshal(raw, &request) != nil || request.RequestID == nil {
+			b.Unsupported = true
+		} else {
+			b.Kind, b.RequestID, b.MaxQuantity, b.SuggestedName, b.SuggestedUsername = "request_managed_bot", *request.RequestID, 1, request.SuggestedName, request.SuggestedUsername
 			actions++
 		}
 	}
@@ -679,7 +703,7 @@ func (b *apiKeyboardButton) UnmarshalJSON(data []byte) error {
 	}
 	for key := range fields {
 		switch key {
-		case "text", "style", "icon_custom_emoji_id", "request_contact", "request_location", "request_poll", "request_users", "request_chat", "web_app":
+		case "text", "style", "icon_custom_emoji_id", "request_contact", "request_location", "request_poll", "request_users", "request_chat", "request_managed_bot", "web_app":
 		default:
 			b.Unsupported = true
 		}
@@ -721,6 +745,7 @@ type apiInlineKeyboardButton struct {
 	LoginBotUsername        string
 	LoginRequestWriteAccess bool
 	LoginURLSet             bool
+	CallbackGameSet         bool
 }
 
 func (b *apiInlineKeyboardButton) UnmarshalJSON(data []byte) error {
@@ -731,6 +756,13 @@ func (b *apiInlineKeyboardButton) UnmarshalJSON(data []byte) error {
 	text, ok := fields["text"]
 	if !ok || json.Unmarshal(text, &b.Text) != nil {
 		return errors.New("invalid inline keyboard button text")
+	}
+	if raw, ok := fields["callback_game"]; ok {
+		var game map[string]json.RawMessage
+		if json.Unmarshal(raw, &game) != nil || game == nil || len(game) != 0 {
+			return errors.New("invalid callback game")
+		}
+		b.CallbackGameSet = true
 	}
 	if raw, ok := fields["url"]; ok {
 		b.URLSet = true
@@ -836,7 +868,7 @@ func (b *apiInlineKeyboardButton) UnmarshalJSON(data []byte) error {
 	}
 	for key := range fields {
 		switch key {
-		case "text", "url", "callback_data", "web_app", "login_url", "switch_inline_query", "switch_inline_query_current_chat", "switch_inline_query_chosen_chat", "copy_text", "style", "icon_custom_emoji_id":
+		case "text", "url", "callback_data", "callback_game", "web_app", "login_url", "switch_inline_query", "switch_inline_query_current_chat", "switch_inline_query_chosen_chat", "copy_text", "style", "icon_custom_emoji_id":
 		default:
 			b.Unsupported = true
 		}
