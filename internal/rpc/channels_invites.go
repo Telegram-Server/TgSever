@@ -132,6 +132,8 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 		Date:   date,
 	})
 	if err != nil {
+		// 存储只在本次新产生申请时随 ErrInviteRequestSent 返回频道；申请已在待审批时频道为零值，
+		// 不重复通知管理员、不重复入队 chat_join_request。
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
 			r.enqueueBotAPIChatJoinRequest(ctx, res.Channel, userID, hash, date)

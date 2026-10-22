@@ -82,8 +82,13 @@ func ChannelMemberPreviousStates(t *testing.T, s store.ChannelStore, users [5]in
 	expect("approve request", approved, d, domain.ChannelMemberLeft, domain.ChannelRoleMember)
 
 	must(s.LeaveChannel(ctx, id, d, baseNow()))
-	if _, err := s.ImportInvite(ctx, domain.ImportChannelInviteRequest{UserID: d, Hash: requestHash, Date: baseNow()}); !errors.Is(err, domain.ErrInviteRequestSent) {
-		t.Fatalf("request invite again = %v", err)
+	if res, err := s.ImportInvite(ctx, domain.ImportChannelInviteRequest{UserID: d, Hash: requestHash, Date: baseNow()}); !errors.Is(err, domain.ErrInviteRequestSent) || res.Channel.ID != id {
+		t.Fatalf("request invite again = %v (channel %d), want a new request for %d", err, res.Channel.ID, id)
+	}
+	// 申请仍在待审批时重复申请：同样是 ErrInviteRequestSent，但不返回频道——调用方据此只在
+	// 首次产生申请时通知管理员、入队 chat_join_request。
+	if res, err := s.ImportInvite(ctx, domain.ImportChannelInviteRequest{UserID: d, Hash: requestHash, Date: baseNow()}); !errors.Is(err, domain.ErrInviteRequestSent) || res.Channel.ID != 0 {
+		t.Fatalf("repeat pending request = %v (channel %d), want ErrInviteRequestSent without channel", err, res.Channel.ID)
 	}
 	if _, err := s.ImportInvite(ctx, domain.ImportChannelInviteRequest{UserID: c, Hash: requestHash, Date: baseNow()}); !errors.Is(err, domain.ErrInviteRequestSent) {
 		t.Fatalf("restricted leaver requests = %v", err)

@@ -171,3 +171,31 @@ func TestBotAPIChatJoinRequestStaysQueuedUntilConfirmed(t *testing.T) {
 		}
 	}
 }
+
+// 申请已在待审批时重复申请（同一链接 / 公开用户名）不再入队新的 chat_join_request（review #2）。
+func TestBotAPIChatJoinRequestNotRequeuedForPendingRequest(t *testing.T) {
+	t.Run("invite link", func(t *testing.T) {
+		f := newBotAPIBridgeFixture(t)
+		f.promoteBot(t, domain.ChannelAdminRights{InviteUsers: true})
+		f.memberLeaves(t)
+		hash := applyViaInviteLink(t, f)
+		if _, err := f.router.onMessagesImportChatInvite(WithUserID(f.ctx, f.member.ID), hash); err == nil {
+			t.Fatal("repeat import joined directly")
+		}
+		if got := botJoinRequestEvents(t, f); len(got) != 1 {
+			t.Fatalf("chat_join_request events after repeat = %d, want 1", len(got))
+		}
+	})
+	t.Run("public username", func(t *testing.T) {
+		f := newBotAPIBridgeFixture(t)
+		f.promoteBot(t, domain.ChannelAdminRights{InviteUsers: true})
+		f.memberLeaves(t)
+		applyViaUsername(t, f)
+		if _, err := f.router.onChannelsJoinChannel(WithUserID(f.ctx, f.member.ID), f.inputChannel()); err == nil {
+			t.Fatal("repeat joinChannel joined directly")
+		}
+		if got := botJoinRequestEvents(t, f); len(got) != 1 {
+			t.Fatalf("chat_join_request events after repeat = %d, want 1", len(got))
+		}
+	})
+}
