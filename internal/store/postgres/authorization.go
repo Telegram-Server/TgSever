@@ -497,40 +497,10 @@ ORDER BY auth_key_id`, userID, keepAuthKeyID)
 		return nil, fmt.Errorf("iterate revoke candidates by user: %w", err)
 	}
 	candidateRows.Close()
-	if len(candidates) == 0 {
-		return []domain.Authorization{}, nil
-	}
-	if err := lockPermanentAuthIdentities(ctx, tx, candidates); err != nil {
-		return nil, err
-	}
-
-	// Advisory keys are already all held in final int32-hash order. Parent rows
-	// are then locked by their real bigint IDs for deterministic batch behavior.
-	lockRows, err := tx.Query(ctx, `
-SELECT auth_key_id
-FROM auth_keys
-WHERE auth_key_id = ANY($1::bigint[])
-ORDER BY auth_key_id
-FOR UPDATE`, candidates)
-	if err != nil {
-		return nil, fmt.Errorf("lock revoke auth keys by user: %w", err)
-	}
-	for lockRows.Next() {
-		var ignored int64
-		if err := lockRows.Scan(&ignored); err != nil {
-			lockRows.Close()
-			return nil, fmt.Errorf("scan locked revoke auth key: %w", err)
-		}
-	}
-	if err := lockRows.Err(); err != nil {
-		lockRows.Close()
-		return nil, fmt.Errorf("iterate locked revoke auth keys: %w", err)
-	}
-	lockRows.Close()
-
-	// This is intentionally a new statement snapshot after all parent locks.
-	// Keys that changed owner while waiting are omitted and must remain intact.
-	rows, err := tx.Query(ctx, `
+	return revokeAuthorizationCandidatesTx(ctx, tx, candidates, func(candidates []int64) ([]domain.Authorization, error) {
+		// This is intentionally a new statement snapshot after all parent locks.
+		// Keys that changed owner while waiting are omitted and must remain intact.
+		rows, err := tx.Query(ctx, `
 SELECT auth_key_id, user_id, hash, layer, device_model, platform, system_version,
        api_id, app_version, ip, password_pending, created_at, active_at
 FROM authorizations
@@ -539,23 +509,52 @@ WHERE user_id = $1
   AND auth_key_id = ANY($3::bigint[])
 ORDER BY created_at, auth_key_id
 FOR UPDATE`, userID, keepAuthKeyID, candidates)
-	if err != nil {
-		return nil, fmt.Errorf("revalidate revoke authorizations by user: %w", err)
-	}
-	out := make([]domain.Authorization, 0)
-	for rows.Next() {
-		a, err := scanRevokedAuthorizationRow(rows)
 		if err != nil {
-			rows.Close()
-			return nil, err
+			return nil, fmt.Errorf("revalidate revoke authorizations by user: %w", err)
 		}
-		out = append(out, a)
-	}
-	if err := rows.Err(); err != nil {
+		out := make([]domain.Authorization, 0)
+		for rows.Next() {
+			a, err := scanRevokedAuthorizationRow(rows)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out = append(out, a)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("iterate revoked authorizations: %w", err)
+		}
 		rows.Close()
-		return nil, fmt.Errorf("iterate revoked authorizations: %w", err)
+		return out, nil
+	})
+}
+
+// revokeAuthorizationCandidatesTx 是远程撤销授权的公共流程（按账号撤销、按设备解绑共用）：
+// candidates 只是提示；先按锁序锁住 auth identity（advisory）与 auth_keys 父行，再由
+// revalidate 用新的语句快照重读并锁住仍应撤销的授权（等待期间换了主的 key 被排除），最后只删
+// 业务授权与 update state，协议 key 保留，客户端重连后收到 401。
+func revokeAuthorizationCandidatesTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	candidates []int64,
+	revalidate func(candidates []int64) ([]domain.Authorization, error),
+) ([]domain.Authorization, error) {
+	if len(candidates) == 0 {
+		return []domain.Authorization{}, nil
 	}
-	rows.Close()
+	if err := lockPermanentAuthIdentities(ctx, tx, candidates); err != nil {
+		return nil, err
+	}
+	// Advisory keys are already all held in final int32-hash order. Parent rows
+	// are then locked by their real bigint IDs for deterministic batch behavior.
+	if _, err := sqlcgen.New(tx).LockAuthKeysForUpdate(ctx, candidates); err != nil {
+		return nil, fmt.Errorf("lock revoke auth keys: %w", err)
+	}
+	out, err := revalidate(candidates)
+	if err != nil {
+		return nil, err
+	}
 	if len(out) == 0 {
 		return out, nil
 	}

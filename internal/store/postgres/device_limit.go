@@ -94,7 +94,7 @@ func (s *AuthorizationStore) PreviewDeviceLimitBackfill(ctx context.Context, use
 }
 
 // BackfillDeviceBinding 是延迟补绑（#115），见 store.DeviceLimitStore。先用一条不加锁的查询
-// 排除未受限的账号（每次持久化 device_id 都会走到这里），再在用户锁下重新判定并写入。
+// 排除未受限的账号（auth key 第一次持久化 device_id 时会走到这里），再在用户锁下重新判定并写入。
 func (s *AuthorizationStore) BackfillDeviceBinding(ctx context.Context, authKeyID [8]byte) (bool, error) {
 	keyID := authKeyIDToInt64(authKeyID)
 	target, err := s.q.GetDeviceBackfillTarget(ctx, keyID)
@@ -141,41 +141,20 @@ func (s *AuthorizationStore) BackfillDeviceBinding(ctx context.Context, authKeyI
 	return bound, nil
 }
 
-// bindIfSlotFree 在调用方已拿到用户锁的事务里：c 尚未绑定且绑定数 < 上限时写入绑定并返回
-// true；没有上限（或 bot）、已绑定、名额已满都不写，返回 false。已绑定的设备不刷新最近使用时间。
+// bindIfSlotFree 在调用方已拿到用户锁的事务里按与登录相同的绑定规则（checkDeviceBinding）
+// 判定 c：尚未绑定且还有名额时写入绑定并返回 true；没有上限（或 bot）、已绑定、名额已满
+// 都不写，返回 false。已绑定的设备不刷新最近使用时间。
 func bindIfSlotFree(ctx context.Context, q *sqlcgen.Queries, c deviceBindingCandidate) (bool, error) {
-	limit, err := q.GetEnforcedDeviceLimit(ctx, c.UserID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("read device limit: %w", err)
-	}
-	if limit == nil {
+	slotFree, err := checkDeviceBinding(ctx, q, c, false)
+	if errors.Is(err, domain.ErrDeviceLimitReached) || errors.Is(err, domain.ErrDeviceIDRequired) {
+		// 补绑没有名额时什么都不做，不是错误。
 		return false, nil
 	}
-	exists, err := q.DeviceBindingExists(ctx, sqlcgen.DeviceBindingExistsParams{UserID: c.UserID, DeviceID: c.DeviceID})
-	if err != nil {
-		return false, fmt.Errorf("read device binding: %w", err)
+	if err != nil || !slotFree {
+		return false, err
 	}
-	if exists {
-		return false, nil
-	}
-	used, err := q.CountDeviceBindings(ctx, c.UserID)
-	if err != nil {
-		return false, fmt.Errorf("count device bindings: %w", err)
-	}
-	if used >= int64(*limit) {
-		return false, nil
-	}
-	if err := q.InsertDeviceBinding(ctx, sqlcgen.InsertDeviceBindingParams{
-		UserID:      c.UserID,
-		DeviceID:    c.DeviceID,
-		DeviceModel: c.DeviceModel,
-		Platform:    c.Platform,
-		AppVersion:  c.AppVersion,
-	}); err != nil {
-		return false, fmt.Errorf("insert device binding: %w", err)
+	if err := insertDeviceBinding(ctx, q, c); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -198,14 +177,8 @@ func backfillDeviceBindings(ctx context.Context, q *sqlcgen.Queries, userID int6
 		return len(plan), err
 	}
 	for _, c := range plan {
-		if err := q.InsertDeviceBinding(ctx, sqlcgen.InsertDeviceBindingParams{
-			UserID:      c.UserID,
-			DeviceID:    c.DeviceID,
-			DeviceModel: c.DeviceModel,
-			Platform:    c.Platform,
-			AppVersion:  c.AppVersion,
-		}); err != nil {
-			return 0, fmt.Errorf("insert backfilled device binding: %w", err)
+		if err := insertDeviceBinding(ctx, q, c); err != nil {
+			return 0, err
 		}
 	}
 	return len(plan), nil
@@ -322,46 +295,61 @@ func authKeyDeviceID(ctx context.Context, q *sqlcgen.Queries, authKeyID int64) (
 // 绑定与转正都先拿这把锁，"计数 + 插入"不会被并发登录穿插，绑定数永不超过上限。拒绝时
 // 本函数不写任何行，调用方回滚或按自己的做法收尾。
 func enforceDeviceBinding(ctx context.Context, q *sqlcgen.Queries, c deviceBindingCandidate, write bool) error {
+	slotFree, err := checkDeviceBinding(ctx, q, c, write)
+	if err != nil || !slotFree || !write {
+		return err
+	}
+	return insertDeviceBinding(ctx, q, c)
+}
+
+// checkDeviceBinding 是绑定规则的判定部分，登录（enforceDeviceBinding）与延迟补绑
+// （bindIfSlotFree）共用：bot 或没有上限、已绑定 → (false, nil)；device_id 不合法 →
+// domain.ErrDeviceIDRequired；尚未绑定且绑定数 < 上限 → (true, nil)，是否写入由调用方决定；
+// 否则 domain.ErrDeviceLimitReached。touchIfBound 时已绑定的设备顺带刷新最近使用时间
+// （用 TouchDeviceBinding 的影响行数代替存在性查询）。
+func checkDeviceBinding(ctx context.Context, q *sqlcgen.Queries, c deviceBindingCandidate, touchIfBound bool) (slotFree bool, err error) {
 	limit, err := q.GetEnforcedDeviceLimit(ctx, c.UserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("read device limit: %w", err)
+		return false, fmt.Errorf("read device limit: %w", err)
 	}
 	if limit == nil {
-		return nil
+		return false, nil
 	}
 	if !domain.ValidDeviceID(c.DeviceID) {
-		return domain.ErrDeviceIDRequired
+		return false, domain.ErrDeviceIDRequired
 	}
-	if write {
+	if touchIfBound {
 		touched, err := q.TouchDeviceBinding(ctx, sqlcgen.TouchDeviceBindingParams{UserID: c.UserID, DeviceID: c.DeviceID})
 		if err != nil {
-			return fmt.Errorf("touch device binding: %w", err)
+			return false, fmt.Errorf("touch device binding: %w", err)
 		}
 		if touched > 0 {
-			return nil
+			return false, nil
 		}
 	} else {
 		bound, err := q.DeviceBindingExists(ctx, sqlcgen.DeviceBindingExistsParams{UserID: c.UserID, DeviceID: c.DeviceID})
 		if err != nil {
-			return fmt.Errorf("read device binding: %w", err)
+			return false, fmt.Errorf("read device binding: %w", err)
 		}
 		if bound {
-			return nil
+			return false, nil
 		}
 	}
 	used, err := q.CountDeviceBindings(ctx, c.UserID)
 	if err != nil {
-		return fmt.Errorf("count device bindings: %w", err)
+		return false, fmt.Errorf("count device bindings: %w", err)
 	}
 	if used >= int64(*limit) {
-		return domain.ErrDeviceLimitReached
+		return false, domain.ErrDeviceLimitReached
 	}
-	if !write {
-		return nil
-	}
+	return true, nil
+}
+
+// insertDeviceBinding 把 c 写进账号的绑定名单。调用方已在同一事务里拿到用户锁并判定了名额。
+func insertDeviceBinding(ctx context.Context, q *sqlcgen.Queries, c deviceBindingCandidate) error {
 	if err := q.InsertDeviceBinding(ctx, sqlcgen.InsertDeviceBindingParams{
 		UserID:      c.UserID,
 		DeviceID:    c.DeviceID,
@@ -406,41 +394,29 @@ func (s *AuthorizationStore) UnbindDevice(ctx context.Context, userID int64, dev
 	return out, nil
 }
 
-// revokeAuthorizationsOnDeviceTx 撤销 userID 在 device_id 为 deviceID 的 auth key 上的全部授权。
-// 候选查询只是提示：锁住 auth identity 与 auth_keys 行之后用新的语句快照重读，等待期间换了主
-// 的 key 不会被误删。
+// revokeAuthorizationsOnDeviceTx 撤销 userID 在 device_id 为 deviceID 的 auth key 上的全部授权，
+// 走与 revokeByUserExceptTx 相同的 revokeAuthorizationCandidatesTx 流程：候选查询只是提示，
+// 锁住 auth identity 与 auth_keys 行之后用新的语句快照重读，等待期间换了主的 key 不会被误删。
 func revokeAuthorizationsOnDeviceTx(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, userID int64, deviceID string) ([]domain.Authorization, error) {
 	candidates, err := q.ListAuthKeyIDsOnDevice(ctx, sqlcgen.ListAuthKeyIDsOnDeviceParams{UserID: userID, DeviceID: &deviceID})
 	if err != nil {
 		return nil, fmt.Errorf("select unbind revoke candidates: %w", err)
 	}
-	if len(candidates) == 0 {
-		return []domain.Authorization{}, nil
-	}
-	if err := lockPermanentAuthIdentities(ctx, tx, candidates); err != nil {
-		return nil, err
-	}
-	if _, err := q.LockAuthKeysForUpdate(ctx, candidates); err != nil {
-		return nil, fmt.Errorf("lock unbind auth keys: %w", err)
-	}
-	rows, err := q.ListAuthorizationsOnDeviceForUpdate(ctx, sqlcgen.ListAuthorizationsOnDeviceForUpdateParams{
-		UserID: userID, DeviceID: &deviceID, AuthKeyIds: candidates,
+	return revokeAuthorizationCandidatesTx(ctx, tx, candidates, func(candidates []int64) ([]domain.Authorization, error) {
+		rows, err := q.ListAuthorizationsOnDeviceForUpdate(ctx, sqlcgen.ListAuthorizationsOnDeviceForUpdateParams{
+			UserID: userID, DeviceID: &deviceID, AuthKeyIds: candidates,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("revalidate unbind authorizations: %w", err)
+		}
+		out := make([]domain.Authorization, 0, len(rows))
+		for _, row := range rows {
+			a := authorizationFromRow(row.Authorization)
+			a.PasswordPending = row.Authorization.PasswordPending
+			out = append(out, a)
+		}
+		return out, nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("revalidate unbind authorizations: %w", err)
-	}
-	out := make([]domain.Authorization, 0, len(rows))
-	targets := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		a := authorizationFromRow(row.Authorization)
-		a.PasswordPending = row.Authorization.PasswordPending
-		out = append(out, a)
-		targets = append(targets, row.Authorization.AuthKeyID)
-	}
-	if err := deleteRevokedAuthorizationStateTx(ctx, tx, targets); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // PreviewUnbindDevice 不加锁地报告解绑会撤销的授权数（试运行）。

@@ -427,28 +427,37 @@ func (s *AuthorizationStore) bindLocked(a domain.Authorization, limited bool, de
 // 绑定数 < 上限 → 放行（write 时写入绑定）；否则 ErrDeviceLimitReached。调用方持有 mu，
 // write=true 时必须是写锁。
 func (s *AuthorizationStore) enforceDeviceBindingLocked(a domain.Authorization, deviceID string, write bool, now time.Time) error {
-	limit, ok := s.deviceLimits[a.UserID]
+	slotFree, err := s.checkDeviceBindingLocked(a.UserID, deviceID, write, now)
+	if err == nil && slotFree && write {
+		s.insertDeviceBindingLocked(a, deviceID, now)
+	}
+	return err
+}
+
+// checkDeviceBindingLocked 是绑定规则 3–6 的判定部分，登录（enforceDeviceBindingLocked）与
+// 延迟补绑（BackfillDeviceBinding）共用：没有上限、已绑定 → (false, nil)；deviceID 不合法 →
+// ErrDeviceIDRequired；尚未绑定且绑定数 < 上限 → (true, nil)，是否写入由调用方决定；否则
+// ErrDeviceLimitReached。touchIfBound 时已绑定的设备刷新最近使用时间（需持有 mu 写锁）。
+func (s *AuthorizationStore) checkDeviceBindingLocked(userID int64, deviceID string, touchIfBound bool, now time.Time) (slotFree bool, err error) {
+	limit, ok := s.deviceLimits[userID]
 	if !ok {
-		return nil
+		return false, nil
 	}
 	if !domain.ValidDeviceID(deviceID) {
-		return domain.ErrDeviceIDRequired
+		return false, domain.ErrDeviceIDRequired
 	}
-	bound := s.deviceBindings[a.UserID]
+	bound := s.deviceBindings[userID]
 	if b, ok := bound[deviceID]; ok {
-		if write {
+		if touchIfBound {
 			b.LastUsedAt = now
 			bound[deviceID] = b
 		}
-		return nil
+		return false, nil
 	}
 	if len(bound) >= limit {
-		return domain.ErrDeviceLimitReached
+		return false, domain.ErrDeviceLimitReached
 	}
-	if write {
-		s.insertDeviceBindingLocked(a, deviceID, now)
-	}
-	return nil
+	return true, nil
 }
 
 // insertDeviceBindingLocked 把 deviceID 写进 a.UserID 的绑定名单，设备信息取自授权 a。
@@ -724,12 +733,8 @@ func (s *AuthorizationStore) BackfillDeviceBinding(ctx context.Context, authKeyI
 	if !ok || current.UserID != a.UserID || current.PasswordPending {
 		return false, nil
 	}
-	limit, ok := s.deviceLimits[current.UserID]
-	if !ok {
-		return false, nil
-	}
-	bound := s.deviceBindings[current.UserID]
-	if _, ok := bound[deviceID]; ok || len(bound) >= limit {
+	// 与登录同一套规则；名额已满等拒绝在补绑里只是"不绑定"，已绑定的设备不刷新最近使用时间。
+	if slotFree, err := s.checkDeviceBindingLocked(current.UserID, deviceID, false, time.Time{}); err != nil || !slotFree {
 		return false, nil
 	}
 	s.insertDeviceBindingLocked(current, deviceID, time.Now())
