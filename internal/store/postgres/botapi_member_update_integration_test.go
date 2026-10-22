@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -45,6 +46,13 @@ func TestBotAPIChatMemberUpdatesRoundTrip(t *testing.T) {
 	})
 }
 
+func TestBotAPIChatJoinRequestUpdatesRoundTrip(t *testing.T) {
+	pool := testPool(t)
+	storetest.BotAPIJoinRequestUpdates(t, func(t *testing.T) storetest.BotAPIMemberUpdateFixture {
+		return botAPIMemberUpdateFixture(t, pool)
+	})
+}
+
 // 只有 Postgres 才有的部分：ListTailBotAPIUpdates 读出成员载荷，以及表约束本身。
 func TestBotAPIChatMemberUpdatesTailAndConstraintsPostgres(t *testing.T) {
 	pool := testPool(t)
@@ -70,5 +78,38 @@ VALUES ($1, 'my_chat_member', 'channel', $2, 0, $3)`, f.BotID, chat.ID, now); er
 INSERT INTO bot_api_updates (bot_user_id, update_kind, peer_type, peer_id, message_id, date, member_payload)
 VALUES ($1, 'message', 'channel', $2, 5, $3, '{}'::jsonb)`, f.BotID, chat.ID, now); err == nil {
 		t.Fatal("a message row with member_payload passed the table constraints")
+	}
+}
+
+// chat_join_request 的表约束：申请类行必须有载荷且与 peer 一致，其他种类不能带申请载荷。
+func TestBotAPIChatJoinRequestConstraintsPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	f := botAPIMemberUpdateFixture(t, pool)
+	chat := storetest.BotAPIMemberUpdateChat(f.BotID)
+	payload := func(chatID, userID int64) *string {
+		out := fmt.Sprintf(`{"chat":{"Type":"channel","ID":%d},"user_id":%d,"date":1}`, chatID, userID)
+		return &out
+	}
+	cases := map[string]struct {
+		kind    string
+		message int
+		payload *string
+	}{
+		"join request without payload": {kind: "chat_join_request"},
+		"payload on a message row":     {kind: "message", message: 5, payload: payload(chat.ID, f.OtherUserID)},
+		"payload of another chat":      {kind: "chat_join_request", payload: payload(chat.ID+1, f.OtherUserID)},
+		"bot applies to itself":        {kind: "chat_join_request", payload: payload(chat.ID, f.BotID)},
+	}
+	insert := `
+INSERT INTO bot_api_updates (bot_user_id, update_kind, peer_type, peer_id, message_id, date, join_request_payload)
+VALUES ($1, $2, 'channel', $3, $4, 1, $5::jsonb)`
+	for name, tc := range cases {
+		if _, err := pool.Exec(ctx, insert, f.BotID, tc.kind, chat.ID, tc.message, tc.payload); err == nil {
+			t.Fatalf("%s passed the table constraints", name)
+		}
+	}
+	if _, err := pool.Exec(ctx, insert, f.BotID, "chat_join_request", chat.ID, 0, payload(chat.ID, f.OtherUserID)); err != nil {
+		t.Fatalf("a well-formed join request row was rejected: %v", err)
 	}
 }
