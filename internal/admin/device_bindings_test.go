@@ -6,7 +6,6 @@ import (
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
-	"telesrv/internal/store/memory"
 )
 
 // 后台读取账号设备绑定名单（#113）：按绑定先后返回每台设备的型号、平台、客户端版本、绑定时间与
@@ -14,11 +13,10 @@ import (
 
 func TestDeviceBindingsListsBoundDevicesInBindingOrder(t *testing.T) {
 	f := newDeviceLimitFixture(t)
-	keys := memory.NewAuthKeyStore()
-	f.auths.LinkAuthKeyAuthority(keys)
+	keys := f.keys
 	ctx := context.Background()
 	u := f.user(t, domain.User{Phone: "15550105201", FirstName: "Staff"})
-	if err := f.auths.SetDeviceLimit(ctx, u.ID, 3); err != nil {
+	if _, err := f.auths.SetDeviceLimit(ctx, u.ID, 3); err != nil {
 		t.Fatalf("set limit: %v", err)
 	}
 	for i, d := range []struct{ id, model, platform, version string }{
