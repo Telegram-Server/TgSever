@@ -21,4 +21,5 @@ var (
 	_ botapi.SendExtraGateway        = (*rpc.Router)(nil)
 	_ botapi.EditExtraGateway        = (*rpc.Router)(nil)
 	_ botapi.MenuButtonGateway       = (*rpc.Router)(nil)
+	_ botapi.UserPhotosGateway       = (*rpc.Router)(nil)
 )

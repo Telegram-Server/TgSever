@@ -452,32 +452,9 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	// 冻结/已删除账号对观察者呈 deleted 墓碑：主头像已塌缩为「已删除账号」占位，
-	// 相册必须一并清空，否则资料页同时出现墓碑占位与用户真实照片两枚头像。
-	// 相册数据保留在 Files 存储（drop 会破坏解冻恢复），墓碑是视图期投影，
-	// 解冻后此处自然放行、真实照片原样恢复。相册数据不被删除。
-	var photos []domain.Photo
-	var total int
-	if target.ID != currentUserID && target.Deleted {
-		// tombstone: empty album
-	} else {
-		visible, err := r.canSeeProfilePhotoAlbum(ctx, currentUserID, target.ID)
-		if err != nil {
-			return nil, internalErr()
-		}
-		if visible {
-			photos, total, err = r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, req.MaxID)
-			// 没有任何 profile 头像时他人看到的 user.photo 是 fallback，相册也给 fallback，
-			// 否则可见的联系人反而比陌生人看到的少。本人的 fallback 由 userFull 单独展示。
-			if err == nil && total == 0 && target.ID != currentUserID {
-				photos, total, err = r.hiddenProfilePhotoAlbum(ctx, target.ID, offset, limit, req.MaxID)
-			}
-		} else {
-			photos, total, err = r.hiddenProfilePhotoAlbum(ctx, target.ID, offset, limit, req.MaxID)
-		}
-		if err != nil {
-			return nil, internalErr()
-		}
+	photos, total, err := r.profilePhotoAlbumPage(ctx, currentUserID, target, offset, limit, req.MaxID)
+	if err != nil {
+		return nil, internalErr()
 	}
 	tgPhotos := make([]tg.PhotoClass, 0, len(photos))
 	for _, p := range photos {
@@ -499,6 +476,33 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 		return &tg.PhotosPhotosSlice{Count: total, Photos: tgPhotos, Users: users}, nil
 	}
 	return &tg.PhotosPhotos{Photos: tgPhotos, Users: users}, nil
+}
+
+// profilePhotoAlbumPage 是 viewer 眼中 target 头像相册的一页与总数：已按墓碑与头像隐私
+// 裁剪。photos.getUserPhotos 与 Bot API getUserProfilePhotos 共用，保证客户端与机器人
+// 看到同一本相册。
+func (r *Router) profilePhotoAlbumPage(ctx context.Context, currentUserID int64, target domain.User, offset, limit int, maxID int64) ([]domain.Photo, int, error) {
+	// 冻结/已删除账号对观察者呈 deleted 墓碑：主头像已塌缩为「已删除账号」占位，
+	// 相册必须一并清空，否则资料页同时出现墓碑占位与用户真实照片两枚头像。
+	// 相册数据保留在 Files 存储（drop 会破坏解冻恢复），墓碑是视图期投影，
+	// 解冻后此处自然放行、真实照片原样恢复。相册数据不被删除。
+	if target.ID != currentUserID && target.Deleted {
+		return nil, 0, nil
+	}
+	visible, err := r.canSeeProfilePhotoAlbum(ctx, currentUserID, target.ID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !visible {
+		return r.hiddenProfilePhotoAlbum(ctx, target.ID, offset, limit, maxID)
+	}
+	photos, total, err := r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, maxID)
+	// 没有任何 profile 头像时他人看到的 user.photo 是 fallback，相册也给 fallback，
+	// 否则可见的联系人反而比陌生人看到的少。本人的 fallback 由 userFull 单独展示。
+	if err == nil && total == 0 && target.ID != currentUserID {
+		return r.hiddenProfilePhotoAlbum(ctx, target.ID, offset, limit, maxID)
+	}
+	return photos, total, err
 }
 
 // canSeeProfilePhotoAlbum 按头像隐私（PrivacyKeyProfilePhoto）判断 viewer 能否看

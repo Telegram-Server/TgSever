@@ -179,7 +179,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (79 методов + 1 файловый маршрут):
+Реализовано (80 методов + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
@@ -194,7 +194,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 | Правка/удаление | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
 | Правка/удаление ephemeral | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
-| Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount` |
+| Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
 | Управление чатами | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
 | Файлы | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
 | Webhooks | `setWebhook`, `deleteWebhook`, `getWebhookInfo` |
@@ -721,6 +721,25 @@ inline-сообщения.
 
 `chat_id` (супергруппа или канал). Возвращает целое число.
 
+### `getUserProfilePhotos`
+
+`user_id`, `offset` (по умолчанию 0), `limit` (1–100, по умолчанию 100;
+значения вне диапазона приводятся к границам, как и официально). Возвращает
+`UserProfilePhotos` `{total_count, photos}`, новые первыми; каждая фотография —
+массив `PhotoSize` от меньшего к большему. Видеоразмер анимированной аватарки
+не включается. `file_id` формируется так же, как у фото в сообщениях, поэтому
+работает с `getFile` и может быть переотправлен через `sendPhoto`.
+
+Альбом тот же, что MTProto-клиент видит через `photos.getUserPhotos`: если
+настройка приватности фото профиля не разрешает боту, бот видит только
+публичное (fallback) фото пользователя или пустой альбом, и `total_count`
+считает именно это представление, а не настоящий альбом. У удалённого
+аккаунта альбом пуст.
+
+Ошибки: отсутствующий или нечисловой `user_id` —
+`Bad Request: invalid user_id specified`; пользователь, которого бот не
+видит, — `Bad Request: user not found`.
+
 ## Методы: управление чатами
 
 Каждый метод действует от имени бота через соответствующий MTProto-обработчик,
@@ -1025,7 +1044,7 @@ Message entities (для `entities` / `caption_entities`, а также entity
   (`approveChatJoinRequest`, `declineChatJoinRequest`);
 - темы форума: `createForumTopic`, `editForumTopic`, `closeForumTopic`,
   `getForumTopicIconStickers` и остальное семейство тем;
-- запросы: `getUserProfilePhotos`, `getUserChatBoosts`;
+- запросы: `getUserChatBoosts`;
 - администрирование бота: `setMyDefaultAdministratorRights`,
   `getMyDefaultAdministratorRights`, `close`, `logOut`;
 - реакции (`setMessageReaction`), стикеры и стикерпаки, stories, методы
