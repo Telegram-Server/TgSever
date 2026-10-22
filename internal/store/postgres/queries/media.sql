@@ -375,6 +375,23 @@ WHERE owner_peer_type = sqlc.arg(owner_peer_type)::text
   AND owner_peer_id = sqlc.arg(owner_peer_id)::bigint
   AND active;
 
+-- name: ProfilePhotoInHistory :one
+-- 头像历史归属：不分 kind（profile / fallback），不分 active。
+SELECT EXISTS (
+  SELECT 1
+  FROM profile_photos
+  WHERE owner_peer_type = sqlc.arg(owner_peer_type)::text
+    AND owner_peer_id = sqlc.arg(owner_peer_id)::bigint
+    AND photo_id = sqlc.arg(photo_id)::bigint
+)::bool AS in_history;
+
+-- name: OfferProfilePhoto :exec
+-- 别人建议的头像：以停用行进入 owner 的头像历史，不改变当前头像，也不出现在相册里；
+-- owner 之后可经 updateProfilePhoto 接受（激活）它。已有同一行时保持原状。
+INSERT INTO profile_photos (owner_peer_type, owner_peer_id, kind, photo_id, date, active, sort_order)
+VALUES (sqlc.arg(owner_peer_type)::text, sqlc.arg(owner_peer_id)::bigint, 'profile', sqlc.arg(photo_id)::bigint, sqlc.arg(date)::int, false, 0)
+ON CONFLICT (owner_peer_type, owner_peer_id, kind, photo_id) DO NOTHING;
+
 -- name: DeactivateProfilePhotos :many
 UPDATE profile_photos
 SET active = false

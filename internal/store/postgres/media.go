@@ -1464,6 +1464,23 @@ WHERE owner_peer_type = $1
 	return photos, total, nil
 }
 
+func (s *MediaStore) ProfilePhotoInHistory(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64) (bool, error) {
+	return s.q.ProfilePhotoInHistory(ctx, sqlcgen.ProfilePhotoInHistoryParams{
+		OwnerPeerType: string(ownerType),
+		OwnerPeerID:   ownerID,
+		PhotoID:       photoID,
+	})
+}
+
+func (s *MediaStore) OfferProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int) error {
+	return s.q.OfferProfilePhoto(ctx, sqlcgen.OfferProfilePhotoParams{
+		OwnerPeerType: string(ownerType),
+		OwnerPeerID:   ownerID,
+		PhotoID:       photoID,
+		Date:          int32(date),
+	})
+}
+
 func (s *MediaStore) DeleteProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerID int64, photoIDs []int64) ([]int64, error) {
 	return s.DeleteProfilePhotosKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile, photoIDs)
 }
