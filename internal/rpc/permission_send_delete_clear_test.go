@@ -135,8 +135,8 @@ func TestPermissionSendDeleteClearMethodMapping(t *testing.T) {
 		{"channels.deleteParticipantHistory", "delete", "TELESRV_PERMISSION_DELETE", &tg.ChannelsDeleteParticipantHistoryRequest{Channel: inputChannel(f.group), Participant: otherPeer}},
 		{"messages.setHistoryTTL on", "delete", "TELESRV_PERMISSION_DELETE", &tg.MessagesSetHistoryTTLRequest{Peer: otherPeer, Period: 86400}},
 		{"messages.setDefaultHistoryTTL on", "delete", "TELESRV_PERMISSION_DELETE", &tg.MessagesSetDefaultHistoryTTLRequest{Period: 86400}},
-		{"messages.deleteHistory", "clear", "TELESRV_PERMISSION_CLEAR_HISTORY", &tg.MessagesDeleteHistoryRequest{Peer: otherPeer}},
-		{"channels.deleteHistory", "clear", "TELESRV_PERMISSION_CLEAR_HISTORY", &tg.ChannelsDeleteHistoryRequest{Channel: inputChannel(f.group)}},
+		{"messages.deleteHistory private", "clear", "TELESRV_PERMISSION_CLEAR_HISTORY", &tg.MessagesDeleteHistoryRequest{Peer: otherPeer}},
+		{"messages.deleteHistory saved messages", "clear", "TELESRV_PERMISSION_CLEAR_HISTORY", &tg.MessagesDeleteHistoryRequest{Peer: &tg.InputPeerSelf{}}},
 		{"messages.deleteSavedHistory", "clear", "TELESRV_PERMISSION_CLEAR_HISTORY", &tg.MessagesDeleteSavedHistoryRequest{Peer: otherPeer}},
 	}
 	items := []string{"send", "delete", "clear"}
@@ -165,6 +165,7 @@ func TestPermissionSendDeleteClearLeaveOtherMethodsAlone(t *testing.T) {
 	f := newPermissionMappingFixture(t)
 	f.perms.items[f.me.ID] = permissionFlagsOff(f.me.ID, "send", "delete", "clear")
 	otherPeer := &tg.InputPeerUser{UserID: f.other.ID, AccessHash: f.other.AccessHash}
+	groupPeer := inputPeerChannel(f.group)
 	secretPeer := tg.InputEncryptedChat{ChatID: f.chat.ID, AccessHash: f.chat.ParticipantAccessHash}
 	cases := []struct {
 		name string
@@ -176,6 +177,10 @@ func TestPermissionSendDeleteClearLeaveOtherMethodsAlone(t *testing.T) {
 		{"messages.setHistoryTTL off", &tg.MessagesSetHistoryTTLRequest{Peer: otherPeer, Period: 0}},
 		{"messages.setDefaultHistoryTTL off", &tg.MessagesSetDefaultHistoryTTLRequest{Period: 0}},
 		{"messages.deleteScheduledMessages", &tg.MessagesDeleteScheduledMessagesRequest{Peer: otherPeer, ID: []int{1}}},
+		// 清空对话只约束私聊与收藏夹：群组的清空会被退出普通群、升级为超级群连带调用。
+		{"channels.deleteHistory group", &tg.ChannelsDeleteHistoryRequest{Channel: inputChannel(f.group)}},
+		{"messages.deleteHistory group", &tg.MessagesDeleteHistoryRequest{Peer: groupPeer}},
+		{"messages.deleteHistory legacy chat", &tg.MessagesDeleteHistoryRequest{Peer: &tg.InputPeerChat{ChatID: f.group.ID}}},
 		{"messages.sendMessage to saved messages", &tg.MessagesSendMessageRequest{Peer: &tg.InputPeerSelf{}, Message: "note", RandomID: 21}},
 		{"messages.sendMedia to saved messages", &tg.MessagesSendMediaRequest{Peer: &tg.InputPeerSelf{}, Media: &tg.InputMediaGeoPoint{GeoPoint: &tg.InputGeoPoint{Lat: 1, Long: 1}}, RandomID: 22}},
 		{"messages.sendMultiMedia to saved messages", &tg.MessagesSendMultiMediaRequest{Peer: &tg.InputPeerSelf{}, MultiMedia: []tg.InputSingleMedia{{Media: &tg.InputMediaGeoPoint{GeoPoint: &tg.InputGeoPoint{Lat: 1, Long: 1}}, RandomID: 23}}}},

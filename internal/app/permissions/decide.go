@@ -26,7 +26,10 @@ const (
 	ActionSend
 	// ActionDelete 是删除消息（含开启或修改自动删除计时器），不需要目标信息。
 	ActionDelete
-	// ActionClearHistory 是清空对话，不需要目标信息。
+	// ActionClearHistory 是清空对话，只约束私聊与收藏夹：Target 为 TargetGroup 或 TargetChannel
+	// 时放行。群组的清空历史会被客户端连带调用（tdesktop 退出普通群、清空由普通群升级来的超级群
+	// 时都会对原群发 messages.deleteHistory），拦下它会让"允许退群"等组合失效。没有目标信息时
+	// 按私聊判定（messages.deleteSavedHistory 按方法名登记，作用于收藏夹）。
 	ActionClearHistory
 	// ActionJoin 是自己加入会话（公开链接、邀请链接、聊天文件夹）；Target 为 TargetGroup 或
 	// TargetChannel（用 ChannelTarget 由会话得出）。
@@ -169,6 +172,9 @@ func Decide(v View, a Action) Denial {
 			return DenyDelete
 		}
 	case ActionClearHistory:
+		if a.Target.Kind == TargetGroup || a.Target.Kind == TargetChannel {
+			return Allowed
+		}
 		if !flags.ClearHistory {
 			return DenyClearHistory
 		}

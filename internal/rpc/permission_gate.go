@@ -29,9 +29,8 @@ var permissionMethodActions = map[string]permissions.ActionKind{
 	"messages.deleteMessages":           permissions.ActionDelete,
 	"channels.deleteMessages":           permissions.ActionDelete,
 	"channels.deleteParticipantHistory": permissions.ActionDelete,
-	// 清空对话（#120）。
-	"messages.deleteHistory":      permissions.ActionClearHistory,
-	"channels.deleteHistory":      permissions.ActionClearHistory,
+	// 清空对话（#120）只约束私聊与收藏夹。messages.deleteHistory 要看 peer，在 handler 里判定
+	// （群组 peer 放行）；channels.deleteHistory 只作用于群组与频道，不受控。
 	"messages.deleteSavedHistory": permissions.ActionClearHistory,
 	// sendScreenshotNotification 尚未实现，先按方法名登记：没有目标信息时按"非收藏夹"判定。
 	// 其他发送方法需要目标（收藏夹放行），在 handler 里调用 checkSendPermission。

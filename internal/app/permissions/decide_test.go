@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"slices"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -58,8 +59,8 @@ var allTargets = []struct {
 }
 
 // decideMatrix 对一个动作跑 总开关关/开 × 该项开/关 × 全部目标。turnOff 只关掉被测的那一项；
-// savedExempt 为 true 时该项关闭后收藏夹仍放行。
-func decideMatrix(t *testing.T, kind ActionKind, turnOff func(*domain.AccountPermissionFlags), want Denial, savedExempt bool) {
+// exempt 列出该项关闭后仍放行的目标种类。
+func decideMatrix(t *testing.T, kind ActionKind, turnOff func(*domain.AccountPermissionFlags), want Denial, exempt ...TargetKind) {
 	t.Helper()
 	itemOff := func(p *domain.AccountPermissions) { turnOff(&p.Flags) }
 	onlyItemOn := func(p *domain.AccountPermissions) {
@@ -92,7 +93,7 @@ func decideMatrix(t *testing.T, kind ActionKind, turnOff func(*domain.AccountPer
 				t.Fatalf("exempt account: Decide = %q, want allowed", got)
 			}
 			wantDenied := want
-			if savedExempt && tc.target.Kind == TargetSelf {
+			if slices.Contains(exempt, tc.target.Kind) {
 				wantDenied = Allowed
 			}
 			if got := Decide(enforcedView(itemOff), action); got != wantDenied {
@@ -144,15 +145,16 @@ func TestDecideCreateGroupChannelAndAddContact(t *testing.T) {
 }
 
 func TestDecideSend(t *testing.T) {
-	decideMatrix(t, ActionSend, func(f *domain.AccountPermissionFlags) { f.Send = false }, DenySend, true)
+	decideMatrix(t, ActionSend, func(f *domain.AccountPermissionFlags) { f.Send = false }, DenySend, TargetSelf)
 }
 
 func TestDecideDelete(t *testing.T) {
-	decideMatrix(t, ActionDelete, func(f *domain.AccountPermissionFlags) { f.Delete = false }, DenyDelete, false)
+	decideMatrix(t, ActionDelete, func(f *domain.AccountPermissionFlags) { f.Delete = false }, DenyDelete)
 }
 
+// 清空对话只约束私聊与收藏夹，群组与频道放行。
 func TestDecideClearHistory(t *testing.T) {
-	decideMatrix(t, ActionClearHistory, func(f *domain.AccountPermissionFlags) { f.ClearHistory = false }, DenyClearHistory, false)
+	decideMatrix(t, ActionClearHistory, func(f *domain.AccountPermissionFlags) { f.ClearHistory = false }, DenyClearHistory, TargetGroup, TargetChannel)
 }
 
 // TestDecideSendWhitelist 覆盖 白名单开/关 × 名单内/外 × 目标种类 × 发送开/关。白名单只看

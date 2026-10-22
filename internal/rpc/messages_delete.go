@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"github.com/iamxvbaba/td/tg"
+	"telesrv/internal/app/permissions"
 	"telesrv/internal/domain"
 )
 
@@ -51,6 +52,12 @@ func (r *Router) onMessagesDeleteHistory(ctx context.Context, req *tg.MessagesDe
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
 		return nil, err
+	}
+	// 清空对话只约束私聊与收藏夹；群组（含普通群 peer）放行，见 permissions.ActionClearHistory。
+	if peer.Type == domain.PeerTypeUser {
+		if err := r.checkPermission(ctx, userID, permissions.Action{Kind: permissions.ActionClearHistory, Target: sendPermissionTarget(userID, peer)}); err != nil {
+			return nil, err
+		}
 	}
 	if peer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
