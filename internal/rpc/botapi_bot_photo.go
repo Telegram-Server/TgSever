@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"math"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
@@ -13,6 +14,10 @@ import (
 // maxBotAPIStaticProfilePhotoBytes 是静态头像文件的上限，与 MTProto 照片上传的 10MB 一致；
 // Bot API 的 multipart 上限（25MB）更宽，超出部分在这里拒绝。
 const maxBotAPIStaticProfilePhotoBytes = 10 << 20
+
+// maxBotAPIAnimatedProfilePhotoBytes 是视频头像文件的上限。视频按 512KB 分片保存，
+// 不受单片上限约束；这里沿用照片的 10MB，防止 25MB multipart 全部落成头像。
+const maxBotAPIAnimatedProfilePhotoBytes = 10 << 20
 
 // BotAPIRemoveMyProfilePhoto 是 Bot API removeMyProfilePhoto 的网关：以机器人身份调用
 // photos.updateProfilePhoto 并传 inputPhotoEmpty（不带 bot 参数，即机器人删自己的主头像）。
@@ -55,7 +60,7 @@ func (r *Router) BotAPISetMyProfilePhoto(ctx context.Context, botID int64, photo
 }
 
 // createBotAPIProfilePhoto 按 InputProfilePhoto 的种类把上传字节存成头像 photo。
-// 新种类（animated）在这里加一个分支，调用文件服务对应的字节入口。
+// 新种类在这里加一个分支，调用文件服务对应的字节入口。
 func (r *Router) createBotAPIProfilePhoto(ctx context.Context, photo domain.BotAPIProfilePhoto) (domain.Photo, error) {
 	switch photo.Kind {
 	case domain.BotAPIProfilePhotoStatic:
@@ -63,6 +68,19 @@ func (r *Router) createBotAPIProfilePhoto(ctx context.Context, photo domain.BotA
 			return domain.Photo{}, tgerr.New(400, "FILE_TOO_BIG")
 		}
 		created, err := r.deps.Files.CreateAvatarFromBytes(ctx, photo.Data)
+		if err != nil {
+			return domain.Photo{}, photoUploadErr(err)
+		}
+		return created, nil
+	case domain.BotAPIProfilePhotoAnimated:
+		if len(photo.Data) > maxBotAPIAnimatedProfilePhotoBytes {
+			return domain.Photo{}, tgerr.New(400, "FILE_TOO_BIG")
+		}
+		// 主帧时间戳即 MTProto 的 video_start_ts：必须是非负有限数。
+		if math.IsNaN(photo.MainFrameTimestamp) || math.IsInf(photo.MainFrameTimestamp, 0) || photo.MainFrameTimestamp < 0 {
+			return domain.Photo{}, photoInvalidErr()
+		}
+		created, err := r.deps.Files.CreateAvatarVideoFromBytes(ctx, photo.Data, photo.MainFrameTimestamp)
 		if err != nil {
 			return domain.Photo{}, photoUploadErr(err)
 		}

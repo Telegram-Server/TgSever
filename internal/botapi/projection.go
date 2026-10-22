@@ -205,9 +205,57 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 			kind = string(domain.BotAPIUpdateMyChatMember)
 		}
 		return map[string]any{"update_id": updateID, kind: body}, kind, true
+	case domain.UpdateEventBotChatJoinRequest:
+		body, ok := apiChatJoinRequest(event)
+		if !ok {
+			return nil, "", false
+		}
+		kind := string(domain.BotAPIUpdateChatJoinRequest)
+		return map[string]any{"update_id": updateID, kind: body}, kind, true
 	default:
 		return nil, "", false
 	}
+}
+
+// apiChatJoinRequest 投影官方 ChatJoinRequest。user_chat_id 是机器人与申请人私聊的 id，
+// 也就是申请人的用户 id；invite_link 只在通过链接申请时出现，复用 ChatInviteLink 投影。
+func apiChatJoinRequest(event domain.UpdateEvent) (map[string]any, bool) {
+	update := event.BotChatJoinRequest
+	if update == nil {
+		return nil, false
+	}
+	request := update.Request
+	if request.Chat.Type != domain.PeerTypeChannel || request.Chat.ID <= 0 || request.UserID <= 0 {
+		return nil, false
+	}
+	users := make(map[int64]domain.User, len(event.Users))
+	for _, user := range event.Users {
+		users[user.ID] = user
+	}
+	from, ok := users[request.UserID]
+	if !ok || from.ID == 0 {
+		from = domain.User{ID: request.UserID}
+	}
+	chat := apiChat(request.Chat, users)
+	for _, channel := range event.Channels {
+		if channel.ID == request.Chat.ID {
+			describeChannelChat(chat, channel)
+			break
+		}
+	}
+	out := map[string]any{
+		"chat":         chat,
+		"from":         apiUser(from),
+		"user_chat_id": request.UserID,
+		"date":         request.Date,
+	}
+	if request.Bio != "" {
+		out["bio"] = request.Bio
+	}
+	if update.InviteLink != nil {
+		out["invite_link"] = apiChatInviteLink(*update.InviteLink)
+	}
+	return out, true
 }
 
 // apiChatMemberUpdated 投影官方 ChatMemberUpdated。can_be_edited 按收件机器人入队时的

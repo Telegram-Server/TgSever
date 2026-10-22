@@ -427,6 +427,7 @@ type BotApiUpdate struct {
 	EphemeralPayload         []byte
 	PreCheckoutPayload       []byte
 	MemberPayload            []byte
+	JoinRequestPayload       []byte
 }
 
 type BotApiUpdateState struct {

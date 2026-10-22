@@ -18,12 +18,17 @@ const (
 	// BotAPIUpdateChatMember 是群里其他成员的状态变化。官方规则：只有 allowed_updates
 	// 显式写了 chat_member 才投递，空列表/未设置都不包含它。
 	BotAPIUpdateChatMember BotAPIUpdateKind = "chat_member"
+	// BotAPIUpdateChatJoinRequest 是有人申请加入需要审批的群/频道，投给有邀请权限的
+	// 机器人管理员。属于默认集合：allowed_updates 未设置或为空时投递。
+	BotAPIUpdateChatJoinRequest BotAPIUpdateKind = "chat_join_request"
 )
 
 // 成员更新只服务 Bot API 队列投影，不写账号 pts。
 const (
 	UpdateEventBotMyChatMember UpdateEventType = "bot_my_chat_member"
 	UpdateEventBotChatMember   UpdateEventType = "bot_chat_member"
+	// UpdateEventBotChatJoinRequest 同样只服务 Bot API 队列投影。
+	UpdateEventBotChatJoinRequest UpdateEventType = "bot_chat_join_request"
 )
 
 // BotAPIUpdateKindNeedsOptIn 报告该类更新是否只在 allowed_updates 显式列出时投递。
@@ -120,6 +125,55 @@ func ValidateBotAPIChatMemberRequest(req EnqueueBotAPIUpdateRequest) error {
 		return ErrBotChatMemberUpdateInvalid
 	}
 	return req.ChatMember.ValidateFor(req.BotUserID, req.Kind)
+}
+
+// BotChatJoinRequest 是官方 ChatJoinRequest 的协议无关载荷。它没有消息可回读，入队时
+// 整体落库：申请人、日期、按收件机器人视角裁剪过的 bio，以及通过链接申请时所用链接
+// 在申请那一刻的快照（投影时再补对外链接与创建者资料）。user_chat_id 就是申请人 id。
+type BotChatJoinRequest struct {
+	Chat   Peer           `json:"chat"`
+	UserID int64          `json:"user_id"`
+	Date   int            `json:"date"`
+	Bio    string         `json:"bio,omitempty"`
+	Invite *ChannelInvite `json:"invite,omitempty"`
+}
+
+// ValidateFor 校验载荷能否投给 botUserID：chat 是群/频道，申请人不是收件机器人自己，
+// 邀请链接（如有）属于同一个群。
+func (r BotChatJoinRequest) ValidateFor(botUserID int64) error {
+	if botUserID <= 0 || r.Chat.Type != PeerTypeChannel || r.Chat.ID <= 0 || r.UserID <= 0 ||
+		r.UserID == botUserID || r.Date <= 0 ||
+		(r.Invite != nil && (r.Invite.ChannelID != r.Chat.ID || r.Invite.Hash == "")) {
+		return ErrBotChatJoinRequestUpdateInvalid
+	}
+	return nil
+}
+
+// ErrBotChatJoinRequestUpdateInvalid 表示入群申请载荷与其队列行不一致。
+var ErrBotChatJoinRequestUpdateInvalid = errors.New("invalid bot api chat join request update")
+
+// BotChatJoinRequestUpdate 是读队列时交给投影的入群申请：载荷本身，加上 rpc 按收件机器人
+// 视角组装好的邀请链接（通过公开用户名申请时为 nil）。
+type BotChatJoinRequestUpdate struct {
+	Request    BotChatJoinRequest
+	InviteLink *BotAPIChatInviteLink
+}
+
+// ValidateBotAPIChatJoinRequestRequest 校验入群申请类入队请求的形状：peer 是群/频道、
+// 没有消息、载荷与 peer 一致；其他种类不得携带该载荷。两套 store 共用。
+func ValidateBotAPIChatJoinRequestRequest(req EnqueueBotAPIUpdateRequest) error {
+	if req.Kind != BotAPIUpdateChatJoinRequest {
+		if req.ChatJoinRequest != nil {
+			return ErrBotChatJoinRequestUpdateInvalid
+		}
+		return nil
+	}
+	if req.ChatJoinRequest == nil || req.Peer.Type != PeerTypeChannel || req.Peer != req.ChatJoinRequest.Chat ||
+		req.MessageID != 0 || req.SourcePts != 0 || req.Callback != nil || req.PreCheckout != nil ||
+		req.Ephemeral != nil || req.ChatMember != nil {
+		return ErrBotChatJoinRequestUpdateInvalid
+	}
+	return req.ChatJoinRequest.ValidateFor(req.BotUserID)
 }
 
 // BotPreCheckoutQuery is the protocol-neutral payload shared by the MTProto
@@ -297,6 +351,8 @@ type BotAPIUpdate struct {
 	Ephemeral   *BotAPIEphemeralPayload
 	// ChatMember 携带 my_chat_member / chat_member 载荷；Peer 是群/频道，MessageID 为零。
 	ChatMember *BotChatMemberUpdated
+	// ChatJoinRequest 携带 chat_join_request 载荷；Peer 是群/频道，MessageID 为零。
+	ChatJoinRequest *BotChatJoinRequest
 }
 
 // EnqueueBotAPIUpdateRequest describes a message-like update that should be
@@ -313,4 +369,6 @@ type EnqueueBotAPIUpdateRequest struct {
 	Ephemeral   *BotAPIEphemeralPayload
 	// ChatMember 携带 my_chat_member / chat_member 载荷；Peer 是群/频道，MessageID 为零。
 	ChatMember *BotChatMemberUpdated
+	// ChatJoinRequest 携带 chat_join_request 载荷；Peer 是群/频道，MessageID 为零。
+	ChatJoinRequest *BotChatJoinRequest
 }
