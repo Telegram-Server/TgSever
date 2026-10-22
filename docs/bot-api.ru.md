@@ -179,12 +179,12 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (79 методов + 1 файловый маршрут):
+Реализовано (81 метод + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
 | Бот и команды | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
-| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription` |
+| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
 | Обновления | `getUpdates`, `dropPendingUpdates` (расширение telesrv) |
 | Текст | `sendMessage`, `sendRichMessage` |
 | Медиа | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -327,6 +327,25 @@ MTProto), поэтому другие клиенты видят изменени
 Возвращают `{"name": ...}`, `{"description": ...}` и
 `{"short_description": ...}`. `language_code` принимается, но игнорируется:
 всегда возвращается значение для языка по умолчанию.
+
+### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
+
+| Параметр | Тип | Комментарий |
+|---|---|---|
+| `rights` | JSON `ChatAdministratorRights` | только `setMy…`; отсутствие очищает права по умолчанию |
+| `for_channels` | логический | `true` для каналов, иначе для групп |
+
+`setMyDefaultAdministratorRights` идёт через MTProto
+`bots.setBotGroupDefaultAdminRights` / `bots.setBotBroadcastDefaultAdminRights`;
+клиенты видят новое значение в `userFull` бота
+(`bot_group_admin_rights` / `bot_broadcast_admin_rights`) и заранее отмечают
+эти права при назначении бота администратором. Повторная установка того же
+значения тоже возвращает `true` (MTProto отвечает `RIGHTS_NOT_MODIFIED`).
+`rights`, который не является JSON-объектом, или известное поле не логического
+типа дают `BAD_REQUEST`.
+
+`getMyDefaultAdministratorRights` возвращает объект `ChatAdministratorRights`
+со всеми полями; если ничего не задано, все они `false`.
 
 ## Методы: отправка
 

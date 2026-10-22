@@ -180,12 +180,12 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (79 methods + 1 file route):
+Implemented (81 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
-| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription` |
+| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
 | Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
 | Media | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -327,6 +327,24 @@ Differences from the official gateway:
 Return `{"name": ...}`, `{"description": ...}` and
 `{"short_description": ...}`. `language_code` is accepted but ignored: the
 default-language value is always returned.
+
+### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `rights` | JSON `ChatAdministratorRights` | `setMy…` only; omitted clears the defaults |
+| `for_channels` | boolean | `true` for channels, otherwise groups |
+
+`setMyDefaultAdministratorRights` goes through MTProto
+`bots.setBotGroupDefaultAdminRights` / `bots.setBotBroadcastDefaultAdminRights`;
+clients see the new value in the bot's `userFull`
+(`bot_group_admin_rights` / `bot_broadcast_admin_rights`) and preselect it
+when adding the bot as an administrator. Setting the current value again is
+still `true` (MTProto answers `RIGHTS_NOT_MODIFIED`). A `rights` value that is
+not a JSON object, or a known field that is not a boolean, is `BAD_REQUEST`.
+
+`getMyDefaultAdministratorRights` returns the `ChatAdministratorRights` object
+with every field present; all are `false` when nothing was set.
 
 ## Methods: sending
 
