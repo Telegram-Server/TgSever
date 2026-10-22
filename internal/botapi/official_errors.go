@@ -39,8 +39,19 @@ func (d officialErrorDescriptions) writeError(w http.ResponseWriter, err error) 
 	writeAPIError(w, http.StatusBadRequest, d.describe(err))
 }
 
-// deleteMessageErrors 是 deleteMessage（以及后续的 deleteMessages）的官方失败说明。
+// deleteMessageErrors 是 deleteMessage 的官方失败说明。
 var deleteMessageErrors = newOfficialErrorDescriptions(map[string]string{
 	"MESSAGE_ID_INVALID":       "Bad Request: message to delete not found",
 	"MESSAGE_DELETE_FORBIDDEN": "Bad Request: message can't be deleted",
+})
+
+// deleteMessagesErrors 是 deleteMessages 的官方失败说明：全部删不了时沿用
+// deleteMessage 的两句；另加 message_ids 本身的参数错误，这三个码只由网关的
+// 参数解析产生。
+var deleteMessagesErrors = newOfficialErrorDescriptions(map[string]string{
+	"MESSAGE_ID_INVALID":       "Bad Request: message to delete not found",
+	"MESSAGE_DELETE_FORBIDDEN": "Bad Request: message can't be deleted",
+	"MESSAGE_IDS_EMPTY":        "Bad Request: message identifiers are not specified",
+	"MESSAGE_IDS_TOO_MUCH":     "Bad Request: too many message identifiers specified",
+	"MESSAGE_IDS_INVALID":      "Bad Request: invalid message identifier specified",
 })

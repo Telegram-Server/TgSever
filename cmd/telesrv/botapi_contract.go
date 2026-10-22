@@ -25,4 +25,5 @@ var (
 	_ botapi.MenuButtonGateway       = (*rpc.Router)(nil)
 	_ botapi.JoinRequestGateway      = (*rpc.Router)(nil)
 	_ botapi.UserPhotosGateway       = (*rpc.Router)(nil)
+	_ botapi.DeleteMessagesGateway   = (*rpc.Router)(nil)
 )

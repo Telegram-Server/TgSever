@@ -180,7 +180,7 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (89 methods + 1 file route):
+Implemented (90 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
@@ -193,7 +193,7 @@ Implemented (89 methods + 1 file route):
 | Albums, polls, dice, actions | `sendMediaGroup`, `sendPoll`, `sendDice`, `sendChatAction` |
 | Location | `sendContact`, `sendLocation`, `sendVenue` |
 | Forwarding | `forwardMessage`, `forwardMessages`, `copyMessage`, `copyMessages` |
-| Edit/delete | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
+| Edit/delete | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage`, `deleteMessages` |
 | Ephemeral edit/delete | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
 | Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
@@ -658,6 +658,21 @@ already closed is `MESSAGE_POLL_CLOSED`; a message without a poll is
 
 `chat_id` + `message_id`. Returns `true`. Deleting an already-deleted or
 foreign message returns `false` or an error, as with the official gateway.
+
+### `deleteMessages`
+
+`chat_id` + `message_ids` (JSON array of 1–100 positive ids; duplicates are
+ignored). Works in private chats, supergroups and channels with the same rules
+as `deleteMessage`: in a private chat only messages of that `chat_id` dialog
+are deleted; in a group the bot deletes its own messages freely and other
+people's only with the delete-messages admin right. Messages that are missing
+or that the bot may not delete are skipped and the rest are deleted in one
+batch (members receive a single deletion update); the result is `true`. When
+none of them can be deleted the error is `Bad Request: message can't be
+deleted` or `Bad Request: message to delete not found`. An empty list, more
+than 100 ids or a non-positive id is a parameter error (`Bad Request: message
+identifiers are not specified` / `too many message identifiers specified` /
+`invalid message identifier specified`).
 
 ### `answerCallbackQuery`
 
