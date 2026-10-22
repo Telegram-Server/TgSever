@@ -452,19 +452,9 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	// 冻结/已删除账号对观察者呈 deleted 墓碑：主头像已塌缩为「已删除账号」占位，
-	// 相册必须一并清空，否则资料页同时出现墓碑占位与用户真实照片两枚头像。
-	// 相册数据保留在 Files 存储（drop 会破坏解冻恢复），墓碑是视图期投影，
-	// 解冻后此处自然放行、真实照片原样恢复。相册数据不被删除。
-	var photos []domain.Photo
-	var total int
-	if target.ID != currentUserID && target.Deleted {
-		// tombstone: empty album
-	} else {
-		photos, total, err = r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, req.MaxID)
-		if err != nil {
-			return nil, internalErr()
-		}
+	photos, total, err := r.profilePhotoAlbumPage(ctx, currentUserID, target, offset, limit, req.MaxID)
+	if err != nil {
+		return nil, internalErr()
 	}
 	tgPhotos := make([]tg.PhotoClass, 0, len(photos))
 	for _, p := range photos {
@@ -486,6 +476,67 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 		return &tg.PhotosPhotosSlice{Count: total, Photos: tgPhotos, Users: users}, nil
 	}
 	return &tg.PhotosPhotos{Photos: tgPhotos, Users: users}, nil
+}
+
+// profilePhotoAlbumPage 是 viewer 眼中 target 头像相册的一页与总数：已按墓碑与头像隐私
+// 裁剪。photos.getUserPhotos 与 Bot API getUserProfilePhotos 共用，保证客户端与机器人
+// 看到同一本相册。
+func (r *Router) profilePhotoAlbumPage(ctx context.Context, currentUserID int64, target domain.User, offset, limit int, maxID int64) ([]domain.Photo, int, error) {
+	// 冻结/已删除账号对观察者呈 deleted 墓碑：主头像已塌缩为「已删除账号」占位，
+	// 相册必须一并清空，否则资料页同时出现墓碑占位与用户真实照片两枚头像。
+	// 相册数据保留在 Files 存储（drop 会破坏解冻恢复），墓碑是视图期投影，
+	// 解冻后此处自然放行、真实照片原样恢复。相册数据不被删除。
+	if target.ID != currentUserID && target.Deleted {
+		return nil, 0, nil
+	}
+	visible, err := r.canSeeProfilePhotoAlbum(ctx, currentUserID, target.ID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !visible {
+		return r.hiddenProfilePhotoAlbum(ctx, target.ID, offset, limit, maxID)
+	}
+	photos, total, err := r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, maxID)
+	// 没有任何 profile 头像时他人看到的 user.photo 是 fallback，相册也给 fallback，
+	// 否则可见的联系人反而比陌生人看到的少。本人的 fallback 由 userFull 单独展示。
+	if err == nil && total == 0 && target.ID != currentUserID {
+		return r.hiddenProfilePhotoAlbum(ctx, target.ID, offset, limit, maxID)
+	}
+	return photos, total, err
+}
+
+// canSeeProfilePhotoAlbum 按头像隐私（PrivacyKeyProfilePhoto）判断 viewer 能否看
+// owner 的头像相册，与 users.getFullUser / user.photo 投影用同一条规则；本人恒可见。
+func (r *Router) canSeeProfilePhotoAlbum(ctx context.Context, viewerUserID, ownerUserID int64) (bool, error) {
+	if viewerUserID == ownerUserID || r.deps.Privacy == nil {
+		return true, nil
+	}
+	return r.deps.Privacy.CanSee(ctx, ownerUserID, viewerUserID, domain.PrivacyKeyProfilePhoto)
+}
+
+// hiddenProfilePhotoAlbum 是头像隐私不可见（或 owner 没有 profile 头像）时的相册视图：只含当前 fallback（公开）
+// 头像，没有就是空相册。offset/max_id 按与存储层相同的语义作用在这张虚拟相册上，
+// total 是虚拟相册大小，分页与总数都不泄露真实相册。
+func (r *Router) hiddenProfilePhotoAlbum(ctx context.Context, ownerUserID int64, offset, limit int, maxID int64) ([]domain.Photo, int, error) {
+	fallback, found, err := r.deps.Files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, ownerUserID, domain.ProfilePhotoKindFallback)
+	if err != nil || !found {
+		return nil, 0, err
+	}
+	const total = 1
+	if limit <= 0 {
+		return nil, total, nil
+	}
+	if offset < 0 && maxID > 0 {
+		// 客户端按 id 刷新单张照片（offset=-1, max_id=photo_id）。
+		if fallback.ID == maxID {
+			return []domain.Photo{fallback}, total, nil
+		}
+		return nil, total, nil
+	}
+	if offset > 0 || (maxID > 0 && fallback.ID >= maxID) {
+		return nil, total, nil
+	}
+	return []domain.Photo{fallback}, total, nil
 }
 
 func (r *Router) onPhotosDeletePhotos(ctx context.Context, id []tg.InputPhotoClass) ([]int64, error) {
@@ -652,6 +703,41 @@ func (r *Router) pushSelfPhotoUpdateWithUser(ctx context.Context, self domain.Us
 	updates := selfPhotoUpdates(self, int(r.clock.Now().Unix()), projected)
 	r.pushUserUpdates(ctx, self.ID, updates)
 	r.pushSelfPhotoUpdateToCurrentSession(ctx, updates)
+	r.pushOwnBotPhotoChangeToOwner(ctx, self)
+}
+
+// pushOwnBotPhotoChangeToOwner 在机器人改了自己的头像（设置或删除）后，给它的所有者推
+// updateUser，附上所有者视角的机器人 user（带 bot_can_edit 与新头像），让所有者客户端
+// 即时刷新。所有自身头像变更都经 pushSelfPhotoUpdateWithUser 汇到这里，Bot API 的
+// setMyProfilePhoto / removeMyProfilePhoto 与 MTProto 直接调用共用同一条通知。
+// 所有者经 bot 参数替机器人改头像时走 pushBotPhotoUpdateToOwner，不经过这里。
+// 不回显当前 session：当前 session 属于机器人，所有者视角的 user 不能发给它。
+func (r *Router) pushOwnBotPhotoChangeToOwner(ctx context.Context, bot domain.User) {
+	if !bot.Bot || bot.ID == 0 || r.deps.Bots == nil || r.deps.Users == nil {
+		return
+	}
+	profile, found, err := r.deps.Bots.BotInfo(ctx, bot.ID)
+	if err != nil || !found {
+		return
+	}
+	ownerUserID := profile.OwnerUserID
+	if ownerUserID == 0 || ownerUserID == bot.ID {
+		return
+	}
+	view, found, err := r.deps.Users.ByID(ctx, ownerUserID, bot.ID)
+	if err != nil || !found {
+		return
+	}
+	// 头像以调用方刚写入的结果为准，不依赖读路径（可能有缓存）已反映变更。
+	view.PhotoID = bot.PhotoID
+	view.PhotoDCID = bot.PhotoDCID
+	view.PhotoStripped = bot.PhotoStripped
+	view.PhotoPersonal = false
+	view.PhotoHasVideo = bot.PhotoHasVideo
+	projected := r.tgUser(view)
+	_ = r.applyBotCanEditToUser(ctx, ownerUserID, view, projected)
+	r.applyUsernamesToPeerObjects(ctx, []tg.UserClass{projected}, nil)
+	r.pushUserUpdates(ctx, ownerUserID, selfPhotoUpdates(view, int(r.clock.Now().Unix()), projected))
 }
 
 func (r *Router) pushBotPhotoUpdateToOwner(ctx context.Context, ownerUserID int64, bot domain.User, projected *tg.User) {

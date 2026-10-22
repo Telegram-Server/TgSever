@@ -348,6 +348,7 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 	}
 	if u.Bot {
 		full.SetBotInfo(r.tgBotInfo(ctx, currentUserID, u))
+		r.applyBotDefaultAdminRights(ctx, &full, u.ID)
 	}
 	if r.deps.Dialogs != nil && u.ID != currentUserID {
 		list, err := r.deps.Dialogs.GetPeerDialogs(ctx, currentUserID, []domain.Peer{{Type: domain.PeerTypeUser, ID: u.ID}})
@@ -706,7 +707,7 @@ func (r *Router) onUsersGetSavedMusic(ctx context.Context, req *tg.UsersGetSaved
 	if !found {
 		return nil, userIDInvalidErr()
 	}
-	allowed, err := r.canSeeSavedMusic(ctx, currentUserID, owner.ID)
+	allowed, err := r.canSeeSavedMusic(ctx, currentUserID, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -744,7 +745,7 @@ func (r *Router) onUsersGetSavedMusicByID(ctx context.Context, req *tg.UsersGetS
 	if !found {
 		return nil, userIDInvalidErr()
 	}
-	allowed, err := r.canSeeSavedMusic(ctx, currentUserID, owner.ID)
+	allowed, err := r.canSeeSavedMusic(ctx, currentUserID, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -786,7 +787,13 @@ func emptyUsersSavedMusic() *tg.UsersSavedMusic {
 	}
 }
 
-func (r *Router) canSeeSavedMusic(ctx context.Context, viewerUserID, ownerUserID int64) (bool, error) {
+// canSeeSavedMusic 决定 viewer 能否读 owner 的资料页音乐。已注销（含冻结）owner
+// 对他人呈 deleted 墓碑，音乐列表与头像相册一样返回空；数据本身保留在存储里。
+func (r *Router) canSeeSavedMusic(ctx context.Context, viewerUserID int64, owner domain.User) (bool, error) {
+	ownerUserID := owner.ID
+	if owner.Deleted && viewerUserID != ownerUserID {
+		return false, nil
+	}
 	if viewerUserID == 0 || ownerUserID == 0 || viewerUserID == ownerUserID || r.deps.Privacy == nil {
 		return true, nil
 	}

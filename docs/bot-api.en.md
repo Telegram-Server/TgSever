@@ -180,12 +180,13 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (79 methods + 1 file route):
+Implemented (91 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
-| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription` |
+| Migration | `logOut`, `close` (no-op: always `True`, no state is touched, no 10-minute `close` limit) |
+| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
 | Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
 | Media | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -195,8 +196,10 @@ Implemented (79 methods + 1 file route):
 | Edit/delete | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
 | Ephemeral edit/delete | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
-| Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount` |
+| Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
 | Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Invite links | `createChatInviteLink`, `editChatInviteLink`, `revokeChatInviteLink`, `exportChatInviteLink` |
+| Join requests | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Files | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
 | Webhooks | `setWebhook`, `deleteWebhook`, `getWebhookInfo` |
 | Menus & status | `setChatMenuButton`, `getChatMenuButton`, `setUserEmojiStatus` |
@@ -327,6 +330,31 @@ Differences from the official gateway:
 Return `{"name": ...}`, `{"description": ...}` and
 `{"short_description": ...}`. `language_code` is accepted but ignored: the
 default-language value is always returned.
+
+### `removeMyProfilePhoto`
+
+No parameters. Removes the bot's current profile photo and returns `True`. A bot
+without a profile photo also gets `True`, as with the official server. The
+bot's owner receives an `updateUser` for the bot, so the change shows up in the
+owner's clients right away.
+
+### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `rights` | JSON `ChatAdministratorRights` | `setMy…` only; omitted clears the defaults |
+| `for_channels` | boolean | `true` for channels, otherwise groups |
+
+`setMyDefaultAdministratorRights` goes through MTProto
+`bots.setBotGroupDefaultAdminRights` / `bots.setBotBroadcastDefaultAdminRights`;
+clients see the new value in the bot's `userFull`
+(`bot_group_admin_rights` / `bot_broadcast_admin_rights`) and preselect it
+when adding the bot as an administrator. Setting the current value again is
+still `true` (MTProto answers `RIGHTS_NOT_MODIFIED`). A `rights` value that is
+not a JSON object, or a known field that is not a boolean, is `BAD_REQUEST`.
+
+`getMyDefaultAdministratorRights` returns the `ChatAdministratorRights` object
+with every field present; all are `false` when nothing was set.
 
 ## Methods: sending
 
@@ -722,6 +750,25 @@ an admin, so an admin bot with `can_promote_members` conservatively gets
 
 `chat_id` (supergroup or channel). Returns an integer.
 
+### `getUserProfilePhotos`
+
+`user_id`, `offset` (default 0), `limit` (1–100, default 100; out-of-range
+values are clamped, as officially). Returns `UserProfilePhotos`
+`{total_count, photos}`, newest first; each photo is an array of
+`PhotoSize` from smallest to largest. The video size of an animated avatar is
+left out. `file_id` is generated the same way as for message photos, so it
+works with `getFile` and can be resent with `sendPhoto`.
+
+The album is the one an MTProto client sees through `photos.getUserPhotos`:
+when the user's profile-photo privacy does not allow the bot, the bot sees
+only the user's public (fallback) photo, or an empty album, and
+`total_count` counts that view, not the real album. A deleted account has an
+empty album.
+
+Errors: a missing or non-numeric `user_id` is
+`Bad Request: invalid user_id specified`; a user the bot cannot see is
+`Bad Request: user not found`.
+
 ## Methods: chat management
 
 Every method acts as the bot through the corresponding MTProto handler, so
@@ -749,6 +796,13 @@ method is `CHAT_ID_INVALID`. Pinning methods also work in private chats.
 | `setChatPhoto` | `chat_id`, `photo` | multipart upload only |
 | `deleteChatPhoto` | `chat_id` | |
 | `leaveChat` | `chat_id` | |
+| `approveChatJoinRequest` | `chat_id`, `user_id` | needs the invite-users (or change-info) right; the applicant joins and members and admins get the same updates as for a human admin |
+| `declineChatJoinRequest` | `chat_id`, `user_id` | needs the invite-users (or change-info) right; the request is dropped |
+
+A join request that does not exist or was already handled is
+`Bad Request: HIDE_REQUESTER_MISSING`; for these two methods
+`CHAT_ADMIN_REQUIRED` and `USER_ALREADY_PARTICIPANT` also carry the
+official `Bad Request: ` prefix.
 
 With `use_independent_chat_permissions=false` (the default), any media, poll,
 "other messages" or web-preview permission also allows plain text messages, as
@@ -767,6 +821,38 @@ Differences from the official gateway:
   `PHOTO_INVALID`;
 - there are no basic groups, so methods and errors specific to them do not
   exist.
+
+## Methods: invite links
+
+The bot must be the creator or an admin with the invite-users or change-info
+right; otherwise every method fails with
+`Bad Request: not enough rights to manage chat invite links`. Creating and
+exporting go through `messages.exportChatInvite`, editing and revoking through
+`messages.editExportedChatInvite`, as the bot, so the owner sees the links as
+created by the bot. Supergroups and channels only.
+
+| Method | Parameters | Returns |
+|---|---|---|
+| `createChatInviteLink` | `chat_id`, `name`, `expire_date`, `member_limit`, `creates_join_request` | `ChatInviteLink` |
+| `editChatInviteLink` | `chat_id`, `invite_link`, `name`, `expire_date`, `member_limit`, `creates_join_request` | `ChatInviteLink` |
+| `revokeChatInviteLink` | `chat_id`, `invite_link` | `ChatInviteLink` with `is_revoked=true`; revoking the primary link generates a new one |
+| `exportChatInviteLink` | `chat_id` | the bot's new primary link as a string; its previous primary link stops working |
+
+Parameter checks (`Bad Request: ...`, before anything is changed): `name` is at
+most 32 characters, `member_limit` is 1–99999, and `member_limit` cannot be
+combined with `creates_join_request=true`; `invite_link` is required for edit
+and revoke.
+
+`ChatInviteLink` carries `invite_link`, `creator`, `creates_join_request`,
+`is_primary`, `is_revoked`, and, when set, `name`, `expire_date`,
+`member_limit` and `pending_join_request_count`.
+
+Differences from the official gateway:
+
+- `editChatInviteLink` changes only the parameters that are passed; officially
+  an omitted parameter is reset;
+- a link created without any parameter counts as a primary link of the bot
+  (`is_primary=true`), and `exportChatInviteLink` revokes it as well.
 
 ## Methods: files
 
@@ -1027,9 +1113,9 @@ commonly reached ones:
   (`approveChatJoinRequest`, `declineChatJoinRequest`);
 - forum topics: `createForumTopic`, `editForumTopic`, `closeForumTopic`,
   `getForumTopicIconStickers` and the rest of the topic family;
-- queries: `getUserProfilePhotos`, `getUserChatBoosts`;
+- queries: `getUserChatBoosts`;
 - bot administration: `setMyDefaultAdministratorRights`,
-  `getMyDefaultAdministratorRights`, `close`, `logOut`;
+  `getMyDefaultAdministratorRights`;
 - reactions (`setMessageReaction`), stickers and sticker sets, stories,
   business-account methods, and Telegram Passport.
 

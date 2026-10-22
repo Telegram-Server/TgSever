@@ -44,12 +44,23 @@ type fakeFiles struct {
 	getFileChunk       domain.FileChunk
 	getFileFound       bool
 	getFileCalls       int
+	// profileAlbums 非空时按 owner 存放完整相册（新的在前），GetProfilePhotos 按
+	// offset/limit 真实分页；为空时退回 profilePhotos/profilePhotosTotal 的固定返回。
+	profileAlbums map[int64][]domain.Photo
 }
 
 type fakeProfilePhotoKey struct {
 	ownerType domain.PeerType
 	ownerID   int64
 	kind      domain.ProfilePhotoKind
+}
+
+// setCurrentProfile 把 photoID 设为 owner 指定 kind 的当前头像（测试辅助）。
+func (f *fakeFiles) setCurrentProfile(ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64) {
+	if f.profile == nil {
+		f.profile = map[fakeProfilePhotoKey]int64{}
+	}
+	f.profile[fakeProfilePhotoKey{ownerType: ownerType, ownerID: ownerID, kind: kind}] = photoID
 }
 
 func (f *fakeFiles) putPhoto(photo domain.Photo) domain.Photo {
@@ -695,11 +706,16 @@ func (f *fakeFiles) CurrentProfilePhotosKind(_ context.Context, ownerType domain
 	}
 	return out, nil
 }
-func (f *fakeFiles) GetProfilePhotos(_ context.Context, _ domain.PeerType, _ int64, offset, limit int, maxID int64) ([]domain.Photo, int, error) {
+func (f *fakeFiles) GetProfilePhotos(_ context.Context, _ domain.PeerType, ownerID int64, offset, limit int, maxID int64) ([]domain.Photo, int, error) {
 	f.lastProfileOffset = offset
 	f.lastProfileLimit = limit
 	f.lastProfileMaxID = maxID
 	f.lastProfileCalls++
+	if album, ok := f.profileAlbums[ownerID]; ok {
+		start := min(max(offset, 0), len(album))
+		end := min(start+max(limit, 0), len(album))
+		return append([]domain.Photo(nil), album[start:end]...), len(album), nil
+	}
 	return append([]domain.Photo(nil), f.profilePhotos...), f.profilePhotosTotal, nil
 }
 func (f *fakeFiles) GetProfilePhotosKind(_ context.Context, _ domain.PeerType, _ int64, _ domain.ProfilePhotoKind, offset, limit int, maxID int64) ([]domain.Photo, int, error) {

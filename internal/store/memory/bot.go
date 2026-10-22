@@ -298,6 +298,16 @@ func (s *BotStore) SetBotChatHistory(_ context.Context, botUserID int64, chatHis
 	return s.editProfile(botUserID, func(p *domain.BotProfile) { p.ChatHistory = chatHistory })
 }
 
+func (s *BotStore) SetBotDefaultAdminRights(_ context.Context, botUserID int64, forChannels bool, rights domain.ChannelAdminRights) (int, error) {
+	return s.editProfile(botUserID, func(p *domain.BotProfile) {
+		if forChannels {
+			p.BroadcastAdminRights = rights
+		} else {
+			p.GroupAdminRights = rights
+		}
+	})
+}
+
 func (s *BotStore) CanBotSendMessage(_ context.Context, botUserID, userID int64) (bool, error) {
 	if botUserID == 0 || userID == 0 || botUserID == userID {
 		return false, nil
