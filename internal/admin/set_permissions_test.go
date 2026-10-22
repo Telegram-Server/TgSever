@@ -270,3 +270,73 @@ func TestSetPermissionsRecordsNotifyFailureWithoutFailing(t *testing.T) {
 		t.Fatal("permissions not written")
 	}
 }
+
+// deleteUser 注销账号（白名单成员被删的场景）。
+func (f *permissionsFixture) deleteUser(t *testing.T, userID int64) {
+	t.Helper()
+	lifecycle := memory.NewAccountLifecycleStore(f.users, nil)
+	if _, err := lifecycle.ExecuteAccountDeletion(context.Background(), userID, domain.AccountDeletionManual, "test", fixedNow()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetPermissionsReplayAfterWhitelistMemberDeletedReturnsRecordedResult(t *testing.T) {
+	f := newPermissionsFixture(t)
+	ctx := context.Background()
+	u, member := f.user(t, domain.User{}), f.user(t, domain.User{})
+	req := permissionsRequest("exec-permissions-member-deleted", u.ID)
+	req.Enabled = bptr(true)
+	req.SendWhitelist = &PermissionsWhitelistRequest{Enabled: bptr(true), UserIDs: &[]int64{member.ID}}
+	if _, err := f.svc.SetPermissions(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	f.deleteUser(t, member.ID)
+
+	again, err := f.svc.SetPermissions(ctx, req)
+	if err != nil || !again.AlreadyExecuted || again.Status != string(domain.AdminCommandCompleted) {
+		t.Fatalf("replay = %+v, %v; want the recorded result", again, err)
+	}
+
+	other := req
+	other.Edit = bptr(false)
+	conflict, err := f.svc.SetPermissions(ctx, other)
+	if err == nil || conflict.Error != "COMMAND_ID_CONFLICT" {
+		t.Fatalf("conflict = %+v, %v; want COMMAND_ID_CONFLICT", conflict, err)
+	}
+
+	fresh := other
+	fresh.CommandID = "exec-permissions-member-deleted-new"
+	if _, err := f.svc.SetPermissions(ctx, fresh); ErrorCode(err) != "PERMISSION_WHITELIST_INVALID" {
+		t.Fatalf("new command err = %v (code %q), want PERMISSION_WHITELIST_INVALID", err, ErrorCode(err))
+	}
+	if _, recorded := f.repo.items[fresh.CommandID]; recorded {
+		t.Fatal("invalid whitelist was recorded as a command")
+	}
+}
+
+// countingUserReader 统计白名单校验访问 users.ByIDs 的次数。
+type countingUserReader struct {
+	*memory.UserStore
+	byIDs int
+}
+
+func (c *countingUserReader) ByIDs(ctx context.Context, ids []int64) ([]domain.User, error) {
+	c.byIDs++
+	return c.UserStore.ByIDs(ctx, ids)
+}
+
+func TestSetPermissionsValidatesWhitelistWithOneLookup(t *testing.T) {
+	f := newPermissionsFixture(t)
+	counter := &countingUserReader{UserStore: f.users}
+	f.perms = permissions.NewService(memory.NewAccountPermissionsStore(f.users), counter)
+	f.svc = NewService(Dependencies{Commands: f.repo, Users: users.NewService(f.users), Permissions: f.perms, Now: fixedNow})
+	u, a := f.user(t, domain.User{}), f.user(t, domain.User{})
+	req := permissionsRequest("exec-permissions-one-lookup", u.ID)
+	req.SendWhitelist = &PermissionsWhitelistRequest{Enabled: bptr(true), UserIDs: &[]int64{a.ID}}
+	if _, err := f.svc.SetPermissions(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if counter.byIDs != 1 {
+		t.Fatalf("users.ByIDs called %d times, want 1", counter.byIDs)
+	}
+}

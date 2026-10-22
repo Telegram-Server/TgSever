@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -72,12 +71,7 @@ func (s *AccountPermissionsStore) SetAccountPermissions(ctx context.Context, p d
 	if p.UserID <= 0 {
 		return domain.AccountPermissions{}, domain.ErrUserNotFound
 	}
-	whitelist := slices.Clone(p.SendWhitelist)
-	slices.Sort(whitelist)
-	whitelist = slices.Compact(whitelist)
-	if whitelist == nil {
-		whitelist = []int64{}
-	}
+	whitelist := domain.NormalizeSendWhitelist(p.SendWhitelist)
 	err := withTx(ctx, s.db, "set account permissions", func(tx pgx.Tx) error {
 		q := sqlcgen.New(tx)
 		f := p.Flags

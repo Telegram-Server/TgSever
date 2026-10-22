@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -60,4 +61,16 @@ type AccountPermissions struct {
 // DefaultAccountPermissions 返回账号没有记录时的权限设置：总开关关闭、各项允许、白名单关闭且为空。
 func DefaultAccountPermissions(userID int64) AccountPermissions {
 	return AccountPermissions{UserID: userID, Flags: DefaultAccountPermissionFlags(), SendWhitelist: []int64{}}
+}
+
+// NormalizeSendWhitelist 返回去重并按 id 升序的白名单副本；nil 或空名单返回空数组（不是 nil），
+// 不修改入参。权限服务、各 store 与后台读出都用它，名单只有这一种规范形式。
+func NormalizeSendWhitelist(ids []int64) []int64 {
+	out := slices.Clone(ids)
+	slices.Sort(out)
+	out = slices.Compact(out)
+	if out == nil {
+		out = []int64{}
+	}
+	return out
 }

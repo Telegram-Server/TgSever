@@ -24,8 +24,8 @@ const ActionSetPermissions = "account.set_permissions"
 // AccountPermissionsService 是员工权限业务模块（生产里是 app/permissions.Service）。
 type AccountPermissionsService interface {
 	AccountPermissions(ctx context.Context, userID int64) (domain.AccountPermissions, bool, error)
-	Resolve(ctx context.Context, userID int64, up permissions.Update) (domain.AccountPermissions, error)
-	Set(ctx context.Context, p domain.AccountPermissions) (domain.AccountPermissions, error)
+	Resolve(ctx context.Context, userID int64, up permissions.Update) (current domain.AccountPermissions, found bool, next permissions.Resolved, err error)
+	Set(ctx context.Context, next permissions.Resolved, commandID string) (domain.AccountPermissions, error)
 }
 
 // AccountPermissionsNotifier 在权限写入后通知在线会话（生产里是 rpc.Router：失效本实例缓存
@@ -106,10 +106,7 @@ type AccountPermissionsResult struct {
 }
 
 func accountPermissionsResult(p domain.AccountPermissions, found bool) AccountPermissionsResult {
-	ids := slices.Clone(p.SendWhitelist)
-	if ids == nil {
-		ids = []int64{}
-	}
+	ids := domain.NormalizeSendWhitelist(p.SendWhitelist)
 	f := p.Flags
 	out := AccountPermissionsResult{
 		UserID: p.UserID, Found: found, Enabled: p.Enabled,
@@ -142,7 +139,9 @@ func (s *Service) AccountPermissions(ctx context.Context, userID int64) (Account
 	return accountPermissionsResult(p, found), nil
 }
 
-// SetPermissions 处理 account.set_permissions。
+// SetPermissions 处理 account.set_permissions。已有记录的 command id 先按记录重放或报
+// COMMAND_ID_CONFLICT；新提交在进入命令通道前合并、校验白名单（一次 users.ByIDs），不合法时
+// 不留命令记录。
 func (s *Service) SetPermissions(ctx context.Context, req SetPermissionsRequest) (CommandResult, error) {
 	if req.UserID <= 0 {
 		return CommandResult{}, fmt.Errorf("user_id is required")
@@ -150,32 +149,27 @@ func (s *Service) SetPermissions(ctx context.Context, req SetPermissionsRequest)
 	if s == nil || s.permissions == nil || s.users == nil {
 		return CommandResult{}, fmt.Errorf("admin permissions dependency is not configured")
 	}
-	// 白名单在进入命令通道之前校验：不合法的提交不留命令记录。
-	if _, err := s.permissions.Resolve(ctx, req.UserID, req.update()); err != nil {
+	if result, replayed, err := s.existingCommand(ctx, req.CommandMeta, ActionSetPermissions, req); replayed || err != nil {
+		return result, err
+	}
+	prev, had, next, err := s.permissions.Resolve(ctx, req.UserID, req.update())
+	if err != nil {
 		return CommandResult{}, permissionsError(err)
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetPermissions, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
 		if err := s.checkPermissionsTarget(ctx, req.UserID); err != nil {
 			return CommandResult{}, err
 		}
-		prev, had, err := s.permissions.AccountPermissions(ctx, req.UserID)
-		if err != nil {
-			return CommandResult{}, err
-		}
-		next, err := s.permissions.Resolve(ctx, req.UserID, req.update())
-		if err != nil {
-			return CommandResult{}, permissionsError(err)
-		}
+		resolved := next.Permissions()
 		details := map[string]any{
 			"previous_permissions": accountPermissionsResult(prev, had),
-			"permissions":          accountPermissionsResult(next, true),
-			"would_change":         !had || !samePermissions(prev, next),
+			"permissions":          accountPermissionsResult(resolved, true),
+			"would_change":         !had || !samePermissions(prev, resolved),
 		}
 		if req.DryRun {
 			return CommandResult{Message: "dry-run completed", Details: details}, nil
 		}
-		next.CommandID = req.CommandID
-		written, err := s.permissions.Set(ctx, next)
+		written, err := s.permissions.Set(ctx, next, req.CommandID)
 		if err != nil {
 			return CommandResult{Details: details}, permissionsError(err)
 		}

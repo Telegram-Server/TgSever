@@ -63,16 +63,17 @@ func TestServiceFirstSetDefaultsUnspecifiedItemsToAllowed(t *testing.T) {
 	f := newServiceFixture(t)
 	u := f.user(t)
 	ctx := context.Background()
-	p, err := f.svc.Resolve(ctx, u.ID, Update{Enabled: boolp(true), Flags: FlagsUpdate{Edit: boolp(false)}})
+	_, _, resolved, err := f.svc.Resolve(ctx, u.ID, Update{Enabled: boolp(true), Flags: FlagsUpdate{Edit: boolp(false)}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	p := resolved.Permissions()
 	want := domain.DefaultAccountPermissionFlags()
 	want.Edit = false
 	if !p.Enabled || p.Flags != want || p.SendWhitelistEnabled || len(p.SendWhitelist) != 0 {
 		t.Fatalf("resolved = %+v, want enabled with only edit denied", p)
 	}
-	if _, err := f.svc.Set(ctx, p); err != nil {
+	if _, err := f.svc.Set(ctx, resolved, "cmd-1"); err != nil {
 		t.Fatal(err)
 	}
 	view, err := f.svc.View(ctx, u.ID)
@@ -90,11 +91,11 @@ func TestServiceDisablingMasterSwitchKeepsSettings(t *testing.T) {
 	ctx := context.Background()
 	set := func(up Update) domain.AccountPermissions {
 		t.Helper()
-		p, err := f.svc.Resolve(ctx, u.ID, up)
+		_, _, p, err := f.svc.Resolve(ctx, u.ID, up)
 		if err != nil {
 			t.Fatal(err)
 		}
-		out, err := f.svc.Set(ctx, p)
+		out, err := f.svc.Set(ctx, p, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,11 +152,11 @@ func TestServiceSetInvalidatesCachedViewAndOtherInstancesOnInvalidate(t *testing
 			t.Fatalf("initial view enforced=%v err=%v", view.Enforced(), err)
 		}
 	}
-	p, err := f.svc.Resolve(ctx, u.ID, Update{Enabled: boolp(true), Flags: FlagsUpdate{Edit: boolp(false)}})
+	_, _, p, err := f.svc.Resolve(ctx, u.ID, Update{Enabled: boolp(true), Flags: FlagsUpdate{Edit: boolp(false)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.Set(ctx, p); err != nil {
+	if _, err := f.svc.Set(ctx, p, ""); err != nil {
 		t.Fatal(err)
 	}
 	if view, err := f.svc.View(ctx, u.ID); err != nil || !view.Enforced() {
@@ -188,19 +189,16 @@ func TestServiceWhitelistValidation(t *testing.T) {
 		"over the limit":  tooMany,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := f.svc.Resolve(ctx, u.ID, Update{SendWhitelist: &list}); !errors.Is(err, domain.ErrPermissionWhitelistInvalid) {
+			if _, _, _, err := f.svc.Resolve(ctx, u.ID, Update{SendWhitelist: &list}); !errors.Is(err, domain.ErrPermissionWhitelistInvalid) {
 				t.Fatalf("Resolve err=%v, want ErrPermissionWhitelistInvalid", err)
-			}
-			if _, err := f.svc.Set(ctx, domain.AccountPermissions{UserID: u.ID, SendWhitelist: list}); !errors.Is(err, domain.ErrPermissionWhitelistInvalid) {
-				t.Fatalf("Set err=%v, want ErrPermissionWhitelistInvalid", err)
 			}
 		})
 	}
-	p, err := f.svc.Resolve(ctx, u.ID, Update{SendWhitelist: idsp(b.ID, a.ID, b.ID, a.ID)})
+	_, _, p, err := f.svc.Resolve(ctx, u.ID, Update{SendWhitelist: idsp(b.ID, a.ID, b.ID, a.ID)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []int64{a.ID, b.ID}; !slices.Equal(p.SendWhitelist, want) {
-		t.Fatalf("deduplicated whitelist = %v, want %v", p.SendWhitelist, want)
+	if want := []int64{a.ID, b.ID}; !slices.Equal(p.Permissions().SendWhitelist, want) {
+		t.Fatalf("deduplicated whitelist = %v, want %v", p.Permissions().SendWhitelist, want)
 	}
 }

@@ -48,12 +48,7 @@ func (s *AccountPermissionsStore) SetAccountPermissions(ctx context.Context, p d
 			return domain.AccountPermissions{}, domain.ErrUserNotFound
 		}
 	}
-	whitelist := slices.Clone(p.SendWhitelist)
-	slices.Sort(whitelist)
-	p.SendWhitelist = slices.Compact(whitelist)
-	if p.SendWhitelist == nil {
-		p.SendWhitelist = []int64{}
-	}
+	p.SendWhitelist = domain.NormalizeSendWhitelist(p.SendWhitelist)
 	p.UpdatedAt = time.Now().UTC()
 	s.mu.Lock()
 	s.byUser[p.UserID] = p

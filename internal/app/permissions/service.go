@@ -104,12 +104,25 @@ type Update struct {
 	SendWhitelist        *[]int64
 }
 
-// Resolve 把 update 叠加到账号当前的设置上，并校验、去重白名单。白名单不合法返回
-// domain.ErrPermissionWhitelistInvalid。只读，不写 store。
-func (s *Service) Resolve(ctx context.Context, userID int64, up Update) (domain.AccountPermissions, error) {
-	current, _, err := s.AccountPermissions(ctx, userID)
+// Resolved 是经 Resolve 合并并校验过的设置。只有 Resolve 能构造它，所以 Set 不再重复校验
+// 白名单（一次提交只查一次 users.ByIDs）。
+type Resolved struct {
+	p domain.AccountPermissions
+}
+
+// Permissions 返回合并后的设置（白名单已去重、按 id 升序）。
+func (r Resolved) Permissions() domain.AccountPermissions {
+	p := r.p
+	p.SendWhitelist = slices.Clone(p.SendWhitelist)
+	return p
+}
+
+// Resolve 读取账号当前的设置（current，没有记录时为默认值与 found=false），把 update 叠加上去，
+// 并校验、去重白名单。白名单不合法返回 domain.ErrPermissionWhitelistInvalid。只读，不写 store。
+func (s *Service) Resolve(ctx context.Context, userID int64, up Update) (current domain.AccountPermissions, found bool, next Resolved, err error) {
+	current, found, err = s.AccountPermissions(ctx, userID)
 	if err != nil {
-		return domain.AccountPermissions{}, err
+		return domain.AccountPermissions{}, false, Resolved{}, err
 	}
 	p := current
 	p.UserID = userID
@@ -139,20 +152,17 @@ func (s *Service) Resolve(ctx context.Context, userID int64, up Update) (domain.
 	}
 	whitelist, err := s.validateWhitelist(ctx, userID, p.SendWhitelist)
 	if err != nil {
-		return domain.AccountPermissions{}, err
+		return domain.AccountPermissions{}, false, Resolved{}, err
 	}
 	p.SendWhitelist = whitelist
-	return p, nil
+	return current, found, Resolved{p: p}, nil
 }
 
-// Set 整体替换账号的权限设置（白名单同样校验、去重），成功后失效本实例缓存；其他实例经
+// Set 用 Resolve 的结果整体替换账号的权限设置并记下 commandID，成功后失效本实例缓存；其他实例经
 // store 写入时发出的读模型通知失效。
-func (s *Service) Set(ctx context.Context, p domain.AccountPermissions) (domain.AccountPermissions, error) {
-	whitelist, err := s.validateWhitelist(ctx, p.UserID, p.SendWhitelist)
-	if err != nil {
-		return domain.AccountPermissions{}, err
-	}
-	p.SendWhitelist = whitelist
+func (s *Service) Set(ctx context.Context, r Resolved, commandID string) (domain.AccountPermissions, error) {
+	p := r.Permissions()
+	p.CommandID = commandID
 	out, err := s.store.SetAccountPermissions(ctx, p)
 	s.InvalidateAccountPermissions(p.UserID)
 	if err != nil {
@@ -178,12 +188,7 @@ func (s *Service) FlushAccountPermissions() {
 // validateWhitelist 去重并按 id 升序返回名单；超过上限、含账号自己、含不存在或已注销的账号时
 // 返回 domain.ErrPermissionWhitelistInvalid。
 func (s *Service) validateWhitelist(ctx context.Context, userID int64, ids []int64) ([]int64, error) {
-	out := slices.Clone(ids)
-	slices.Sort(out)
-	out = slices.Compact(out)
-	if out == nil {
-		out = []int64{}
-	}
+	out := domain.NormalizeSendWhitelist(ids)
 	if len(out) > domain.MaxSendWhitelistSize {
 		return nil, fmt.Errorf("%w: more than %d accounts", domain.ErrPermissionWhitelistInvalid, domain.MaxSendWhitelistSize)
 	}
