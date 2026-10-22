@@ -756,6 +756,14 @@ func (r *Router) onAccountVerifyEmail(ctx context.Context, req *tg.AccountVerify
 		if r.deps.Auth == nil {
 			return nil, internalErr()
 		}
+		// 老账号的登录邮箱设置会先消耗邮箱码、把登录邮箱写到账号上，再登录；所以先按设备绑定
+		// 规则预检，名额已满或缺 device_id 时邮箱不会被设置。登录时 store 仍在锁下再判一次。
+		if err := r.deps.Auth.CheckDeviceLimitForPhone(ctx, r.authzFromCtx(ctx).AuthKeyID, p.PhoneNumber); err != nil {
+			if rejected := deviceBindingRejectionErr(err); rejected != nil {
+				return nil, rejected
+			}
+			return nil, internalErr()
+		}
 		email, err := r.deps.Account.VerifyLoginEmail(ctx, 0, p.PhoneNumber, p.PhoneCodeHash, code, true)
 		if err != nil {
 			return nil, passwordErr(err)

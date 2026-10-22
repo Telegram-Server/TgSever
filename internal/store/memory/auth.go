@@ -137,8 +137,9 @@ func mergeAuthKeyClientInfo(k *store.AuthKeyData, info store.AuthKeyClientInfo) 
 	if info.AppVersion != "" {
 		k.AppVersion = info.AppVersion
 	}
-	// device_id 一次写入：只在从未上报时写，之后不再改变（见 store.AuthKeyClientInfo.DeviceID）。
-	if info.DeviceID != "" && k.DeviceID == "" {
+	// device_id 一次写入：只在从未上报时写，之后不再改变（见 store.AuthKeyClientInfo.DeviceID）；
+	// 不合法的值当作未上报。
+	if domain.ValidDeviceID(info.DeviceID) && k.DeviceID == "" {
 		k.DeviceID = info.DeviceID
 		deviceIDStored = true
 	}

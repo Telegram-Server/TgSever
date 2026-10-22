@@ -98,7 +98,10 @@ type Service struct {
 	phoneCodeSender    otpdelivery.Sender
 	otpDeliveryFailure func(context.Context, otpdelivery.Request, error)
 	// deviceBackfillFailure 观察延迟补绑（#115）的失败；补绑是尽力而为，失败不影响调用方。
-	deviceBackfillFailure  func(context.Context, [8]byte, error)
+	deviceBackfillFailure func(context.Context, [8]byte, error)
+	// deviceIDCarryFailure 观察把 temp key 的 device_id 带到 perm key（#111）的失败；与常规的
+	// 客户端信息持久化一样是尽力而为，失败不让 bindTempAuthKey 失败。
+	deviceIDCarryFailure   func(context.Context, [8]byte, error)
 	phoneCodeLength        int
 	loginEmailEnabled      bool
 	loginEmailRequireSetup bool
@@ -417,6 +420,14 @@ func WithDeviceBackfillFailureObserver(observer func(ctx context.Context, authKe
 	}
 }
 
+// WithDeviceIDCarryFailureObserver 观察 bindTempAuthKey 成功后把 temp key 的 device_id 带到
+// perm key 的写入失败：这一步尽力而为，失败只交给 observer 记录，绑定照常成功。
+func WithDeviceIDCarryFailureObserver(observer func(ctx context.Context, permAuthKeyID [8]byte, err error)) Option {
+	return func(s *Service) {
+		s.deviceIDCarryFailure = observer
+	}
+}
+
 // NewService 创建登录服务。fixedCode 为开发固定验证码。
 func NewService(users store.UserStore, auths store.AuthorizationStore, codes store.CodeStore, authKeys store.AuthKeyStore, tempKeys store.TempAuthKeyBindingStore, fixedCode string, opts ...Option) *Service {
 	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute, codeMaxAttempts: 5, loginEmailCodeLength: 6, phoneCodeLength: 5}
@@ -472,8 +483,8 @@ func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding 
 		return domain.TempAuthKeyBindingResult{}, err
 	}
 	carried, err := s.carryDeviceIDToPermanentKey(ctx, binding.PermAuthKeyID, tempDeviceID)
-	if err != nil {
-		return domain.TempAuthKeyBindingResult{}, err
+	if err != nil && s.deviceIDCarryFailure != nil {
+		s.deviceIDCarryFailure(ctx, authKeyIDFromInt64(binding.PermAuthKeyID), err)
 	}
 	// 带过去的 device_id 对已登录的 perm key 同样是一次"之后才持久化"，走延迟补绑；
 	// perm key 原本就有 device_id（或重放绑定）时没有写入，也就不补绑。
@@ -502,7 +513,8 @@ func (s *Service) backfillDeviceBinding(ctx context.Context, authKeyID [8]byte) 
 // 语义与 UpdateClientInfo 一致：temp key 没上报时不动 perm key 上的值；device_id 一次写入，
 // perm key 已有值时保持原值。返回值报告 perm key 的 device_id 是否本次新写入。
 //
-// 绑定已提交，这里失败时返回错误让客户端重试：重放绑定是幂等的，会再补写一次。
+// 与常规的客户端信息持久化一样是尽力而为：失败由调用方交给 deviceIDCarryFailure 记录，
+// 不让已提交的绑定失败；客户端之后在 perm key 上发 initConnection 时仍会写入。
 func (s *Service) carryDeviceIDToPermanentKey(ctx context.Context, permAuthKeyID int64, deviceID string) (bool, error) {
 	if deviceID == "" || s.authKeys == nil {
 		return false, nil
@@ -588,6 +600,20 @@ func (s *Service) CheckDeviceLimit(ctx context.Context, authKeyID [8]byte, userI
 		return nil
 	}
 	return limits.CheckDeviceLimit(ctx, userID, authKeyID)
+}
+
+// CheckDeviceLimitForPhone 是按手机号的 CheckDeviceLimit：登录邮箱设置（account.verifyEmail
+// 的 loginSetup）会先把登录邮箱写到账号上再登录，所以在那之前按手机号找到要登录的账号预检。
+// 手机号还没有账号（注册）时不受限制。
+func (s *Service) CheckDeviceLimitForPhone(ctx context.Context, authKeyID [8]byte, phone string) error {
+	if s == nil || s.users == nil {
+		return nil
+	}
+	owner, found, err := s.currentPhoneOwner(ctx, domain.NormalizePhone(phone))
+	if err != nil || !found {
+		return err
+	}
+	return s.CheckDeviceLimit(ctx, authKeyID, owner.ID)
 }
 
 // CompletePasswordSignIn 在两步验证通过后清除 password_pending，使 auth_key 转为完全授权。

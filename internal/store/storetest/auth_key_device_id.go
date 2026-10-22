@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"crypto/rand"
+	"strings"
 	"testing"
 
 	"telesrv/internal/store"
@@ -10,6 +11,7 @@ import (
 
 // AuthKeyDeviceIDContract 是 auth key 上 device_id 持久化的存储契约（#111）：
 // UpdateClientInfo 写入的 device_id 能经 Get/Revalidate 读回；空值不覆盖已有值，
+// 不合法的值（domain.ValidDeviceID）当作未上报、不写入，
 // 只更新其它元数据也不会清掉它；一次写入：已有值的 key 收到不同的非空值时保持原值
 // （会话被拷到另一台机器后上报的新 device_id 不能顶掉原设备）；协议层重复 Save 不清掉它。
 // reopen 返回同一份底层数据上的另一个 store 实例（postgres 借此模拟服务端重启），
@@ -48,6 +50,23 @@ func AuthKeyDeviceIDContract(t *testing.T, newStore func(t *testing.T) store.Aut
 		if err != nil || data.DeviceModel != "Laptop" {
 			t.Fatalf("device model = %q err=%v, want Laptop", data.DeviceModel, err)
 		}
+	})
+
+	t.Run("an invalid device id counts as not reported", func(t *testing.T) {
+		keys := newStore(t)
+		id := newDeviceIDTestKey(t, keys)
+		for _, invalid := range []string{strings.Repeat("d", 129), "desk\x00id", "设备"} {
+			stored, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{DeviceModel: "PC", DeviceID: invalid})
+			if err != nil || stored {
+				t.Fatalf("update with invalid device id %q stored=%v err=%v, want not stored", invalid, stored, err)
+			}
+			assertAuthKeyDeviceID(t, keys, id, "")
+		}
+		// 不合法的值没有占掉一次写入的机会：之后的合法值照常写入。
+		if stored, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{DeviceID: "desk-0009"}); err != nil || !stored {
+			t.Fatalf("update valid device id stored=%v err=%v, want stored", stored, err)
+		}
+		assertAuthKeyDeviceID(t, keys, id, "desk-0009")
 	})
 
 	t.Run("a stored device id is never replaced", func(t *testing.T) {

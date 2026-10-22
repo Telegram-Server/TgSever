@@ -131,7 +131,8 @@ type GetDeviceBackfillTargetRow struct {
 }
 
 // 延迟补绑（#115）：auth key 上的已完成授权属于设了上限的非 bot 账号时返回它与 key 上的
-// device_id；其余情况没有行。每次持久化 device_id 都会调用，未受限的账号一条查询就结束。
+// device_id；其余情况没有行。只在 auth key 第一次持久化 device_id 时调用（之后重连不再调用）：
+// 先不加锁调用一次，未受限的账号一条查询就结束；需要补绑时再在用户锁下重读一次。
 func (q *Queries) GetDeviceBackfillTarget(ctx context.Context, authKeyID int64) (GetDeviceBackfillTargetRow, error) {
 	row := q.db.QueryRow(ctx, getDeviceBackfillTarget, authKeyID)
 	var i GetDeviceBackfillTargetRow

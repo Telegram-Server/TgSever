@@ -298,3 +298,31 @@ func TestDeviceLimitRejectsEveryOtherLoginEntryOnNewDeviceAtLimit(t *testing.T) 
 		})
 	}
 }
+
+// CheckDeviceLimitForPhone 是登录邮箱设置（account.verifyEmail 的 loginSetup）写入邮箱之前的
+// 预检：按手机号找到要登录的账号，规则与 CheckDeviceLimit 一致；手机号还没有账号（注册）时
+// 不受限制。
+func TestCheckDeviceLimitForPhoneAppliesTheBindingRulesToThePhoneOwner(t *testing.T) {
+	f := newDeviceLimitFixture(t)
+	ctx := context.Background()
+	const phone = "15550105101"
+	u := f.existingUser(t, phone)
+	f.setLimit(t, u.ID, 1)
+	first := f.device(t, 1)
+	if err := f.signInOn(t, phone, first); err != nil {
+		t.Fatalf("sign in on the first device: %v", err)
+	}
+	if err := f.svc.CheckDeviceLimitForPhone(ctx, first, "+1 555 010 5101"); err != nil {
+		t.Fatalf("pre-check on the bound device: %v", err)
+	}
+	if err := f.svc.CheckDeviceLimitForPhone(ctx, f.device(t, 2), phone); !errors.Is(err, domain.ErrDeviceLimitReached) {
+		t.Fatalf("pre-check on a new device at the limit err=%v, want ErrDeviceLimitReached", err)
+	}
+	if err := f.svc.CheckDeviceLimitForPhone(ctx, f.key(t, 3, ""), phone); !errors.Is(err, domain.ErrDeviceIDRequired) {
+		t.Fatalf("pre-check without device_id err=%v, want ErrDeviceIDRequired", err)
+	}
+	if err := f.svc.CheckDeviceLimitForPhone(ctx, f.key(t, 4, ""), "15550105199"); err != nil {
+		t.Fatalf("pre-check for a phone with no account (sign-up): %v", err)
+	}
+	f.assertBindings(t, u.ID, 1)
+}

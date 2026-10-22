@@ -31,6 +31,8 @@ type AuthService interface {
 	// 拒绝（domain.ErrDeviceLimitReached / domain.ErrDeviceIDRequired），在有副作用的登录
 	// 步骤之前调用；绑定与 2FA 转正时仍会在锁下再判一次。
 	CheckDeviceLimit(ctx context.Context, authKeyID [8]byte, userID int64) error
+	// CheckDeviceLimitForPhone 同 CheckDeviceLimit，按手机号找到要登录的账号；没有账号（注册）时不限制。
+	CheckDeviceLimitForPhone(ctx context.Context, authKeyID [8]byte, phone string) error
 	SendCode(ctx context.Context, phone string) (string, error)
 	CodeDelivery(ctx context.Context, phoneCodeHash string) (domain.AuthCodeDelivery, bool, error)
 	ResendCode(ctx context.Context, phone, phoneCodeHash string) (string, error)

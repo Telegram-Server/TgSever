@@ -1707,6 +1707,11 @@ func run(logger *zap.Logger) error {
 				zap.String("auth_key_id", fmt.Sprintf("%x", authKeyID)),
 				zap.Error(err))
 		}),
+		auth.WithDeviceIDCarryFailureObserver(func(_ context.Context, permAuthKeyID [8]byte, err error) {
+			logger.Named("auth").Warn("把 temp key 的 device_id 带到 perm key 失败，绑定照常成功",
+				zap.String("perm_auth_key_id", fmt.Sprintf("%x", permAuthKeyID)),
+				zap.Error(err))
+		}),
 		auth.WithLoginEmail(auth.LoginEmailOptions{
 			Enabled:      cfg.LoginEmailEnable,
 			RequireSetup: cfg.LoginEmailRequireSetup,

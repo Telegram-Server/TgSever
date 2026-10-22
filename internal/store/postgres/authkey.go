@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"telesrv/internal/domain"
 	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
 )
@@ -245,6 +246,11 @@ WHERE auth_key_id = ANY($1::bigint[])`, batch)
 // 是否本次新写入由同一语句里 prev 子查询读到的旧值判断；并发两条连接同时首次上报时
 // 两边都可能读到 NULL 而都报 true，只会多跑一次幂等的补绑，不会漏报。
 func (s *AuthKeyStore) UpdateClientInfo(ctx context.Context, id [8]byte, info store.AuthKeyClientInfo) (bool, error) {
+	// 不合法的 device_id 当作未上报：不写入，也不占掉一次写入的机会。
+	deviceID := info.DeviceID
+	if !domain.ValidDeviceID(deviceID) {
+		deviceID = ""
+	}
 	var deviceIDStored bool
 	err := s.db.QueryRow(ctx, `
 UPDATE auth_keys AS k
@@ -263,7 +269,7 @@ FROM (
 WHERE k.auth_key_id = $1
   AND ($2::integer <= 0 OR k.layer_observation_id = 0 OR k.layer = $2::integer)
 RETURNING prev.device_id_unset AND $8::text <> ''
-`, authKeyIDToInt64(id), info.Layer, info.DeviceModel, info.Platform, info.SystemVersion, info.APIID, info.AppVersion, info.DeviceID).Scan(&deviceIDStored)
+`, authKeyIDToInt64(id), info.Layer, info.DeviceModel, info.Platform, info.SystemVersion, info.APIID, info.AppVersion, deviceID).Scan(&deviceIDStored)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			var (

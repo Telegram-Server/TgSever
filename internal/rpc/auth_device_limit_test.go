@@ -185,6 +185,44 @@ func (s fullDeviceLimitAuthService) CheckDeviceLimit(context.Context, [8]byte, i
 	return s.err
 }
 
+func (s fullDeviceLimitAuthService) CheckDeviceLimitForPhone(context.Context, [8]byte, string) error {
+	return s.err
+}
+
+// recordingLoginEmailAccount 记录登录邮箱设置是否真的执行（会消耗邮箱码并把登录邮箱写到账号上）。
+type recordingLoginEmailAccount struct {
+	AccountService
+	verifyCalls int
+}
+
+func (a *recordingLoginEmailAccount) VerifyLoginEmail(context.Context, int64, string, string, string, bool) (string, error) {
+	a.verifyCalls++
+	return "alice@example.test", nil
+}
+
+// 名额已满或缺 device_id 时 account.verifyEmail(loginSetup) 在消耗邮箱码、把登录邮箱写到账号上
+// 之前就拒绝。
+func TestDeviceBindingRejectionRefusesLoginEmailSetupBeforeSettingEmail(t *testing.T) {
+	for _, rejection := range deviceBindingRejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			authSvc := fullDeviceLimitAuthService{&captureAuthService{}, rejection.err}
+			account := &recordingLoginEmailAccount{}
+			r := New(Config{}, Deps{Auth: authSvc, Account: account}, zaptest.NewLogger(t), clock.System)
+			_, err := r.onAccountVerifyEmail(context.Background(), &tg.AccountVerifyEmailRequest{
+				Purpose:      &tg.EmailVerifyPurposeLoginSetup{PhoneNumber: "8618800000020", PhoneCodeHash: "hash-email-setup"},
+				Verification: &tg.EmailVerificationCode{Code: "654321"},
+			})
+			assertRPCError(t, "account.verifyEmail", err, 400, rejection.typ)
+			if account.verifyCalls != 0 {
+				t.Fatalf("VerifyLoginEmail calls=%d, want 0 (refused before the email is set)", account.verifyCalls)
+			}
+			if authSvc.signInWithEmailCount != 0 {
+				t.Fatalf("SignInWithEmail calls=%d, want 0", authSvc.signInWithEmailCount)
+			}
+		})
+	}
+}
+
 // recordingRecoveryAccount 记录密码找回是否真的执行（找回会消耗找回码并重置 2FA 密码）。
 type recordingRecoveryAccount struct {
 	AccountService

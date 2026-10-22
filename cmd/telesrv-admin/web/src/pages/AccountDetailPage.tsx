@@ -167,6 +167,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                               path="/api/actions/unbind-device"
                               payload={() => ({ user_id: account.ID, device_id: row.device_id })}
                               onDone={load}
+                              refreshOnClose
                             />
                           )
                         : undefined
