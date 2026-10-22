@@ -1,6 +1,7 @@
 import type {
   AccountDetail,
   AccountListResponse,
+  AccountPermissions,
   DeviceBindingList,
   DonationChainsResponse,
   DonationDepositListResponse,
@@ -185,6 +186,7 @@ export const api = {
   accounts: (params: URLSearchParams) => request<AccountListResponse>(`/api/accounts?${params.toString()}`),
   account: (id: number) => request<AccountDetail>(`/api/accounts/${id}`),
   deviceBindings: (id: number) => request<DeviceBindingList>(`/api/accounts/${id}/device-bindings`),
+  accountPermissions: (id: number) => request<AccountPermissions>(`/api/accounts/${id}/permissions`),
   sharedDeviceGroups: (params: URLSearchParams) => request<SharedDeviceGroupListResponse>(`/api/accounts/shared-devices?${params.toString()}`),
   channels: (params: URLSearchParams) => request<ChannelListResponse>(`/api/channels?${params.toString()}`),
   channel: (id: number) => request<ChannelDetail>(`/api/channels/${id}`),
