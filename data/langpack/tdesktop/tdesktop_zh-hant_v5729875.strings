@@ -4239,6 +4239,8 @@
 "lng_inline_switch_cant" = "抱歉，您無法在此傳送訊息 :(";
 "lng_inline_switch_choose" = "選擇聊天…";
 "lng_intro_about" = "歡迎使用 Telegram 官方版桌面應用程式。\n快速又安全。";
+"lng_intro_device_id_required" = "此帳號需要使用新版應用程式，請更新至最新版本。";
+"lng_intro_device_limit_reached" = "此帳號綁定的裝置數量已達上限，請聯絡管理員解除綁定裝置。";
 "lng_intro_email_confirm_subtitle" = "請檢查您的電子信箱 {email}（不要忘記垃圾郵件匣）並輸入我們剛剛傳給您的驗證碼。";
 "lng_intro_email_setup_title" = "選擇登入要用的電子信箱";
 "lng_intro_finish" = "註冊";

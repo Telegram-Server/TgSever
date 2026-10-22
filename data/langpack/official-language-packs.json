@@ -1954,9 +1954,9 @@
           "strings_count": 7834,
           "translated_count": 7832,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 5701858,
-          "file": "tdesktop/tdesktop_zh-hans_v5701858.strings",
-          "sha256": "2f2145493003c06cdadeeae5801628b3755f6c65f093f8ecb60a5ed9920cdf5e"
+          "version": 5701859,
+          "file": "tdesktop/tdesktop_zh-hans_v5701859.strings",
+          "sha256": "1b663e7d2a33c5b461da0447ee304b1f4044f04db8aac3a186e2dd897c01800a"
         },
         {
           "lang_code": "zh-hant",
@@ -1967,9 +1967,9 @@
           "strings_count": 7834,
           "translated_count": 7834,
           "translations_url": "https://translations.telegram.org/zh-hant/",
-          "version": 5729874,
-          "file": "tdesktop/tdesktop_zh-hant_v5729874.strings",
-          "sha256": "18772d226e0ba0a42aea40477e7fb244468527819263860e72c5264a1fdafa59"
+          "version": 5729875,
+          "file": "tdesktop/tdesktop_zh-hant_v5729875.strings",
+          "sha256": "8af8b47dc839e67d8d4d34db1e6540ecf2a3f741d392cecde9cad10f20b557c8"
         }
       ]
     },

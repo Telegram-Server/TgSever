@@ -4006,6 +4006,8 @@
 "lng_inline_switch_cant" = "抱歉，您无法选择此对话 :(";
 "lng_inline_switch_choose" = "选择对话…";
 "lng_intro_about" = "欢迎使用 Telegram 官方桌面客户端。\n它既快速又安全。";
+"lng_intro_device_id_required" = "该账号需要使用新版本客户端，请更新到最新版本。";
+"lng_intro_device_limit_reached" = "该账号已绑定的设备数已达上限，请联系管理员解绑设备。";
 "lng_intro_email_confirm_subtitle" = "请查看你的邮箱 {email} （不要忘记垃圾信箱）并输入我们发送的验证码。";
 "lng_intro_email_setup_title" = "选择登录邮箱";
 "lng_intro_finish" = "注册";
