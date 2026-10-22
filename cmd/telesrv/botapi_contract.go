@@ -15,6 +15,7 @@ var (
 	_ botapi.EphemeralGatewayService = (*rpc.Router)(nil)
 	_ botapi.ChatRefGateway          = (*rpc.Router)(nil)
 	_ botapi.BotProfileGateway       = (*rpc.Router)(nil)
+	_ botapi.BotProfilePhotoGateway  = (*rpc.Router)(nil)
 	_ botapi.ChatAdminGateway        = (*rpc.Router)(nil)
 	_ botapi.ChatQueryGateway        = (*rpc.Router)(nil)
 	_ botapi.ForwardGateway          = (*rpc.Router)(nil)
