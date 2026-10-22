@@ -422,6 +422,7 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+			r.enqueueBotAPIChatJoinRequest(ctx, res.Channel, userID, "", date)
 		}
 		return nil, channelInviteErr(err)
 	}
