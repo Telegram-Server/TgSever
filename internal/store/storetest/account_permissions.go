@@ -147,6 +147,149 @@ func AccountPermissionsContract(t *testing.T, newFixture func(t *testing.T) Acco
 		t.Fatalf("whitelist after concurrent sets = %v, want exactly one submitted list of %v", got.SendWhitelist, lists)
 	})
 
+	t.Run("a read never pairs one submission's flags with another's whitelist", func(t *testing.T) {
+		f := newFixture(t)
+		u := createPermissionsUser(t, f)
+		a, b := createPermissionsUser(t, f), createPermissionsUser(t, f)
+		// 两份提交的总开关与名单一一对应：读到 enabled=true 就必须是 [a]，false 就必须是 [b]。
+		states := []domain.AccountPermissions{
+			{UserID: u.ID, Enabled: true, Flags: domain.DefaultAccountPermissionFlags(), SendWhitelistEnabled: true, SendWhitelist: []int64{a.ID}},
+			{UserID: u.ID, Enabled: false, Flags: domain.DefaultAccountPermissionFlags(), SendWhitelistEnabled: true, SendWhitelist: []int64{b.ID}},
+		}
+		if _, err := f.Permissions.SetAccountPermissions(ctx, states[0]); err != nil {
+			t.Fatalf("seed permissions: %v", err)
+		}
+		done := make(chan struct{})
+		writeErr := make(chan error, 1)
+		go func() {
+			defer close(done)
+			for i := 0; i < 200; i++ {
+				if _, err := f.Permissions.SetAccountPermissions(ctx, states[i%2]); err != nil {
+					writeErr <- err
+					return
+				}
+			}
+		}()
+		for reading := true; reading; {
+			select {
+			case <-done:
+				reading = false
+			default:
+			}
+			got, found, err := f.Permissions.GetAccountPermissions(ctx, u.ID)
+			if err != nil || !found {
+				t.Fatalf("read during writes found=%v err=%v", found, err)
+			}
+			want := states[1].SendWhitelist
+			if got.Enabled {
+				want = states[0].SendWhitelist
+			}
+			if !slices.Equal(got.SendWhitelist, want) {
+				t.Fatalf("read enabled=%v with whitelist %v, want %v: flags and whitelist come from different submissions", got.Enabled, got.SendWhitelist, want)
+			}
+		}
+		select {
+		case err := <-writeErr:
+			t.Fatalf("write during reads: %v", err)
+		default:
+		}
+	})
+
+	t.Run("update merges under a lock so concurrent partial updates all survive", func(t *testing.T) {
+		f := newFixture(t)
+		u := createPermissionsUser(t, f)
+		// 11 个并发的部分更新各自只关掉一项：每次合并都必须基于前一次写入后的值，否则后提交的
+		// 会把先提交的那一项改回允许。
+		turnOff := []func(*domain.AccountPermissionFlags){
+			func(p *domain.AccountPermissionFlags) { p.Send = false },
+			func(p *domain.AccountPermissionFlags) { p.Delete = false },
+			func(p *domain.AccountPermissionFlags) { p.Edit = false },
+			func(p *domain.AccountPermissionFlags) { p.ClearHistory = false },
+			func(p *domain.AccountPermissionFlags) { p.CreateGroup = false },
+			func(p *domain.AccountPermissionFlags) { p.CreateChannel = false },
+			func(p *domain.AccountPermissionFlags) { p.JoinGroup = false },
+			func(p *domain.AccountPermissionFlags) { p.JoinChannel = false },
+			func(p *domain.AccountPermissionFlags) { p.LeaveGroup = false },
+			func(p *domain.AccountPermissionFlags) { p.LeaveChannel = false },
+			func(p *domain.AccountPermissionFlags) { p.AddContact = false },
+		}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		firsts := 0
+		errs := make(chan error, len(turnOff))
+		for _, off := range turnOff {
+			wg.Add(1)
+			go func(off func(*domain.AccountPermissionFlags)) {
+				defer wg.Done()
+				_, found, _, err := f.Permissions.UpdateAccountPermissions(ctx, u.ID, func(cur domain.AccountPermissions, found bool) domain.AccountPermissions {
+					if !found {
+						cur = domain.AccountPermissions{Enabled: true, Flags: domain.DefaultAccountPermissionFlags()}
+					}
+					off(&cur.Flags)
+					return cur
+				})
+				if err == nil && !found {
+					mu.Lock()
+					firsts++
+					mu.Unlock()
+				}
+				errs <- err
+			}(off)
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("concurrent update: %v", err)
+			}
+		}
+		if firsts != 1 {
+			t.Fatalf("%d updates saw no record, want exactly the first one", firsts)
+		}
+		got, found, err := f.Permissions.GetAccountPermissions(ctx, u.ID)
+		if err != nil || !found {
+			t.Fatalf("get after concurrent updates found=%v err=%v", found, err)
+		}
+		if got.Flags != (domain.AccountPermissionFlags{}) || !got.Enabled {
+			t.Fatalf("after 11 concurrent partial updates enabled=%v flags=%+v, want enabled with every item off", got.Enabled, got.Flags)
+		}
+	})
+
+	t.Run("update returns the previous value and rejects missing accounts", func(t *testing.T) {
+		f := newFixture(t)
+		u := createPermissionsUser(t, f)
+		a := createPermissionsUser(t, f)
+		seed := domain.AccountPermissions{UserID: u.ID, Enabled: true, Flags: domain.DefaultAccountPermissionFlags(), SendWhitelistEnabled: true, SendWhitelist: []int64{a.ID}}
+		if _, err := f.Permissions.SetAccountPermissions(ctx, seed); err != nil {
+			t.Fatalf("seed permissions: %v", err)
+		}
+		prev, found, written, err := f.Permissions.UpdateAccountPermissions(ctx, u.ID, func(cur domain.AccountPermissions, _ bool) domain.AccountPermissions {
+			cur.Enabled = false
+			cur.CommandID = "cmd-update"
+			return cur
+		})
+		if err != nil || !found || !prev.Enabled || !slices.Equal(prev.SendWhitelist, []int64{a.ID}) {
+			t.Fatalf("update prev=%+v found=%v err=%v, want the seeded record", prev, found, err)
+		}
+		if written.Enabled || written.CommandID != "cmd-update" || !slices.Equal(written.SendWhitelist, []int64{a.ID}) || written.UpdatedAt.IsZero() {
+			t.Fatalf("update wrote %+v, want enabled off with the whitelist and command id kept", written)
+		}
+		assertPermissions(t, f, written)
+
+		if _, _, _, err := f.Permissions.UpdateAccountPermissions(ctx, 1<<40, func(cur domain.AccountPermissions, _ bool) domain.AccountPermissions {
+			return cur
+		}); !errors.Is(err, domain.ErrUserNotFound) {
+			t.Fatalf("update of a missing account err=%v, want ErrUserNotFound", err)
+		}
+		if _, _, _, err := f.Permissions.UpdateAccountPermissions(ctx, u.ID, func(cur domain.AccountPermissions, _ bool) domain.AccountPermissions {
+			cur.SendWhitelist = append(cur.SendWhitelist, 1<<40)
+			return cur
+		}); !errors.Is(err, domain.ErrUserNotFound) {
+			t.Fatalf("update with a missing whitelist account err=%v, want ErrUserNotFound", err)
+		}
+		assertPermissions(t, f, written)
+	})
+
 	t.Run("account deletion removes its permissions and its whitelist entries elsewhere", func(t *testing.T) {
 		f := newFixture(t)
 		owner := createPermissionsUser(t, f)

@@ -20,4 +20,12 @@ type AccountPermissionsStore interface {
 	// domain.ErrUserNotFound，什么都不写。白名单的重复项只保存一次；业务校验（上限、已注销、
 	// 含自己）由调用方完成。
 	SetAccountPermissions(ctx context.Context, p domain.AccountPermissions) (domain.AccountPermissions, error)
+	// UpdateAccountPermissions 在一个事务里锁住账号的权限设置，把当前值（prev，没有记录时
+	// prevFound=false）交给 merge 算出新设置，再像 SetAccountPermissions 一样整体写回（新设置的
+	// UserID 由 store 填为 userID）。并发的两次更新按提交顺序排队，后一次的 merge 看到的是前一次
+	// 写入后的值，所以两人同时改不同的项时谁的改动都不会被覆盖。merge 在锁内调用，不能做 I/O。
+	UpdateAccountPermissions(ctx context.Context, userID int64, merge AccountPermissionsMerge) (prev domain.AccountPermissions, prevFound bool, written domain.AccountPermissions, err error)
 }
+
+// AccountPermissionsMerge 把账号当前的权限设置（found=false 时为零值）合并成要写入的设置。
+type AccountPermissionsMerge func(current domain.AccountPermissions, found bool) domain.AccountPermissions

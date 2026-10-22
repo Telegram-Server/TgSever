@@ -104,71 +104,94 @@ type Update struct {
 	SendWhitelist        *[]int64
 }
 
-// Resolved 是经 Resolve 合并并校验过的设置。只有 Resolve 能构造它，所以 Set 不再重复校验
-// 白名单（一次提交只查一次 users.ByIDs）。
+// Resolved 是经 Resolve 校验过的一次提交：白名单（若给出）已去重、校验。只有 Resolve 能构造它，
+// 所以 Set 不再重复校验白名单（一次提交只查一次 users.ByIDs）。
 type Resolved struct {
-	p domain.AccountPermissions
+	userID  int64
+	up      Update
+	preview domain.AccountPermissions
 }
 
-// Permissions 返回合并后的设置（白名单已去重、按 id 升序）。
+// Permissions 返回按 Resolve 时读到的当前值合并出的设置（白名单已去重、按 id 升序），供试运行
+// 展示。真正写入时 Set 会在锁内基于那一刻的当前值重新合并，结果可能与这里不同。
 func (r Resolved) Permissions() domain.AccountPermissions {
-	p := r.p
+	p := r.preview
 	p.SendWhitelist = slices.Clone(p.SendWhitelist)
 	return p
 }
 
-// Resolve 读取账号当前的设置（current，没有记录时为默认值与 found=false），把 update 叠加上去，
-// 并校验、去重白名单。白名单不合法返回 domain.ErrPermissionWhitelistInvalid。只读，不写 store。
+// Resolve 读取账号当前的设置（current，没有记录时为默认值与 found=false），校验并去重 update
+// 给出的白名单，并算出合并后的预览。白名单不合法返回 domain.ErrPermissionWhitelistInvalid。
+// 只读，不写 store。
 func (s *Service) Resolve(ctx context.Context, userID int64, up Update) (current domain.AccountPermissions, found bool, next Resolved, err error) {
 	current, found, err = s.AccountPermissions(ctx, userID)
 	if err != nil {
 		return domain.AccountPermissions{}, false, Resolved{}, err
 	}
+	if up.SendWhitelist != nil {
+		whitelist, err := s.validateWhitelist(ctx, userID, *up.SendWhitelist)
+		if err != nil {
+			return domain.AccountPermissions{}, false, Resolved{}, err
+		}
+		up.SendWhitelist = &whitelist
+	}
+	return current, found, Resolved{userID: userID, up: up, preview: up.apply(userID, current)}, nil
+}
+
+// apply 把 update 叠加到 current 上：给出的字段替换当前值，未给出的沿用。
+func (up Update) apply(userID int64, current domain.AccountPermissions) domain.AccountPermissions {
 	p := current
 	p.UserID = userID
 	p.UpdatedAt = time.Time{}
 	p.CommandID = ""
-	apply := func(dst *bool, v *bool) {
+	p.SendWhitelist = slices.Clone(current.SendWhitelist)
+	set := func(dst *bool, v *bool) {
 		if v != nil {
 			*dst = *v
 		}
 	}
-	apply(&p.Enabled, up.Enabled)
+	set(&p.Enabled, up.Enabled)
 	f := up.Flags
-	apply(&p.Flags.Send, f.Send)
-	apply(&p.Flags.Delete, f.Delete)
-	apply(&p.Flags.Edit, f.Edit)
-	apply(&p.Flags.ClearHistory, f.ClearHistory)
-	apply(&p.Flags.CreateGroup, f.CreateGroup)
-	apply(&p.Flags.CreateChannel, f.CreateChannel)
-	apply(&p.Flags.JoinGroup, f.JoinGroup)
-	apply(&p.Flags.JoinChannel, f.JoinChannel)
-	apply(&p.Flags.LeaveGroup, f.LeaveGroup)
-	apply(&p.Flags.LeaveChannel, f.LeaveChannel)
-	apply(&p.Flags.AddContact, f.AddContact)
-	apply(&p.SendWhitelistEnabled, up.SendWhitelistEnabled)
+	set(&p.Flags.Send, f.Send)
+	set(&p.Flags.Delete, f.Delete)
+	set(&p.Flags.Edit, f.Edit)
+	set(&p.Flags.ClearHistory, f.ClearHistory)
+	set(&p.Flags.CreateGroup, f.CreateGroup)
+	set(&p.Flags.CreateChannel, f.CreateChannel)
+	set(&p.Flags.JoinGroup, f.JoinGroup)
+	set(&p.Flags.JoinChannel, f.JoinChannel)
+	set(&p.Flags.LeaveGroup, f.LeaveGroup)
+	set(&p.Flags.LeaveChannel, f.LeaveChannel)
+	set(&p.Flags.AddContact, f.AddContact)
+	set(&p.SendWhitelistEnabled, up.SendWhitelistEnabled)
 	if up.SendWhitelist != nil {
-		p.SendWhitelist = *up.SendWhitelist
+		p.SendWhitelist = slices.Clone(*up.SendWhitelist)
 	}
-	whitelist, err := s.validateWhitelist(ctx, userID, p.SendWhitelist)
-	if err != nil {
-		return domain.AccountPermissions{}, false, Resolved{}, err
-	}
-	p.SendWhitelist = whitelist
-	return current, found, Resolved{p: p}, nil
+	p.SendWhitelist = domain.NormalizeSendWhitelist(p.SendWhitelist)
+	return p
 }
 
-// Set 用 Resolve 的结果整体替换账号的权限设置并记下 commandID，成功后失效本实例缓存；其他实例经
+// Set 写入 Resolve 校验过的提交并记下 commandID。合并在 store 的锁内基于那一刻的当前值进行，
+// 所以两个操作员同时改不同的项时两份改动都会保留（后提交的不会把先提交的覆盖回去）；prev 是
+// 合并时读到的当前值（没有记录时为默认值与 prevFound=false）。成功后失效本实例缓存；其他实例经
 // store 写入时发出的读模型通知失效。
-func (s *Service) Set(ctx context.Context, r Resolved, commandID string) (domain.AccountPermissions, error) {
-	p := r.Permissions()
-	p.CommandID = commandID
-	out, err := s.store.SetAccountPermissions(ctx, p)
-	s.InvalidateAccountPermissions(p.UserID)
+func (s *Service) Set(ctx context.Context, r Resolved, commandID string) (prev domain.AccountPermissions, prevFound bool, written domain.AccountPermissions, err error) {
+	prev, prevFound, written, err = s.store.UpdateAccountPermissions(ctx, r.userID, func(current domain.AccountPermissions, found bool) domain.AccountPermissions {
+		if !found {
+			current = domain.DefaultAccountPermissions(r.userID)
+		}
+		next := r.up.apply(r.userID, current)
+		next.CommandID = commandID
+		return next
+	})
+	s.InvalidateAccountPermissions(r.userID)
 	if err != nil {
-		return domain.AccountPermissions{}, err
+		return domain.AccountPermissions{}, false, domain.AccountPermissions{}, err
 	}
-	return out, nil
+	if !prevFound {
+		prev = domain.DefaultAccountPermissions(r.userID)
+	}
+	return prev, prevFound, written, nil
 }
 
 // InvalidateAccountPermissions 失效账号的缓存视图（读模型通知与本地写入后调用）。

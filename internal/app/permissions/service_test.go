@@ -73,7 +73,7 @@ func TestServiceFirstSetDefaultsUnspecifiedItemsToAllowed(t *testing.T) {
 	if !p.Enabled || p.Flags != want || p.SendWhitelistEnabled || len(p.SendWhitelist) != 0 {
 		t.Fatalf("resolved = %+v, want enabled with only edit denied", p)
 	}
-	if _, err := f.svc.Set(ctx, resolved, "cmd-1"); err != nil {
+	if _, _, _, err := f.svc.Set(ctx, resolved, "cmd-1"); err != nil {
 		t.Fatal(err)
 	}
 	view, err := f.svc.View(ctx, u.ID)
@@ -95,7 +95,7 @@ func TestServiceDisablingMasterSwitchKeepsSettings(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out, err := f.svc.Set(ctx, p, "")
+		_, _, out, err := f.svc.Set(ctx, p, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -156,7 +156,7 @@ func TestServiceSetInvalidatesCachedViewAndOtherInstancesOnInvalidate(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.Set(ctx, p, ""); err != nil {
+	if _, _, _, err := f.svc.Set(ctx, p, ""); err != nil {
 		t.Fatal(err)
 	}
 	if view, err := f.svc.View(ctx, u.ID); err != nil || !view.Enforced() {
@@ -200,5 +200,33 @@ func TestServiceWhitelistValidation(t *testing.T) {
 	}
 	if want := []int64{a.ID, b.ID}; !slices.Equal(p.Permissions().SendWhitelist, want) {
 		t.Fatalf("deduplicated whitelist = %v, want %v", p.Permissions().SendWhitelist, want)
+	}
+}
+
+func TestServiceSetMergesOnTheValueAtWriteTime(t *testing.T) {
+	f := newServiceFixture(t)
+	u := f.user(t)
+	ctx := context.Background()
+	// 两个操作员都在对方提交之前 Resolve：A 关编辑，B 关删除。Set 在写入时合并，两项都保留。
+	_, _, a, err := f.svc.Resolve(ctx, u.ID, Update{Enabled: boolp(true), Flags: FlagsUpdate{Edit: boolp(false)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, b, err := f.svc.Resolve(ctx, u.ID, Update{Flags: FlagsUpdate{Delete: boolp(false)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _, err := f.svc.Set(ctx, a, "cmd-a"); err != nil || found {
+		t.Fatalf("first set found=%v err=%v, want no previous record", found, err)
+	}
+	prev, found, written, err := f.svc.Set(ctx, b, "cmd-b")
+	if err != nil || !found {
+		t.Fatalf("second set found=%v err=%v", found, err)
+	}
+	if prev.Flags.Edit || prev.CommandID != "cmd-a" {
+		t.Fatalf("second set saw prev %+v, want the first submission", prev)
+	}
+	if !written.Enabled || written.Flags.Edit || written.Flags.Delete || written.CommandID != "cmd-b" {
+		t.Fatalf("second set wrote %+v, want enabled with edit and delete both off", written)
 	}
 }

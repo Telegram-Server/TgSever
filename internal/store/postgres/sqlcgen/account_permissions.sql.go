@@ -60,21 +60,47 @@ func (q *Queries) DeleteAccountSendWhitelistByMember(ctx context.Context, member
 
 const getAccountPermissions = `-- name: GetAccountPermissions :one
 
-SELECT user_id, enabled,
-       allow_send, allow_delete, allow_edit, allow_clear_history,
-       allow_create_group, allow_create_channel,
-       allow_join_group, allow_join_channel,
-       allow_leave_group, allow_leave_channel,
-       allow_add_contact,
-       send_whitelist_enabled, updated_at, command_id
-FROM account_permissions
-WHERE user_id = $1
+SELECT p.user_id, p.enabled,
+       p.allow_send, p.allow_delete, p.allow_edit, p.allow_clear_history,
+       p.allow_create_group, p.allow_create_channel,
+       p.allow_join_group, p.allow_join_channel,
+       p.allow_leave_group, p.allow_leave_channel,
+       p.allow_add_contact,
+       p.send_whitelist_enabled, p.updated_at, p.command_id,
+       ARRAY(
+           SELECT w.member_user_id FROM account_send_whitelist w
+           WHERE w.user_id = p.user_id ORDER BY w.member_user_id
+       )::bigint[] AS send_whitelist
+FROM account_permissions p
+WHERE p.user_id = $1
 `
 
+type GetAccountPermissionsRow struct {
+	UserID               int64
+	Enabled              bool
+	AllowSend            bool
+	AllowDelete          bool
+	AllowEdit            bool
+	AllowClearHistory    bool
+	AllowCreateGroup     bool
+	AllowCreateChannel   bool
+	AllowJoinGroup       bool
+	AllowJoinChannel     bool
+	AllowLeaveGroup      bool
+	AllowLeaveChannel    bool
+	AllowAddContact      bool
+	SendWhitelistEnabled bool
+	UpdatedAt            pgtype.Timestamptz
+	CommandID            string
+	SendWhitelist        []int64
+}
+
 // 员工权限控制（#119）：account_permissions 一行 + account_send_whitelist 名单。
-func (q *Queries) GetAccountPermissions(ctx context.Context, userID int64) (AccountPermission, error) {
+// 权限行与名单在一条语句里读出，同一个快照：不会和一次并发的整体替换交错成"新的权限行 +
+// 旧的名单"。FOR UPDATE 版本见 LockAccountPermissions。
+func (q *Queries) GetAccountPermissions(ctx context.Context, userID int64) (GetAccountPermissionsRow, error) {
 	row := q.db.QueryRow(ctx, getAccountPermissions, userID)
-	var i AccountPermission
+	var i GetAccountPermissionsRow
 	err := row.Scan(
 		&i.UserID,
 		&i.Enabled,
@@ -92,6 +118,7 @@ func (q *Queries) GetAccountPermissions(ctx context.Context, userID int64) (Acco
 		&i.SendWhitelistEnabled,
 		&i.UpdatedAt,
 		&i.CommandID,
+		&i.SendWhitelist,
 	)
 	return i, err
 }
@@ -113,31 +140,68 @@ func (q *Queries) InsertAccountSendWhitelist(ctx context.Context, arg InsertAcco
 	return err
 }
 
-const listAccountSendWhitelist = `-- name: ListAccountSendWhitelist :many
-SELECT member_user_id
-FROM account_send_whitelist
-WHERE user_id = $1
-ORDER BY member_user_id
+const lockAccountPermissions = `-- name: LockAccountPermissions :one
+SELECT p.user_id, p.enabled,
+       p.allow_send, p.allow_delete, p.allow_edit, p.allow_clear_history,
+       p.allow_create_group, p.allow_create_channel,
+       p.allow_join_group, p.allow_join_channel,
+       p.allow_leave_group, p.allow_leave_channel,
+       p.allow_add_contact,
+       p.send_whitelist_enabled, p.updated_at, p.command_id,
+       ARRAY(
+           SELECT w.member_user_id FROM account_send_whitelist w
+           WHERE w.user_id = p.user_id ORDER BY w.member_user_id
+       )::bigint[] AS send_whitelist
+FROM account_permissions p
+WHERE p.user_id = $1
+FOR UPDATE OF p
 `
 
-func (q *Queries) ListAccountSendWhitelist(ctx context.Context, userID int64) ([]int64, error) {
-	rows, err := q.db.Query(ctx, listAccountSendWhitelist, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var member_user_id int64
-		if err := rows.Scan(&member_user_id); err != nil {
-			return nil, err
-		}
-		items = append(items, member_user_id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+type LockAccountPermissionsRow struct {
+	UserID               int64
+	Enabled              bool
+	AllowSend            bool
+	AllowDelete          bool
+	AllowEdit            bool
+	AllowClearHistory    bool
+	AllowCreateGroup     bool
+	AllowCreateChannel   bool
+	AllowJoinGroup       bool
+	AllowJoinChannel     bool
+	AllowLeaveGroup      bool
+	AllowLeaveChannel    bool
+	AllowAddContact      bool
+	SendWhitelistEnabled bool
+	UpdatedAt            pgtype.Timestamptz
+	CommandID            string
+	SendWhitelist        []int64
+}
+
+// 部分更新在事务里先锁住权限行再合并，两个并发的部分更新因此排队，后提交的那次基于先提交的
+// 结果合并，不会把对方的改动覆盖回去。名单行由同一把行锁保护（写名单的事务都先锁这一行）。
+func (q *Queries) LockAccountPermissions(ctx context.Context, userID int64) (LockAccountPermissionsRow, error) {
+	row := q.db.QueryRow(ctx, lockAccountPermissions, userID)
+	var i LockAccountPermissionsRow
+	err := row.Scan(
+		&i.UserID,
+		&i.Enabled,
+		&i.AllowSend,
+		&i.AllowDelete,
+		&i.AllowEdit,
+		&i.AllowClearHistory,
+		&i.AllowCreateGroup,
+		&i.AllowCreateChannel,
+		&i.AllowJoinGroup,
+		&i.AllowJoinChannel,
+		&i.AllowLeaveGroup,
+		&i.AllowLeaveChannel,
+		&i.AllowAddContact,
+		&i.SendWhitelistEnabled,
+		&i.UpdatedAt,
+		&i.CommandID,
+		&i.SendWhitelist,
+	)
+	return i, err
 }
 
 const upsertAccountPermissions = `-- name: UpsertAccountPermissions :one

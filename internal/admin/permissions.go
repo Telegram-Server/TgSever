@@ -25,7 +25,7 @@ const ActionSetPermissions = "account.set_permissions"
 type AccountPermissionsService interface {
 	AccountPermissions(ctx context.Context, userID int64) (domain.AccountPermissions, bool, error)
 	Resolve(ctx context.Context, userID int64, up permissions.Update) (current domain.AccountPermissions, found bool, next permissions.Resolved, err error)
-	Set(ctx context.Context, next permissions.Resolved, commandID string) (domain.AccountPermissions, error)
+	Set(ctx context.Context, next permissions.Resolved, commandID string) (prev domain.AccountPermissions, prevFound bool, written domain.AccountPermissions, err error)
 }
 
 // AccountPermissionsNotifier 在权限写入后通知在线会话（生产里是 rpc.Router：失效本实例缓存
@@ -169,11 +169,15 @@ func (s *Service) SetPermissions(ctx context.Context, req SetPermissionsRequest)
 		if req.DryRun {
 			return CommandResult{Message: "dry-run completed", Details: details}, nil
 		}
-		written, err := s.permissions.Set(ctx, next, req.CommandID)
+		// 真正写入时在锁内基于那一刻的当前值合并：Resolve 之后别人提交的改动不会被这次覆盖掉，
+		// 所以 previous/would_change 以锁内读到的值为准。
+		prev, had, written, err := s.permissions.Set(ctx, next, req.CommandID)
 		if err != nil {
 			return CommandResult{Details: details}, permissionsError(err)
 		}
+		details["previous_permissions"] = accountPermissionsResult(prev, had)
 		details["permissions"] = accountPermissionsResult(written, true)
+		details["would_change"] = !had || !samePermissions(prev, written)
 		if s.permissionsNotifier != nil {
 			if err := s.permissionsNotifier.NotifyAccountPermissionsChanged(ctx, req.UserID); err != nil {
 				details["notify_error"] = err.Error()
