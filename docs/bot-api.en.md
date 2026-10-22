@@ -180,7 +180,7 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (93 methods + 1 file route):
+Implemented (95 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
@@ -197,7 +197,7 @@ Implemented (93 methods + 1 file route):
 | Ephemeral edit/delete | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
 | Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
-| Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat`, `banChatSenderChat`, `unbanChatSenderChat` |
 | Invite links | `createChatInviteLink`, `editChatInviteLink`, `revokeChatInviteLink`, `exportChatInviteLink` |
 | Join requests | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Files | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
@@ -850,11 +850,19 @@ method is `CHAT_ID_INVALID`. Pinning methods also work in private chats.
 | `leaveChat` | `chat_id` | |
 | `approveChatJoinRequest` | `chat_id`, `user_id` | needs the invite-users (or change-info) right; the applicant joins and members and admins get the same updates as for a human admin |
 | `declineChatJoinRequest` | `chat_id`, `user_id` | needs the invite-users (or change-info) right; the request is dropped |
+| `banChatSenderChat` | `chat_id`, `sender_chat_id` | needs the ban right; the ban shows in the banned list and the admin log; repeating it is a no-op |
+| `unbanChatSenderChat` | `chat_id`, `sender_chat_id` | needs the ban right; repeating it is a no-op |
 
 A join request that does not exist or was already handled is
 `Bad Request: HIDE_REQUESTER_MISSING`; for these two methods
 `CHAT_ADMIN_REQUIRED` and `USER_ALREADY_PARTICIPANT` also carry the
 official `Bad Request: ` prefix.
+
+`banChatSenderChat` / `unbanChatSenderChat` take `sender_chat_id` only as a
+supergroup/channel id (`-100…`); anything else is `Bad Request: invalid chat
+identifier specified`, an unknown channel or the chat itself is `Bad Request:
+member not found`, and a missing ban right is `Bad Request: not enough rights
+to restrict/unrestrict chat member`.
 
 With `use_independent_chat_permissions=false` (the default), any media, poll,
 "other messages" or web-preview permission also allows plain text messages, as
@@ -1158,8 +1166,7 @@ commonly reached ones:
 - payments: `createInvoiceLink`, `getStarTransactions`,
   `editUserStarSubscription`, `getMyStarBalance`, and the gift-management
   methods beyond `getAvailableGifts` / `sendGift`;
-- chat administration: `banChatSenderChat`, `unbanChatSenderChat`,
-  `setChatStickerSet`, `deleteChatStickerSet`, invite links
+- chat administration: `setChatStickerSet`, `deleteChatStickerSet`, invite links
   (`exportChatInviteLink`, `createChatInviteLink`, `editChatInviteLink`,
   `revokeChatInviteLink`, subscription links), join requests
   (`approveChatJoinRequest`, `declineChatJoinRequest`);

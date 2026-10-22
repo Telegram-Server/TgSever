@@ -27,4 +27,5 @@ var (
 	_ botapi.JoinRequestGateway           = (*rpc.Router)(nil)
 	_ botapi.UserPhotosGateway            = (*rpc.Router)(nil)
 	_ botapi.DeleteMessagesGateway        = (*rpc.Router)(nil)
+	_ botapi.SenderChatBanGateway         = (*rpc.Router)(nil)
 )
