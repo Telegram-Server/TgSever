@@ -179,7 +179,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (93 метода + 1 файловый маршрут):
+Реализовано (95 методов + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
@@ -196,7 +196,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 | Правка/удаление ephemeral | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
 | Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
-| Управление чатами | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Управление чатами | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat`, `banChatSenderChat`, `unbanChatSenderChat` |
 | Ссылки-приглашения | `createChatInviteLink`, `editChatInviteLink`, `revokeChatInviteLink`, `exportChatInviteLink` |
 | Заявки на вступление | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Файлы | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
@@ -833,11 +833,19 @@ specified` / `invalid message identifier specified`).
 | `leaveChat` | `chat_id` | |
 | `approveChatJoinRequest` | `chat_id`, `user_id` | нужно право приглашать пользователей (или менять информацию); заявитель вступает, участники и администраторы получают те же обновления, что и при действии администратора-человека |
 | `declineChatJoinRequest` | `chat_id`, `user_id` | нужно право приглашать пользователей (или менять информацию); заявка удаляется |
+| `banChatSenderChat` | `chat_id`, `sender_chat_id` | нужно право блокировать пользователей; блокировка видна в списке заблокированных и в журнале действий; повтор ничего не меняет |
+| `unbanChatSenderChat` | `chat_id`, `sender_chat_id` | нужно право блокировать пользователей; повтор ничего не меняет |
 
 Несуществующая или уже обработанная заявка —
 `Bad Request: HIDE_REQUESTER_MISSING`; для этих двух методов
 `CHAT_ADMIN_REQUIRED` и `USER_ALREADY_PARTICIPANT` тоже идут с
 официальным префиксом `Bad Request: `.
+
+`banChatSenderChat` / `unbanChatSenderChat` принимают `sender_chat_id` только
+как id супергруппы/канала (`-100…`); всё остальное — `Bad Request: invalid chat
+identifier specified`, неизвестный канал или сам чат — `Bad Request: member not
+found`, отсутствие права блокировки — `Bad Request: not enough rights to
+restrict/unrestrict chat member`.
 
 При `use_independent_chat_permissions=false` (по умолчанию) любое право на
 медиа, опросы, «другие сообщения» или превью ссылок также разрешает обычные
@@ -1139,8 +1147,7 @@ Message entities (для `entities` / `caption_entities`, а также entity
 - платежи: `createInvoiceLink`, `getStarTransactions`,
   `editUserStarSubscription`, `getMyStarBalance` и методы управления
   подарками помимо `getAvailableGifts` / `sendGift`;
-- администрирование чатов: `banChatSenderChat`, `unbanChatSenderChat`,
-  `setChatStickerSet`, `deleteChatStickerSet`, пригласительные ссылки
+- администрирование чатов: `setChatStickerSet`, `deleteChatStickerSet`, пригласительные ссылки
   (`exportChatInviteLink`, `createChatInviteLink`, `editChatInviteLink`,
   `revokeChatInviteLink`, ссылки-подписки), заявки на вступление
   (`approveChatJoinRequest`, `declineChatJoinRequest`);
