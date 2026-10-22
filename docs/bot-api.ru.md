@@ -179,12 +179,13 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (81 метод + 1 файловый маршрут):
+Реализовано (86 методов + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
 | Бот и команды | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
-| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
+| Миграция | `logOut`, `close` (заглушки: всегда `True`, состояние не меняется, 10-минутного ограничения `close` нет) |
+| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
 | Обновления | `getUpdates`, `dropPendingUpdates` (расширение telesrv) |
 | Текст | `sendMessage`, `sendRichMessage` |
 | Медиа | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -194,8 +195,9 @@ TL-ошибка, которой шлюз не знает, сворачивает
 | Правка/удаление | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
 | Правка/удаление ephemeral | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
-| Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount` |
+| Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
 | Управление чатами | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Заявки на вступление | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Файлы | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
 | Webhooks | `setWebhook`, `deleteWebhook`, `getWebhookInfo` |
 | Меню и статус | `setChatMenuButton`, `getChatMenuButton`, `setUserEmojiStatus` |
@@ -327,6 +329,12 @@ MTProto), поэтому другие клиенты видят изменени
 Возвращают `{"name": ...}`, `{"description": ...}` и
 `{"short_description": ...}`. `language_code` принимается, но игнорируется:
 всегда возвращается значение для языка по умолчанию.
+
+### `removeMyProfilePhoto`
+
+Без параметров. Удаляет текущее фото профиля бота и возвращает `True`. Если
+фото нет, тоже возвращается `True`, как на официальном сервере. Владелец бота
+получает `updateUser` для бота, и его клиенты сразу показывают изменение.
 
 ### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
 
@@ -740,6 +748,25 @@ inline-сообщения.
 
 `chat_id` (супергруппа или канал). Возвращает целое число.
 
+### `getUserProfilePhotos`
+
+`user_id`, `offset` (по умолчанию 0), `limit` (1–100, по умолчанию 100;
+значения вне диапазона приводятся к границам, как и официально). Возвращает
+`UserProfilePhotos` `{total_count, photos}`, новые первыми; каждая фотография —
+массив `PhotoSize` от меньшего к большему. Видеоразмер анимированной аватарки
+не включается. `file_id` формируется так же, как у фото в сообщениях, поэтому
+работает с `getFile` и может быть переотправлен через `sendPhoto`.
+
+Альбом тот же, что MTProto-клиент видит через `photos.getUserPhotos`: если
+настройка приватности фото профиля не разрешает боту, бот видит только
+публичное (fallback) фото пользователя или пустой альбом, и `total_count`
+считает именно это представление, а не настоящий альбом. У удалённого
+аккаунта альбом пуст.
+
+Ошибки: отсутствующий или нечисловой `user_id` —
+`Bad Request: invalid user_id specified`; пользователь, которого бот не
+видит, — `Bad Request: user not found`.
+
 ## Методы: управление чатами
 
 Каждый метод действует от имени бота через соответствующий MTProto-обработчик,
@@ -767,6 +794,13 @@ inline-сообщения.
 | `setChatPhoto` | `chat_id`, `photo` | только multipart-загрузка |
 | `deleteChatPhoto` | `chat_id` | |
 | `leaveChat` | `chat_id` | |
+| `approveChatJoinRequest` | `chat_id`, `user_id` | нужно право приглашать пользователей (или менять информацию); заявитель вступает, участники и администраторы получают те же обновления, что и при действии администратора-человека |
+| `declineChatJoinRequest` | `chat_id`, `user_id` | нужно право приглашать пользователей (или менять информацию); заявка удаляется |
+
+Несуществующая или уже обработанная заявка —
+`Bad Request: HIDE_REQUESTER_MISSING`; для этих двух методов
+`CHAT_ADMIN_REQUIRED` и `USER_ALREADY_PARTICIPANT` тоже идут с
+официальным префиксом `Bad Request: `.
 
 При `use_independent_chat_permissions=false` (по умолчанию) любое право на
 медиа, опросы, «другие сообщения» или превью ссылок также разрешает обычные
@@ -1044,9 +1078,9 @@ Message entities (для `entities` / `caption_entities`, а также entity
   (`approveChatJoinRequest`, `declineChatJoinRequest`);
 - темы форума: `createForumTopic`, `editForumTopic`, `closeForumTopic`,
   `getForumTopicIconStickers` и остальное семейство тем;
-- запросы: `getUserProfilePhotos`, `getUserChatBoosts`;
+- запросы: `getUserChatBoosts`;
 - администрирование бота: `setMyDefaultAdministratorRights`,
-  `getMyDefaultAdministratorRights`, `close`, `logOut`;
+  `getMyDefaultAdministratorRights`;
 - реакции (`setMessageReaction`), стикеры и стикерпаки, stories, методы
   business-аккаунтов и Telegram Passport.
 
