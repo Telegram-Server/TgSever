@@ -15,8 +15,8 @@ import (
 // Bot API 的 multipart 上限（25MB）更宽，超出部分在这里拒绝。
 const maxBotAPIStaticProfilePhotoBytes = 10 << 20
 
-// maxBotAPIAnimatedProfilePhotoBytes 是视频头像文件的上限。视频按 512KB 分片保存，
-// 不受单片上限约束；这里沿用照片的 10MB，防止 25MB multipart 全部落成头像。
+// maxBotAPIAnimatedProfilePhotoBytes 是视频头像文件的上限。视频字节直接写入正式 blob，
+// 不受上传分片上限约束；这里沿用照片的 10MB，防止 25MB multipart 全部落成头像。
 const maxBotAPIAnimatedProfilePhotoBytes = 10 << 20
 
 // BotAPIRemoveMyProfilePhoto 是 Bot API removeMyProfilePhoto 的网关：以机器人身份调用

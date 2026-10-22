@@ -31,10 +31,8 @@ func (c *countingThumbnailer) Extract(_ context.Context, _ []byte, _ string) ([]
 
 // TestBotAvatarsSeedViaRealService 集成测试：通过真实 files.Service、真实
 // permanent-blob 后端与真实、分开的 upload-staging 后端调用 botavatars.Seed。
-// Seed 内部经 SeedTx 构造事务化服务——这里确保 uploadParts / thumbs 等字段在
-// 事务服务上完整保留，且 upload parts 被写入单独的 staging backend（而非主
-// blob 后端）。否则 premiumbot.mp4 的 CreateAvatarVideoFromBytes 会因 upload
-// part backend 未配置而失败，或视频静态帧回落成生成占位图。
+// Seed 内部经 SeedTx 构造事务化服务——这里确保 thumbs 等字段在事务服务上完整
+// 保留（否则视频静态帧回落成生成占位图），且字节头像不经 upload-staging。
 func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	ctx := context.Background()
 
@@ -58,10 +56,10 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 		t.Fatalf("botavatars.SeedOfficialSystemAvatar failed: %v", err)
 	}
 
-	// premiumbot.mp4 走 CreateAvatarVideoFromBytes -> SaveFilePart -> PutUploadPart。
-	// uploadParts 必须被 SeedTx 保留，且确实落到了独立的 staging backend。
-	if staging.putUploadPartCalls == 0 {
-		t.Fatalf("staging backend was never used: uploadParts not carried into SeedTx")
+	// premiumbot.mp4 走 CreateAvatarVideoFromBytes：字节直接写入正式 blob，不经上传分片，
+	// 不占用 upload-staging（也就不占用任何属主的上传配额）。
+	if staging.putUploadPartCalls != 0 {
+		t.Fatalf("seed wrote %d upload parts to staging, want byte avatars to bypass upload staging", staging.putUploadPartCalls)
 	}
 	// 视频静态帧必须从真实 thumbnailer 抽取，而不是回落成生成占位图——这证明
 	// SeedTx 保留了 thumbs。

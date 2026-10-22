@@ -816,3 +816,24 @@ func TestCreateAvatarVideoFromBytesStoresVideoLargerThanOnePart(t *testing.T) {
 	}
 	assertAvatarImageSize(t, svc, photo.ID, "c", 640, 640, "image/jpeg")
 }
+
+// 字节入口与静态头像（CreateAvatarFromBytes）一致，不经用户上传分片：不占用任何属主的上传
+// 配额，也不受其他在途上传影响（review #7：此前以属主 0 写分片，所有 bot 共享这份配额）。
+func TestCreateAvatarVideoFromBytesDoesNotUseUploadQuota(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	svc := NewService(newFakeMediaStore(), blobs, 2,
+		WithVideoThumbnailer(&fakeVideoThumbnailer{thumb: testJPEG(t, 640, 640)}),
+		WithUploadPartQuota(domain.UploadPartQuota{MaxFiles: 1}))
+	// 另一路字节入口仍在途（属主 0 已占满 1 个文件的配额）。
+	if _, err := svc.SaveFilePart(ctx, 0, 777, 0, []byte("in flight")); err != nil {
+		t.Fatalf("occupy owner 0 quota: %v", err)
+	}
+	video := make([]byte, MaxUploadPartBytes+100)
+	if _, err := svc.CreateAvatarVideoFromBytes(ctx, video, 0); err != nil {
+		t.Fatalf("CreateAvatarVideoFromBytes with owner 0 quota in use: %v", err)
+	}
+}

@@ -159,42 +159,21 @@ func (s *Service) CreateAvatarFromBytes(ctx context.Context, data []byte) (domai
 }
 
 // CreateAvatarVideoFromBytes stores raw animated-profile-video bytes through the
-// same upload + s/a/c rendition pipeline used by Telegram video-avatar uploads.
-// 字节按 MaxUploadPartBytes（512KB）切成上传分片保存，与客户端分片上传后组装的路径一致；
-// 整段写成一片会被分片上限拒绝（ErrFilePartTooBig）。
+// same s/a/c rendition pipeline used by Telegram video-avatar uploads.
+// 与静态头像的字节入口（CreateAvatarFromBytes）一致，字节直接流式写入正式 blob，不经用户
+// 上传分片：不占用任何属主的上传配额，也没有分片大小上限；总长上限与分片上传一致。
 func (s *Service) CreateAvatarVideoFromBytes(ctx context.Context, data []byte, videoStartTs float64) (domain.Photo, error) {
 	if len(data) == 0 {
 		return domain.Photo{}, domain.ErrPhotoInvalid
 	}
-	parts := (len(data) + MaxUploadPartBytes - 1) / MaxUploadPartBytes
-	if parts > MaxUploadParts {
+	if len(data) > MaxUploadParts*MaxUploadPartBytes {
 		return domain.Photo{}, domain.ErrFilePartsInvalid
 	}
-	fileID := randomID()
-	for part := 0; part < parts; part++ {
-		chunk := data[part*MaxUploadPartBytes : min((part+1)*MaxUploadPartBytes, len(data))]
-		if _, err := s.SaveFilePart(ctx, 0, fileID, part, chunk); err != nil {
-			s.discardUploadParts(ctx, fileID)
-			return domain.Photo{}, err
-		}
-	}
-	ref := domain.UploadedFileRef{OwnerUserID: 0, FileID: fileID, Parts: parts}
-	photo, err := s.createAvatarVideoFromUpload(ctx, ref, videoStartTs, nil)
+	objectKey, size, sum, err := s.blobs.PutReader(ctx, bytes.NewReader(data))
 	if err != nil {
-		s.discardUploadParts(ctx, fileID)
 		return domain.Photo{}, err
 	}
-	return photo, nil
-}
-
-// discardUploadParts 清掉字节入口自己写入的临时分片（属主 0）；失败只记日志，
-// 残留分片由上传分片的过期清理兜底。
-func (s *Service) discardUploadParts(ctx context.Context, fileID int64) {
-	if err := s.cleanupUploadParts(ctx, 0, fileID); err != nil {
-		s.log.Warn("cleanup avatar video byte upload parts failed",
-			zap.Int64("file_id", fileID),
-			zap.Error(err))
-	}
+	return s.createAvatarVideoFromBlob(ctx, assembledUploadBlob{ObjectKey: objectKey, Size: size, SHA256: sum}, videoStartTs, nil)
 }
 
 // CreateAvatarFromUpload 把已上传文件组装成头像 Photo（'s'/'a'/'c' 尺寸，'a'/'c' 匹配
@@ -228,6 +207,23 @@ func (s *Service) createAvatarVideoFromUpload(ctx context.Context, file domain.U
 	if err != nil {
 		return domain.Photo{}, err
 	}
+	photo, err := s.createAvatarVideoFromBlob(ctx, body, videoStartTs, extraSizes)
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	if err := s.cleanupUploadParts(ctx, file.OwnerUserID, file.FileID); err != nil {
+		s.log.Warn("cleanup assembled avatar video upload parts failed",
+			zap.Int64("owner_user_id", file.OwnerUserID),
+			zap.Int64("file_id", file.FileID),
+			zap.Int64("photo_id", photo.ID),
+			zap.Error(err))
+	}
+	return photo, nil
+}
+
+// createAvatarVideoFromBlob 把已写入正式 blob 的视频组装成视频头像 Photo（'u' 视频尺寸 + 主帧
+// 的 s/a/c 静态尺寸）。
+func (s *Service) createAvatarVideoFromBlob(ctx context.Context, body assembledUploadBlob, videoStartTs float64, extraSizes []domain.PhotoSize) (domain.Photo, error) {
 	if body.Size == 0 {
 		return domain.Photo{}, domain.ErrPhotoInvalid
 	}
@@ -268,13 +264,6 @@ func (s *Service) createAvatarVideoFromUpload(ctx context.Context, file domain.U
 	}
 	if err := s.media.PutPhoto(ctx, photo); err != nil {
 		return domain.Photo{}, err
-	}
-	if err := s.cleanupUploadParts(ctx, file.OwnerUserID, file.FileID); err != nil {
-		s.log.Warn("cleanup assembled avatar video upload parts failed",
-			zap.Int64("owner_user_id", file.OwnerUserID),
-			zap.Int64("file_id", file.FileID),
-			zap.Int64("photo_id", photoID),
-			zap.Error(err))
 	}
 	return photo, nil
 }
