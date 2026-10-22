@@ -1663,7 +1663,7 @@ func (s *Service) ExportInvite(ctx context.Context, userID int64, req domain.Exp
 	if req.UserID == 0 {
 		req.UserID = userID
 	}
-	if req.UserID != userID || req.ChannelID == 0 || len(req.Title) > domain.MaxChannelInviteTitleLength {
+	if req.UserID != userID || req.ChannelID == 0 || utf8.RuneCountInString(req.Title) > domain.MaxChannelInviteTitleLength {
 		return domain.ExportChannelInviteResult{}, domain.ErrChannelInvalid
 	}
 	return s.channels.ExportInvite(ctx, req)
@@ -1749,7 +1749,7 @@ func (s *Service) EditExportedInvite(ctx context.Context, userID int64, req doma
 	if req.UserID != userID || req.ChannelID == 0 || req.Hash == "" {
 		return domain.EditChannelInviteResult{}, domain.ErrInviteHashEmpty
 	}
-	if req.ExpireDate < 0 || req.UsageLimit < 0 || len(req.Title) > domain.MaxChannelInviteTitleLength {
+	if req.ExpireDate < 0 || req.UsageLimit < 0 || utf8.RuneCountInString(req.Title) > domain.MaxChannelInviteTitleLength {
 		return domain.EditChannelInviteResult{}, domain.ErrChannelInvalid
 	}
 	return s.channels.EditExportedInvite(ctx, req)

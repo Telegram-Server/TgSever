@@ -44,7 +44,7 @@ const (
 	MaxChannelTypingFanout = MaxChannelRealtimeFanout
 	// MaxChannelAdminRankLength limits custom admin rank text.
 	MaxChannelAdminRankLength = 32
-	// MaxChannelInviteTitleLength limits invite link admin-only labels.
+	// MaxChannelInviteTitleLength limits invite link admin-only labels（按字符/rune 计数，与官方一致）.
 	MaxChannelInviteTitleLength = 32
 	// MaxChannelInviteListLimit limits invite management pages.
 	MaxChannelInviteListLimit = 100

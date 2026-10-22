@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
@@ -27,7 +28,7 @@ func (r *Router) onMessagesExportChatInvite(ctx context.Context, req *tg.Message
 	if peer.Type != domain.PeerTypeChannel || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
-	if req.UsageLimit < 0 || req.ExpireDate < 0 || len(req.Title) > domain.MaxChannelInviteTitleLength {
+	if req.UsageLimit < 0 || req.ExpireDate < 0 || utf8.RuneCountInString(req.Title) > domain.MaxChannelInviteTitleLength {
 		return nil, limitInvalidErr()
 	}
 	res, err := r.deps.Channels.ExportInvite(ctx, userID, domain.ExportChannelInviteRequest{
@@ -233,7 +234,7 @@ func (r *Router) onMessagesEditExportedChatInvite(ctx context.Context, req *tg.M
 	if err != nil {
 		return nil, err
 	}
-	if req.ExpireDate < 0 || req.UsageLimit < 0 || len(req.Title) > domain.MaxChannelInviteTitleLength {
+	if req.ExpireDate < 0 || req.UsageLimit < 0 || utf8.RuneCountInString(req.Title) > domain.MaxChannelInviteTitleLength {
 		return nil, limitInvalidErr()
 	}
 	expireDate, hasExpireDate := req.GetExpireDate()

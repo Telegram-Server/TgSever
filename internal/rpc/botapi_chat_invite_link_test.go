@@ -232,3 +232,21 @@ func TestBotAPICreateChatInviteLinkWithoutOptionsIsNotPrimary(t *testing.T) {
 		}
 	}
 }
+
+// 链接名按字符（rune）计数：32 个汉字（96 字节）可以创建和改名，33 个字符被拒绝（review #12）。
+func TestChatInviteTitleLimitCountsCharacters(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.promoteBot(t, domain.ChannelAdminRights{InviteUsers: true})
+	longest := strings.Repeat("链", domain.MaxChannelInviteTitleLength)
+
+	created, err := f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{Name: inviteOption(longest)})
+	if err != nil || created.Invite.Title != longest {
+		t.Fatalf("create with %d-character name = %+v, %v", domain.MaxChannelInviteTitleLength, created.Invite, err)
+	}
+	renamed, err := f.router.BotAPIEditChatInviteLink(f.ctx, f.bot.ID, f.chatID, created.Link, domain.BotAPIChatInviteLinkOptions{Name: inviteOption(strings.Repeat("名", domain.MaxChannelInviteTitleLength))})
+	if err != nil || renamed.Invite.Title != strings.Repeat("名", domain.MaxChannelInviteTitleLength) {
+		t.Fatalf("rename with %d-character name = %+v, %v", domain.MaxChannelInviteTitleLength, renamed.Invite, err)
+	}
+	_, err = f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{Name: inviteOption(longest + "x")})
+	wantBotAPIError(t, err, "LIMIT_INVALID")
+}
