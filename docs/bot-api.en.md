@@ -180,20 +180,20 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (89 methods + 1 file route):
+Implemented (92 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
 | Migration | `logOut`, `close` (no-op: always `True`, no state is touched, no 10-minute `close` limit) |
-| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto` |
+| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `setMyProfilePhoto`, `removeMyProfilePhoto`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
 | Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
 | Media | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
 | Albums, polls, dice, actions | `sendMediaGroup`, `sendPoll`, `sendDice`, `sendChatAction` |
 | Location | `sendContact`, `sendLocation`, `sendVenue` |
 | Forwarding | `forwardMessage`, `forwardMessages`, `copyMessage`, `copyMessages` |
-| Edit/delete | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
+| Edit/delete | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage`, `deleteMessages` |
 | Ephemeral edit/delete | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
 | Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
@@ -353,6 +353,45 @@ No parameters. Removes the bot's current profile photo and returns `True`. A bot
 without a profile photo also gets `True`, as with the official server. The
 bot's owner receives an `updateUser` for the bot, so the change shows up in the
 owner's clients right away.
+
+### `setMyProfilePhoto`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `photo` | InputProfilePhoto | required; JSON object, request must be `multipart/form-data` |
+
+Only `InputProfilePhotoStatic` is supported:
+`{"type":"static","photo":"attach://<field>"}`, where `<field>` is a file part
+of the same request. Profile photos cannot reuse a `file_id` or a URL, as
+officially. The image is stored with the profile-photo size rules (`s`, `a`,
+`c`), becomes the bot's current photo, and `True` is returned. As with
+`removeMyProfilePhoto`, the owner receives an `updateUser` for the bot.
+
+Errors: a missing or malformed `photo` gives `Bad Request: parameter "photo"
+is required`, `Bad Request: can't parse InputProfilePhoto JSON object` or
+`Bad Request: invalid InputProfilePhoto type specified`; a `photo` that does not
+point to an uploaded file gives `Bad Request: profile photo must be uploaded as
+a new file using attach://`. A file that is not a decodable image gives
+`Bad Request: IMAGE_PROCESS_FAILED`; a file over 10 MB gives
+`Bad Request: file is too big`.
+
+### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `rights` | JSON `ChatAdministratorRights` | `setMy…` only; omitted clears the defaults |
+| `for_channels` | boolean | `true` for channels, otherwise groups |
+
+`setMyDefaultAdministratorRights` goes through MTProto
+`bots.setBotGroupDefaultAdminRights` / `bots.setBotBroadcastDefaultAdminRights`;
+clients see the new value in the bot's `userFull`
+(`bot_group_admin_rights` / `bot_broadcast_admin_rights`) and preselect it
+when adding the bot as an administrator. Setting the current value again is
+still `true` (MTProto answers `RIGHTS_NOT_MODIFIED`). A `rights` value that is
+not a JSON object, or a known field that is not a boolean, is `BAD_REQUEST`.
+
+`getMyDefaultAdministratorRights` returns the `ChatAdministratorRights` object
+with every field present; all are `false` when nothing was set.
 
 ## Methods: sending
 
@@ -674,6 +713,21 @@ already closed is `MESSAGE_POLL_CLOSED`; a message without a poll is
 
 `chat_id` + `message_id`. Returns `true`. Deleting an already-deleted or
 foreign message returns `false` or an error, as with the official gateway.
+
+### `deleteMessages`
+
+`chat_id` + `message_ids` (JSON array of 1–100 positive ids; duplicates are
+ignored). Works in private chats, supergroups and channels with the same rules
+as `deleteMessage`: in a private chat only messages of that `chat_id` dialog
+are deleted; in a group the bot deletes its own messages freely and other
+people's only with the delete-messages admin right. Messages that are missing
+or that the bot may not delete are skipped and the rest are deleted in one
+batch (members receive a single deletion update); the result is `true`. When
+none of them can be deleted the error is `Bad Request: message can't be
+deleted` or `Bad Request: message to delete not found`. An empty list, more
+than 100 ids or a non-positive id is a parameter error (`Bad Request: message
+identifiers are not specified` / `too many message identifiers specified` /
+`invalid message identifier specified`).
 
 ### `answerCallbackQuery`
 

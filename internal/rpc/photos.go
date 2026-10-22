@@ -45,14 +45,12 @@ func (r *Router) onPhotosUploadProfilePhoto(ctx context.Context, req *tg.PhotosU
 	if !ok || userID == 0 {
 		return nil, photoInvalidErr()
 	}
-	targetUserID := userID
 	var botTarget domain.User
 	bot, hasBot := req.GetBot()
 	if target, isBotTarget, err := r.resolveProfilePhotoBotTarget(ctx, userID, bot, hasBot); err != nil {
 		return nil, err
 	} else if isBotTarget {
 		botTarget = target
-		targetUserID = target.ID
 	}
 	upload, mediaFlags, err := parseProfilePhotoUpload(req)
 	if err != nil {
@@ -68,6 +66,17 @@ func (r *Router) onPhotosUploadProfilePhoto(ctx context.Context, req *tg.PhotosU
 	photo, err := r.createProfilePhoto(ctx, userID, upload)
 	if err != nil {
 		return nil, err
+	}
+	return r.setUploadedProfilePhoto(ctx, userID, botTarget, kind, photo)
+}
+
+// setUploadedProfilePhoto 是 photos.uploadProfilePhoto 的后半段：把刚生成的头像 photo 设为
+// 当前头像（机器人目标或调用者自己），并推送 updateUser / 构造返回值。Bot API 的
+// setMyProfilePhoto 从字节生成 photo 后也经这里落地，推送（含给所有者的通知）完全一致。
+func (r *Router) setUploadedProfilePhoto(ctx context.Context, userID int64, botTarget domain.User, kind domain.ProfilePhotoKind, photo domain.Photo) (*tg.PhotosPhoto, error) {
+	targetUserID := userID
+	if botTarget.ID != 0 {
+		targetUserID = botTarget.ID
 	}
 	photo, found, err := r.deps.Files.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, targetUserID, kind, photo.ID, int(r.clock.Now().Unix()))
 	if err != nil {

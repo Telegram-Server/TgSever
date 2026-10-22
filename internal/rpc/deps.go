@@ -361,6 +361,9 @@ type BotsService interface {
 	// BotMenuButtonForUser 返回 userID 看到的菜单按钮：专属按钮优先，否则全局默认。
 	BotMenuButtonForUser(ctx context.Context, botUserID, userID int64) (domain.BotMenuButton, error)
 	SetInlinePlaceholder(ctx context.Context, botUserID int64, placeholder string) (int, error)
+	// SetDefaultAdminRights 写入 bot 的群（forChannels=false）/频道默认管理员权限，零值即清空；
+	// 未变返回 domain.ErrBotAdminRightsNotModified，非 bot 返回 domain.ErrBotNotFound。
+	SetDefaultAdminRights(ctx context.Context, botUserID int64, forChannels bool, rights domain.ChannelAdminRights) (int, error)
 	CanSendMessage(ctx context.Context, userID, botUserID int64) (bool, error)
 	AllowSendMessage(ctx context.Context, userID, botUserID int64, fromRequest bool) (bool, error)
 	UpsertBotApp(ctx context.Context, botUserID int64, app domain.BotApp) (domain.BotApp, int, error)
@@ -773,6 +776,12 @@ type ChannelsService interface {
 	TransferOwnership(ctx context.Context, userID int64, req domain.TransferChannelOwnershipRequest) (domain.TransferChannelOwnershipResult, error)
 	EditMemberRank(ctx context.Context, userID int64, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error)
 	EditBanned(ctx context.Context, userID int64, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error)
+	// EditBannedSenderChat 封禁/解封频道 peer（只接受全封与解封）。
+	EditBannedSenderChat(ctx context.Context, userID int64, req domain.EditChannelBannedSenderChatRequest) (domain.EditChannelBannedSenderChatResult, error)
+	// IsSenderChatBanned 报告频道 senderChatID 是否在 channelID 里被封禁（发言拦截用，不鉴权）。
+	IsSenderChatBanned(ctx context.Context, channelID, senderChatID int64) (bool, error)
+	// GetSenderChatParticipant 返回被封禁频道 peer 的成员投影与频道基础行（查看者须为管理员）。
+	GetSenderChatParticipant(ctx context.Context, userID, channelID, senderChatID int64) (domain.ChannelMember, domain.Channel, error)
 	EditDefaultBannedRights(ctx context.Context, userID int64, req domain.EditChannelDefaultBannedRightsRequest) (domain.Channel, error)
 	DeleteChannel(ctx context.Context, userID int64, req domain.DeleteChannelRequest) (domain.DeleteChannelResult, error)
 	CheckUsername(ctx context.Context, userID, channelID int64, username string) (bool, error)
@@ -974,6 +983,9 @@ type FilesService interface {
 	// getWebPagePreview 已解析过，则 echo 直接带 done 卡片（与官方一致），不依赖异步换卡。
 	LookupWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, bool)
 	CreateAvatarFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error)
+	// CreateAvatarFromBytes 把已在内存里的图片字节按头像规则（s/a/c）存成 Photo，不绑定
+	// profile_photos；与 CreatePhotoFromBytes（消息照片 m/x）不同。Bot API setMyProfilePhoto 用它。
+	CreateAvatarFromBytes(ctx context.Context, data []byte) (domain.Photo, error)
 	CreateAvatarVideoFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64) (domain.Photo, error)
 	CreateAvatarVideoMarkupFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, markup domain.PhotoSize) (domain.Photo, error)
 	CreateAvatarMarkup(ctx context.Context, size domain.PhotoSize) (domain.Photo, error)

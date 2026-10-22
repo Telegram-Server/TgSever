@@ -274,6 +274,41 @@ func TestCreateAvatarFromUploadStoresRealSizedRenditions(t *testing.T) {
 	}
 }
 
+// CreateAvatarFromBytes（Bot API setMyProfilePhoto 的入口）按头像规则生成 s/a/c，
+// 而不是消息照片的 m/x；解不开的字节报 ErrPhotoInvalid。
+func TestCreateAvatarFromBytesStoresAvatarSizes(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	svc := NewService(newFakeMediaStore(), blobs, 2)
+
+	photo, err := svc.CreateAvatarFromBytes(ctx, testJPEG(t, 640, 480))
+	if err != nil {
+		t.Fatalf("CreateAvatarFromBytes: %v", err)
+	}
+	wants := map[string]image.Point{
+		"s": {X: 150, Y: 150},
+		"a": {X: 160, Y: 160},
+		"c": {X: 640, Y: 480},
+	}
+	if len(photo.Sizes) != len(wants) {
+		t.Fatalf("avatar sizes = %+v, want s/a/c", photo.Sizes)
+	}
+	for _, size := range photo.Sizes {
+		want, ok := wants[size.Type]
+		if !ok || size.W != want.X || size.H != want.Y {
+			t.Fatalf("avatar size = %+v, want one of %v", size, wants)
+		}
+		assertAvatarImageSize(t, svc, photo.ID, size.Type, want.X, want.Y, "image/jpeg")
+	}
+
+	if _, err := svc.CreateAvatarFromBytes(ctx, []byte("not an image")); !errors.Is(err, domain.ErrPhotoInvalid) {
+		t.Fatalf("CreateAvatarFromBytes(non-image) err = %v, want ErrPhotoInvalid", err)
+	}
+}
+
 func TestCreateDocumentFromBytesStoresBodyAndAttributes(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()

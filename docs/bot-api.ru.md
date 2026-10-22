@@ -179,20 +179,20 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (89 методов + 1 файловый маршрут):
+Реализовано (92 метода + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
 | Бот и команды | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
 | Миграция | `logOut`, `close` (заглушки: всегда `True`, состояние не меняется, 10-минутного ограничения `close` нет) |
-| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto` |
+| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `setMyProfilePhoto`, `removeMyProfilePhoto`, `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights` |
 | Обновления | `getUpdates`, `dropPendingUpdates` (расширение telesrv) |
 | Текст | `sendMessage`, `sendRichMessage` |
 | Медиа | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
 | Альбомы, опросы, dice, actions | `sendMediaGroup`, `sendPoll`, `sendDice`, `sendChatAction` |
 | Гео | `sendContact`, `sendLocation`, `sendVenue` |
 | Пересылка | `forwardMessage`, `forwardMessages`, `copyMessage`, `copyMessages` |
-| Правка/удаление | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage` |
+| Правка/удаление | `editMessageText`, `editMessageCaption`, `editMessageMedia`, `editMessageReplyMarkup`, `stopPoll`, `deleteMessage`, `deleteMessages` |
 | Правка/удаление ephemeral | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
 | Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
@@ -352,6 +352,46 @@ MTProto), поэтому другие клиенты видят изменени
 Без параметров. Удаляет текущее фото профиля бота и возвращает `True`. Если
 фото нет, тоже возвращается `True`, как на официальном сервере. Владелец бота
 получает `updateUser` для бота, и его клиенты сразу показывают изменение.
+
+### `setMyProfilePhoto`
+
+| Параметр | Тип | Комментарий |
+|---|---|---|
+| `photo` | InputProfilePhoto | обязателен; JSON-объект, запрос должен быть `multipart/form-data` |
+
+Поддерживается только `InputProfilePhotoStatic`:
+`{"type":"static","photo":"attach://<поле>"}`, где `<поле>` — файловая часть
+того же запроса. Как и официально, фото профиля нельзя задать через `file_id`
+или URL. Изображение сохраняется по правилам размеров фото профиля (`s`, `a`,
+`c`), становится текущим фото бота, возвращается `True`. Как и при
+`removeMyProfilePhoto`, владелец получает `updateUser` для бота.
+
+Ошибки: отсутствующий или некорректный `photo` даёт `Bad Request: parameter
+"photo" is required`, `Bad Request: can't parse InputProfilePhoto JSON object`
+или `Bad Request: invalid InputProfilePhoto type specified`; `photo`, не
+указывающий на загруженный файл, — `Bad Request: profile photo must be uploaded
+as a new file using attach://`. Файл, который не декодируется как изображение,
+даёт `Bad Request: IMAGE_PROCESS_FAILED`; файл больше 10 МБ —
+`Bad Request: file is too big`.
+
+### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
+
+| Параметр | Тип | Комментарий |
+|---|---|---|
+| `rights` | JSON `ChatAdministratorRights` | только `setMy…`; отсутствие очищает права по умолчанию |
+| `for_channels` | логический | `true` для каналов, иначе для групп |
+
+`setMyDefaultAdministratorRights` идёт через MTProto
+`bots.setBotGroupDefaultAdminRights` / `bots.setBotBroadcastDefaultAdminRights`;
+клиенты видят новое значение в `userFull` бота
+(`bot_group_admin_rights` / `bot_broadcast_admin_rights`) и заранее отмечают
+эти права при назначении бота администратором. Повторная установка того же
+значения тоже возвращает `true` (MTProto отвечает `RIGHTS_NOT_MODIFIED`).
+`rights`, который не является JSON-объектом, или известное поле не логического
+типа дают `BAD_REQUEST`.
+
+`getMyDefaultAdministratorRights` возвращает объект `ChatAdministratorRights`
+со всеми полями; если ничего не задано, все они `false`.
 
 ## Методы: отправка
 
@@ -671,6 +711,21 @@ inline-сообщения.
 
 `chat_id` + `message_id`. Возвращает `true`. Удаление уже удалённого или
 чужого сообщения возвращает `false` либо ошибку, как и на официальном шлюзе.
+
+### `deleteMessages`
+
+`chat_id` + `message_ids` (JSON-массив из 1–100 положительных id; повторы
+игнорируются). Работает в личных чатах, супергруппах и каналах по тем же
+правилам, что и `deleteMessage`: в личном чате удаляются только сообщения
+диалога с этим `chat_id`; в группе бот удаляет свои сообщения без прав, а
+чужие — только с правом администратора на удаление сообщений. Отсутствующие
+и недоступные для удаления сообщения пропускаются, остальные удаляются одним
+пакетом (участники получают одно обновление об удалении); результат — `true`.
+Если удалить нельзя ни одного, возвращается `Bad Request: message can't be
+deleted` или `Bad Request: message to delete not found`. Пустой список,
+больше 100 id или неположительный id — ошибка параметров (`Bad Request:
+message identifiers are not specified` / `too many message identifiers
+specified` / `invalid message identifier specified`).
 
 ### `answerCallbackQuery`
 

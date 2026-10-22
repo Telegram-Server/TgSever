@@ -125,6 +125,8 @@ type ChannelStore struct {
 	usernameRegistry *CollectibleUsernameStore
 	// deletions 是删除记录（与 MessageStore 共用同一实例）；nil 时不记录。
 	deletions *MessageDeletionStore
+	// bannedSenderChats 是频道 peer 封禁记录，按 channel → sender chat 索引（首次写入时创建）。
+	bannedSenderChats map[int64]map[int64]domain.ChannelBannedSenderChat
 }
 
 // AttachDeletionStore 注入删除记录（与 MessageStore 共用同一实例）。

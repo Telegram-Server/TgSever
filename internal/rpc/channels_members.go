@@ -210,7 +210,9 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 			users = append(users, r.tgUsersForIDs(ctx, userID, missing)...)
 		}
 	}
-	r.applyPeerReadModels(ctx, userID, users, nil)
+	// 被封禁的频道 peer（kicked 筛选）随列表带上频道。
+	chats := tgSenderChats(userID, list.SenderChats)
+	r.applyPeerReadModels(ctx, userID, users, chats)
 	r.log.Debug("channels.getParticipants result",
 		zap.Int64("channel_id", ref.ID),
 		zap.String("filter", string(filter.Kind)),
@@ -221,7 +223,7 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 	return &tg.ChannelsChannelParticipants{
 		Count:        list.Count,
 		Participants: participants,
-		Chats:        []tg.ChatClass{},
+		Chats:        chats,
 		Users:        users,
 	}, nil
 }
@@ -268,6 +270,9 @@ func (r *Router) onChannelsGetParticipant(ctx context.Context, req *tg.ChannelsG
 		return nil, err
 	}
 	peer, ok := r.domainPeerFromInputPeer(userID, req.Participant)
+	if ok && peer.Type == domain.PeerTypeChannel && peer.ID != 0 {
+		return r.senderChatParticipant(ctx, userID, channelID, peer.ID)
+	}
 	if !ok || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
@@ -584,6 +589,9 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 		return nil, err
 	}
 	participant, ok := r.domainPeerFromInputPeer(userID, req.Participant)
+	if ok && participant.Type == domain.PeerTypeChannel && participant.ID != 0 {
+		return r.editBannedSenderChat(ctx, userID, channelID, participant.ID, req.BannedRights)
+	}
 	if !ok || participant.Type != domain.PeerTypeUser || participant.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
@@ -665,7 +673,7 @@ func (r *Router) onChannelsGetAdminLog(ctx context.Context, req *tg.ChannelsGetA
 		return nil, channelAdminErr(err)
 	}
 	events := tgChannelAdminLogEvents(userID, res.Events)
-	chats := []tg.ChatClass{tgChannelChatMin(userID, res.Channel)}
+	chats := append([]tg.ChatClass{tgChannelChatMin(userID, res.Channel)}, tgSenderChats(userID, res.SenderChats)...)
 	users := r.channelAdminLogUsers(ctx, userID, res.Events)
 	r.applyPeerReadModels(ctx, userID, users, chats)
 	return &tg.ChannelsAdminLogResults{

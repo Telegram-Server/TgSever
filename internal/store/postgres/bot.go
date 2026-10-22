@@ -193,41 +193,13 @@ func (s *BotStore) GetBots(ctx context.Context, botUserIDs []int64) (map[int64]d
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := s.db.Query(ctx, `
-SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history,
-       bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type,
-       menu_button_text, menu_button_url, bot_inline_geo
-FROM bots
-WHERE bot_user_id = ANY($1::bigint[])`, ids)
+	rows, err := s.q.GetBots(ctx, ids)
 	if err != nil {
 		return nil, fmt.Errorf("get bots: %w", err)
 	}
-	defer rows.Close()
-	out := make(map[int64]domain.BotProfile, len(ids))
-	for rows.Next() {
-		var row sqlcgen.Bot
-		if err := rows.Scan(
-			&row.BotUserID,
-			&row.OwnerUserID,
-			&row.TokenSecret,
-			&row.Description,
-			&row.Commands,
-			&row.BotChatHistory,
-			&row.BotNochats,
-			&row.InlinePlaceholder,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-			&row.MenuButtonType,
-			&row.MenuButtonText,
-			&row.MenuButtonUrl,
-			&row.BotInlineGeo,
-		); err != nil {
-			return nil, err
-		}
+	out := make(map[int64]domain.BotProfile, len(rows))
+	for _, row := range rows {
 		out[row.BotUserID] = botProfileFromModel(row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("get bots: %w", err)
 	}
 	for id, profile := range out {
 		enriched, err := s.enrichBotProfile(ctx, profile)
@@ -423,6 +395,30 @@ func (s *BotStore) SetBotChatHistory(ctx context.Context, botUserID int64, chatH
 	})
 }
 
+func (s *BotStore) SetBotDefaultAdminRights(ctx context.Context, botUserID int64, forChannels bool, rights domain.ChannelAdminRights) (int, error) {
+	payload, err := json.Marshal(rights)
+	if err != nil {
+		return 0, fmt.Errorf("set bot default admin rights: encode: %w", err)
+	}
+	return s.withBumpTx(ctx, botUserID, func(q *sqlcgen.Queries) error {
+		if forChannels {
+			_, err = q.SetBotBroadcastAdminRightsRow(ctx, sqlcgen.SetBotBroadcastAdminRightsRowParams{
+				BotUserID:            botUserID,
+				BroadcastAdminRights: payload,
+			})
+		} else {
+			_, err = q.SetBotGroupAdminRightsRow(ctx, sqlcgen.SetBotGroupAdminRightsRowParams{
+				BotUserID:        botUserID,
+				GroupAdminRights: payload,
+			})
+		}
+		if err != nil {
+			return fmt.Errorf("set bot default admin rights: %w", err)
+		}
+		return nil
+	})
+}
+
 func (s *BotStore) CanBotSendMessage(ctx context.Context, botUserID, userID int64) (bool, error) {
 	if botUserID == 0 || userID == 0 || botUserID == userID {
 		return false, nil
@@ -519,6 +515,13 @@ func botProfileFromModel(r sqlcgen.Bot) domain.BotProfile {
 	if len(r.Commands) > 0 {
 		// commands 列损坏不阻断读路径：botInfo 退化为空命令列表。
 		_ = json.Unmarshal(r.Commands, &p.Commands)
+	}
+	// 默认管理员权限列损坏同样不阻断读路径：退化为未设置。
+	if len(r.GroupAdminRights) > 0 {
+		_ = json.Unmarshal(r.GroupAdminRights, &p.GroupAdminRights)
+	}
+	if len(r.BroadcastAdminRights) > 0 {
+		_ = json.Unmarshal(r.BroadcastAdminRights, &p.BroadcastAdminRights)
 	}
 	return p
 }
