@@ -95,3 +95,13 @@ ON CONFLICT (bot_user_id, user_id) DO UPDATE SET state = EXCLUDED.state, updated
 
 -- name: DeleteBotChatState :exec
 DELETE FROM bot_chat_states WHERE bot_user_id = $1 AND user_id = $2;
+
+-- name: GetBots :many
+-- 批量读（userFull / 频道 full info 富化）；SELECT * 让新增列自动进 sqlcgen.Bot。
+SELECT * FROM bots WHERE bot_user_id = ANY(sqlc.arg(bot_user_ids)::bigint[]);
+
+-- name: SetBotGroupAdminRightsRow :execrows
+UPDATE bots SET group_admin_rights = $2, updated_at = now() WHERE bot_user_id = $1;
+
+-- name: SetBotBroadcastAdminRightsRow :execrows
+UPDATE bots SET broadcast_admin_rights = $2, updated_at = now() WHERE bot_user_id = $1;

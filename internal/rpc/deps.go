@@ -361,6 +361,9 @@ type BotsService interface {
 	// BotMenuButtonForUser 返回 userID 看到的菜单按钮：专属按钮优先，否则全局默认。
 	BotMenuButtonForUser(ctx context.Context, botUserID, userID int64) (domain.BotMenuButton, error)
 	SetInlinePlaceholder(ctx context.Context, botUserID int64, placeholder string) (int, error)
+	// SetDefaultAdminRights 写入 bot 的群（forChannels=false）/频道默认管理员权限，零值即清空；
+	// 未变返回 domain.ErrBotAdminRightsNotModified，非 bot 返回 domain.ErrBotNotFound。
+	SetDefaultAdminRights(ctx context.Context, botUserID int64, forChannels bool, rights domain.ChannelAdminRights) (int, error)
 	CanSendMessage(ctx context.Context, userID, botUserID int64) (bool, error)
 	AllowSendMessage(ctx context.Context, userID, botUserID int64, fromRequest bool) (bool, error)
 	UpsertBotApp(ctx context.Context, botUserID int64, app domain.BotApp) (domain.BotApp, int, error)
