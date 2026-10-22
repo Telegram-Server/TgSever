@@ -1984,3 +1984,72 @@ td.evidence-message-cell {
   align-items: center;
   gap: 8px;
 }
+
+/* Account detail: staff permission control (#118). With the master switch off
+	the flags and whitelist dim but keep their values. */
+.account-permissions .perm-master {
+  color: var(--heading);
+}
+
+.perm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px 16px;
+  padding: 10px;
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.perm-whitelist {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.perm-grid.is-off,
+.perm-whitelist.is-off {
+  opacity: 0.55;
+}
+
+.perm-whitelist-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.perm-whitelist-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 10px;
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.perm-whitelist-id .icon-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+}
+
+.perm-whitelist-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.perm-whitelist-add input {
+  flex: 1 1 160px;
+  max-width: 240px;
+}
+
+.perm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
