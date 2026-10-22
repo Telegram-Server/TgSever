@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +129,41 @@ func getBody(t *testing.T, url string) (int, []byte) {
 		t.Fatal(err)
 	}
 	return resp.StatusCode, body
+}
+
+// /current 与 /current1 … /current10 返回同一份桌面更新表；范围之外的 /currentN 不存在。
+func TestHandlerServesSameDesktopMapOnEveryCurrentEndpoint(t *testing.T) {
+	handler, _, _ := newWin64Handler(t)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	status, want := getBody(t, server.URL+"/current4")
+	if status != http.StatusOK || !strings.Contains(string(want), `"released":7007000`) {
+		t.Fatalf("current4 = %d %s", status, want)
+	}
+	endpoints := []string{"/current"}
+	for n := 1; n <= 10; n++ {
+		endpoints = append(endpoints, "/current"+strconv.Itoa(n))
+	}
+	for _, endpoint := range endpoints {
+		resp, err := http.Get(server.URL + endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || !bytes.Equal(body, want) {
+			t.Fatalf("%s = %d %s, want the current4 body %s", endpoint, resp.StatusCode, body, want)
+		}
+		if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+			t.Fatalf("%s Cache-Control = %q, want no-cache", endpoint, got)
+		}
+	}
+	for _, endpoint := range []string{"/current0", "/current11"} {
+		if status, body := getBody(t, server.URL+endpoint); status != http.StatusNotFound {
+			t.Fatalf("%s = %d %s, want 404", endpoint, status, body)
+		}
+	}
 }
 
 // 主进程把 Handler 挂在公开 Web 的 /_updates/ 下（剥离前缀后转发）。客户端以

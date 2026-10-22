@@ -641,9 +641,10 @@ the standalone service).
 - `/readyz` reports the catalog: `ready`, or `stale` (still HTTP 200) when the
   latest manifest failed to load and the previous catalog is being served. It
   returns `503` only when no catalog has ever loaded.
-- `/current`, `/current1` … `/current4` return the desktop map with
-  `Cache-Control: no-cache`; each enabled entry has `released` (the build) and a
-  `link` relative to the prefix (`/files/<name>`).
+- `/current`, `/current1` … `/current10` all return the same desktop map (the
+  `/current4` format) with `Cache-Control: no-cache`; each enabled entry has
+  `released` (the build) and a `link` relative to the prefix (`/files/<name>`).
+  Other numbers (`/current0`, `/current11`, …) are `404`.
 - `/files/<name>` serves only packages referenced by the current verified
   catalog, supports GET, HEAD and Range (resumable downloads), and sends an
   immutable cache policy and a SHA-256 ETag. Other files in the directory are

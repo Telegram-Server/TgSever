@@ -6,10 +6,15 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 )
 
 const maxResolveQueryLength = 256
+
+// maxCurrentEndpoint 是 /currentN 的最大 N。/current 与 /current1 … /current10 返回同一份
+// 桌面更新表（current4 格式），客户端按自己的更新器版本选哪一个都能拿到。
+const maxCurrentEndpoint = 10
 
 // PublicWebPrefix 是主进程把 Handler 挂到公开 Web 上的路径前缀。公开 Web 按它剥离
 // 前缀后转发，配置按它推导 autoupdate_url_prefix（<PublicBaseURL>/_updates）。用户名
@@ -30,8 +35,9 @@ func NewHandler(store *Store) (*Handler, error) {
 	h.mux.HandleFunc("/readyz", h.ready)
 	h.mux.HandleFunc("/v1/resolve", h.resolve)
 	h.mux.HandleFunc("/files/", h.file)
-	for _, endpoint := range []string{"/current", "/current1", "/current2", "/current3", "/current4"} {
-		h.mux.HandleFunc(endpoint, h.current)
+	h.mux.HandleFunc("/current", h.current)
+	for n := 1; n <= maxCurrentEndpoint; n++ {
+		h.mux.HandleFunc("/current"+strconv.Itoa(n), h.current)
 	}
 	return h, nil
 }

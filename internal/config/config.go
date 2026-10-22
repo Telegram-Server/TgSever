@@ -118,7 +118,8 @@ type Config struct {
 	UpdateServiceURL     string
 	UpdateRequestTimeout time.Duration
 	// UpdateManifest（TELESRV_UPDATE_MANIFEST）非空即启用进程内更新服务：公开 Web 的
-	// /_updates/ 提供 /current4 与 /files/*，help.getAppUpdate 在进程内解析。清单
+	// /_updates/ 提供 /current、/current1 … /current10（同一份更新表）与 /files/*，
+	// help.getAppUpdate 在进程内解析。清单
 	// 无法加载时启动失败。与独立 telesrv-update 的同名变量语义一致。
 	UpdateManifest string
 	// UpdateFilesDir（TELESRV_UPDATE_FILES_DIR）是桌面更新包目录，默认清单所在目录下的 files。
