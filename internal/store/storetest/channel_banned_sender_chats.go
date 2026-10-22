@@ -107,6 +107,10 @@ func ChannelBannedSenderChats(t *testing.T, s ChannelBannedSenderChatStore, user
 			if _, err := edit(owner, target, full, now); !errors.Is(err, domain.ErrChannelSenderChatInvalid) {
 				t.Fatalf("ban %d = %v, want ErrChannelSenderChatInvalid", target, err)
 			}
+			// 解封同样拒绝从未存在的频道和本群（已删除的频道可以解封，见下）。
+			if _, err := edit(owner, target, domain.ChannelBannedRights{}, now); !errors.Is(err, domain.ErrChannelSenderChatInvalid) {
+				t.Fatalf("unban %d = %v, want ErrChannelSenderChatInvalid", target, err)
+			}
 		}
 	})
 

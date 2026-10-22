@@ -13,7 +13,7 @@ type ChannelBannedSenderChatStore interface {
 	// EditChannelBannedSenderChat 封禁（BannedRights.ViewMessages）或解封（全空）一个频道 peer。
 	// 执行者必须是群主或有 ban_users 的管理员，否则 ErrChannelAdminRequired；其他权限组合
 	// 返回 ErrChannelBannedRightsInvalid；目标就是本群，或封禁时目标频道不存在/已删除，返回
-	// ErrChannelSenderChatInvalid（解封不要求目标频道仍然存在）。真正发生变化时在同一事务里写管理日志
+	// ErrChannelSenderChatInvalid（解封只要求目标频道存在过，已删除的也可以解封）。真正发生变化时在同一事务里写管理日志
 	// （participant_kick / participant_unkick），重复操作返回 Changed=false 且不写日志。
 	EditChannelBannedSenderChat(ctx context.Context, req domain.EditChannelBannedSenderChatRequest) (domain.EditChannelBannedSenderChatResult, error)
 	// GetChannelBannedSenderChat 不做查看者鉴权，直接返回封禁记录；供发言拦截等内部路径使用。

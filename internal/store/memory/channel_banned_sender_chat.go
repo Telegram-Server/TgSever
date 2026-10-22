@@ -33,8 +33,8 @@ func (s *ChannelStore) EditChannelBannedSenderChat(_ context.Context, req domain
 	if req.SenderChatID == req.ChannelID {
 		return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
 	}
-	// 只有封禁要求目标频道存在且未删除；解封不要求，频道删除后封禁记录仍可解除。
-	if target, ok := s.channels[req.SenderChatID]; ban && (!ok || target.Deleted) {
+	// 目标频道必须存在过；只有封禁要求它未删除，频道删除后封禁记录仍可解除。
+	if target, ok := s.channels[req.SenderChatID]; !ok || (ban && target.Deleted) {
 		return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
 	}
 	date := restrictionNow(req.Date)

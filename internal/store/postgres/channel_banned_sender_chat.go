@@ -54,7 +54,8 @@ func (s *ChannelStore) EditChannelBannedSenderChat(ctx context.Context, req doma
 	if req.SenderChatID == req.ChannelID {
 		return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
 	}
-	// 只有封禁要求目标频道存在且未删除；解封不要求，频道删除后封禁记录仍可解除。
+	q := sqlcgen.New(tx)
+	// 封禁要求目标频道存在且未删除；解封只要求它存在过，频道删除后封禁记录仍可解除。
 	if ban {
 		if _, err := getChannelByID(ctx, tx, req.SenderChatID); err != nil {
 			if errors.Is(err, domain.ErrChannelInvalid) {
@@ -62,8 +63,15 @@ func (s *ChannelStore) EditChannelBannedSenderChat(ctx context.Context, req doma
 			}
 			return domain.EditChannelBannedSenderChatResult{}, err
 		}
+	} else {
+		existed, err := q.SenderChatChannelEverExisted(ctx, req.SenderChatID)
+		if err != nil {
+			return domain.EditChannelBannedSenderChatResult{}, fmt.Errorf("check sender chat channel: %w", err)
+		}
+		if !existed {
+			return domain.EditChannelBannedSenderChatResult{}, domain.ErrChannelSenderChatInvalid
+		}
 	}
-	q := sqlcgen.New(tx)
 	res := domain.EditChannelBannedSenderChatResult{Channel: channel, Banned: ban}
 	var row sqlcgen.ChannelBannedSenderChat
 	if ban {

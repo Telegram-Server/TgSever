@@ -41,3 +41,7 @@ WHERE b.channel_id = sqlc.arg(channel_id)
        OR lower(coalesce(c.username, '')) LIKE sqlc.arg(pattern)::text ESCAPE '\')
 ORDER BY b.sender_chat_id
 LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
+
+-- name: SenderChatChannelEverExisted :one
+-- 解封只要求被封频道存在过（含已软删除）：频道删除后封禁记录仍可解除。
+SELECT EXISTS (SELECT 1 FROM channels WHERE id = $1);

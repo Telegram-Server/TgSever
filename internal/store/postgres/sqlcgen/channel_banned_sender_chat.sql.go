@@ -164,3 +164,15 @@ func (q *Queries) ListChannelBannedSenderChats(ctx context.Context, arg ListChan
 	}
 	return items, nil
 }
+
+const senderChatChannelEverExisted = `-- name: SenderChatChannelEverExisted :one
+SELECT EXISTS (SELECT 1 FROM channels WHERE id = $1)
+`
+
+// 解封只要求被封频道存在过（含已软删除）：频道删除后封禁记录仍可解除。
+func (q *Queries) SenderChatChannelEverExisted(ctx context.Context, id int64) (bool, error) {
+	row := q.db.QueryRow(ctx, senderChatChannelEverExisted, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
