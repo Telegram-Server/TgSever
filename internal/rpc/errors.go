@@ -466,6 +466,9 @@ func fileEmptyErr() error                 { return tgerr.New(400, "FILE_EMPTY") 
 
 // signInErr 把登录业务错误映射为客户端可识别的 rpc_error。
 func signInErr(err error) error {
+	if rejected := deviceBindingRejectionErr(err); rejected != nil {
+		return rejected
+	}
 	switch {
 	case errors.Is(err, auth.ErrPhoneNumberInvalid),
 		errors.Is(err, auth.ErrSystemUserLoginForbidden):
@@ -487,8 +490,6 @@ func signInErr(err error) error {
 		return signUpDisabledErr()
 	case errors.Is(err, domain.ErrCodeLoginDisabled):
 		return codeLoginDisabledErr()
-	case deviceBindingRejectionErr(err) != nil:
-		return deviceBindingRejectionErr(err)
 	default:
 		return internalErr()
 	}
@@ -497,11 +498,12 @@ func signInErr(err error) error {
 // passkeyErr 映射 passkey(WebAuthn)错误。验证类失败统一返回 PASSKEY_INVALID,不泄漏
 // 具体哪一步失败(防探测);非验证类(store/内部)返回 500。
 func passkeyErr(err error) error {
+	if rejected := deviceBindingRejectionErr(err); rejected != nil {
+		return rejected
+	}
 	switch {
 	case errors.Is(err, auth.ErrSystemUserLoginForbidden):
 		return tgerr.New(400, "PASSKEY_INVALID")
-	case deviceBindingRejectionErr(err) != nil:
-		return deviceBindingRejectionErr(err)
 	case errors.Is(err, domain.ErrPasskeyChallengeInvalid):
 		return tgerr.New(400, "PASSKEY_CHALLENGE_INVALID")
 	case errors.Is(err, domain.ErrPasskeyInvalid),
