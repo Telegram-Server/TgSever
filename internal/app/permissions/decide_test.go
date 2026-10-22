@@ -155,6 +155,78 @@ func TestDecideClearHistory(t *testing.T) {
 	decideMatrix(t, ActionClearHistory, func(f *domain.AccountPermissionFlags) { f.ClearHistory = false }, DenyClearHistory, false)
 }
 
+// TestDecideSendWhitelist 覆盖 白名单开/关 × 名单内/外 × 目标种类 × 发送开/关。白名单只看
+// 私聊与秘密聊天的对方；群组、频道不看名单，收藏夹始终放行，发送关闭优先于白名单。
+func TestDecideSendWhitelist(t *testing.T) {
+	const listed, unlisted int64 = 2002, 3003
+	targets := []struct {
+		name      string
+		target    Target
+		whitelist bool // 该目标是否受白名单约束
+		inList    bool
+	}{
+		{"private listed", Target{Kind: TargetPrivate, UserID: listed}, true, true},
+		{"private unlisted", Target{Kind: TargetPrivate, UserID: unlisted}, true, false},
+		{"secret chat listed", Target{Kind: TargetSecretChat, UserID: listed}, true, true},
+		{"secret chat unlisted", Target{Kind: TargetSecretChat, UserID: unlisted}, true, false},
+		{"secret chat unknown counterpart", Target{Kind: TargetSecretChat}, true, false},
+		{"group", Target{Kind: TargetGroup}, false, false},
+		{"channel", Target{Kind: TargetChannel}, false, false},
+		{"saved messages", Target{Kind: TargetSelf}, false, false},
+		{"no target", Target{}, false, false},
+	}
+	for _, whitelistOn := range []bool{false, true} {
+		for _, sendOn := range []bool{true, false} {
+			view := enforcedView(func(p *domain.AccountPermissions) {
+				p.Flags.Send = sendOn
+				p.SendWhitelistEnabled = whitelistOn
+				p.SendWhitelist = []int64{listed}
+			})
+			for _, tc := range targets {
+				name := tc.name
+				if whitelistOn {
+					name += "/whitelist on"
+				} else {
+					name += "/whitelist off"
+				}
+				if sendOn {
+					name += "/send on"
+				} else {
+					name += "/send off"
+				}
+				t.Run(name, func(t *testing.T) {
+					want := Allowed
+					switch {
+					case tc.target.Kind == TargetSelf:
+					case !sendOn:
+						want = DenySend
+					case whitelistOn && tc.whitelist && !tc.inList:
+						want = DenySendWhitelist
+					}
+					if got := Decide(view, Action{Kind: ActionSend, Target: tc.target}); got != want {
+						t.Fatalf("Decide = %q, want %q", got, want)
+					}
+				})
+			}
+		}
+	}
+	// 总开关关闭或豁免账号时，白名单开启也不生效。
+	off := domain.DefaultAccountPermissions(1001)
+	off.SendWhitelistEnabled = true
+	if got := Decide(NewView(off, false), Action{Kind: ActionSend, Target: Target{Kind: TargetPrivate, UserID: unlisted}}); got != Allowed {
+		t.Fatalf("master switch off: Decide = %q, want allowed", got)
+	}
+	off.Enabled = true
+	if got := Decide(NewView(off, true), Action{Kind: ActionSend, Target: Target{Kind: TargetPrivate, UserID: unlisted}}); got != Allowed {
+		t.Fatalf("exempt account: Decide = %q, want allowed", got)
+	}
+	// 白名单开启但名单为空：所有私聊都被拒绝。
+	empty := enforcedView(func(p *domain.AccountPermissions) { p.SendWhitelistEnabled = true; p.SendWhitelist = nil })
+	if got := Decide(empty, Action{Kind: ActionSend, Target: Target{Kind: TargetPrivate, UserID: listed}}); got != DenySendWhitelist {
+		t.Fatalf("empty whitelist: Decide = %q, want %q", got, DenySendWhitelist)
+	}
+}
+
 func TestDenialErrorNames(t *testing.T) {
 	if DenyEdit.Allowed() || !Allowed.Allowed() {
 		t.Fatal("Allowed() mismatch")
