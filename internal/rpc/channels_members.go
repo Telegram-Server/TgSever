@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 	"sort"
 	"strings"
+	"telesrv/internal/app/permissions"
 	"telesrv/internal/domain"
 	"unicode/utf8"
 )
@@ -410,6 +411,12 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 			return nil, channelInvalidErr(domain.ErrChannelPrivate)
 		}
 	}
+	if err := r.checkChannelPermission(ctx, userID, permissions.ActionJoin, func() (domain.Channel, bool) {
+		channel, err := r.deps.Channels.GetJoinableChannel(ctx, userID, ref.ID)
+		return channel, err == nil
+	}); err != nil {
+		return nil, err
+	}
 	date := int(r.clock.Now().Unix())
 	res, err := r.deps.Channels.JoinChannel(ctx, userID, ref.ID, date)
 	if err != nil {
@@ -440,6 +447,12 @@ func (r *Router) onChannelsLeaveChannel(ctx context.Context, input tg.InputChann
 	}
 	channelID, err := r.channelIDFromInput(ctx, userID, input)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.checkChannelPermission(ctx, userID, permissions.ActionLeave, func() (domain.Channel, bool) {
+		view, err := r.deps.Channels.ResolveChannel(ctx, userID, channelID)
+		return view.Channel, err == nil
+	}); err != nil {
 		return nil, err
 	}
 	date := int(r.clock.Now().Unix())

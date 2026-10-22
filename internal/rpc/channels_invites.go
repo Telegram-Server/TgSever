@@ -8,6 +8,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 
+	"telesrv/internal/app/permissions"
 	"telesrv/internal/domain"
 )
 
@@ -118,6 +119,13 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 		return nil, internalErr()
 	}
 	date := int(r.clock.Now().Unix())
+	// 目标会话由链接解析；需要审批的链接（入群申请）同样按目标类型拦截。已是成员的链接不是新的加入。
+	if err := r.checkChannelPermission(ctx, userID, permissions.ActionJoin, func() (domain.Channel, bool) {
+		checked, err := r.deps.Channels.CheckInvite(ctx, userID, hash, date)
+		return checked.Channel, err == nil && !checked.Already && checked.Channel.ID != 0
+	}); err != nil {
+		return nil, err
+	}
 	res, err := r.deps.Channels.ImportInvite(ctx, userID, domain.ImportChannelInviteRequest{
 		UserID: userID,
 		Hash:   hash,

@@ -20,6 +20,11 @@ const (
 	actionUnknown ActionKind = iota
 	// ActionEdit 是编辑消息（messages.editMessage），不需要目标信息。
 	ActionEdit
+	// ActionJoin 是自己加入会话（公开链接、邀请链接、聊天文件夹）；Target 为 TargetGroup 或
+	// TargetChannel（用 ChannelTarget 由会话得出）。
+	ActionJoin
+	// ActionLeave 是自己退出会话；Target 为 TargetGroup 或 TargetChannel。
+	ActionLeave
 )
 
 // TargetKind 是动作作用的会话种类。没有普通群：megagroup、gigagroup、论坛、monoforum 都算
@@ -44,6 +49,15 @@ type Target struct {
 	Kind TargetKind
 	// UserID 是私聊或秘密聊天的对方；其他种类为 0。
 	UserID int64
+}
+
+// ChannelTarget 是群组与频道的分类规则：广播频道算 TargetChannel，其余（megagroup、论坛、
+// gigagroup、monoforum，以及经 messages.createChat 建出的群）都算 TargetGroup。
+func ChannelTarget(ch domain.Channel) Target {
+	if ch.Broadcast {
+		return Target{Kind: TargetChannel}
+	}
+	return Target{Kind: TargetGroup}
 }
 
 // Action 是一次待判定的操作：动作种类 + 必要的目标信息。
@@ -118,6 +132,20 @@ func Decide(v View, a Action) Denial {
 	case ActionEdit:
 		if !flags.Edit {
 			return DenyEdit
+		}
+	case ActionJoin:
+		switch {
+		case a.Target.Kind == TargetGroup && !flags.JoinGroup:
+			return DenyJoinGroup
+		case a.Target.Kind == TargetChannel && !flags.JoinChannel:
+			return DenyJoinChannel
+		}
+	case ActionLeave:
+		switch {
+		case a.Target.Kind == TargetGroup && !flags.LeaveGroup:
+			return DenyLeaveGroup
+		case a.Target.Kind == TargetChannel && !flags.LeaveChannel:
+			return DenyLeaveChannel
 		}
 	}
 	return Allowed
