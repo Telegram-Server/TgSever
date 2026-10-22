@@ -2080,6 +2080,8 @@ func run(logger *zap.Logger) error {
 		AccountSettings:     router,
 		UserProjectionFacts: userProjectionFacts,
 		AccountPermissions:  permissionsService,
+		// 别的实例改了权限：本实例的在线会话也要收到 updateConfig（#118）。
+		AccountPermissionsNotifier: router,
 	}, logger.Named("store").Named("read-model-listener"))
 	go readModelListener.Run(ctx)
 	activeSessions.SetLifecycleObserver(router)

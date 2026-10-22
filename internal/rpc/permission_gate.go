@@ -161,9 +161,10 @@ func permissionDeniedErr(denial permissions.Denial) error {
 	return tgerr.New(403, string(denial))
 }
 
-// NotifyAccountPermissionsChanged 是管理端在权限设置写入后（包括关闭总开关）调用的通知：
-// 立刻失效本实例的权限视图，并向该账号在本实例上的全部在线会话推送 updateConfig，客户端据此
-// 重新拉取 appConfig。其他实例的缓存由写入时提交的读模型通知失效。
+// NotifyAccountPermissionsChanged 失效本实例的权限视图，并向该账号在本实例上的全部在线会话
+// 推送 updateConfig，客户端据此重新拉取 appConfig。两处调用：管理端在权限设置写入后（包括关闭
+// 总开关）调用它；其他实例由读模型监听器在收到 "account_permissions" 通知时调用它，所以连在
+// 任何实例上的会话都会收到推送。
 func (r *Router) NotifyAccountPermissionsChanged(ctx context.Context, userID int64) error {
 	if r == nil || userID == 0 {
 		return nil
