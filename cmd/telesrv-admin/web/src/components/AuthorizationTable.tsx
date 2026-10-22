@@ -37,6 +37,7 @@ export function AuthorizationTable({ rows, userID, onDone }: { rows: Authorizati
                       path="/api/actions/revoke-sessions"
                       payload={() => ({ user_id: userID, hash: row.Hash })}
                       onDone={onDone}
+                      refreshOnClose
                     />
                     <ActionButton
                       label={t("auth.keepCurrent")}

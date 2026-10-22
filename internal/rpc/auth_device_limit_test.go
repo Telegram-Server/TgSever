@@ -22,7 +22,20 @@ type deviceLimitAuthService struct {
 	bindErr error
 }
 
-var errWrappedDeviceLimitReached = fmt.Errorf("upsert authorization: %w", domain.ErrDeviceLimitReached)
+var (
+	errWrappedDeviceLimitReached = fmt.Errorf("upsert authorization: %w", domain.ErrDeviceLimitReached)
+	errWrappedDeviceIDRequired   = fmt.Errorf("upsert authorization: %w", domain.ErrDeviceIDRequired)
+)
+
+// deviceBindingRejections 是设备绑定规则的两种拒绝（#112）及其 rpc_error。
+var deviceBindingRejections = []struct {
+	name string
+	err  error
+	typ  string
+}{
+	{"limit reached", errWrappedDeviceLimitReached, "AUTHORIZATIONS_TOO_MUCH"},
+	{"device id required", errWrappedDeviceIDRequired, "DEVICE_ID_REQUIRED"},
+}
 
 func newDeviceLimitAuthService(bindErr error) deviceLimitAuthService {
 	return deviceLimitAuthService{captureAuthService: &captureAuthService{}, bindErr: bindErr}
@@ -41,11 +54,14 @@ func (s deviceLimitAuthService) AcceptLoginToken(context.Context, domain.Authori
 }
 
 // deviceLimitLoginPassword 让 telesrv.signInWithPassword 在 SRP 校验通过后的绑定一步返回该领域错误。
-type deviceLimitLoginPassword struct{ LoginPasswordService }
+type deviceLimitLoginPassword struct {
+	LoginPasswordService
+	err error
+}
 
 func (deviceLimitLoginPassword) Enabled() bool { return true }
-func (deviceLimitLoginPassword) SignIn(context.Context, domain.Authorization, [8]byte, string, domain.PasswordCheck) (domain.User, error) {
-	return domain.User{}, errWrappedDeviceLimitReached
+func (p deviceLimitLoginPassword) SignIn(context.Context, domain.Authorization, [8]byte, string, domain.PasswordCheck) (domain.User, error) {
+	return domain.User{}, p.err
 }
 
 // verifiedPasskey 让任何 passkey 断言都验证为 userID。
@@ -66,11 +82,19 @@ func assertRPCError(t *testing.T, method string, err error, code int, typ string
 	}
 }
 
-func TestDeviceLimitReachedMapsToAuthorizationsTooMuch(t *testing.T) {
+func TestDeviceBindingRejectionsMapOnEveryLoginEntry(t *testing.T) {
+	for _, rejection := range deviceBindingRejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			assertLoginEntriesMapDeviceBindingRejection(t, rejection.err, rejection.typ)
+		})
+	}
+}
+
+func assertLoginEntriesMapDeviceBindingRejection(t *testing.T, bindErr error, typ string) {
 	const userID = int64(1000000107)
 	r := New(Config{}, Deps{
-		Auth:          newDeviceLimitAuthService(errWrappedDeviceLimitReached),
-		LoginPassword: deviceLimitLoginPassword{},
+		Auth:          newDeviceLimitAuthService(bindErr),
+		LoginPassword: deviceLimitLoginPassword{err: bindErr},
 		Passkey:       verifiedPasskey{userID: userID},
 	}, zaptest.NewLogger(t), clock.System)
 	ctx := context.Background()
@@ -100,15 +124,18 @@ func TestDeviceLimitReachedMapsToAuthorizationsTooMuch(t *testing.T) {
 		}},
 	}
 	for _, tc := range cases {
-		assertRPCError(t, tc.method, tc.call(), 400, "AUTHORIZATIONS_TOO_MUCH")
+		assertRPCError(t, tc.method, tc.call(), 400, typ)
 	}
 }
 
-// twoFactorDeviceLimitAuthService 让 2FA 转正返回 domain.ErrDeviceLimitReached（#106）。
-type twoFactorDeviceLimitAuthService struct{ *captureAuthService }
+// twoFactorDeviceLimitAuthService 让 2FA 转正返回 err（#106、#112）。
+type twoFactorDeviceLimitAuthService struct {
+	*captureAuthService
+	err error
+}
 
-func (twoFactorDeviceLimitAuthService) CompletePasswordSignIn(context.Context, [8]byte, int64) error {
-	return errWrappedDeviceLimitReached
+func (s twoFactorDeviceLimitAuthService) CompletePasswordSignIn(context.Context, [8]byte, int64) error {
+	return s.err
 }
 
 // acceptingPasswordAccountService 让任何 2FA 密码校验与密码找回都通过。
@@ -122,29 +149,78 @@ func (acceptingPasswordAccountService) RecoverPassword(context.Context, int64, s
 	return nil
 }
 
-func newTwoFactorDeviceLimitRouter(t *testing.T) *Router {
-	auth := twoFactorDeviceLimitAuthService{&captureAuthService{pendingPasswordUserID: 42, pendingPassword: true}}
+func newTwoFactorDeviceLimitRouter(t *testing.T, err error) *Router {
+	auth := twoFactorDeviceLimitAuthService{&captureAuthService{pendingPasswordUserID: 42, pendingPassword: true}, err}
 	return New(Config{}, Deps{Auth: auth, Account: acceptingPasswordAccountService{}}, zaptest.NewLogger(t), clock.System)
 }
 
-func TestDeviceLimitReachedOnCheckPasswordMapsToAuthorizationsTooMuch(t *testing.T) {
-	r := newTwoFactorDeviceLimitRouter(t)
-	_, err := r.onAuthCheckPassword(pendingPasswordContext(), &tg.InputCheckPasswordSRP{SRPID: 1, A: []byte{1}, M1: []byte{1}})
-	assertRPCError(t, "auth.checkPassword", err, 400, "AUTHORIZATIONS_TOO_MUCH")
+func TestDeviceBindingRejectionOnCheckPasswordMaps(t *testing.T) {
+	for _, rejection := range deviceBindingRejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			r := newTwoFactorDeviceLimitRouter(t, rejection.err)
+			_, err := r.onAuthCheckPassword(pendingPasswordContext(), &tg.InputCheckPasswordSRP{SRPID: 1, A: []byte{1}, M1: []byte{1}})
+			assertRPCError(t, "auth.checkPassword", err, 400, rejection.typ)
+		})
+	}
 }
 
-func TestDeviceLimitReachedOnRecoverPasswordMapsToAuthorizationsTooMuch(t *testing.T) {
-	r := newTwoFactorDeviceLimitRouter(t)
-	_, err := r.onAuthRecoverPassword(pendingPasswordContext(), &tg.AuthRecoverPasswordRequest{Code: "123456"})
-	assertRPCError(t, "auth.recoverPassword", err, 400, "AUTHORIZATIONS_TOO_MUCH")
+func TestDeviceBindingRejectionOnRecoverPasswordMaps(t *testing.T) {
+	for _, rejection := range deviceBindingRejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			r := newTwoFactorDeviceLimitRouter(t, rejection.err)
+			_, err := r.onAuthRecoverPassword(pendingPasswordContext(), &tg.AuthRecoverPasswordRequest{Code: "123456"})
+			assertRPCError(t, "auth.recoverPassword", err, 400, rejection.typ)
+		})
+	}
 }
 
-// fullDeviceLimitAuthService 的预检报告名额已满；其余行为同 captureAuthService（绑定、转正都会成功），
-// 所以 RPC 只有在有副作用的步骤之前先做预检才会拒绝。
-type fullDeviceLimitAuthService struct{ *captureAuthService }
+// fullDeviceLimitAuthService 的预检返回 err（名额已满或缺 device_id）；其余行为同
+// captureAuthService（绑定、转正都会成功），所以 RPC 只有在有副作用的步骤之前先做预检才会拒绝。
+type fullDeviceLimitAuthService struct {
+	*captureAuthService
+	err error
+}
 
-func (fullDeviceLimitAuthService) CheckDeviceLimit(context.Context, [8]byte, int64) error {
-	return errWrappedDeviceLimitReached
+func (s fullDeviceLimitAuthService) CheckDeviceLimit(context.Context, [8]byte, int64) error {
+	return s.err
+}
+
+func (s fullDeviceLimitAuthService) CheckDeviceLimitForPhone(context.Context, [8]byte, string) error {
+	return s.err
+}
+
+// recordingLoginEmailAccount 记录登录邮箱设置是否真的执行（会消耗邮箱码并把登录邮箱写到账号上）。
+type recordingLoginEmailAccount struct {
+	AccountService
+	verifyCalls int
+}
+
+func (a *recordingLoginEmailAccount) VerifyLoginEmail(context.Context, int64, string, string, string, bool) (string, error) {
+	a.verifyCalls++
+	return "alice@example.test", nil
+}
+
+// 名额已满或缺 device_id 时 account.verifyEmail(loginSetup) 在消耗邮箱码、把登录邮箱写到账号上
+// 之前就拒绝。
+func TestDeviceBindingRejectionRefusesLoginEmailSetupBeforeSettingEmail(t *testing.T) {
+	for _, rejection := range deviceBindingRejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			authSvc := fullDeviceLimitAuthService{&captureAuthService{}, rejection.err}
+			account := &recordingLoginEmailAccount{}
+			r := New(Config{}, Deps{Auth: authSvc, Account: account}, zaptest.NewLogger(t), clock.System)
+			_, err := r.onAccountVerifyEmail(context.Background(), &tg.AccountVerifyEmailRequest{
+				Purpose:      &tg.EmailVerifyPurposeLoginSetup{PhoneNumber: "8618800000020", PhoneCodeHash: "hash-email-setup"},
+				Verification: &tg.EmailVerificationCode{Code: "654321"},
+			})
+			assertRPCError(t, "account.verifyEmail", err, 400, rejection.typ)
+			if account.verifyCalls != 0 {
+				t.Fatalf("VerifyLoginEmail calls=%d, want 0 (refused before the email is set)", account.verifyCalls)
+			}
+			if authSvc.signInWithEmailCount != 0 {
+				t.Fatalf("SignInWithEmail calls=%d, want 0", authSvc.signInWithEmailCount)
+			}
+		})
+	}
 }
 
 // recordingRecoveryAccount 记录密码找回是否真的执行（找回会消耗找回码并重置 2FA 密码）。
@@ -158,29 +234,37 @@ func (a *recordingRecoveryAccount) RecoverPassword(context.Context, int64, strin
 	return nil
 }
 
-// 名额已满时 auth.recoverPassword 在动 2FA 密码之前就拒绝：找回码不被消耗、密码不变。
-func TestDeviceLimitReachedRefusesRecoverPasswordBeforeResettingIt(t *testing.T) {
-	authSvc := fullDeviceLimitAuthService{&captureAuthService{pendingPasswordUserID: 42, pendingPassword: true}}
-	account := &recordingRecoveryAccount{}
-	r := New(Config{}, Deps{Auth: authSvc, Account: account}, zaptest.NewLogger(t), clock.System)
-	_, err := r.onAuthRecoverPassword(pendingPasswordContext(), &tg.AuthRecoverPasswordRequest{Code: "123456"})
-	assertRPCError(t, "auth.recoverPassword", err, 400, "AUTHORIZATIONS_TOO_MUCH")
-	if account.recoverCalls != 0 {
-		t.Fatalf("RecoverPassword calls=%d, want 0 (refused before the password changes)", account.recoverCalls)
-	}
-	if authSvc.completePasswordCount != 0 {
-		t.Fatalf("CompletePasswordSignIn calls=%d, want 0", authSvc.completePasswordCount)
+// 名额已满或缺 device_id 时 auth.recoverPassword 在动 2FA 密码之前就拒绝：找回码不被消耗、密码不变。
+func TestDeviceBindingRejectionRefusesRecoverPasswordBeforeResettingIt(t *testing.T) {
+	for _, rejection := range deviceBindingRejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			authSvc := fullDeviceLimitAuthService{&captureAuthService{pendingPasswordUserID: 42, pendingPassword: true}, rejection.err}
+			account := &recordingRecoveryAccount{}
+			r := New(Config{}, Deps{Auth: authSvc, Account: account}, zaptest.NewLogger(t), clock.System)
+			_, err := r.onAuthRecoverPassword(pendingPasswordContext(), &tg.AuthRecoverPasswordRequest{Code: "123456"})
+			assertRPCError(t, "auth.recoverPassword", err, 400, rejection.typ)
+			if account.recoverCalls != 0 {
+				t.Fatalf("RecoverPassword calls=%d, want 0 (refused before the password changes)", account.recoverCalls)
+			}
+			if authSvc.completePasswordCount != 0 {
+				t.Fatalf("CompletePasswordSignIn calls=%d, want 0", authSvc.completePasswordCount)
+			}
+		})
 	}
 }
 
-// 名额已满时扫码确认在清掉新设备的更新状态之前就拒绝。
-func TestDeviceLimitReachedRefusesAcceptLoginTokenBeforeClearingState(t *testing.T) {
-	updates := &captureUpdates{}
-	r := New(Config{}, Deps{Auth: fullDeviceLimitAuthService{&captureAuthService{}}, Updates: updates}, zaptest.NewLogger(t), clock.System)
-	_, err := acceptLoginTokenFromOtherDevice(t, r, 1000000109)
-	assertRPCError(t, "auth.acceptLoginToken", err, 400, "AUTHORIZATIONS_TOO_MUCH")
-	if updates.cleared {
-		t.Fatalf("new device update state cleared for %x, want untouched", updates.clearedAuthKeyID)
+// 名额已满或缺 device_id 时扫码确认在清掉新设备的更新状态之前就拒绝。
+func TestDeviceBindingRejectionRefusesAcceptLoginTokenBeforeClearingState(t *testing.T) {
+	for _, rejection := range deviceBindingRejections {
+		t.Run(rejection.name, func(t *testing.T) {
+			updates := &captureUpdates{}
+			r := New(Config{}, Deps{Auth: fullDeviceLimitAuthService{&captureAuthService{}, rejection.err}, Updates: updates}, zaptest.NewLogger(t), clock.System)
+			_, err := acceptLoginTokenFromOtherDevice(t, r, 1000000109)
+			assertRPCError(t, "auth.acceptLoginToken", err, 400, rejection.typ)
+			if updates.cleared {
+				t.Fatalf("new device update state cleared for %x, want untouched", updates.clearedAuthKeyID)
+			}
+		})
 	}
 }
 

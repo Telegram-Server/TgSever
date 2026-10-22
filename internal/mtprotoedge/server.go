@@ -237,6 +237,7 @@ type RPCInitConnectionObserver interface {
 		sessionID int64,
 		layer, apiID int,
 		deviceModel, systemVersion, appVersion, systemLangCode, langPack, langCode string,
+		params tg.JSONValueClass,
 	) error
 }
 

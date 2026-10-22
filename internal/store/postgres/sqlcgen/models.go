@@ -34,6 +34,16 @@ type AccountDeletionRequest struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type AccountDeviceBinding struct {
+	UserID      int64
+	DeviceID    string
+	DeviceModel string
+	Platform    string
+	AppVersion  string
+	BoundAt     pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+}
+
 type AccountFreezeNotification struct {
 	ID            int64
 	TargetUserID  int64
@@ -294,6 +304,7 @@ type AuthKey struct {
 	LastUsedAt         pgtype.Timestamptz
 	ExpiresAt          int32
 	LayerObservationID int64
+	DeviceID           *string
 }
 
 type AuthKeySessionLayer struct {

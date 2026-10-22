@@ -133,7 +133,7 @@ func (s *BatchedAuthKeyStore) LoadBindingKeys(ctx context.Context, tempID, permI
 	return s.base.LoadBindingKeys(ctx, tempID, permID)
 }
 
-func (s *BatchedAuthKeyStore) UpdateClientInfo(ctx context.Context, id [8]byte, info store.AuthKeyClientInfo) error {
+func (s *BatchedAuthKeyStore) UpdateClientInfo(ctx context.Context, id [8]byte, info store.AuthKeyClientInfo) (bool, error) {
 	return s.base.UpdateClientInfo(ctx, id, info)
 }
 
@@ -273,7 +273,8 @@ SET last_used_at = now()
 WHERE auth_key_id = ANY($1::bigint[])
 RETURNING auth_key_id, body, server_salt, created_at,
        expires_at, layer, layer_observation_id,
-       device_model, platform, system_version, api_id, app_version
+       device_model, platform, system_version, api_id, app_version,
+       COALESCE(device_id, '')
 `, keyIDs)
 	if err != nil {
 		return nil, fmt.Errorf("batch get auth keys: %w", err)
@@ -290,7 +291,8 @@ func (s *AuthKeyStore) getMany(ctx context.Context, ids [][8]byte) (map[[8]byte]
 /* auth_key_revalidate_batch */
 SELECT auth_key_id, body, server_salt, created_at,
        expires_at, layer, layer_observation_id,
-       device_model, platform, system_version, api_id, app_version
+       device_model, platform, system_version, api_id, app_version,
+       COALESCE(device_id, '')
 FROM auth_keys
 WHERE auth_key_id = ANY($1::bigint[])
 `, keyIDs)

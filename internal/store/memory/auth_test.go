@@ -53,7 +53,7 @@ func TestAuthKeyStoreProtocolRetryPreservesClientLayerMetadata(t *testing.T) {
 	if err := keys.Save(ctx, key); err != nil {
 		t.Fatalf("save auth key: %v", err)
 	}
-	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+	if _, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
 		Layer: 227, DeviceModel: "Desktop", Platform: "tdesktop",
 		SystemVersion: "Windows", APIID: 2040, AppVersion: "6.2",
 	}); err != nil {
@@ -81,7 +81,7 @@ func TestAuthKeyStoreProtocolRetryPreservesClientLayerMetadata(t *testing.T) {
 
 func TestAuthKeyStoreUpdateClientInfoRejectsMissingPrimary(t *testing.T) {
 	keys := NewAuthKeyStore()
-	err := keys.UpdateClientInfo(context.Background(), memoryAuthKeyID(18), store.AuthKeyClientInfo{Layer: 227})
+	_, err := keys.UpdateClientInfo(context.Background(), memoryAuthKeyID(18), store.AuthKeyClientInfo{Layer: 227})
 	if !errors.Is(err, store.ErrAuthKeyNotFound) {
 		t.Fatalf("missing primary update error = %v, want %v", err, store.ErrAuthKeyNotFound)
 	}
@@ -99,7 +99,7 @@ func TestAuthKeyStoreUpdateClientInfoProtectsObservedLayer(t *testing.T) {
 		t.Fatalf("save observed auth key: %v", err)
 	}
 
-	err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+	_, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
 		Layer: 220, DeviceModel: "must-not-merge", AppVersion: "must-not-merge",
 	})
 	if !errors.Is(err, store.ErrAuthKeySessionLayerConflict) {
@@ -110,12 +110,12 @@ func TestAuthKeyStoreUpdateClientInfoProtectsObservedLayer(t *testing.T) {
 		t.Fatalf("auth key changed after layer conflict: got=%+v found=%v err=%v, want=%+v", got, found, err, want)
 	}
 
-	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+	if _, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
 		Layer: 227, DeviceModel: "same-layer", AppVersion: "1.0",
 	}); err != nil {
 		t.Fatalf("same observed layer metadata merge: %v", err)
 	}
-	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+	if _, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
 		Layer: 0, Platform: "windows", SystemVersion: "11",
 	}); err != nil {
 		t.Fatalf("layerless metadata merge: %v", err)

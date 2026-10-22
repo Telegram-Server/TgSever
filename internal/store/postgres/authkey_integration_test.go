@@ -178,7 +178,7 @@ func TestAuthKeyStoreClientInfoRoundTrip(t *testing.T) {
 	if err := keys.Save(ctx, store.AuthKeyData{ID: id, Value: val, ServerSalt: 0x0badf00d}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+	if _, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
 		Layer:         227,
 		DeviceModel:   "GooglePixel 9a",
 		Platform:      "android",
@@ -201,7 +201,7 @@ func TestAuthKeyStoreClientInfoRoundTrip(t *testing.T) {
 		t.Fatalf("client info mismatch: %+v", got)
 	}
 
-	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{AppVersion: "12.8.2"}); err != nil {
+	if _, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{AppVersion: "12.8.2"}); err != nil {
 		t.Fatalf("partial update client info: %v", err)
 	}
 	got, found, err = NewAuthKeyStore(pool).Get(ctx, id)
@@ -242,7 +242,7 @@ WHERE auth_key_id = $1`, authKeyIDToInt64(id)); err != nil {
 		t.Fatalf("seed ordered layer: %v", err)
 	}
 
-	err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+	_, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
 		Layer: 220, DeviceModel: "must-not-merge", AppVersion: "must-not-merge",
 	})
 	if !errors.Is(err, store.ErrAuthKeySessionLayerConflict) {
@@ -257,12 +257,12 @@ WHERE auth_key_id = $1`, authKeyIDToInt64(id)); err != nil {
 		t.Fatalf("conflicting update changed row: %+v", got)
 	}
 
-	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+	if _, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
 		Layer: 227, DeviceModel: "same-layer", AppVersion: "1.0",
 	}); err != nil {
 		t.Fatalf("same observed layer metadata merge: %v", err)
 	}
-	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+	if _, err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
 		Platform: "windows", SystemVersion: "11",
 	}); err != nil {
 		t.Fatalf("layerless metadata merge: %v", err)
@@ -278,7 +278,7 @@ WHERE auth_key_id = $1`, authKeyIDToInt64(id)); err != nil {
 
 	missing := id
 	missing[0] ^= 0xff
-	if err := keys.UpdateClientInfo(ctx, missing, store.AuthKeyClientInfo{Layer: 227}); !errors.Is(err, store.ErrAuthKeyNotFound) {
+	if _, err := keys.UpdateClientInfo(ctx, missing, store.AuthKeyClientInfo{Layer: 227}); !errors.Is(err, store.ErrAuthKeyNotFound) {
 		t.Fatalf("missing primary update error = %v, want %v", err, store.ErrAuthKeyNotFound)
 	}
 }

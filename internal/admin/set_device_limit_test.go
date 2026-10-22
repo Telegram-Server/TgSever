@@ -7,6 +7,7 @@ import (
 
 	"telesrv/internal/app/users"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
 
@@ -17,17 +18,23 @@ type deviceLimitFixture struct {
 	svc   *Service
 	repo  *memoryCommandRepo
 	users *memory.UserStore
+	keys  *memory.AuthKeyStore
 	auths *memory.AuthorizationStore
+	// revoker 记下被关闭在线连接的 auth key（解绑设备，#114）。
+	revoker *fakeRevoker
+	seq     byte
 }
 
 func newDeviceLimitFixture(t *testing.T) *deviceLimitFixture {
 	t.Helper()
-	f := &deviceLimitFixture{repo: newMemoryCommandRepo(), users: memory.NewUserStore(), auths: memory.NewAuthorizationStore()}
+	f := &deviceLimitFixture{repo: newMemoryCommandRepo(), users: memory.NewUserStore(), keys: memory.NewAuthKeyStore(), auths: memory.NewAuthorizationStore(), revoker: &fakeRevoker{}}
+	f.auths.LinkAuthKeyAuthority(f.keys)
 	f.auths.LinkAuthorizationUsers(f.users)
 	f.svc = NewService(Dependencies{
 		Commands:     f.repo,
 		Users:        users.NewService(f.users),
 		DeviceLimits: f.auths,
+		Revoker:      f.revoker,
 		Now:          fixedNow,
 	})
 	return f
@@ -47,6 +54,41 @@ func (f *deviceLimitFixture) assertLimit(t *testing.T, userID int64, want int, w
 	got, found, err := f.auths.GetDeviceLimit(context.Background(), userID)
 	if err != nil || found != wantFound || got != want {
 		t.Fatalf("device limit=%d found=%v err=%v, want %d found=%v", got, found, err, want, wantFound)
+	}
+}
+
+// signIn 让 userID 在一台新设备上完成登录并返回它的 auth key；deviceID 为空表示客户端从未上报。
+func (f *deviceLimitFixture) signIn(t *testing.T, userID int64, deviceID string) [8]byte {
+	t.Helper()
+	ctx := context.Background()
+	f.seq++
+	key := [8]byte{0xd1, f.seq}
+	if err := f.keys.Save(ctx, store.AuthKeyData{ID: key, ServerSalt: 1}); err != nil {
+		t.Fatalf("save auth key: %v", err)
+	}
+	if deviceID != "" {
+		if _, err := f.keys.UpdateClientInfo(ctx, key, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
+			t.Fatalf("persist device id: %v", err)
+		}
+	}
+	if err := f.auths.Bind(ctx, domain.Authorization{AuthKeyID: key, UserID: userID}); err != nil {
+		t.Fatalf("sign in %q: %v", deviceID, err)
+	}
+	return key
+}
+
+func (f *deviceLimitFixture) assertBound(t *testing.T, userID int64, want ...string) {
+	t.Helper()
+	got, err := f.auths.ListDeviceBindings(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("list device bindings: %v", err)
+	}
+	ids := make([]string, 0, len(got))
+	for _, b := range got {
+		ids = append(ids, b.DeviceID)
+	}
+	if fmt.Sprint(ids) != fmt.Sprint(want) {
+		t.Fatalf("bound devices=%v, want %v", ids, want)
 	}
 }
 
@@ -111,7 +153,7 @@ func TestSetDeviceLimitDryRunWritesNothing(t *testing.T) {
 		t.Fatalf("dry run not recorded: %+v", f.repo.items["dry-device-limit"])
 	}
 
-	if err := f.auths.SetDeviceLimit(ctx, u.ID, 4); err != nil {
+	if _, err := f.auths.SetDeviceLimit(ctx, u.ID, 4); err != nil {
 		t.Fatal(err)
 	}
 	clear := deviceLimitRequest("dry-device-limit-clear", u.ID, nil)
@@ -132,7 +174,7 @@ func TestSetDeviceLimitIsIdempotentPerCommandIDAndConflictsOnAnotherValue(t *tes
 		t.Fatalf("set: %v", err)
 	}
 	// 之后被别处改过：同一个 command id 重放只返回原结果，不再写入。
-	if err := f.auths.SetDeviceLimit(ctx, u.ID, 7); err != nil {
+	if _, err := f.auths.SetDeviceLimit(ctx, u.ID, 7); err != nil {
 		t.Fatal(err)
 	}
 	again, err := f.svc.SetDeviceLimit(ctx, req)
@@ -206,4 +248,41 @@ func TestSetDeviceLimitRejectsValuesOutsideTheRange(t *testing.T) {
 		}
 		f.assertLimit(t, u.ID, limit, true)
 	}
+}
+
+// 设上限时（#115）把已登录、上报过 device_id 的设备按登录先后补绑到上限；试运行只报告数量。
+func TestSetDeviceLimitBackfillsSignedInDevicesInLoginOrder(t *testing.T) {
+	f := newDeviceLimitFixture(t)
+	ctx := context.Background()
+	u := f.user(t, domain.User{Phone: "15550105106", FirstName: "Backfill"})
+	for _, deviceID := range []string{"desk", "", "phone", "desk", "tablet"} {
+		f.signIn(t, u.ID, deviceID)
+	}
+
+	dry := deviceLimitRequest("dry-device-limit-backfill", u.ID, intPtr(2))
+	dry.DryRun = true
+	res, err := f.svc.SetDeviceLimit(ctx, dry)
+	if err != nil || res.Details["backfilled_devices"] != 2 {
+		t.Fatalf("dry run = %+v, %v; want backfilled_devices=2", res, err)
+	}
+	f.assertLimit(t, u.ID, 0, false)
+	f.assertBound(t, u.ID)
+
+	res, err = f.svc.SetDeviceLimit(ctx, deviceLimitRequest("exec-device-limit-backfill", u.ID, intPtr(2)))
+	if err != nil || res.Details["backfilled_devices"] != 2 {
+		t.Fatalf("set = %+v, %v; want backfilled_devices=2", res, err)
+	}
+	f.assertBound(t, u.ID, "desk", "phone")
+
+	res, err = f.svc.SetDeviceLimit(ctx, deviceLimitRequest("exec-device-limit-backfill-raise", u.ID, intPtr(4)))
+	if err != nil || res.Details["backfilled_devices"] != 1 {
+		t.Fatalf("raise = %+v, %v; want backfilled_devices=1", res, err)
+	}
+	f.assertBound(t, u.ID, "desk", "phone", "tablet")
+
+	res, err = f.svc.SetDeviceLimit(ctx, deviceLimitRequest("exec-device-limit-backfill-clear", u.ID, nil))
+	if err != nil || res.Details["backfilled_devices"] != 0 {
+		t.Fatalf("clear = %+v, %v; want backfilled_devices=0", res, err)
+	}
+	f.assertBound(t, u.ID, "desk", "phone", "tablet")
 }

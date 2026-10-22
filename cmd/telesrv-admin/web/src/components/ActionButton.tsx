@@ -19,6 +19,7 @@ export function ActionButton({
   disabled = false,
   onDone,
   onError,
+  refreshOnClose = false,
   secretField,
   maskFields
 }: {
@@ -39,6 +40,11 @@ export function ActionButton({
   // form — an optimistic-locking 409, say — and replace the raw backend text with
   // an explanation by returning it.
   onError?: (error: unknown) => string | undefined;
+  // refreshOnClose holds onDone until the operator closes the dialog. A button
+  // inside a row its own command removes (unbind a device, revoke a session)
+  // unmounts with that row as soon as the page reloads, taking the result
+  // dialog with it.
+  refreshOnClose?: boolean;
   secretField?: string;
   // maskFields are payload keys whose values never show in the request preview
   // (a plaintext password typed for the server to hash). They are still sent.
@@ -51,6 +57,15 @@ export function ActionButton({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [secretCopied, setSecretCopied] = useState(false);
+  const [doneResult, setDoneResult] = useState<CommandResult | null>(null);
+
+  function close() {
+    setOpen(false);
+    if (doneResult) {
+      setDoneResult(null);
+      onDone?.(doneResult);
+    }
+  }
 
   function reset() {
     setReason("");
@@ -71,7 +86,11 @@ export function ActionButton({
       const commandResult = await api.action(path, body);
       setResult(commandResult);
       if (confirm) {
-        onDone?.(commandResult);
+        if (refreshOnClose) {
+          setDoneResult(commandResult);
+        } else {
+          onDone?.(commandResult);
+        }
       }
     } catch (err) {
       setError(onError?.(err) || errorMessage(err));
@@ -127,7 +146,7 @@ export function ActionButton({
                 <div className="eyebrow">{t("action.flow")}</div>
                 <h2>{label}</h2>
               </div>
-              <button className="icon-btn" type="button" onClick={() => setOpen(false)} aria-label={t("action.close")}><X size={15} /></button>
+              <button className="icon-btn" type="button" onClick={close} aria-label={t("action.close")}><X size={15} /></button>
             </div>
             <div className="command-body">
               <div className="command-steps">
@@ -177,7 +196,7 @@ export function ActionButton({
               )}
             </div>
             <div className="modal-actions">
-              <button className="btn" type="button" onClick={() => setOpen(false)}>{t("common.close")}</button>
+              <button className="btn" type="button" onClick={close}>{t("common.close")}</button>
               <button className="btn icon-text" type="button" onClick={() => run(false)} disabled={busy}>
                 {busy ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
                 {result ? t("action.runAgain") : t("action.runDry")}

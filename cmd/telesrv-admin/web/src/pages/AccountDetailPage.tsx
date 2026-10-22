@@ -1,10 +1,11 @@
-import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MessagesSquare, Minus, Sparkles, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MessagesSquare, Minus, Sparkles, Star, Trash2, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Avatar } from "../components/Avatar";
 import { AvatarModal } from "../components/AvatarModal";
 import { AuthorizationTable } from "../components/AuthorizationTable";
+import { DeviceBindingTable } from "../components/DeviceBindingTable";
 import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary, UsernameCell } from "../components/ui";
 import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
 import { ColorAction, DeviceLimitAction, EmojiStatusAction, LoginEmailAction, LoginPasswordAction, PhoneAction, ProfileAction, SupportAction, UsernameAction } from "../components/attributes";
@@ -12,8 +13,15 @@ import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix, toInt } from "../lib/format";
 import { permissionAccountsManage, permissionMessagesRead, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
-import type { AccountDetail } from "../types";
+import type { AccountDetail, DeviceBinding } from "../types";
 import { SectionTabs } from "../components/SectionTabs";
+
+// Bots are never limited and a deleted account cannot sign in, so the server
+// refuses a limit on either: no summary row, no bound-device section and no
+// action for them.
+function deviceLimitAppliesTo(detail: AccountDetail): boolean {
+  return !detail.Bot && !detail.Deleted;
+}
 
 export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navigate }) {
   const { t } = useI18n();
@@ -27,13 +35,26 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
   const [freezeAppealURL, setFreezeAppealURL] = useState("");
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [avatarRefresh, setAvatarRefresh] = useState(0);
+  const [bindings, setBindings] = useState<DeviceBinding[] | null>(null);
+  const [bindingsError, setBindingsError] = useState("");
 
   async function load() {
     setBusy(true);
     setError("");
     try {
       const next = await api.account(id);
+      // The bound-device list comes from the server's admin API rather than the
+      // panel's read store; a failure there degrades only its own section. It is
+      // only requested when that section is shown (not for bots or deleted accounts).
+      const bound = deviceLimitAppliesTo(next)
+        ? await api.deviceBindings(id).then(
+            (list) => ({ rows: list.bindings ?? [], error: "" }),
+            (err: unknown) => ({ rows: null, error: errorMessage(err) })
+          )
+        : { rows: [], error: "" };
       setDetail(next);
+      setBindings(bound.rows);
+      setBindingsError(bound.error);
       if (next.Restriction.Frozen) {
         if (next.Restriction.Until) {
           setFreezeUntil(toDateTimeLocal(new Date(next.Restriction.Until)));
@@ -59,13 +80,11 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
   }
 
   const account = detail.Account;
-  // Devices that hold a slot under the limit: a sign-in still waiting for its
-  // 2FA password does not count (see #104).
-  const signedInDevices = detail.Authorizations.filter((row) => !row.PasswordPending).length;
+  // The limit counts bound devices, not sign-ins (#112): a device keeps its
+  // slot after signing out, and several sign-ins on one device hold one slot.
+  const boundDevices = bindings === null ? "?" : bindings.length;
   const deviceLimit = detail.DeviceLimit ?? null;
-  // Bots are never limited and a deleted account cannot sign in, so the server
-  // refuses a limit on either: no summary row and no action for them.
-  const deviceLimitApplies = !detail.Bot && !detail.Deleted;
+  const deviceLimitApplies = deviceLimitAppliesTo(detail);
   return (
     <PageFrame
       title={t("account.detailTitle", { id: account.ID })}
@@ -115,7 +134,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
               {deviceLimitApplies && (
                 <Summary
                   label={t("attr.deviceLimit")}
-                  value={deviceLimit === null ? t("attr.deviceLimitUnlimited") : t("attr.deviceLimitUsage", { count: signedInDevices, limit: deviceLimit })}
+                  value={deviceLimit === null ? t("attr.deviceLimitUnlimited") : t("attr.deviceLimitUsage", { count: boundDevices, limit: deviceLimit })}
                 />
               )}
               <Summary label={t("account.accountFlags")} value={`support=${detail.Support} bot=${detail.Bot}`} />
@@ -127,6 +146,36 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
               <Summary label={t("account.createdAt")} value={formatDate(account.CreatedAt) || "-"} />
             </div>
             {detail.About && <p className="about-text">{detail.About}</p>}
+            {deviceLimitApplies && (
+              <section className="section-block">
+                <SectionHead
+                  title={t("deviceBinding.title")}
+                  text={bindings === null ? t("deviceBinding.hint") : `${t("deviceBinding.count", { count: bindings.length })} · ${t("deviceBinding.hint")}`}
+                />
+                {bindingsError ? (
+                  <Alert>{t("deviceBinding.loadFailed", { error: bindingsError })}</Alert>
+                ) : (
+                  <DeviceBindingTable
+                    rows={bindings ?? []}
+                    actions={
+                      can(permissionAccountsManage)
+                        ? (row) => (
+                            <ActionButton
+                              label={t("deviceBinding.unbind")}
+                              icon={<Unlink size={13} />}
+                              compact
+                              path="/api/actions/unbind-device"
+                              payload={() => ({ user_id: account.ID, device_id: row.device_id })}
+                              onDone={load}
+                              refreshOnClose
+                            />
+                          )
+                        : undefined
+                    }
+                  />
+                )}
+              </section>
+            )}
             <section className="section-block">
               <SectionHead title={t("account.authorizationsTitle")} text={t("account.authorizationsCount", { count: detail.Authorizations.length })} />
               <AuthorizationTable rows={detail.Authorizations} userID={account.ID} onDone={load} />

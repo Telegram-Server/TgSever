@@ -79,24 +79,29 @@ func systemLoginPhoneForbidden(phone string) bool {
 // 后生成随机验证码并通过 otpdelivery 投递。已有账号的外部投递是 durable
 // 777000 App-code 的附加渠道，不能替换或削弱原有消息事实。
 type Service struct {
-	users                  store.UserStore
-	auths                  store.AuthorizationStore
-	codes                  store.CodeStore
-	authKeys               store.AuthKeyStore
-	tempKeys               store.TempAuthKeyBindingStore
-	passwords              store.PasswordStore
-	messages               store.MessageStore
-	dialogs                store.DialogStore
-	loginCodeDelivery      store.LoginCodeDeliveryStore
-	loginCodeTemplate      func() (string, error)
-	bots                   store.BotStore
-	fixedCode              string
-	codeTTL                time.Duration
-	codeMaxAttempts        int
-	loginEmails            loginEmailStore
-	loginEmailSender       otpdelivery.Sender
-	phoneCodeSender        otpdelivery.Sender
-	otpDeliveryFailure     func(context.Context, otpdelivery.Request, error)
+	users              store.UserStore
+	auths              store.AuthorizationStore
+	codes              store.CodeStore
+	authKeys           store.AuthKeyStore
+	tempKeys           store.TempAuthKeyBindingStore
+	passwords          store.PasswordStore
+	messages           store.MessageStore
+	dialogs            store.DialogStore
+	loginCodeDelivery  store.LoginCodeDeliveryStore
+	loginCodeTemplate  func() (string, error)
+	bots               store.BotStore
+	fixedCode          string
+	codeTTL            time.Duration
+	codeMaxAttempts    int
+	loginEmails        loginEmailStore
+	loginEmailSender   otpdelivery.Sender
+	phoneCodeSender    otpdelivery.Sender
+	otpDeliveryFailure func(context.Context, otpdelivery.Request, error)
+	// deviceBackfillFailure 观察延迟补绑（#115）的失败；补绑是尽力而为，失败不影响调用方。
+	deviceBackfillFailure func(context.Context, [8]byte, error)
+	// deviceIDCarryFailure 观察把 temp key 的 device_id 带到 perm key（#111）的失败；与常规的
+	// 客户端信息持久化一样是尽力而为，失败不让 bindTempAuthKey 失败。
+	deviceIDCarryFailure   func(context.Context, [8]byte, error)
 	phoneCodeLength        int
 	loginEmailEnabled      bool
 	loginEmailRequireSetup bool
@@ -407,6 +412,22 @@ func WithOTPDeliveryFailureObserver(observer func(context.Context, otpdelivery.R
 	}
 }
 
+// WithDeviceBackfillFailureObserver 观察延迟补绑设备绑定（#115）的失败：auth key 持久化
+// device_id 之后的补绑是尽力而为，失败只交给 observer 记录，不影响客户端信息的写入。
+func WithDeviceBackfillFailureObserver(observer func(ctx context.Context, authKeyID [8]byte, err error)) Option {
+	return func(s *Service) {
+		s.deviceBackfillFailure = observer
+	}
+}
+
+// WithDeviceIDCarryFailureObserver 观察 bindTempAuthKey 成功后把 temp key 的 device_id 带到
+// perm key 的写入失败：这一步尽力而为，失败只交给 observer 记录，绑定照常成功。
+func WithDeviceIDCarryFailureObserver(observer func(ctx context.Context, permAuthKeyID [8]byte, err error)) Option {
+	return func(s *Service) {
+		s.deviceIDCarryFailure = observer
+	}
+}
+
 // NewService 创建登录服务。fixedCode 为开发固定验证码。
 func NewService(users store.UserStore, auths store.AuthorizationStore, codes store.CodeStore, authKeys store.AuthKeyStore, tempKeys store.TempAuthKeyBindingStore, fixedCode string, opts ...Option) *Service {
 	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute, codeMaxAttempts: 5, loginEmailCodeLength: 6, phoneCodeLength: 5}
@@ -424,9 +445,12 @@ func NewService(users store.UserStore, auths store.AuthorizationStore, codes sto
 
 // BindTempAuthKey 校验并记录 TDesktop PFS temp→perm auth key 绑定。
 func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error) {
-	var validated domain.TempAuthKeyBindingResult
+	var (
+		validated    domain.TempAuthKeyBindingResult
+		tempDeviceID string
+	)
 	if s.authKeys != nil {
-		inner, protocolExpiresAt, result, err := s.validateBindTempAuthKey(ctx, sessionID, binding)
+		inner, protocolExpiresAt, tempKeyDeviceID, result, err := s.validateBindTempAuthKey(ctx, sessionID, binding)
 		if err != nil {
 			return domain.TempAuthKeyBindingResult{}, err
 		}
@@ -437,6 +461,7 @@ func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding 
 		// value at handshake completion. Retention and edge admission must use the
 		// server's p_q_inner_data_temp lifetime, never the client value.
 		binding.ExpiresAt = protocolExpiresAt
+		tempDeviceID = tempKeyDeviceID
 	}
 	if binding.ExpiresAt <= int(time.Now().Unix()) {
 		// The edge may admit the frame immediately before the temporary key's
@@ -457,7 +482,44 @@ func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding 
 		}
 		return domain.TempAuthKeyBindingResult{}, err
 	}
+	carried, err := s.carryDeviceIDToPermanentKey(ctx, binding.PermAuthKeyID, tempDeviceID)
+	if err != nil && s.deviceIDCarryFailure != nil {
+		s.deviceIDCarryFailure(ctx, authKeyIDFromInt64(binding.PermAuthKeyID), err)
+	}
+	// 带过去的 device_id 对已登录的 perm key 同样是一次"之后才持久化"，走延迟补绑；
+	// perm key 原本就有 device_id（或重放绑定）时没有写入，也就不补绑。
+	if carried {
+		s.backfillDeviceBinding(ctx, authKeyIDFromInt64(binding.PermAuthKeyID))
+	}
 	return result, nil
+}
+
+// backfillDeviceBinding 是延迟补绑（#115）：authKeyID 刚持久化了 device_id，若它上面是受限
+// 账号已完成的授权、设备尚未绑定且还有名额，就补绑；其余情况 store 什么都不做。尽力而为：
+// 失败只交给 deviceBackfillFailure 记录，不影响调用方，也从不踢下线。
+func (s *Service) backfillDeviceBinding(ctx context.Context, authKeyID [8]byte) {
+	limits, ok := s.auths.(store.DeviceLimitStore)
+	if !ok {
+		return
+	}
+	if _, err := limits.BackfillDeviceBinding(ctx, authKeyID); err != nil && s.deviceBackfillFailure != nil {
+		s.deviceBackfillFailure(ctx, authKeyID, err)
+	}
+}
+
+// carryDeviceIDToPermanentKey 把 temp key 上已持久化的 device_id 带到刚绑定的 perm key 上
+// （#111）。客户端可能在 bindTempAuthKey 之前就在 temp key 上发了 initConnection，那时
+// 业务 auth key 还解析不到 perm key；登录时只看 perm key，所以绑定成功后补写一次，
+// 语义与 UpdateClientInfo 一致：temp key 没上报时不动 perm key 上的值；device_id 一次写入，
+// perm key 已有值时保持原值。返回值报告 perm key 的 device_id 是否本次新写入。
+//
+// 与常规的客户端信息持久化一样是尽力而为：失败由调用方交给 deviceIDCarryFailure 记录，
+// 不让已提交的绑定失败；客户端之后在 perm key 上发 initConnection 时仍会写入。
+func (s *Service) carryDeviceIDToPermanentKey(ctx context.Context, permAuthKeyID int64, deviceID string) (bool, error) {
+	if deviceID == "" || s.authKeys == nil {
+		return false, nil
+	}
+	return s.authKeys.UpdateClientInfo(ctx, authKeyIDFromInt64(permAuthKeyID), store.AuthKeyClientInfo{DeviceID: deviceID})
 }
 
 // ResolveAuthKey 将已绑定的 temp auth_key 解析为对应 perm auth_key。
@@ -525,9 +587,10 @@ func (s *Service) PendingPasswordUserID(ctx context.Context, authKeyID [8]byte) 
 }
 
 // CheckDeviceLimit 只读地预检把 authKeyID 作为 userID 的已完成授权（新绑定或 2FA 转正）
-// 是否会超出设备上限，超限返回 domain.ErrDeviceLimitReached。用于在有副作用的步骤之前
+// 是否会被设备绑定规则拒绝（#112）：名额已满且这台设备未绑定返回 domain.ErrDeviceLimitReached，
+// auth key 上没有 device_id 返回 domain.ErrDeviceIDRequired。用于在有副作用的步骤之前
 // 先拒绝（密码找回会消耗找回码并改掉 2FA 密码；扫码确认会清掉新设备的更新状态）；
-// 绑定与转正时 store 仍在锁下再检查一次。授权 store 不支持设备上限时不限制。
+// 绑定与转正时 store 仍在锁下再判一次。授权 store 不支持设备上限时不限制。
 func (s *Service) CheckDeviceLimit(ctx context.Context, authKeyID [8]byte, userID int64) error {
 	if s == nil || userID == 0 {
 		return nil
@@ -537,6 +600,20 @@ func (s *Service) CheckDeviceLimit(ctx context.Context, authKeyID [8]byte, userI
 		return nil
 	}
 	return limits.CheckDeviceLimit(ctx, userID, authKeyID)
+}
+
+// CheckDeviceLimitForPhone 是按手机号的 CheckDeviceLimit：登录邮箱设置（account.verifyEmail
+// 的 loginSetup）会先把登录邮箱写到账号上再登录，所以在那之前按手机号找到要登录的账号预检。
+// 手机号还没有账号（注册）时不受限制。
+func (s *Service) CheckDeviceLimitForPhone(ctx context.Context, authKeyID [8]byte, phone string) error {
+	if s == nil || s.users == nil {
+		return nil
+	}
+	owner, found, err := s.currentPhoneOwner(ctx, domain.NormalizePhone(phone))
+	if err != nil || !found {
+		return err
+	}
+	return s.CheckDeviceLimit(ctx, authKeyID, owner.ID)
 }
 
 // CompletePasswordSignIn 在两步验证通过后清除 password_pending，使 auth_key 转为完全授权。
@@ -1803,9 +1880,10 @@ func (s *Service) AuthKeyClientInfo(ctx context.Context, authKeyID [8]byte) (dom
 		SystemVersion:      key.SystemVersion,
 		APIID:              key.APIID,
 		AppVersion:         key.AppVersion,
+		DeviceID:           key.DeviceID,
 	}
 	if info.Layer == 0 && info.DeviceModel == "" && info.Platform == "" &&
-		info.SystemVersion == "" && info.APIID == 0 && info.AppVersion == "" {
+		info.SystemVersion == "" && info.APIID == 0 && info.AppVersion == "" && info.DeviceID == "" {
 		return domain.AuthKeyClientInfo{}, false, nil
 	}
 	return info, true, nil
@@ -1815,17 +1893,25 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 	if s == nil || s.authKeys == nil || authKeyID == ([8]byte{}) {
 		return nil
 	}
-	if err := s.authKeys.UpdateClientInfo(ctx, authKeyID, store.AuthKeyClientInfo{
+	deviceIDStored, err := s.authKeys.UpdateClientInfo(ctx, authKeyID, store.AuthKeyClientInfo{
 		Layer:         info.Layer,
 		DeviceModel:   info.DeviceModel,
 		Platform:      info.Platform,
 		SystemVersion: info.SystemVersion,
 		APIID:         info.APIID,
 		AppVersion:    info.AppVersion,
-	}); err != nil {
+		DeviceID:      info.DeviceID,
+	})
+	if err != nil {
 		return err
 	}
 	if s.auths != nil {
+		// 延迟补绑只在 device_id 本次新写入时触发（已登录的 key 之后才上报，例如老客户端升级
+		// 后重连）；每次重连重复上报同一个值不再进补绑查询。device_id 一次写入，错过这一次
+		// 就不会再有，所以下面镜像更新失败也照样补绑。temp key 上没有授权，store 查不到即返回。
+		if deviceIDStored {
+			defer s.backfillDeviceBinding(ctx, authKeyID)
+		}
 		// Layer is an ordered protocol fact. Its authorization-table mirror is
 		// advanced atomically by the durable Layer evidence/bind transactions.
 		// A generic metadata update is deliberately two-store and can race such
@@ -1834,7 +1920,9 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 		authorizationInfo := info
 		authorizationInfo.Layer = 0
 		authorizationInfo.LayerObservationID = 0
-		return s.auths.UpdateClientInfo(ctx, authKeyID, authorizationInfo)
+		if err := s.auths.UpdateClientInfo(ctx, authKeyID, authorizationInfo); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -2001,49 +2089,49 @@ func (s *Service) recordWelcomeMessage(ctx context.Context, u domain.User) {
 	})
 }
 
-func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, int, domain.TempAuthKeyBindingResult, error) {
+func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, int, string, domain.TempAuthKeyBindingResult, error) {
 	if binding.ExpiresAt <= int(time.Now().Unix()) {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrExpiresAtInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrExpiresAtInvalid
 	}
 	permID := authKeyIDFromInt64(binding.PermAuthKeyID)
 	pair, err := s.authKeys.LoadBindingKeys(ctx, binding.TempAuthKeyID, permID)
 	if err != nil {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, err
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, err
 	}
 	// expires_at in auth.bindTempAuthKey is client-supplied and must only attest
 	// to a still-live binding. It may never create or reclassify a protocol key;
 	// the caller normalizes durable retention to this handshake-authoritative
 	// temp.ExpiresAt instead of trusting the client value.
 	if !pair.TemporaryFound || pair.Temporary.ExpiresAt <= int(time.Now().Unix()) {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrTempAuthKeyEmpty
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrTempAuthKeyEmpty
 	}
 
 	if !pair.PermanentFound || pair.Permanent.ExpiresAt != 0 {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
 	}
 
 	inner, err := decryptBindAuthKeyInner(pair.Permanent, binding.EncryptedMessage)
 	if err != nil {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
 	}
 	if inner.Nonce != binding.Nonce ||
 		inner.TempAuthKeyID != authKeyIDInt64(binding.TempAuthKeyID) ||
 		inner.PermAuthKeyID != binding.PermAuthKeyID ||
 		inner.TempSessionID != sessionID ||
 		inner.ExpiresAt != binding.ExpiresAt {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
 	}
 	if pair.Temporary.ExpiresAt <= int(time.Now().Unix()) {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrTempAuthKeyEmpty
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrTempAuthKeyEmpty
 	}
 	layer, observationID, err := store.MergeAuthKeyLayerObservations(
 		pair.Temporary.Layer, pair.Temporary.LayerObservationID,
 		pair.Permanent.Layer, pair.Permanent.LayerObservationID,
 	)
 	if err != nil {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, err
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, err
 	}
-	return inner, pair.Temporary.ExpiresAt, domain.TempAuthKeyBindingResult{
+	return inner, pair.Temporary.ExpiresAt, pair.Temporary.DeviceID, domain.TempAuthKeyBindingResult{
 		Layer: layer, LayerObservationID: observationID,
 	}, nil
 }

@@ -771,6 +771,9 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 			LangPack:       req.LangPack,
 			LangCode:       req.LangCode,
 		}
+		if params, ok := req.GetParams(); ok {
+			info.DeviceID = deviceIDFromInitConnectionParams(params)
+		}
 		ctx = WithClientInfo(ctx, info)
 		r.rememberClientInfo(ctx, info)
 		r.log.Debug("initConnection",
@@ -1120,7 +1123,8 @@ func (r *Router) persistAuthKeyClientInfo(ctx context.Context, info clientSessio
 		domainInfo.IP = ip
 	}
 	if domainInfo.Layer == 0 && domainInfo.DeviceModel == "" && domainInfo.Platform == "" &&
-		domainInfo.SystemVersion == "" && domainInfo.APIID == 0 && domainInfo.AppVersion == "" {
+		domainInfo.SystemVersion == "" && domainInfo.APIID == 0 && domainInfo.AppVersion == "" &&
+		domainInfo.DeviceID == "" {
 		return
 	}
 	seen := make(map[[8]byte]struct{}, 2)
@@ -1366,6 +1370,7 @@ func (r *Router) ObserveInitConnection(
 	sessionID int64,
 	layer, apiID int,
 	deviceModel, systemVersion, appVersion, systemLangCode, langPack, langCode string,
+	params tg.JSONValueClass,
 ) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1386,6 +1391,7 @@ func (r *Router) ObserveInitConnection(
 		APIID: apiID, DeviceModel: deviceModel, SystemVersion: systemVersion,
 		AppVersion: appVersion, SystemLangCode: systemLangCode,
 		LangPack: langPack, LangCode: langCode,
+		DeviceID: deviceIDFromInitConnectionParams(params),
 	})
 	return nil
 }
@@ -1821,6 +1827,7 @@ func domainAuthKeyClientInfo(info clientSessionInfo) domain.AuthKeyClientInfo {
 		out.SystemVersion = info.clientInfo.SystemVersion
 		out.AppVersion = info.clientInfo.AppVersion
 		out.Platform = string(info.clientInfo.ClientType())
+		out.DeviceID = info.clientInfo.DeviceID
 	}
 	return out
 }

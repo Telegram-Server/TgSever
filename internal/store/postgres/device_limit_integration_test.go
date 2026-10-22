@@ -23,7 +23,7 @@ func TestDeviceLimitOnlyRowIsNotAFreezeRecordPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if err := auths.SetDeviceLimit(ctx, u.ID, 2); err != nil {
+	if _, err := auths.SetDeviceLimit(ctx, u.ID, 2); err != nil {
 		t.Fatalf("set device limit: %v", err)
 	}
 	if got, found, err := admin.GetAccountFreeze(ctx, u.ID); err != nil || found {
@@ -73,7 +73,7 @@ func TestSetDeviceLimitWaitsForAnInFlightLoginPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if err := auths.SetDeviceLimit(ctx, u.ID, 5); err != nil {
+	if _, err := auths.SetDeviceLimit(ctx, u.ID, 5); err != nil {
 		t.Fatalf("set initial device limit: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestSetDeviceLimitWaitsForAnInFlightLoginPostgres(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- auths.SetDeviceLimit(ctx, u.ID, 1) }()
+	go func() { _, err := auths.SetDeviceLimit(ctx, u.ID, 1); done <- err }()
 	select {
 	case err := <-done:
 		t.Fatalf("SetDeviceLimit returned (err=%v) while a login held the user lock", err)
@@ -121,6 +121,11 @@ func TestDeviceLimitContractPostgres(t *testing.T) {
 			DeviceLimits: auths,
 			NewPhone: func(t *testing.T) string {
 				return "1997" + randomSuffix(t)
+			},
+			DeleteAccount: func(t *testing.T, userID int64) {
+				if _, err := NewAccountLifecycleStore(pool).ExecuteAccountDeletion(context.Background(), userID, domain.AccountDeletionManual, "device binding contract", time.Now()); err != nil {
+					t.Fatalf("delete account: %v", err)
+				}
 			},
 			NewBot: func(t *testing.T) domain.User {
 				ctx := context.Background()

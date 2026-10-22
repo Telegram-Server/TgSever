@@ -93,6 +93,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/accounts/shared-devices", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleSharedDeviceGroupsAPI)))
 	mux.Handle("GET /api/accounts/{id}", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountDetailAPI)))
 	mux.Handle("GET /api/accounts/{id}/avatar", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountAvatarAPI)))
+	mux.Handle("GET /api/accounts/{id}/device-bindings", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleDeviceBindingsAPI)))
 	mux.Handle("GET /api/channels", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelDetailAPI)))
 	mux.Handle("GET /api/channels/{id}/avatar", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelAvatarAPI)))
@@ -166,6 +167,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/create-account", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleCreateAccountAPI)))
 	mux.Handle("POST /api/actions/set-login-password", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginPasswordAPI)))
 	mux.Handle("POST /api/actions/set-device-limit", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetDeviceLimitAPI)))
+	mux.Handle("POST /api/actions/unbind-device", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleUnbindDeviceAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
 	mux.Handle("POST /api/actions/set-account-color", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserColorAPI)))
@@ -969,6 +971,16 @@ func (s *server) handleAccountAvatarAPI(w http.ResponseWriter, r *http.Request) 
 	s.proxyAvatar(w, r, "accounts")
 }
 
+// handleDeviceBindingsAPI 代理账号的设备绑定名单（#113）。不缓存：解绑（#114）之后要立刻看到新名单。
+func (s *server) handleDeviceBindingsAPI(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInt64(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid account id")
+		return
+	}
+	s.proxyAdminJSONNoStore(w, r, fmt.Sprintf("/v1/accounts/%d/device-bindings", id), 1<<20)
+}
+
 func (s *server) handleChannelAvatarAPI(w http.ResponseWriter, r *http.Request) {
 	s.proxyAvatar(w, r, "channels")
 }
@@ -1197,6 +1209,30 @@ func (s *server) handleSetDeviceLimitAPI(w http.ResponseWriter, r *http.Request)
 		DeviceLimit: body.DeviceLimit,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-device-limit", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type unbindDeviceAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	DeviceID  string `json:"device_id"`
+}
+
+// handleUnbindDeviceAPI 解绑账号的一台设备（#114），转发给服务端 POST /v1/accounts/unbind-device：
+// 删除绑定、释放名额，并让那台设备上的这个账号下线。
+func (s *server) handleUnbindDeviceAPI(w http.ResponseWriter, r *http.Request) {
+	var body unbindDeviceAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.UnbindDeviceRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "unbind-device"),
+		UserID:      body.UserID,
+		DeviceID:    body.DeviceID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/unbind-device", req)
 	writeCommandResultAPI(w, result, err)
 }
 

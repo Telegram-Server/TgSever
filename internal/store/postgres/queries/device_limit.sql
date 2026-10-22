@@ -1,4 +1,5 @@
 -- 账号设备上限（#105）。上限存在 account_restrictions.device_limit，NULL = 不限制。
+-- 名额按设备绑定计数（#112），绑定相关查询见 device_binding.sql。
 
 -- name: GetDeviceLimit :one
 SELECT device_limit
@@ -24,12 +25,6 @@ SELECT r.device_limit
 FROM account_restrictions r
 JOIN users u ON u.id = r.user_id
 WHERE r.user_id = $1 AND r.device_limit IS NOT NULL AND NOT u.is_bot;
-
--- name: CountOtherCompletedAuthorizations :one
--- 占用名额的授权：已完成登录（不含 password_pending），且不是这次要绑定的 auth key 自身。
-SELECT count(*)
-FROM authorizations
-WHERE user_id = $1 AND auth_key_id <> $2 AND NOT password_pending;
 
 -- name: LockUserRowForPasswordPromotion :exec
 -- 2FA 转正（#106）与绑定使用同一锁顺序：先 advisory 用户锁，再锁用户行。

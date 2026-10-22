@@ -67,7 +67,11 @@ type ClientInfo struct {
 	SystemLangCode string
 	LangPack       string
 	LangCode       string
-	Type           ClientType
+	// DeviceID 是 initConnection.params 里上报的稳定设备标识（#111），已按
+	// domain.ValidDeviceID 校验，空串表示未上报。只来自当前连接的 initConnection，
+	// 不从存储恢复：登录判定从持久化的 auth key 读取。
+	DeviceID string
+	Type     ClientType
 	// typeResolved distinguishes current-connection classification from raw
 	// metadata restored from storage. A persisted unknown remains unknown until
 	// a fresh initConnection supplies authoritative wire evidence.

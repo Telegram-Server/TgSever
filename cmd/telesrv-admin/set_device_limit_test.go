@@ -108,3 +108,68 @@ func TestSetDeviceLimitAPIForwardsCommandAndRequiresAccountsManage(t *testing.T)
 }
 
 func intPtr(v int) *int { return &v }
+
+// TestDeviceBindingsAPIProxiesAndRequiresAccountsRead 账号的设备绑定名单（#113）：代理到服务端
+// admin API 的 GET /v1/accounts/{id}/device-bindings，响应原样返回且不缓存；没有 accounts.read
+// 的操作员被拒绝，请求到不了服务端。
+func TestDeviceBindingsAPIProxiesAndRequiresAccountsRead(t *testing.T) {
+	const body = `{"user_id":1001,"bindings":[{"device_id":"phone-1","device_model":"Pixel 9","platform":"Android","app_version":"11.2","bound_at":"2026-10-20T08:00:00Z","last_used_at":"2026-10-20T09:00:00Z"}]}`
+	var mu sync.Mutex
+	var paths []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer test-admin" {
+			t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+		}
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer upstream.Close()
+
+	get := func(srv *server, cookies []*http.Cookie, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if cookies != nil {
+			req = withCookies(req, cookies)
+		}
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		return rec
+	}
+
+	srv := panelServer(t, permissionAccountsRead)
+	srv.cfg.AdminAPIURL, srv.cfg.AdminAPIToken = upstream.URL, "test-admin"
+	cookies, _ := signIn(t, srv)
+	if rec := get(srv, nil, "/api/accounts/1001/device-bindings"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous status=%d, want 401", rec.Code)
+	}
+	if rec := get(srv, cookies, "/api/accounts/abc/device-bindings"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad id status=%d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+	rec := get(srv, cookies, "/api/accounts/1001/device-bindings")
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != body {
+		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control=%q, want no-store", got)
+	}
+	mu.Lock()
+	if len(paths) != 1 || paths[0] != "/v1/accounts/1001/device-bindings" {
+		t.Fatalf("upstream paths=%v", paths)
+	}
+	mu.Unlock()
+
+	forbidden := panelServer(t, permissionAccountsManage)
+	forbidden.cfg.AdminAPIURL, forbidden.cfg.AdminAPIToken = upstream.URL, "test-admin"
+	forbiddenCookies, _ := signIn(t, forbidden)
+	rec = get(forbidden, forbiddenCookies, "/api/accounts/1001/device-bindings")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), permissionAccountsRead) {
+		t.Fatalf("without accounts.read status=%d body=%s, want 403 naming the right", rec.Code, rec.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) != 1 {
+		t.Fatalf("forbidden request reached the admin API: paths=%v", paths)
+	}
+}

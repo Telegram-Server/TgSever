@@ -23,25 +23,6 @@ func (q *Queries) ClearDeviceLimit(ctx context.Context, userID int64) (int64, er
 	return result.RowsAffected(), nil
 }
 
-const countOtherCompletedAuthorizations = `-- name: CountOtherCompletedAuthorizations :one
-SELECT count(*)
-FROM authorizations
-WHERE user_id = $1 AND auth_key_id <> $2 AND NOT password_pending
-`
-
-type CountOtherCompletedAuthorizationsParams struct {
-	UserID    int64
-	AuthKeyID int64
-}
-
-// 占用名额的授权：已完成登录（不含 password_pending），且不是这次要绑定的 auth key 自身。
-func (q *Queries) CountOtherCompletedAuthorizations(ctx context.Context, arg CountOtherCompletedAuthorizationsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countOtherCompletedAuthorizations, arg.UserID, arg.AuthKeyID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const deletePendingAuthorization = `-- name: DeletePendingAuthorization :execrows
 DELETE FROM authorizations
 WHERE auth_key_id = $1 AND user_id = $2 AND password_pending
@@ -69,6 +50,7 @@ WHERE user_id = $1 AND device_limit IS NOT NULL
 `
 
 // 账号设备上限（#105）。上限存在 account_restrictions.device_limit，NULL = 不限制。
+// 名额按设备绑定计数（#112），绑定相关查询见 device_binding.sql。
 func (q *Queries) GetDeviceLimit(ctx context.Context, userID int64) (*int32, error) {
 	row := q.db.QueryRow(ctx, getDeviceLimit, userID)
 	var device_limit *int32

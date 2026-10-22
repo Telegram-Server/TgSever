@@ -369,9 +369,26 @@ func signUpDisabledErr() error { return tgerr.New(400, "SIGN_UP_DISABLED") }
 // verifyEmail 的 loginSetup。
 func codeLoginDisabledErr() error { return tgerr.New(400, "CODE_LOGIN_DISABLED") }
 
-// authorizationsTooMuchErr 表示账号已登录的设备数达到管理员设置的设备上限
-// （domain.ErrDeviceLimitReached），新设备的登录被拒绝。
+// authorizationsTooMuchErr 表示账号已绑定的设备数达到管理员设置的设备上限
+// （domain.ErrDeviceLimitReached），未绑定的新设备的登录被拒绝。
 func authorizationsTooMuchErr() error { return tgerr.New(400, "AUTHORIZATIONS_TOO_MUCH") }
+
+// deviceIDRequiredErr 表示账号设了设备上限，而客户端没有在 initConnection.params 里上报
+// device_id（domain.ErrDeviceIDRequired），登录被拒绝（#112）。
+func deviceIDRequiredErr() error { return tgerr.New(400, "DEVICE_ID_REQUIRED") }
+
+// deviceBindingRejectionErr 把设备绑定规则的拒绝映射为 rpc_error；err 不是这两类拒绝时
+// 返回 nil，由调用方按自己的映射处理。
+func deviceBindingRejectionErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrDeviceLimitReached):
+		return authorizationsTooMuchErr()
+	case errors.Is(err, domain.ErrDeviceIDRequired):
+		return deviceIDRequiredErr()
+	default:
+		return nil
+	}
+}
 
 func phoneChangeErr(err error) error {
 	switch {
@@ -449,6 +466,9 @@ func fileEmptyErr() error                 { return tgerr.New(400, "FILE_EMPTY") 
 
 // signInErr 把登录业务错误映射为客户端可识别的 rpc_error。
 func signInErr(err error) error {
+	if rejected := deviceBindingRejectionErr(err); rejected != nil {
+		return rejected
+	}
 	switch {
 	case errors.Is(err, auth.ErrPhoneNumberInvalid),
 		errors.Is(err, auth.ErrSystemUserLoginForbidden):
@@ -470,8 +490,6 @@ func signInErr(err error) error {
 		return signUpDisabledErr()
 	case errors.Is(err, domain.ErrCodeLoginDisabled):
 		return codeLoginDisabledErr()
-	case errors.Is(err, domain.ErrDeviceLimitReached):
-		return authorizationsTooMuchErr()
 	default:
 		return internalErr()
 	}
@@ -480,11 +498,12 @@ func signInErr(err error) error {
 // passkeyErr 映射 passkey(WebAuthn)错误。验证类失败统一返回 PASSKEY_INVALID,不泄漏
 // 具体哪一步失败(防探测);非验证类(store/内部)返回 500。
 func passkeyErr(err error) error {
+	if rejected := deviceBindingRejectionErr(err); rejected != nil {
+		return rejected
+	}
 	switch {
 	case errors.Is(err, auth.ErrSystemUserLoginForbidden):
 		return tgerr.New(400, "PASSKEY_INVALID")
-	case errors.Is(err, domain.ErrDeviceLimitReached):
-		return authorizationsTooMuchErr()
 	case errors.Is(err, domain.ErrPasskeyChallengeInvalid):
 		return tgerr.New(400, "PASSKEY_CHALLENGE_INVALID")
 	case errors.Is(err, domain.ErrPasskeyInvalid),

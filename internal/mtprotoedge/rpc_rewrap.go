@@ -323,7 +323,9 @@ type rpcRewrapInit struct {
 	systemLang  string
 	langPack    string
 	langCode    string
-	inner       []byte
+	// params 是 initConnection 的可选 JSON 参数（承载 device_id，#111），原样交给 rpc 解析。
+	params tg.JSONValueClass
+	inner  []byte
 }
 
 type rpcRewrapRawObject struct {
@@ -362,7 +364,7 @@ func decodeRPCRewrapInit(body []byte) (rpcRewrapInit, bool) {
 		layer: layer, apiID: req.APIID, deviceModel: req.DeviceModel,
 		system: req.SystemVersion, appVersion: req.AppVersion,
 		systemLang: req.SystemLangCode, langPack: req.LangPack, langCode: req.LangCode,
-		inner: raw.data,
+		params: req.Params, inner: raw.data,
 	}, true
 }
 
@@ -1054,7 +1056,7 @@ func (s *Server) scheduleRewrappedInitObservation(c *Conn, init rpcRewrapInit) {
 		if err := observer.ObserveInitConnection(
 			ctx, c.authKeyID, c.sessionID, init.layer, init.apiID,
 			init.deviceModel, init.system, init.appVersion, init.systemLang,
-			init.langPack, init.langCode,
+			init.langPack, init.langCode, init.params,
 		); err != nil {
 			s.log.Debug("Observe rewrapped initConnection failed", zap.Error(err))
 		}

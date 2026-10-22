@@ -35,6 +35,11 @@ type accountLifecycleAuthorizations interface {
 	RevokeByUserExcept(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error)
 }
 
+// accountLifecycleDeviceBindings 删除被注销账号的设备绑定名单（memory.AuthorizationStore 实现）。
+type accountLifecycleDeviceBindings interface {
+	DeleteDeviceBindings(ctx context.Context, userID int64) error
+}
+
 // AccountLifecycleOption 调整内存账号生命周期 store。
 type AccountLifecycleOption func(*AccountLifecycleStore)
 
@@ -143,6 +148,12 @@ func (s *AccountLifecycleStore) ExecuteAccountDeletion(ctx context.Context, user
 	s.users.mu.Unlock()
 
 	result := domain.AccountDeletionResult{User: tombstone, Changed: true}
+	// 设备绑定名单随账号一起删除（#112）；退出登录、撤销授权都不删它，所以单独调用。
+	if bindings, ok := s.authorizations.(accountLifecycleDeviceBindings); ok {
+		if err := bindings.DeleteDeviceBindings(ctx, userID); err != nil {
+			return domain.AccountDeletionResult{}, err
+		}
+	}
 	if s.authorizations != nil {
 		revoked, err := s.authorizations.RevokeByUserExcept(ctx, userID, [8]byte{})
 		if err != nil {

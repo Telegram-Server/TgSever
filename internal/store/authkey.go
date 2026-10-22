@@ -55,6 +55,9 @@ type AuthKeyData struct {
 	SystemVersion      string
 	APIID              int
 	AppVersion         string
+	// DeviceID 是客户端在 initConnection.params 里上报的稳定设备标识（#111）；
+	// 空串表示从未上报。PFS 下业务语义只看 perm key 上的值。
+	DeviceID string
 	// 用户绑定不在此处：auth_key 是协议产物，授权（auth_key↔user + 设备信息）由 authorization 承载（P2）。
 }
 
@@ -68,6 +71,11 @@ type AuthKeyClientInfo struct {
 	SystemVersion string
 	APIID         int
 	AppVersion    string
+	// DeviceID 一次写入：只在 key 从未上报（为空）时写，此后不再改变，空串与不同的
+	// 非空值都不覆盖。auth key 被拷到另一台机器后上报的新 device_id 因此顶不掉原设备，
+	// 绑定检查与按设备解绑始终认 key 第一次上报的设备。调用方负责先按
+	// domain.ValidDeviceID 校验，store 只做持久化。
+	DeviceID string
 }
 
 // AuthKeyBindingKeys is the authoritative pair used to verify one
@@ -126,8 +134,10 @@ type AuthKeyStore interface {
 	LoadBindingKeys(ctx context.Context, tempID, permID [8]byte) (AuthKeyBindingKeys, error)
 	// UpdateClientInfo 合并更新 auth key 的客户端协商元数据。目标 key 不存在时
 	// 必须返回 ErrAuthKeyNotFound，禁止把缺失 primary 当成成功后继续更新 mirror。
-	// 空字段不覆盖已有值，layer/api_id 为 0 时不覆盖。
-	UpdateClientInfo(ctx context.Context, id [8]byte, info AuthKeyClientInfo) error
+	// 空字段不覆盖已有值，layer/api_id 为 0 时不覆盖。device_id 一次写入（见
+	// AuthKeyClientInfo.DeviceID）；deviceIDStored 报告本次是否把它从未上报写成了非空值，
+	// 调用方只在此时触发延迟补绑，重连时重复上报不再进补绑查询。
+	UpdateClientInfo(ctx context.Context, id [8]byte, info AuthKeyClientInfo) (deviceIDStored bool, err error)
 	// Delete 删除一条 auth key 记录（destroy_auth_key）。不存在时静默成功。
 	// SessionManager/control fabric 负责 fence active connection；activation
 	// claim 仍通过 Revalidate 关闭首次取得与注册之间的竞态。
