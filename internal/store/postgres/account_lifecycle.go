@@ -198,6 +198,10 @@ WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND active`, userID); err 
 	if _, err := sqlcgen.New(tx).DeleteDeviceBindingsByUser(ctx, userID); err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("delete deleted account device bindings: %w", err)
 	}
+	// 员工权限设置与发送白名单（#119）同理，连同别的账号白名单里指向它的条目一起删掉。
+	if err := deleteAccountPermissionsTx(ctx, tx, userID); err != nil {
+		return domain.AccountDeletionResult{}, err
+	}
 	reason = strings.TrimSpace(reason)
 	reason = truncateUTF8Bytes(reason, 1024)
 	if _, err := tx.Exec(ctx, `
