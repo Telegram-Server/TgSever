@@ -180,7 +180,7 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (81 methods + 1 file route):
+Implemented (83 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
