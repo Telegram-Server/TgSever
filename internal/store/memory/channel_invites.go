@@ -189,12 +189,15 @@ func (s *ChannelStore) ExportInvite(_ context.Context, req domain.ExportChannelI
 		return domain.ExportChannelInviteResult{}, err
 	}
 	invite := domain.ChannelInvite{
-		ChannelID:     req.ChannelID,
-		InviteID:      inviteID,
-		Hash:          hash,
-		AdminUserID:   req.UserID,
-		Title:         req.Title,
-		Permanent:     req.ExpireDate == 0 && req.UsageLimit == 0 && !req.RequestNeeded && req.Title == "",
+		ChannelID:   req.ChannelID,
+		InviteID:    inviteID,
+		Hash:        hash,
+		AdminUserID: req.UserID,
+		Title:       req.Title,
+		// 只有 legacy_revoke_permanent（撤销旧主链接并重建）产生主链接；不带参数的导出与官方
+		// 一样是额外链接（Bot API createChatInviteLink 永不创建主链接）。主链接的其他来源是
+		// EnsurePermanentInvite 与撤销主链接时的自动替换。
+		Permanent:     req.LegacyRevokePermanent,
 		RequestNeeded: req.RequestNeeded,
 		ExpireDate:    req.ExpireDate,
 		UsageLimit:    req.UsageLimit,
@@ -449,7 +452,7 @@ func (s *ChannelStore) EditExportedInvite(_ context.Context, req domain.EditChan
 	if req.HasTitle {
 		invite.Title = req.Title
 	}
-	invite.Permanent = invite.ExpireDate == 0 && invite.UsageLimit == 0 && !invite.RequestNeeded && invite.Title == ""
+	// 主链接/额外链接的身份在创建时确定，编辑参数不改变它（清空额外链接的参数不会让它变成主链接）。
 	s.invites[invite.Hash] = invite
 	s.refreshChannelHasLinkLocked(req.ChannelID)
 	return domain.EditChannelInviteResult{Invite: invite}, nil

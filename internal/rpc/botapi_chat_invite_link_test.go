@@ -201,3 +201,34 @@ func TestBotAPIExportChatInviteLinkReplacesPrimaryLink(t *testing.T) {
 		t.Fatalf("join via new primary link: %v", err)
 	}
 }
+
+// createChatInviteLink 永不创建主链接：不带任何参数也是额外链接，exportChatInviteLink
+// 重建主链接时不会撤销它；把额外链接的名字清空也不会让它变成主链接（review #11）。
+func TestBotAPICreateChatInviteLinkWithoutOptionsIsNotPrimary(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.promoteBot(t, domain.ChannelAdminRights{InviteUsers: true})
+
+	plain, err := f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{})
+	if err != nil {
+		t.Fatalf("create without options: %v", err)
+	}
+	if plain.Invite.Permanent {
+		t.Fatalf("plain link = %+v, want an additional (non-primary) link", plain.Invite)
+	}
+	named, err := f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{Name: inviteOption("promo")})
+	if err != nil {
+		t.Fatalf("create named: %v", err)
+	}
+	cleared, err := f.router.BotAPIEditChatInviteLink(f.ctx, f.bot.ID, f.chatID, named.Link, domain.BotAPIChatInviteLinkOptions{Name: inviteOption("")})
+	if err != nil || cleared.Invite.Permanent {
+		t.Fatalf("cleared = %+v, %v; want it to stay an additional link", cleared.Invite, err)
+	}
+	if _, err := f.router.BotAPIExportChatInviteLink(f.ctx, f.bot.ID, f.chatID); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	for _, link := range []string{plain.Link, named.Link} {
+		if seen := f.ownerSeesInvite(t, link); seen.Revoked || seen.Permanent {
+			t.Fatalf("additional link %s after export = %+v, want active and non-primary", link, seen)
+		}
+	}
+}
