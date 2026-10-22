@@ -384,6 +384,13 @@ func (r *Router) sendWebViewDomainResultMessage(ctx context.Context, botID int64
 	if err := r.checkSendRateLimit(ctx, session.UserID, 1); err != nil {
 		return err
 	}
+	// send_as 在 requestWebView 时已校验，这里以 sendAsReady 直接发出；会话期间该频道身份
+	// 可能被群封禁（#138），发出前再查一次。只在 send_as 是频道时查询。
+	if sendAs := session.SendAs; sendAs != nil && sendAs.Type == domain.PeerTypeChannel && session.Peer.Type == domain.PeerTypeChannel {
+		if err := r.checkSenderChatNotBanned(ctx, session.Peer.ID, sendAs.ID); err != nil {
+			return err
+		}
+	}
 	media := cloneInlineMedia(result.Media)
 	if result.MediaAuto {
 		if result.Content != nil {

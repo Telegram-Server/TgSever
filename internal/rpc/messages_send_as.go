@@ -142,6 +142,24 @@ func (r *Router) validateForeignChannelSendAs(ctx context.Context, userID, toCha
 	if !view.Channel.Verified && !r.userIsPremium(ctx, userID) && target.Channel.LinkedChatID != sendAsChannelID {
 		return sendAsPeerInvalidErr()
 	}
+	return r.checkSenderChatNotBanned(ctx, toChannelID, sendAsChannelID)
+}
+
+// checkSenderChatNotBanned 拒绝以在 toChannelID 里被封禁的频道身份发言（#138）。只在 send_as
+// 是"另一个频道"时调用，以本人或群本身发言不查询。被封返回 SEND_AS_PEER_INVALID（官方
+// "You can't send messages as the specified peer"；账号本身未被封，不用 USER_BANNED_IN_CHANNEL）；
+// 查询失败返回 INTERNAL_SERVER_ERROR，按拒绝处理。
+func (r *Router) checkSenderChatNotBanned(ctx context.Context, toChannelID, sendAsChannelID int64) error {
+	if r.deps.Channels == nil || toChannelID == sendAsChannelID {
+		return nil
+	}
+	banned, err := r.deps.Channels.IsSenderChatBanned(ctx, toChannelID, sendAsChannelID)
+	if err != nil {
+		return internalErr()
+	}
+	if banned {
+		return sendAsPeerInvalidErr()
+	}
 	return nil
 }
 
