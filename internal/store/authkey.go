@@ -55,6 +55,9 @@ type AuthKeyData struct {
 	SystemVersion      string
 	APIID              int
 	AppVersion         string
+	// DeviceID 是客户端在 initConnection.params 里上报的稳定设备标识（#111）；
+	// 空串表示从未上报。PFS 下业务语义只看 perm key 上的值。
+	DeviceID string
 	// 用户绑定不在此处：auth_key 是协议产物，授权（auth_key↔user + 设备信息）由 authorization 承载（P2）。
 }
 
@@ -68,6 +71,9 @@ type AuthKeyClientInfo struct {
 	SystemVersion string
 	APIID         int
 	AppVersion    string
+	// DeviceID 与其它字符串字段一样：空串不覆盖已有值。调用方负责先按
+	// domain.ValidDeviceID 校验，store 只做持久化。
+	DeviceID string
 }
 
 // AuthKeyBindingKeys is the authoritative pair used to verify one

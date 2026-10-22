@@ -294,6 +294,7 @@ type AuthKey struct {
 	LastUsedAt         pgtype.Timestamptz
 	ExpiresAt          int32
 	LayerObservationID int64
+	DeviceID           *string
 }
 
 type AuthKeySessionLayer struct {

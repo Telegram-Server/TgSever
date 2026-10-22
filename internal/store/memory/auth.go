@@ -58,6 +58,7 @@ func (s *AuthKeyStore) Save(_ context.Context, k store.AuthKeyData) error {
 		k.SystemVersion = current.SystemVersion
 		k.APIID = current.APIID
 		k.AppVersion = current.AppVersion
+		k.DeviceID = current.DeviceID
 	}
 	s.state.keys[k.ID] = k
 	s.state.mirrorAuthorizationLayersLocked([][8]byte{k.ID}, k.Layer)
@@ -132,6 +133,9 @@ func mergeAuthKeyClientInfo(k *store.AuthKeyData, info store.AuthKeyClientInfo) 
 	}
 	if info.AppVersion != "" {
 		k.AppVersion = info.AppVersion
+	}
+	if info.DeviceID != "" {
+		k.DeviceID = info.DeviceID
 	}
 }
 

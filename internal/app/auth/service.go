@@ -424,9 +424,12 @@ func NewService(users store.UserStore, auths store.AuthorizationStore, codes sto
 
 // BindTempAuthKey 校验并记录 TDesktop PFS temp→perm auth key 绑定。
 func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error) {
-	var validated domain.TempAuthKeyBindingResult
+	var (
+		validated    domain.TempAuthKeyBindingResult
+		tempDeviceID string
+	)
 	if s.authKeys != nil {
-		inner, protocolExpiresAt, result, err := s.validateBindTempAuthKey(ctx, sessionID, binding)
+		inner, protocolExpiresAt, tempKeyDeviceID, result, err := s.validateBindTempAuthKey(ctx, sessionID, binding)
 		if err != nil {
 			return domain.TempAuthKeyBindingResult{}, err
 		}
@@ -437,6 +440,7 @@ func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding 
 		// value at handshake completion. Retention and edge admission must use the
 		// server's p_q_inner_data_temp lifetime, never the client value.
 		binding.ExpiresAt = protocolExpiresAt
+		tempDeviceID = tempKeyDeviceID
 	}
 	if binding.ExpiresAt <= int(time.Now().Unix()) {
 		// The edge may admit the frame immediately before the temporary key's
@@ -457,7 +461,23 @@ func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding 
 		}
 		return domain.TempAuthKeyBindingResult{}, err
 	}
+	if err := s.carryDeviceIDToPermanentKey(ctx, binding.PermAuthKeyID, tempDeviceID); err != nil {
+		return domain.TempAuthKeyBindingResult{}, err
+	}
 	return result, nil
+}
+
+// carryDeviceIDToPermanentKey 把 temp key 上已持久化的 device_id 带到刚绑定的 perm key 上
+// （#111）。客户端可能在 bindTempAuthKey 之前就在 temp key 上发了 initConnection，那时
+// 业务 auth key 还解析不到 perm key；登录时只看 perm key，所以绑定成功后补写一次，
+// 语义与 UpdateClientInfo 一致：temp key 没上报时不动 perm key 上的值。
+//
+// 绑定已提交，这里失败时返回错误让客户端重试：重放绑定是幂等的，会再补写一次。
+func (s *Service) carryDeviceIDToPermanentKey(ctx context.Context, permAuthKeyID int64, deviceID string) error {
+	if deviceID == "" || s.authKeys == nil {
+		return nil
+	}
+	return s.authKeys.UpdateClientInfo(ctx, authKeyIDFromInt64(permAuthKeyID), store.AuthKeyClientInfo{DeviceID: deviceID})
 }
 
 // ResolveAuthKey 将已绑定的 temp auth_key 解析为对应 perm auth_key。
@@ -1803,9 +1823,10 @@ func (s *Service) AuthKeyClientInfo(ctx context.Context, authKeyID [8]byte) (dom
 		SystemVersion:      key.SystemVersion,
 		APIID:              key.APIID,
 		AppVersion:         key.AppVersion,
+		DeviceID:           key.DeviceID,
 	}
 	if info.Layer == 0 && info.DeviceModel == "" && info.Platform == "" &&
-		info.SystemVersion == "" && info.APIID == 0 && info.AppVersion == "" {
+		info.SystemVersion == "" && info.APIID == 0 && info.AppVersion == "" && info.DeviceID == "" {
 		return domain.AuthKeyClientInfo{}, false, nil
 	}
 	return info, true, nil
@@ -1822,6 +1843,7 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 		SystemVersion: info.SystemVersion,
 		APIID:         info.APIID,
 		AppVersion:    info.AppVersion,
+		DeviceID:      info.DeviceID,
 	}); err != nil {
 		return err
 	}
@@ -2001,49 +2023,49 @@ func (s *Service) recordWelcomeMessage(ctx context.Context, u domain.User) {
 	})
 }
 
-func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, int, domain.TempAuthKeyBindingResult, error) {
+func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, int, string, domain.TempAuthKeyBindingResult, error) {
 	if binding.ExpiresAt <= int(time.Now().Unix()) {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrExpiresAtInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrExpiresAtInvalid
 	}
 	permID := authKeyIDFromInt64(binding.PermAuthKeyID)
 	pair, err := s.authKeys.LoadBindingKeys(ctx, binding.TempAuthKeyID, permID)
 	if err != nil {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, err
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, err
 	}
 	// expires_at in auth.bindTempAuthKey is client-supplied and must only attest
 	// to a still-live binding. It may never create or reclassify a protocol key;
 	// the caller normalizes durable retention to this handshake-authoritative
 	// temp.ExpiresAt instead of trusting the client value.
 	if !pair.TemporaryFound || pair.Temporary.ExpiresAt <= int(time.Now().Unix()) {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrTempAuthKeyEmpty
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrTempAuthKeyEmpty
 	}
 
 	if !pair.PermanentFound || pair.Permanent.ExpiresAt != 0 {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
 	}
 
 	inner, err := decryptBindAuthKeyInner(pair.Permanent, binding.EncryptedMessage)
 	if err != nil {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
 	}
 	if inner.Nonce != binding.Nonce ||
 		inner.TempAuthKeyID != authKeyIDInt64(binding.TempAuthKeyID) ||
 		inner.PermAuthKeyID != binding.PermAuthKeyID ||
 		inner.TempSessionID != sessionID ||
 		inner.ExpiresAt != binding.ExpiresAt {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrEncryptedMessageInvalid
 	}
 	if pair.Temporary.ExpiresAt <= int(time.Now().Unix()) {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, ErrTempAuthKeyEmpty
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, ErrTempAuthKeyEmpty
 	}
 	layer, observationID, err := store.MergeAuthKeyLayerObservations(
 		pair.Temporary.Layer, pair.Temporary.LayerObservationID,
 		pair.Permanent.Layer, pair.Permanent.LayerObservationID,
 	)
 	if err != nil {
-		return mtcrypto.BindAuthKeyInner{}, 0, domain.TempAuthKeyBindingResult{}, err
+		return mtcrypto.BindAuthKeyInner{}, 0, "", domain.TempAuthKeyBindingResult{}, err
 	}
-	return inner, pair.Temporary.ExpiresAt, domain.TempAuthKeyBindingResult{
+	return inner, pair.Temporary.ExpiresAt, pair.Temporary.DeviceID, domain.TempAuthKeyBindingResult{
 		Layer: layer, LayerObservationID: observationID,
 	}, nil
 }

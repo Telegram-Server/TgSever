@@ -583,5 +583,6 @@ func clientInfoFromLayerWrapper(wrapper tlprofile.Wrapper) (ClientInfo, error) {
 		SystemLangCode: systemLangCode,
 		LangPack:       langPack,
 		LangCode:       langCode,
+		DeviceID:       deviceIDFromLayerWrapper(wrapper),
 	}, nil
 }

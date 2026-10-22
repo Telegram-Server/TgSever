@@ -60,7 +60,8 @@ SET last_used_at = now()
 WHERE auth_key_id = $1
 RETURNING auth_key_id, body, server_salt, created_at,
        expires_at, layer, layer_observation_id,
-       device_model, platform, system_version, api_id, app_version
+       device_model, platform, system_version, api_id, app_version,
+       COALESCE(device_id, '')
 `, authKeyIDToInt64(id)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -82,7 +83,8 @@ func (s *AuthKeyStore) Revalidate(ctx context.Context, id [8]byte) (store.AuthKe
 	data, err := scanAuthKeyData(s.db.QueryRow(ctx, `
 SELECT auth_key_id, body, server_salt, created_at,
        expires_at, layer, layer_observation_id,
-       device_model, platform, system_version, api_id, app_version
+       device_model, platform, system_version, api_id, app_version,
+       COALESCE(device_id, '')
 FROM auth_keys
 WHERE auth_key_id = $1
 `, authKeyIDToInt64(id)))
@@ -108,7 +110,8 @@ SET last_used_at = now()
 WHERE auth_key_id = ANY($1::bigint[])
 RETURNING auth_key_id, body, server_salt, created_at,
        expires_at, layer, layer_observation_id,
-       device_model, platform, system_version, api_id, app_version
+       device_model, platform, system_version, api_id, app_version,
+       COALESCE(device_id, '')
 `, []int64{authKeyIDToInt64(tempID), authKeyIDToInt64(permID)})
 	if err != nil {
 		return store.AuthKeyBindingKeys{}, fmt.Errorf("load auth key binding pair: %w", err)
@@ -159,11 +162,13 @@ func scanAuthKeyData(row authKeyDataScanner) (store.AuthKeyData, error) {
 		systemVersion      string
 		apiID              int
 		appVersion         string
+		deviceID           string
 	)
 	if err := row.Scan(
 		&storedID, &body, &serverSalt, &createdAt,
 		&expiresAt, &layer, &layerObservationID,
 		&deviceModel, &platform, &systemVersion, &apiID, &appVersion,
+		&deviceID,
 	); err != nil {
 		return store.AuthKeyData{}, err
 	}
@@ -181,6 +186,7 @@ func scanAuthKeyData(row authKeyDataScanner) (store.AuthKeyData, error) {
 		SystemVersion:      systemVersion,
 		APIID:              apiID,
 		AppVersion:         appVersion,
+		DeviceID:           deviceID,
 	}
 	copy(data.Value[:], body)
 	if createdAt.Valid {
@@ -244,11 +250,12 @@ SET layer = CASE WHEN $2::integer > 0 THEN $2 ELSE layer END,
     platform = CASE WHEN $4::text <> '' THEN $4 ELSE platform END,
     system_version = CASE WHEN $5::text <> '' THEN $5 ELSE system_version END,
     api_id = CASE WHEN $6::integer <> 0 THEN $6 ELSE api_id END,
-    app_version = CASE WHEN $7::text <> '' THEN $7 ELSE app_version END
+    app_version = CASE WHEN $7::text <> '' THEN $7 ELSE app_version END,
+    device_id = CASE WHEN $8::text <> '' THEN $8 ELSE device_id END
 WHERE auth_key_id = $1
   AND ($2::integer <= 0 OR layer_observation_id = 0 OR layer = $2::integer)
 RETURNING 1
-`, authKeyIDToInt64(id), info.Layer, info.DeviceModel, info.Platform, info.SystemVersion, info.APIID, info.AppVersion).Scan(&updated)
+`, authKeyIDToInt64(id), info.Layer, info.DeviceModel, info.Platform, info.SystemVersion, info.APIID, info.AppVersion, info.DeviceID).Scan(&updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			var (
