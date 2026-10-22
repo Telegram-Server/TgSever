@@ -134,6 +134,7 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 	if err != nil {
 		if errors.Is(err, domain.ErrInviteRequestSent) && res.Channel.ID != 0 {
 			r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
+			r.enqueueBotAPIChatJoinRequest(ctx, res.Channel, userID, hash, date)
 		}
 		return nil, channelInviteErr(err)
 	}

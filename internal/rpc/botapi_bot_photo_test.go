@@ -206,3 +206,88 @@ func TestBotAPISetMyProfilePhotoRejectsUnknownKind(t *testing.T) {
 		t.Fatalf("setMyProfilePhoto with unknown kind err = %v, want PHOTO_INVALID", err)
 	}
 }
+
+func animatedProfilePhoto(size int, mainFrame float64) domain.BotAPIProfilePhoto {
+	return domain.BotAPIProfilePhoto{
+		Kind:               domain.BotAPIProfilePhotoAnimated,
+		FileName:           "avatar.mp4",
+		MimeType:           "video/mp4",
+		Data:               bytes.Repeat([]byte{0x5a}, size),
+		MainFrameTimestamp: mainFrame,
+	}
+}
+
+// setMyProfilePhoto（animated）：超过一个上传分片（512KB）的视频成为 bot 的视频头像，
+// main_frame_timestamp 落到 'u' 视频尺寸的 video_start_ts；所有者收到 has_video 的 updateUser。
+func TestBotAPISetMyProfilePhotoAnimatedStoresVideoAvatarAndNotifiesOwner(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	const videoBytes = 1<<20 + 7
+
+	ok, err := f.router.BotAPISetMyProfilePhoto(f.ctx, f.bot.ID, animatedProfilePhoto(videoBytes, 2.5))
+	if err != nil || !ok {
+		t.Fatalf("setMyProfilePhoto(animated) = %v, %v; want true", ok, err)
+	}
+
+	cur, found, err := f.files.CurrentProfilePhotoKind(f.ctx, domain.PeerTypeUser, f.bot.ID, domain.ProfilePhotoKindProfile)
+	if err != nil || !found {
+		t.Fatalf("bot current photo found=%v err=%v, want the new video avatar", found, err)
+	}
+	var video *domain.PhotoSize
+	for i := range cur.Sizes {
+		if cur.Sizes[i].Kind == domain.PhotoSizeKindVideo {
+			video = &cur.Sizes[i]
+		}
+	}
+	if video == nil || video.Type != "u" || video.Size != videoBytes || video.VideoStartTs != 2.5 {
+		t.Fatalf("bot avatar video size = %+v, want u of %d bytes with video_start_ts 2.5", video, videoBytes)
+	}
+	f.ownerSeesBotPhoto(t, cur.ID)
+	if !f.ownerPushedBotPhotoHasVideo() {
+		t.Fatal("owner's updateUser carries the bot photo without has_video")
+	}
+}
+
+// ownerPushedBotPhotoHasVideo 读取所有者最近一次推送里机器人头像的 has_video。
+func (f botAPIBridgeFixture) ownerPushedBotPhotoHasVideo() bool {
+	pushes := f.sessions.pushesTo(f.owner.ID)
+	if len(pushes) == 0 {
+		return false
+	}
+	updates, ok := pushes[len(pushes)-1].(*tg.Updates)
+	if !ok {
+		return false
+	}
+	for _, u := range updates.Users {
+		if bot, ok := u.(*tg.User); ok && bot.ID == f.bot.ID {
+			photo, ok := bot.Photo.(*tg.UserProfilePhoto)
+			return ok && photo.HasVideo
+		}
+	}
+	return false
+}
+
+// 主帧时间戳必须是非负有限数；非法时拒绝（PHOTO_INVALID），不会成为头像。
+func TestBotAPISetMyProfilePhotoAnimatedRejectsNegativeMainFrame(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+
+	_, err := f.router.BotAPISetMyProfilePhoto(f.ctx, f.bot.ID, animatedProfilePhoto(1024, -1))
+	if !tgerr.Is(err, "PHOTO_INVALID") {
+		t.Fatalf("setMyProfilePhoto(animated, main frame -1) err = %v, want PHOTO_INVALID", err)
+	}
+	if _, found, _ := f.files.CurrentProfilePhotoKind(f.ctx, domain.PeerTypeUser, f.bot.ID, domain.ProfilePhotoKindProfile); found {
+		t.Fatal("animated photo with a negative main frame became the bot's photo")
+	}
+}
+
+// 超过头像上限（10MB）的视频被拒（FILE_TOO_BIG）。
+func TestBotAPISetMyProfilePhotoAnimatedRejectsOversizedVideo(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+
+	_, err := f.router.BotAPISetMyProfilePhoto(f.ctx, f.bot.ID, animatedProfilePhoto(10<<20+1, 0))
+	if !tgerr.Is(err, "FILE_TOO_BIG") {
+		t.Fatalf("setMyProfilePhoto(animated, 10MB+) err = %v, want FILE_TOO_BIG", err)
+	}
+	if _, found, _ := f.files.CurrentProfilePhotoKind(f.ctx, domain.PeerTypeUser, f.bot.ID, domain.ProfilePhotoKindProfile); found {
+		t.Fatal("oversized video became the bot's photo")
+	}
+}

@@ -160,16 +160,41 @@ func (s *Service) CreateAvatarFromBytes(ctx context.Context, data []byte) (domai
 
 // CreateAvatarVideoFromBytes stores raw animated-profile-video bytes through the
 // same upload + s/a/c rendition pipeline used by Telegram video-avatar uploads.
+// 字节按 MaxUploadPartBytes（512KB）切成上传分片保存，与客户端分片上传后组装的路径一致；
+// 整段写成一片会被分片上限拒绝（ErrFilePartTooBig）。
 func (s *Service) CreateAvatarVideoFromBytes(ctx context.Context, data []byte, videoStartTs float64) (domain.Photo, error) {
 	if len(data) == 0 {
 		return domain.Photo{}, domain.ErrPhotoInvalid
 	}
+	parts := (len(data) + MaxUploadPartBytes - 1) / MaxUploadPartBytes
+	if parts > MaxUploadParts {
+		return domain.Photo{}, domain.ErrFilePartsInvalid
+	}
 	fileID := randomID()
-	if _, err := s.SaveFilePart(ctx, 0, fileID, 0, data); err != nil {
+	for part := 0; part < parts; part++ {
+		chunk := data[part*MaxUploadPartBytes : min((part+1)*MaxUploadPartBytes, len(data))]
+		if _, err := s.SaveFilePart(ctx, 0, fileID, part, chunk); err != nil {
+			s.discardUploadParts(ctx, fileID)
+			return domain.Photo{}, err
+		}
+	}
+	ref := domain.UploadedFileRef{OwnerUserID: 0, FileID: fileID, Parts: parts}
+	photo, err := s.createAvatarVideoFromUpload(ctx, ref, videoStartTs, nil)
+	if err != nil {
+		s.discardUploadParts(ctx, fileID)
 		return domain.Photo{}, err
 	}
-	ref := domain.UploadedFileRef{OwnerUserID: 0, FileID: fileID, Parts: 1, Big: true}
-	return s.createAvatarVideoFromUpload(ctx, ref, videoStartTs, nil)
+	return photo, nil
+}
+
+// discardUploadParts 清掉字节入口自己写入的临时分片（属主 0）；失败只记日志，
+// 残留分片由上传分片的过期清理兜底。
+func (s *Service) discardUploadParts(ctx context.Context, fileID int64) {
+	if err := s.cleanupUploadParts(ctx, 0, fileID); err != nil {
+		s.log.Warn("cleanup avatar video byte upload parts failed",
+			zap.Int64("file_id", fileID),
+			zap.Error(err))
+	}
 }
 
 // CreateAvatarFromUpload 把已上传文件组装成头像 Photo（'s'/'a'/'c' 尺寸，'a'/'c' 匹配

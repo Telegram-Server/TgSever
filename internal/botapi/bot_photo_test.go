@@ -90,6 +90,69 @@ func TestSetMyProfilePhotoPassesStaticUpload(t *testing.T) {
 	}
 }
 
+// setMyProfilePhoto 的 animated 头像：animation 用 attach:// 指向上传的视频，
+// main_frame_timestamp（数字或数字字符串）原样交给网关；缺省为 0。
+func TestSetMyProfilePhotoPassesAnimatedUpload(t *testing.T) {
+	cases := []struct {
+		name      string
+		photo     string
+		wantFrame float64
+	}{
+		{"with main frame", `{"type":"animated","animation":"attach://clip","main_frame_timestamp":1.25}`, 1.25},
+		{"main frame as string", `{"type":"animated","animation":"attach://clip","main_frame_timestamp":"2.5"}`, 2.5},
+		{"default main frame", `{"type":"animated","animation":"attach://clip"}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := &fakeBotProfilePhotoGateway{fakeBotAPIGateway: &fakeBotAPIGateway{}}
+
+			resp := postMultipart(t, gateway, "setMyProfilePhoto",
+				map[string]string{"photo": tc.photo},
+				map[string][]byte{"clip": []byte("mp4 bytes")})
+
+			if !resp.OK || string(resp.Result) != "true" {
+				t.Fatalf("setMyProfilePhoto = %+v, want ok true", resp)
+			}
+			if len(gateway.setCalls) != 1 {
+				t.Fatalf("gateway calls = %+v, want one", gateway.setCalls)
+			}
+			got := gateway.setCalls[0]
+			if got.Kind != domain.BotAPIProfilePhotoAnimated || string(got.Data) != "mp4 bytes" || got.MainFrameTimestamp != tc.wantFrame {
+				t.Fatalf("gateway photo = kind %q data %q main frame %v, want animated \"mp4 bytes\" %v", got.Kind, got.Data, got.MainFrameTimestamp, tc.wantFrame)
+			}
+		})
+	}
+}
+
+// animated 的参数错误：没有上传的 animation、主帧时间戳不是数字或为负，都在网关层拒绝。
+func TestSetMyProfilePhotoRejectsMalformedAnimated(t *testing.T) {
+	cases := []struct {
+		name  string
+		photo string
+		want  string
+	}{
+		{"photo field instead of animation", `{"type":"animated","photo":"attach://clip"}`, "Bad Request: profile photo must be uploaded as a new file using attach://"},
+		{"animation file_id", `{"type":"animated","animation":"CgACAgIAAxkBAAIB"}`, "Bad Request: profile photo must be uploaded as a new file using attach://"},
+		{"main frame not a number", `{"type":"animated","animation":"attach://clip","main_frame_timestamp":"soon"}`, `Bad Request: field "main_frame_timestamp" must be a valid Number`},
+		{"main frame object", `{"type":"animated","animation":"attach://clip","main_frame_timestamp":{}}`, `Bad Request: field "main_frame_timestamp" must be a valid Number`},
+		{"negative main frame", `{"type":"animated","animation":"attach://clip","main_frame_timestamp":-1}`, "Bad Request: wrong main frame timestamp specified"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := &fakeBotProfilePhotoGateway{fakeBotAPIGateway: &fakeBotAPIGateway{}}
+			resp := postMultipart(t, gateway, "setMyProfilePhoto",
+				map[string]string{"photo": tc.photo},
+				map[string][]byte{"clip": []byte("mp4 bytes")})
+			if resp.OK || resp.Description != tc.want {
+				t.Fatalf("setMyProfilePhoto = %+v, want error %q", resp, tc.want)
+			}
+			if len(gateway.setCalls) != 0 {
+				t.Fatalf("gateway called with %+v", gateway.setCalls)
+			}
+		})
+	}
+}
+
 // InputProfilePhoto 解析失败时在网关层就给出明确错误，不调用网关。
 func TestSetMyProfilePhotoRejectsMalformedInputProfilePhoto(t *testing.T) {
 	pic := map[string][]byte{"pic": []byte("jpeg bytes")}

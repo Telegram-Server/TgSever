@@ -79,7 +79,7 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 		if _, ok := botAPIQueuedUpdateKind(botID, item, now); !ok {
 			continue
 		}
-		if item.Ephemeral != nil || item.ChatMember != nil {
+		if item.Ephemeral != nil || item.ChatMember != nil || item.ChatJoinRequest != nil {
 			continue
 		}
 		if item.Callback != nil && item.Callback.InlineMessage != nil {
@@ -115,6 +115,11 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 				leadingSkipped = item.ID
 			}
 			continue
+		}
+		if update := event.BotChatJoinRequest; update != nil && update.Request.Invite != nil {
+			// 对外链接与创建者资料按收件机器人视角在读取时组装，与邀请链接方法的返回值一致。
+			link := r.botAPIChatInviteLink(ctx, botID, *update.Request.Invite)
+			update.InviteLink = &link
 		}
 		events = append(events, event)
 	}
@@ -186,6 +191,17 @@ func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate, now time.Time
 		return eventType, true
 	}
 	if item.ChatMember != nil {
+		return "", false
+	}
+	if item.Kind == domain.BotAPIUpdateChatJoinRequest {
+		// 入群申请同样没有消息：载荷自足，只核对它与队列行一致。
+		if item.ChatJoinRequest == nil || item.MessageID != 0 || item.Peer.Type != domain.PeerTypeChannel ||
+			item.Peer != item.ChatJoinRequest.Chat || item.ChatJoinRequest.ValidateFor(botID) != nil {
+			return "", false
+		}
+		return eventType, true
+	}
+	if item.ChatJoinRequest != nil {
 		return "", false
 	}
 	if item.Kind == domain.BotAPIUpdatePreCheckoutQuery {
@@ -295,6 +311,23 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 			Peer:           item.Peer,
 			Peers:          peers,
 			BotChatMember:  &update,
+		}, true
+	}
+	if eventType == domain.UpdateEventBotChatJoinRequest {
+		request := *item.ChatJoinRequest
+		if request.Invite != nil {
+			invite := *request.Invite
+			request.Invite = &invite
+		}
+		// 申请人放进 Peers，由 enrichUpdateEvents 补齐用户对象；Peer 指向群/频道。
+		return domain.UpdateEvent{
+			UserID:             botID,
+			Type:               eventType,
+			BotAPIUpdateID:     item.ID,
+			Date:               item.Date,
+			Peer:               item.Peer,
+			Peers:              []domain.Peer{{Type: domain.PeerTypeUser, ID: request.UserID}},
+			BotChatJoinRequest: &domain.BotChatJoinRequestUpdate{Request: request},
 		}, true
 	}
 	// A pre-checkout query is not about any message: it carries only the order
@@ -418,6 +451,8 @@ func botAPIUpdateEventType(kind domain.BotAPIUpdateKind) (domain.UpdateEventType
 		return domain.UpdateEventBotMyChatMember, true
 	case domain.BotAPIUpdateChatMember:
 		return domain.UpdateEventBotChatMember, true
+	case domain.BotAPIUpdateChatJoinRequest:
+		return domain.UpdateEventBotChatJoinRequest, true
 	default:
 		return "", false
 	}
@@ -705,6 +740,62 @@ func (r *Router) enqueueBotAPIMemberChange(ctx context.Context, change botAPIMem
 			enqueue(admin.UserID, domain.BotAPIUpdateChatMember, admin)
 		}
 	}
+}
+
+// enqueueBotAPIChatJoinRequest 是两条待审批申请路径（需要审批的邀请链接、开启审批的群的
+// 公开用户名）的出口：给群里有邀请权限的机器人管理员各入队一条 chat_join_request。
+// inviteHash 为空表示通过用户名申请。邀请链接快照与 bio 都按收件机器人的视角读取：
+// 前者要求它有管理链接的权限，后者遵循申请人的 bio 隐私设置。
+func (r *Router) enqueueBotAPIChatJoinRequest(ctx context.Context, channel domain.Channel, userID int64, inviteHash string, date int) {
+	if r == nil || r.deps.BotAPIUpdates == nil || channel.ID == 0 || userID == 0 {
+		return
+	}
+	if date <= 0 {
+		date = int(r.clock.Now().Unix())
+	}
+	r.botAPIEnqueueQueue.Enqueue(ctx, func(jobCtx context.Context) {
+		chat := domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}
+		for _, admin := range r.botAPIChannelAdminBots(jobCtx, channel) {
+			botID := admin.UserID
+			if botID == userID || (admin.Role != domain.ChannelRoleCreator && !admin.AdminRights.InviteUsers) {
+				continue
+			}
+			request := domain.BotChatJoinRequest{
+				Chat: chat, UserID: userID, Date: date,
+				Bio: r.botAPIJoinRequestBio(jobCtx, botID, userID),
+			}
+			if inviteHash != "" {
+				invite, err := r.deps.Channels.GetExportedInvite(jobCtx, botID, domain.GetChannelInviteRequest{
+					UserID: botID, ChannelID: channel.ID, Hash: inviteHash,
+				})
+				if err == nil {
+					request.Invite = &invite
+				}
+			}
+			if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(jobCtx, domain.EnqueueBotAPIUpdateRequest{
+				BotUserID: botID, Kind: domain.BotAPIUpdateChatJoinRequest, Peer: chat, Date: date,
+				ChatJoinRequest: &request,
+			}); err == nil && created {
+				r.notifyBotAPIUpdate(botID)
+			}
+		}
+	})
+}
+
+// botAPIJoinRequestBio 是申请人对该机器人可见的 bio，与 getChat 的裁剪一致；读取失败按无 bio 处理。
+func (r *Router) botAPIJoinRequestBio(ctx context.Context, botID, userID int64) string {
+	if r.deps.Users == nil {
+		return ""
+	}
+	user, found, err := r.deps.Users.ByID(ctx, botID, userID)
+	if err != nil || !found || user.About == "" {
+		return ""
+	}
+	visibility, err := r.userFullPrivacyVisibility(ctx, botID, userID)
+	if err != nil || !visibility[domain.PrivacyKeyAbout] {
+		return ""
+	}
+	return user.About
 }
 
 // botAPIChannelAdminBots 列出群里当前是管理员（含群主）的机器人及其成员记录

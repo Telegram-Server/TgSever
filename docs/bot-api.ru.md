@@ -179,7 +179,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (93 метода + 1 файловый маршрут):
+Реализовано (95 методов + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
@@ -196,7 +196,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 | Правка/удаление ephemeral | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
 | Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
-| Управление чатами | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Управление чатами | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat`, `banChatSenderChat`, `unbanChatSenderChat` |
 | Ссылки-приглашения | `createChatInviteLink`, `editChatInviteLink`, `revokeChatInviteLink`, `exportChatInviteLink` |
 | Заявки на вступление | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Файлы | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
@@ -213,7 +213,7 @@ actions, дополнительные методы правки, пересыл�
 
 ## Обновления
 
-Шлюз порождает шесть видов обновлений:
+Шлюз порождает семь видов обновлений:
 
 | Значение `allowed_updates` | Ключ обновления | Доставляется по умолчанию |
 |---|---|---|
@@ -223,6 +223,7 @@ actions, дополнительные методы правки, пересыл�
 | `pre_checkout_query` | `pre_checkout_query` | да |
 | `my_chat_member` | `my_chat_member` | да |
 | `chat_member` | `chat_member` | **нет** — только при явном указании |
+| `chat_join_request` | `chat_join_request` | да |
 
 `allowed_updates` — JSON-массив из не более 100 строк; он принимается и
 `getUpdates`, и `setWebhook` и хранится отдельно для каждого бота. Фильтр
@@ -272,6 +273,21 @@ Ephemeral-сообщения (Bot API 10.2) приходят как обычны
   сервер не хранит, кто назначил админа;
 - поля `invite_link` нет; `via_join_request` и `via_chat_folder_invite_link`
   заполняются.
+
+### `chat_join_request`
+
+Несёт официальный `ChatJoinRequest`: `chat`, `from` (заявитель),
+`user_chat_id` (id заявителя, то есть личного чата с ботом), `date`, `bio`,
+если оно есть и боту разрешено его видеть, и `invite_link` (`ChatInviteLink`),
+если заявка подана по пригласительной ссылке.
+
+Обновление ставится в очередь, когда пользователь подаёт заявку в супергруппу
+или канал с одобрением вступления — по пригласительной ссылке с
+`creates_join_request` или вступая в публичный чат с включёнными заявками, —
+и только ботам, которые в этот момент владелец или администратор с
+`can_invite_users`. Входит в набор по умолчанию. `invite_link` — состояние
+ссылки на момент заявки, поэтому `pending_join_request_count` учитывает и эту
+заявку.
 
 Время жизни очереди задаёт `TELESRV_BOT_API_UPDATE_RETENTION` (по умолчанию
 `24h`); подтверждённые обновления удаляются раньше.
@@ -343,18 +359,31 @@ MTProto), поэтому другие клиенты видят изменени
 |---|---|---|
 | `photo` | InputProfilePhoto | обязателен; JSON-объект, запрос должен быть `multipart/form-data` |
 
-Поддерживается только `InputProfilePhotoStatic`:
-`{"type":"static","photo":"attach://<поле>"}`, где `<поле>` — файловая часть
-того же запроса. Как и официально, фото профиля нельзя задать через `file_id`
-или URL. Изображение сохраняется по правилам размеров фото профиля (`s`, `a`,
-`c`), становится текущим фото бота, возвращается `True`. Как и при
-`removeMyProfilePhoto`, владелец получает `updateUser` для бота.
+Поддерживаются два вида:
+
+- `InputProfilePhotoStatic`: `{"type":"static","photo":"attach://<поле>"}`.
+  Изображение сохраняется по правилам размеров фото профиля (`s`, `a`, `c`).
+- `InputProfilePhotoAnimated`:
+  `{"type":"animated","animation":"attach://<поле>","main_frame_timestamp":<секунды>}`.
+  Видео MPEG4 становится видеоаватаром (размер видео `u`) и сохраняется
+  частями по 512 КБ, поэтому работают и видео больше одной части.
+  `main_frame_timestamp` необязателен (по умолчанию `0`, число или строка с
+  числом) и сохраняется как `video_start_ts` видео — клиенты берут этот кадр
+  как статичный.
+
+`<поле>` — файловая часть того же запроса. Как и официально, фото профиля
+нельзя задать через `file_id` или URL. Файл становится текущим фото бота,
+возвращается `True`. Как и при `removeMyProfilePhoto`, владелец получает
+`updateUser` для бота.
 
 Ошибки: отсутствующий или некорректный `photo` даёт `Bad Request: parameter
 "photo" is required`, `Bad Request: can't parse InputProfilePhoto JSON object`
 или `Bad Request: invalid InputProfilePhoto type specified`; `photo`, не
 указывающий на загруженный файл, — `Bad Request: profile photo must be uploaded
-as a new file using attach://`. Файл, который не декодируется как изображение,
+as a new file using attach://`. `main_frame_timestamp`, который не является
+числом, даёт `Bad Request: field "main_frame_timestamp" must be a valid
+Number`; отрицательный — `Bad Request: wrong main frame timestamp specified`.
+Файл, который не декодируется как изображение,
 даёт `Bad Request: IMAGE_PROCESS_FAILED`; файл больше 10 МБ —
 `Bad Request: file is too big`.
 
@@ -833,11 +862,19 @@ specified` / `invalid message identifier specified`).
 | `leaveChat` | `chat_id` | |
 | `approveChatJoinRequest` | `chat_id`, `user_id` | нужно право приглашать пользователей (или менять информацию); заявитель вступает, участники и администраторы получают те же обновления, что и при действии администратора-человека |
 | `declineChatJoinRequest` | `chat_id`, `user_id` | нужно право приглашать пользователей (или менять информацию); заявка удаляется |
+| `banChatSenderChat` | `chat_id`, `sender_chat_id` | нужно право блокировать пользователей; блокировка видна в списке заблокированных и в журнале действий; повтор ничего не меняет |
+| `unbanChatSenderChat` | `chat_id`, `sender_chat_id` | нужно право блокировать пользователей; повтор ничего не меняет |
 
 Несуществующая или уже обработанная заявка —
 `Bad Request: HIDE_REQUESTER_MISSING`; для этих двух методов
 `CHAT_ADMIN_REQUIRED` и `USER_ALREADY_PARTICIPANT` тоже идут с
 официальным префиксом `Bad Request: `.
+
+`banChatSenderChat` / `unbanChatSenderChat` принимают `sender_chat_id` только
+как id супергруппы/канала (`-100…`); всё остальное — `Bad Request: invalid chat
+identifier specified`, неизвестный канал или сам чат — `Bad Request: member not
+found`, отсутствие права блокировки — `Bad Request: not enough rights to
+restrict/unrestrict chat member`.
 
 При `use_independent_chat_permissions=false` (по умолчанию) любое право на
 медиа, опросы, «другие сообщения» или превью ссылок также разрешает обычные
@@ -1139,8 +1176,7 @@ Message entities (для `entities` / `caption_entities`, а также entity
 - платежи: `createInvoiceLink`, `getStarTransactions`,
   `editUserStarSubscription`, `getMyStarBalance` и методы управления
   подарками помимо `getAvailableGifts` / `sendGift`;
-- администрирование чатов: `banChatSenderChat`, `unbanChatSenderChat`,
-  `setChatStickerSet`, `deleteChatStickerSet`, пригласительные ссылки
+- администрирование чатов: `setChatStickerSet`, `deleteChatStickerSet`, пригласительные ссылки
   (`exportChatInviteLink`, `createChatInviteLink`, `editChatInviteLink`,
   `revokeChatInviteLink`, ссылки-подписки), заявки на вступление
   (`approveChatJoinRequest`, `declineChatJoinRequest`);

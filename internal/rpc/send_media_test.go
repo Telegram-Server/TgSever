@@ -579,6 +579,16 @@ func (f *fakeFiles) CreateAvatarVideoFromUpload(_ context.Context, _ domain.Uplo
 	photo := domain.Photo{ID: 779, AccessHash: 7, DCID: 2, Sizes: append(fakeAvatarStaticSizes(), domain.PhotoSize{Kind: domain.PhotoSizeKindVideo, Type: "u", W: 640, H: 640, Size: 1024, VideoStartTs: videoStartTs})}
 	return f.putPhoto(photo), nil
 }
+
+// CreateAvatarVideoFromBytes 与真实实现一样拒绝空字节，'u' 尺寸记录视频字节数与主帧时间戳。
+func (f *fakeFiles) CreateAvatarVideoFromBytes(_ context.Context, data []byte, videoStartTs float64) (domain.Photo, error) {
+	if len(data) == 0 {
+		return domain.Photo{}, domain.ErrPhotoInvalid
+	}
+	sizes := append(fakeAvatarStaticSizes(), domain.PhotoSize{Kind: domain.PhotoSizeKindVideo, Type: "u", W: 640, H: 640, Size: len(data), VideoStartTs: videoStartTs})
+	photo := domain.Photo{ID: 8600 + int64(len(f.photos)), AccessHash: 86, DCID: 2, Sizes: sizes}
+	return f.putPhoto(photo), nil
+}
 func (f *fakeFiles) CreateAvatarVideoMarkupFromUpload(_ context.Context, _ domain.UploadedFileRef, videoStartTs float64, markup domain.PhotoSize) (domain.Photo, error) {
 	sizes := append(fakeAvatarStaticSizes(), domain.PhotoSize{Kind: domain.PhotoSizeKindVideo, Type: "u", W: 640, H: 640, Size: 1024, VideoStartTs: videoStartTs})
 	sizes = append(sizes, markup)

@@ -180,7 +180,7 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (93 methods + 1 file route):
+Implemented (95 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
@@ -197,7 +197,7 @@ Implemented (93 methods + 1 file route):
 | Ephemeral edit/delete | `editEphemeralMessageText`, `editEphemeralMessageMedia`, `editEphemeralMessageCaption`, `editEphemeralMessageReplyMarkup`, `deleteEphemeralMessage` |
 | Callback | `answerCallbackQuery` |
 | Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
-| Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat`, `banChatSenderChat`, `unbanChatSenderChat` |
 | Invite links | `createChatInviteLink`, `editChatInviteLink`, `revokeChatInviteLink`, `exportChatInviteLink` |
 | Join requests | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Files | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
@@ -214,7 +214,7 @@ one answers that group with `501 METHOD_NOT_FOUND`.
 
 ## Updates
 
-Six update kinds are produced:
+Seven update kinds are produced:
 
 | `allowed_updates` value | Update key | Delivered by default |
 |---|---|---|
@@ -224,6 +224,7 @@ Six update kinds are produced:
 | `pre_checkout_query` | `pre_checkout_query` | yes |
 | `my_chat_member` | `my_chat_member` | yes |
 | `chat_member` | `chat_member` | **no** — only when listed explicitly |
+| `chat_join_request` | `chat_join_request` | yes |
 
 `allowed_updates` is a JSON array of up to 100 strings, accepted both by
 `getUpdates` and by `setWebhook`, and it persists per bot. The filter is
@@ -273,6 +274,21 @@ Known differences from the official gateway:
   does not record who promoted an admin;
 - there is no `invite_link` field; `via_join_request` and
   `via_chat_folder_invite_link` are filled.
+
+### `chat_join_request`
+
+Carries an official `ChatJoinRequest`: `chat`, `from` (the applicant),
+`user_chat_id` (the applicant's id, i.e. the private chat with the bot),
+`date`, `bio` when the applicant has one that the bot may see, and
+`invite_link` (a `ChatInviteLink`) when the request came through an invite
+link.
+
+It is queued when a user applies to a supergroup or channel that needs
+approval — either through an invite link with `creates_join_request`, or by
+joining a public chat that has join requests enabled — and only for bots that
+are the creator or an administrator with `can_invite_users` at that moment.
+It belongs to the default set. `invite_link` is the link as it was when the
+request was made, so `pending_join_request_count` counts this request too.
 
 Queue retention is controlled by `TELESRV_BOT_API_UPDATE_RETENTION`
 (default `24h`); acknowledged updates are dropped earlier.
@@ -344,18 +360,29 @@ owner's clients right away.
 |---|---|---|
 | `photo` | InputProfilePhoto | required; JSON object, request must be `multipart/form-data` |
 
-Only `InputProfilePhotoStatic` is supported:
-`{"type":"static","photo":"attach://<field>"}`, where `<field>` is a file part
-of the same request. Profile photos cannot reuse a `file_id` or a URL, as
-officially. The image is stored with the profile-photo size rules (`s`, `a`,
-`c`), becomes the bot's current photo, and `True` is returned. As with
-`removeMyProfilePhoto`, the owner receives an `updateUser` for the bot.
+Two kinds are supported:
+
+- `InputProfilePhotoStatic`: `{"type":"static","photo":"attach://<field>"}`.
+  The image is stored with the profile-photo size rules (`s`, `a`, `c`).
+- `InputProfilePhotoAnimated`:
+  `{"type":"animated","animation":"attach://<field>","main_frame_timestamp":<seconds>}`.
+  The MPEG4 video becomes a video avatar (video size `u`), saved in 512 KB
+  upload parts, so videos larger than one part work. `main_frame_timestamp` is
+  optional (default `0`, a number or a numeric string) and is stored as the
+  video's `video_start_ts`, which clients use as the still frame.
+
+`<field>` is a file part of the same request. Profile photos cannot reuse a
+`file_id` or a URL, as officially. The file becomes the bot's current photo and
+`True` is returned. As with `removeMyProfilePhoto`, the owner receives an
+`updateUser` for the bot.
 
 Errors: a missing or malformed `photo` gives `Bad Request: parameter "photo"
 is required`, `Bad Request: can't parse InputProfilePhoto JSON object` or
 `Bad Request: invalid InputProfilePhoto type specified`; a `photo` that does not
 point to an uploaded file gives `Bad Request: profile photo must be uploaded as
-a new file using attach://`. A file that is not a decodable image gives
+a new file using attach://`. A `main_frame_timestamp` that is not a number gives
+`Bad Request: field "main_frame_timestamp" must be a valid Number`; a negative
+one gives `Bad Request: wrong main frame timestamp specified`. A file that is not a decodable image gives
 `Bad Request: IMAGE_PROCESS_FAILED`; a file over 10 MB gives
 `Bad Request: file is too big`.
 
@@ -834,11 +861,19 @@ method is `CHAT_ID_INVALID`. Pinning methods also work in private chats.
 | `leaveChat` | `chat_id` | |
 | `approveChatJoinRequest` | `chat_id`, `user_id` | needs the invite-users (or change-info) right; the applicant joins and members and admins get the same updates as for a human admin |
 | `declineChatJoinRequest` | `chat_id`, `user_id` | needs the invite-users (or change-info) right; the request is dropped |
+| `banChatSenderChat` | `chat_id`, `sender_chat_id` | needs the ban right; the ban shows in the banned list and the admin log; repeating it is a no-op |
+| `unbanChatSenderChat` | `chat_id`, `sender_chat_id` | needs the ban right; repeating it is a no-op |
 
 A join request that does not exist or was already handled is
 `Bad Request: HIDE_REQUESTER_MISSING`; for these two methods
 `CHAT_ADMIN_REQUIRED` and `USER_ALREADY_PARTICIPANT` also carry the
 official `Bad Request: ` prefix.
+
+`banChatSenderChat` / `unbanChatSenderChat` take `sender_chat_id` only as a
+supergroup/channel id (`-100…`); anything else is `Bad Request: invalid chat
+identifier specified`, an unknown channel or the chat itself is `Bad Request:
+member not found`, and a missing ban right is `Bad Request: not enough rights
+to restrict/unrestrict chat member`.
 
 With `use_independent_chat_permissions=false` (the default), any media, poll,
 "other messages" or web-preview permission also allows plain text messages, as
@@ -1142,8 +1177,7 @@ commonly reached ones:
 - payments: `createInvoiceLink`, `getStarTransactions`,
   `editUserStarSubscription`, `getMyStarBalance`, and the gift-management
   methods beyond `getAvailableGifts` / `sendGift`;
-- chat administration: `banChatSenderChat`, `unbanChatSenderChat`,
-  `setChatStickerSet`, `deleteChatStickerSet`, invite links
+- chat administration: `setChatStickerSet`, `deleteChatStickerSet`, invite links
   (`exportChatInviteLink`, `createChatInviteLink`, `editChatInviteLink`,
   `revokeChatInviteLink`, subscription links), join requests
   (`approveChatJoinRequest`, `declineChatJoinRequest`);
