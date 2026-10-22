@@ -179,7 +179,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (85 методов + 1 файловый маршрут):
+Реализовано (89 методов + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
@@ -197,6 +197,7 @@ TL-ошибка, которой шлюз не знает, сворачивает
 | Callback | `answerCallbackQuery` |
 | Запросы о чатах | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount`, `getUserProfilePhotos` |
 | Управление чатами | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Ссылки-приглашения | `createChatInviteLink`, `editChatInviteLink`, `revokeChatInviteLink`, `exportChatInviteLink` |
 | Заявки на вступление | `approveChatJoinRequest`, `declineChatJoinRequest` |
 | Файлы | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
 | Webhooks | `setWebhook`, `deleteWebhook`, `getWebhookInfo` |
@@ -799,6 +800,37 @@ inline-сообщения.
   как multipart-файл или `attach://<field>`); `file_id` или URL —
   `PHOTO_INVALID`;
 - обычных групп нет, поэтому специфичных для них методов и ошибок тоже нет.
+
+## Методы: ссылки-приглашения
+
+Бот должен быть создателем или админом с правом приглашать пользователей или
+менять информацию; иначе каждый метод возвращает
+`Bad Request: not enough rights to manage chat invite links`. Создание и
+экспорт идут через `messages.exportChatInvite`, изменение и отзыв — через
+`messages.editExportedChatInvite` от имени бота, поэтому владелец видит эти
+ссылки как созданные ботом. Только супергруппы и каналы.
+
+| Метод | Параметры | Результат |
+|---|---|---|
+| `createChatInviteLink` | `chat_id`, `name`, `expire_date`, `member_limit`, `creates_join_request` | `ChatInviteLink` |
+| `editChatInviteLink` | `chat_id`, `invite_link`, `name`, `expire_date`, `member_limit`, `creates_join_request` | `ChatInviteLink` |
+| `revokeChatInviteLink` | `chat_id`, `invite_link` | `ChatInviteLink` с `is_revoked=true`; при отзыве основной ссылки создаётся новая |
+| `exportChatInviteLink` | `chat_id` | новая основная ссылка бота строкой; прежняя основная ссылка перестаёт работать |
+
+Проверка параметров (`Bad Request: ...`, до каких-либо изменений): `name` — не
+длиннее 32 символов, `member_limit` — 1–99999, `member_limit` нельзя сочетать с
+`creates_join_request=true`; `invite_link` обязателен для изменения и отзыва.
+
+`ChatInviteLink` содержит `invite_link`, `creator`, `creates_join_request`,
+`is_primary`, `is_revoked` и, если заданы, `name`, `expire_date`,
+`member_limit` и `pending_join_request_count`.
+
+Отличия от официального шлюза:
+
+- `editChatInviteLink` меняет только переданные параметры; официально
+  непереданный параметр сбрасывается;
+- ссылка, созданная без параметров, считается основной ссылкой бота
+  (`is_primary=true`), и `exportChatInviteLink` отзывает и её.
 
 ## Методы: файлы
 

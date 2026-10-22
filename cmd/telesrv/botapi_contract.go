@@ -18,6 +18,7 @@ var (
 	_ botapi.BotProfilePhotoGateway  = (*rpc.Router)(nil)
 	_ botapi.ChatAdminGateway        = (*rpc.Router)(nil)
 	_ botapi.ChatQueryGateway        = (*rpc.Router)(nil)
+	_ botapi.ChatInviteLinkGateway   = (*rpc.Router)(nil)
 	_ botapi.ForwardGateway          = (*rpc.Router)(nil)
 	_ botapi.SendExtraGateway        = (*rpc.Router)(nil)
 	_ botapi.EditExtraGateway        = (*rpc.Router)(nil)
