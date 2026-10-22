@@ -16,6 +16,13 @@ import type { Navigate } from "../routing";
 import type { AccountDetail, DeviceBinding } from "../types";
 import { SectionTabs } from "../components/SectionTabs";
 
+// Bots are never limited and a deleted account cannot sign in, so the server
+// refuses a limit on either: no summary row, no bound-device section and no
+// action for them.
+function deviceLimitAppliesTo(detail: AccountDetail): boolean {
+  return !detail.Bot && !detail.Deleted;
+}
+
 export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navigate }) {
   const { t } = useI18n();
   const { can } = usePermissions();
@@ -35,15 +42,16 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
     setBusy(true);
     setError("");
     try {
+      const next = await api.account(id);
       // The bound-device list comes from the server's admin API rather than the
-      // panel's read store; a failure there degrades only its own section.
-      const [next, bound] = await Promise.all([
-        api.account(id),
-        api.deviceBindings(id).then(
-          (list) => ({ rows: list.bindings ?? [], error: "" }),
-          (err: unknown) => ({ rows: null, error: errorMessage(err) })
-        )
-      ]);
+      // panel's read store; a failure there degrades only its own section. It is
+      // only requested when that section is shown (not for bots or deleted accounts).
+      const bound = deviceLimitAppliesTo(next)
+        ? await api.deviceBindings(id).then(
+            (list) => ({ rows: list.bindings ?? [], error: "" }),
+            (err: unknown) => ({ rows: null, error: errorMessage(err) })
+          )
+        : { rows: [], error: "" };
       setDetail(next);
       setBindings(bound.rows);
       setBindingsError(bound.error);
@@ -76,9 +84,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
   // slot after signing out, and several sign-ins on one device hold one slot.
   const boundDevices = bindings === null ? "?" : bindings.length;
   const deviceLimit = detail.DeviceLimit ?? null;
-  // Bots are never limited and a deleted account cannot sign in, so the server
-  // refuses a limit on either: no summary row and no action for them.
-  const deviceLimitApplies = !detail.Bot && !detail.Deleted;
+  const deviceLimitApplies = deviceLimitAppliesTo(detail);
   return (
     <PageFrame
       title={t("account.detailTitle", { id: account.ID })}
