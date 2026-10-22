@@ -179,13 +179,13 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (89 методов + 1 файловый маршрут):
+Реализовано (90 методов + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
 | Бот и команды | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
 | Миграция | `logOut`, `close` (заглушки: всегда `True`, состояние не меняется, 10-минутного ограничения `close` нет) |
-| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto` |
+| Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `setMyProfilePhoto`, `removeMyProfilePhoto` |
 | Обновления | `getUpdates`, `dropPendingUpdates` (расширение telesrv) |
 | Текст | `sendMessage`, `sendRichMessage` |
 | Медиа | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -336,6 +336,27 @@ MTProto), поэтому другие клиенты видят изменени
 Без параметров. Удаляет текущее фото профиля бота и возвращает `True`. Если
 фото нет, тоже возвращается `True`, как на официальном сервере. Владелец бота
 получает `updateUser` для бота, и его клиенты сразу показывают изменение.
+
+### `setMyProfilePhoto`
+
+| Параметр | Тип | Комментарий |
+|---|---|---|
+| `photo` | InputProfilePhoto | обязателен; JSON-объект, запрос должен быть `multipart/form-data` |
+
+Поддерживается только `InputProfilePhotoStatic`:
+`{"type":"static","photo":"attach://<поле>"}`, где `<поле>` — файловая часть
+того же запроса. Как и официально, фото профиля нельзя задать через `file_id`
+или URL. Изображение сохраняется по правилам размеров фото профиля (`s`, `a`,
+`c`), становится текущим фото бота, возвращается `True`. Как и при
+`removeMyProfilePhoto`, владелец получает `updateUser` для бота.
+
+Ошибки: отсутствующий или некорректный `photo` даёт `Bad Request: parameter
+"photo" is required`, `Bad Request: can't parse InputProfilePhoto JSON object`
+или `Bad Request: invalid InputProfilePhoto type specified`; `photo`, не
+указывающий на загруженный файл, — `Bad Request: profile photo must be uploaded
+as a new file using attach://`. Файл, который не декодируется как изображение,
+даёт `Bad Request: IMAGE_PROCESS_FAILED`; файл больше 10 МБ —
+`Bad Request: file is too big`.
 
 ## Методы: отправка
 

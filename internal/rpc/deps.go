@@ -974,6 +974,9 @@ type FilesService interface {
 	// getWebPagePreview 已解析过，则 echo 直接带 done 卡片（与官方一致），不依赖异步换卡。
 	LookupWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, bool)
 	CreateAvatarFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error)
+	// CreateAvatarFromBytes 把已在内存里的图片字节按头像规则（s/a/c）存成 Photo，不绑定
+	// profile_photos；与 CreatePhotoFromBytes（消息照片 m/x）不同。Bot API setMyProfilePhoto 用它。
+	CreateAvatarFromBytes(ctx context.Context, data []byte) (domain.Photo, error)
 	CreateAvatarVideoFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64) (domain.Photo, error)
 	CreateAvatarVideoMarkupFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, markup domain.PhotoSize) (domain.Photo, error)
 	CreateAvatarMarkup(ctx context.Context, size domain.PhotoSize) (domain.Photo, error)

@@ -1,8 +1,11 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	_ "image/png"
 	"sort"
 	"strings"
 	"testing"
@@ -561,6 +564,15 @@ func (f *fakeFiles) CreatePhotoFromBytes(_ context.Context, data []byte) (domain
 }
 func (f *fakeFiles) CreateAvatarFromUpload(_ context.Context, _ domain.UploadedFileRef) (domain.Photo, error) {
 	photo := domain.Photo{ID: 778, AccessHash: 7, DCID: 2, Sizes: fakeAvatarStaticSizes()}
+	return f.putPhoto(photo), nil
+}
+
+// CreateAvatarFromBytes 与真实实现一样拒绝解不开的图片，成功时给出头像的 s/a/c 尺寸。
+func (f *fakeFiles) CreateAvatarFromBytes(_ context.Context, data []byte) (domain.Photo, error) {
+	if _, _, err := image.DecodeConfig(bytes.NewReader(data)); err != nil {
+		return domain.Photo{}, domain.ErrPhotoInvalid
+	}
+	photo := domain.Photo{ID: 8500 + int64(len(f.photos)), AccessHash: 85, DCID: 2, Sizes: fakeAvatarStaticSizes()}
 	return f.putPhoto(photo), nil
 }
 func (f *fakeFiles) CreateAvatarVideoFromUpload(_ context.Context, _ domain.UploadedFileRef, videoStartTs float64) (domain.Photo, error) {

@@ -180,13 +180,13 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (89 methods + 1 file route):
+Implemented (90 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
 | Bot & commands | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
 | Migration | `logOut`, `close` (no-op: always `True`, no state is touched, no 10-minute `close` limit) |
-| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `removeMyProfilePhoto` |
+| Bot profile | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription`, `setMyProfilePhoto`, `removeMyProfilePhoto` |
 | Updates | `getUpdates`, `dropPendingUpdates` (telesrv extension) |
 | Text | `sendMessage`, `sendRichMessage` |
 | Media | `sendPhoto`, `sendAnimation`, `sendAudio`, `sendDocument`, `sendLivePhoto`, `sendSticker`, `sendVideo`, `sendVideoNote`, `sendVoice` |
@@ -337,6 +337,27 @@ No parameters. Removes the bot's current profile photo and returns `True`. A bot
 without a profile photo also gets `True`, as with the official server. The
 bot's owner receives an `updateUser` for the bot, so the change shows up in the
 owner's clients right away.
+
+### `setMyProfilePhoto`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `photo` | InputProfilePhoto | required; JSON object, request must be `multipart/form-data` |
+
+Only `InputProfilePhotoStatic` is supported:
+`{"type":"static","photo":"attach://<field>"}`, where `<field>` is a file part
+of the same request. Profile photos cannot reuse a `file_id` or a URL, as
+officially. The image is stored with the profile-photo size rules (`s`, `a`,
+`c`), becomes the bot's current photo, and `True` is returned. As with
+`removeMyProfilePhoto`, the owner receives an `updateUser` for the bot.
+
+Errors: a missing or malformed `photo` gives `Bad Request: parameter "photo"
+is required`, `Bad Request: can't parse InputProfilePhoto JSON object` or
+`Bad Request: invalid InputProfilePhoto type specified`; a `photo` that does not
+point to an uploaded file gives `Bad Request: profile photo must be uploaded as
+a new file using attach://`. A file that is not a decodable image gives
+`Bad Request: IMAGE_PROCESS_FAILED`; a file over 10 MB gives
+`Bad Request: file is too big`.
 
 ## Methods: sending
 
