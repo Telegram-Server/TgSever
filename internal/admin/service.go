@@ -566,7 +566,11 @@ type Dependencies struct {
 	LoginPasswordFingerprintKey []byte
 	// DeviceLimits 是账号设备上限的读写面（见 devicelimit.go）。
 	DeviceLimits DeviceLimitStore
-	Now          func() time.Time
+	// Permissions 是员工权限控制的业务模块，PermissionsNotifier 在权限写入后推送
+	// updateConfig（见 permissions.go）。
+	Permissions         AccountPermissionsService
+	PermissionsNotifier AccountPermissionsNotifier
+	Now                 func() time.Time
 }
 
 type Service struct {
@@ -618,6 +622,8 @@ type Service struct {
 	// loginPasswordFingerprintKey 见 Dependencies.LoginPasswordFingerprintKey。
 	loginPasswordFingerprintKey []byte
 	deviceLimits                DeviceLimitStore
+	permissions                 AccountPermissionsService
+	permissionsNotifier         AccountPermissionsNotifier
 	now                         func() time.Time
 }
 
@@ -767,6 +773,12 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.DeviceLimits != nil {
 		s.deviceLimits = deps.DeviceLimits
+	}
+	if deps.Permissions != nil {
+		s.permissions = deps.Permissions
+	}
+	if deps.PermissionsNotifier != nil {
+		s.permissionsNotifier = deps.PermissionsNotifier
 	}
 	if deps.Now != nil {
 		s.now = deps.Now

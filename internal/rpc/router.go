@@ -847,6 +847,9 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		if err := r.checkFrozenRPC(ctx, tlTypeName(id)); err != nil {
 			return nil, err
 		}
+		if err := r.checkPermissionRPC(ctx, tlTypeName(id)); err != nil {
+			return nil, err
+		}
 		if err := r.checkSensitiveRPCRateLimit(ctx, id); err != nil {
 			return nil, err
 		}

@@ -309,6 +309,9 @@ func (r *Router) DispatchAdmitted(
 	if err := r.checkFrozenRPC(ctx, method); err != nil {
 		return nil, method, err
 	}
+	if err := r.checkPermissionRPC(ctx, method); err != nil {
+		return nil, method, err
+	}
 	// 敏感方法组（SRP 校验、提现、转账）的限流按 canonical wire id 查表，与旧的
 	// Router.Dispatch 路径一致；生产走的是这条按 Layer 准入的路径，漏掉它整张表就不生效。
 	if err := r.checkSensitiveRPCRateLimit(ctx, canonicalID); err != nil {

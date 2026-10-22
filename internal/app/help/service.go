@@ -107,6 +107,7 @@ type Service struct {
 	appConfigs    store.AppConfigStore
 	countries     store.CountryStore
 	accountFreeze AccountFreezeProvider
+	permissions   AccountPermissionsProvider
 	mapboxToken   string
 	premiumBot    string
 	walletEnabled bool
@@ -140,6 +141,19 @@ type AccountFreezeProvider interface {
 func WithAccountFreezeProvider(provider AccountFreezeProvider) Option {
 	return func(s *Service) {
 		s.accountFreeze = provider
+	}
+}
+
+// AccountPermissionsProvider 提供作用于账号的员工权限设置（#118）；enforced=false 表示该账号
+// 不受权限控制（没有记录、总开关关闭、bot 或系统账号），appConfig 里不出现 telesrv_permissions。
+type AccountPermissionsProvider interface {
+	EnforcedAccountPermissions(ctx context.Context, userID int64) (domain.AccountPermissions, bool, error)
+}
+
+// WithAccountPermissionsProvider 让按账号的 appConfig 叠加层在总开关开启时下发 telesrv_permissions。
+func WithAccountPermissionsProvider(provider AccountPermissionsProvider) Option {
+	return func(s *Service) {
+		s.permissions = provider
 	}
 }
 
@@ -184,6 +198,45 @@ func WithPasswordLogin(enabled bool) Option {
 // appConfigKeySignUpDisabled 是注册关闭时下发给客户端的服务器状态 key。它与
 // telesrv_features 分开：后者表示能力，这个表示服务器当前状态。注册开放时不出现。
 const appConfigKeySignUpDisabled = "telesrv_sign_up_disabled"
+
+// appConfigKeyPermissions 是员工权限控制（#118）下发给客户端的 key，只在总开关开启时出现。
+const appConfigKeyPermissions = "telesrv_permissions"
+
+type appConfigPermissions struct {
+	Send          bool                          `json:"send"`
+	Delete        bool                          `json:"delete"`
+	Edit          bool                          `json:"edit"`
+	ClearHistory  bool                          `json:"clear_history"`
+	CreateGroup   bool                          `json:"create_group"`
+	CreateChannel bool                          `json:"create_channel"`
+	JoinGroup     bool                          `json:"join_group"`
+	JoinChannel   bool                          `json:"join_channel"`
+	LeaveGroup    bool                          `json:"leave_group"`
+	LeaveChannel  bool                          `json:"leave_channel"`
+	AddContact    bool                          `json:"add_contact"`
+	SendWhitelist appConfigPermissionsWhitelist `json:"send_whitelist"`
+}
+
+type appConfigPermissionsWhitelist struct {
+	Enabled bool    `json:"enabled"`
+	UserIDs []int64 `json:"user_ids"`
+}
+
+func appConfigPermissionsValue(p domain.AccountPermissions) appConfigPermissions {
+	ids := p.SendWhitelist
+	if ids == nil {
+		ids = []int64{}
+	}
+	f := p.Flags
+	return appConfigPermissions{
+		Send: f.Send, Delete: f.Delete, Edit: f.Edit, ClearHistory: f.ClearHistory,
+		CreateGroup: f.CreateGroup, CreateChannel: f.CreateChannel,
+		JoinGroup: f.JoinGroup, JoinChannel: f.JoinChannel,
+		LeaveGroup: f.LeaveGroup, LeaveChannel: f.LeaveChannel,
+		AddContact:    f.AddContact,
+		SendWhitelist: appConfigPermissionsWhitelist{Enabled: p.SendWhitelistEnabled, UserIDs: ids},
+	}
+}
 
 // WithSignUpAllowed 注入"是否允许注册"的来源（通常是 auth.Service.SignUpAllowed，
 // 保证下发状态与服务端拦截同源）。每次 GetAppConfig 都实时调用；返回 error 时按关闭下发。
@@ -313,7 +366,7 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 		return domain.AppConfig{}, fmt.Errorf("decode base app config: %w", err)
 	}
 	changed := false
-	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled, appConfigKeyCodeLoginDisabled} {
+	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled, appConfigKeyCodeLoginDisabled, appConfigKeyPermissions} {
 		if _, exists := values[key]; exists {
 			delete(values, key)
 			changed = true
@@ -339,6 +392,20 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 				values["freeze_until_date"] = json.RawMessage(strconv.FormatInt(freeze.Until.Unix(), 10))
 				appeal, _ := json.Marshal(freeze.AppealURL)
 				values["freeze_appeal_url"] = appeal
+				changed = true
+			}
+		}
+		if s != nil && s.permissions != nil {
+			perms, enforced, err := s.permissions.EnforcedAccountPermissions(ctx, userID)
+			if err != nil {
+				return domain.AppConfig{}, fmt.Errorf("load account permissions: %w", err)
+			}
+			if enforced {
+				body, err := json.Marshal(appConfigPermissionsValue(perms))
+				if err != nil {
+					return domain.AppConfig{}, fmt.Errorf("encode account permissions: %w", err)
+				}
+				values[appConfigKeyPermissions] = body
 				changed = true
 			}
 		}

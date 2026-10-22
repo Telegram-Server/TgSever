@@ -42,6 +42,14 @@ type ReadModelCacheSet struct {
 	StarGifts           StarGiftCatalogCache
 	AccountSettings     AccountSettingsReadModelCache
 	UserProjectionFacts UserProjectionFactReadModelCache
+	AccountPermissions  AccountPermissionsReadModelCache
+}
+
+// AccountPermissionsReadModelCache 是员工权限视图的进程内缓存（app/permissions.Service，#119）；
+// 权限写入在同一事务里 bump read model "account_permissions"，据此跨实例失效。
+type AccountPermissionsReadModelCache interface {
+	InvalidateAccountPermissions(userID int64)
+	FlushAccountPermissions()
 }
 
 type UserProjectionFactReadModelCache interface {
@@ -382,6 +390,10 @@ func (l *ReadModelChangeListener) flush(reasons ...string) {
 		l.caches.UserProjectionFacts.FlushUserProjectionFactReadModel()
 		flushed = append(flushed, "user_projection_facts")
 	}
+	if l.caches.AccountPermissions != nil {
+		l.caches.AccountPermissions.FlushAccountPermissions()
+		flushed = append(flushed, "account_permissions")
+	}
 	// 注意：BaseUsers(Redis) 刻意不在重连时 flush——它是跨实例共享缓存，整库清空会误伤
 	// 其它实例；漏掉的通知由其 5min TTL 兜底。
 	l.log.Info("read model caches flushed",
@@ -489,6 +501,10 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			if l.caches.Stories != nil {
 				l.caches.Stories.InvalidateStoryReadModelPeer(domain.Peer{Type: domain.PeerTypeUser, ID: evt.PeerID})
 			}
+		}
+	case "account_permissions":
+		if evt.PeerType == "user" && evt.PeerID != 0 && l.caches.AccountPermissions != nil {
+			l.caches.AccountPermissions.InvalidateAccountPermissions(evt.PeerID)
 		}
 	case "user_collectible_phone":
 		if evt.PeerType == "user" && evt.PeerID != 0 && l.caches.UserProjectionFacts != nil {

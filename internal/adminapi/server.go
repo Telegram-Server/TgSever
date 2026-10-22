@@ -62,6 +62,8 @@ type Service interface {
 	SetDeviceLimit(ctx context.Context, req admin.SetDeviceLimitRequest) (admin.CommandResult, error)
 	DeviceBindings(ctx context.Context, userID int64) (admin.DeviceBindingList, error)
 	UnbindDevice(ctx context.Context, req admin.UnbindDeviceRequest) (admin.CommandResult, error)
+	SetPermissions(ctx context.Context, req admin.SetPermissionsRequest) (admin.CommandResult, error)
+	AccountPermissions(ctx context.Context, userID int64) (admin.AccountPermissionsResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
@@ -295,6 +297,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-device-limit", s.authenticated(s.handleSetDeviceLimit))
 	mux.HandleFunc("GET /v1/accounts/{id}/device-bindings", s.authenticated(s.handleDeviceBindings))
 	mux.HandleFunc("POST /v1/accounts/unbind-device", s.authenticated(s.handleUnbindDevice))
+	mux.HandleFunc("POST /v1/accounts/set-permissions", s.authenticated(s.handleSetPermissions))
+	mux.HandleFunc("GET /v1/accounts/{id}/permissions", s.authenticated(s.handleAccountPermissions))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
@@ -799,6 +803,31 @@ func (s *Server) handleDeviceBindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// handleSetPermissions 设置账号的员工权限（#119，account.set_permissions）：给出的字段整体替换，
+// 未给出的沿用当前值。
+func (s *Server) handleSetPermissions(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetPermissionsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetPermissions(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// handleAccountPermissions 读取账号的员工权限；没有记录时返回总开关关闭与默认值（found=false）。
+func (s *Server) handleAccountPermissions(w http.ResponseWriter, r *http.Request) {
+	userID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	result, err := s.svc.AccountPermissions(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handleUnbindDevice 解绑账号的一台设备（#114）：删除绑定并让那台设备上的这个账号下线。

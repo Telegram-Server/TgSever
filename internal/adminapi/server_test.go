@@ -862,6 +862,14 @@ func (fakeService) DeviceBindings(_ context.Context, userID int64) (admin.Device
 	return admin.DeviceBindingList{UserID: userID, Bindings: []admin.DeviceBinding{}}, nil
 }
 
+func (fakeService) SetPermissions(_ context.Context, req admin.SetPermissionsRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) AccountPermissions(_ context.Context, userID int64) (admin.AccountPermissionsResult, error) {
+	return admin.AccountPermissionsResult{UserID: userID}, nil
+}
+
 func (fakeService) UnbindDevice(_ context.Context, req admin.UnbindDeviceRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
