@@ -179,11 +179,12 @@ TL-ошибка, которой шлюз не знает, сворачивает
 
 ## Сводка методов
 
-Реализовано (79 методов + 1 файловый маршрут):
+Реализовано (81 метод + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
 | Бот и команды | `getMe`, `setMyCommands`, `deleteMyCommands`, `getMyCommands` |
+| Миграция | `logOut`, `close` (заглушки: всегда `True`, состояние не меняется, 10-минутного ограничения `close` нет) |
 | Профиль бота | `setMyName`, `getMyName`, `setMyDescription`, `getMyDescription`, `setMyShortDescription`, `getMyShortDescription` |
 | Обновления | `getUpdates`, `dropPendingUpdates` (расширение telesrv) |
 | Текст | `sendMessage`, `sendRichMessage` |
@@ -1027,7 +1028,7 @@ Message entities (для `entities` / `caption_entities`, а также entity
   `getForumTopicIconStickers` и остальное семейство тем;
 - запросы: `getUserProfilePhotos`, `getUserChatBoosts`;
 - администрирование бота: `setMyDefaultAdministratorRights`,
-  `getMyDefaultAdministratorRights`, `close`, `logOut`;
+  `getMyDefaultAdministratorRights`;
 - реакции (`setMessageReaction`), стикеры и стикерпаки, stories, методы
   business-аккаунтов и Telegram Passport.
 
