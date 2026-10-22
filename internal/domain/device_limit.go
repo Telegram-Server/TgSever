@@ -27,6 +27,9 @@ var (
 	ErrDeviceIDRequired = errors.New("device id required")
 	// ErrDeviceLimitInvalid 表示设备上限不在 [MinDeviceLimit, MaxDeviceLimit] 内。
 	ErrDeviceLimitInvalid = errors.New("device limit invalid")
+	// ErrDeviceBindingNotFound 表示后台要解绑的设备不在账号的绑定名单里（#114）；
+	// 后台命令映射为 DEVICE_BINDING_NOT_FOUND。
+	ErrDeviceBindingNotFound = errors.New("device binding not found")
 )
 
 // ValidDeviceLimit 报告 limit 是否是可设置的设备上限。

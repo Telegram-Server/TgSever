@@ -72,3 +72,43 @@ WHERE user_id = $1;
 -- name: IsBotUser :one
 -- 试运行补绑（#115）时排除 bot：bot 不受上限约束，也不补绑。
 SELECT is_bot FROM users WHERE id = $1;
+
+-- name: DeleteDeviceBinding :execrows
+-- 后台解绑一台设备（#114）；0 行即绑定不存在。
+DELETE FROM account_device_bindings
+WHERE user_id = $1 AND device_id = $2;
+
+-- name: ListAuthKeyIDsOnDevice :many
+-- 解绑时要撤销的候选：账号在 device_id 相同的 auth key 上的授权（含 password_pending）。
+-- 只是候选，锁住 auth key 之后要用 ListAuthorizationsOnDeviceForUpdate 重读。
+SELECT a.auth_key_id
+FROM authorizations a
+JOIN auth_keys k ON k.auth_key_id = a.auth_key_id
+WHERE a.user_id = $1 AND k.device_id = $2
+ORDER BY a.auth_key_id;
+
+-- name: CountAuthorizationsOnDevice :one
+-- 解绑试运行：将要撤销的授权数。
+SELECT count(*)
+FROM authorizations a
+JOIN auth_keys k ON k.auth_key_id = a.auth_key_id
+WHERE a.user_id = $1 AND k.device_id = $2;
+
+-- name: LockAuthKeysForUpdate :many
+-- 按 auth_key_id 顺序锁住 auth key 行（与 Bind 锁同一父行，撤销期间授权不会换主）。
+SELECT auth_key_id
+FROM auth_keys
+WHERE auth_key_id = ANY(@auth_key_ids::bigint[])
+ORDER BY auth_key_id
+FOR UPDATE;
+
+-- name: ListAuthorizationsOnDeviceForUpdate :many
+-- 锁住 auth key 之后用新的语句快照重读候选：等待期间换了主或换了设备的 key 被排除。
+SELECT sqlc.embed(a)
+FROM authorizations a
+JOIN auth_keys k ON k.auth_key_id = a.auth_key_id
+WHERE a.user_id = @user_id
+  AND k.device_id = @device_id
+  AND a.auth_key_id = ANY(@auth_key_ids::bigint[])
+ORDER BY a.created_at, a.auth_key_id
+FOR UPDATE OF a;

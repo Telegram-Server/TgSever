@@ -48,6 +48,16 @@ type DeviceLimitStore interface {
 	// ListDeviceBindings 返回账号的设备绑定名单，按绑定时间先后（同一时刻按 device_id）
 	// 排序；没有绑定返回空切片。
 	ListDeviceBindings(ctx context.Context, userID int64) ([]domain.DeviceBinding, error)
+	// UnbindDevice 是后台解绑（#114）：在同一事务、同一把用户锁下删除 userID 对 deviceID 的
+	// 绑定，并撤销该账号在 device_id 相同的 auth key 上的全部授权（含 password_pending），
+	// 返回被撤销的授权。撤销与远程踢设备相同：只删业务授权，保留协议 key，客户端重连后收到
+	// 401 并退出；调用方还要关闭这些 key 上的在线连接。绑定不存在返回
+	// domain.ErrDeviceBindingNotFound，不撤销任何授权。别的账号在同一 device_id 上的授权
+	// 与绑定不受影响。
+	UnbindDevice(ctx context.Context, userID int64, deviceID string) ([]domain.Authorization, error)
+	// PreviewUnbindDevice 只读地报告 UnbindDevice 会撤销的授权数（供试运行）；绑定不存在返回
+	// domain.ErrDeviceBindingNotFound。不加锁，结果是此刻的估计。
+	PreviewUnbindDevice(ctx context.Context, userID int64, deviceID string) (int, error)
 }
 
 // AuthorizationUserLinker 是可选的进程内组合钩子：授权与用户分别存放在两个内存对象里的

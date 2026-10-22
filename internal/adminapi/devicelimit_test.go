@@ -131,3 +131,52 @@ func TestAdminAPIDeviceBindings(t *testing.T) {
 		t.Fatalf("empty list status=%d body=%s", rec.Code, got)
 	}
 }
+
+type captureUnbindDeviceService struct {
+	fakeService
+	reqs []admin.UnbindDeviceRequest
+}
+
+func (s *captureUnbindDeviceService) UnbindDevice(_ context.Context, req admin.UnbindDeviceRequest) (admin.CommandResult, error) {
+	s.reqs = append(s.reqs, req)
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun, TargetUserID: req.UserID}, nil
+}
+
+// TestAdminAPIUnbindDevice 解绑设备（#114）：与 set-device-limit 一样只有 master token 能调。
+func TestAdminAPIUnbindDevice(t *testing.T) {
+	svc := &captureUnbindDeviceService{}
+	srv := &Server{
+		token:  "secret",
+		scoped: []ScopedToken{{Name: "prices", Token: "scoped", Permissions: []string{PermissionPricesManage}}},
+		svc:    svc,
+		log:    zap.NewNop(),
+	}
+	post := func(token, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/accounts/unbind-device", strings.NewReader(body))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		return rec
+	}
+	body := `{"command_id":"c-unbind","actor":"ops","reason":"new laptop","dry_run":true,"user_id":1001,"device_id":"laptop-1"}`
+	if rec := post("", body); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("without a token status=%d, want 401", rec.Code)
+	}
+	if rec := post("scoped", body); rec.Code != http.StatusForbidden {
+		t.Fatalf("with a scoped token status=%d, want 403", rec.Code)
+	}
+	if len(svc.reqs) != 0 {
+		t.Fatalf("unauthorized requests reached the service %d times", len(svc.reqs))
+	}
+	if rec := post("secret", body); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"command_id":"c-unbind"`) {
+		t.Fatalf("unbind status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(svc.reqs) != 1 {
+		t.Fatalf("service calls=%d, want 1", len(svc.reqs))
+	}
+	if got := svc.reqs[0]; got.CommandID != "c-unbind" || got.Actor != "ops" || !got.DryRun || got.UserID != 1001 || got.DeviceID != "laptop-1" {
+		t.Fatalf("decoded request = %+v", got)
+	}
+}

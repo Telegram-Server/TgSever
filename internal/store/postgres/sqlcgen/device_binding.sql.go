@@ -9,6 +9,26 @@ import (
 	"context"
 )
 
+const countAuthorizationsOnDevice = `-- name: CountAuthorizationsOnDevice :one
+SELECT count(*)
+FROM authorizations a
+JOIN auth_keys k ON k.auth_key_id = a.auth_key_id
+WHERE a.user_id = $1 AND k.device_id = $2
+`
+
+type CountAuthorizationsOnDeviceParams struct {
+	UserID   int64
+	DeviceID *string
+}
+
+// 解绑试运行：将要撤销的授权数。
+func (q *Queries) CountAuthorizationsOnDevice(ctx context.Context, arg CountAuthorizationsOnDeviceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAuthorizationsOnDevice, arg.UserID, arg.DeviceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDeviceBindings = `-- name: CountDeviceBindings :one
 SELECT count(*)
 FROM account_device_bindings
@@ -20,6 +40,25 @@ func (q *Queries) CountDeviceBindings(ctx context.Context, userID int64) (int64,
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteDeviceBinding = `-- name: DeleteDeviceBinding :execrows
+DELETE FROM account_device_bindings
+WHERE user_id = $1 AND device_id = $2
+`
+
+type DeleteDeviceBindingParams struct {
+	UserID   int64
+	DeviceID string
+}
+
+// 后台解绑一台设备（#114）；0 行即绑定不存在。
+func (q *Queries) DeleteDeviceBinding(ctx context.Context, arg DeleteDeviceBindingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteDeviceBinding, arg.UserID, arg.DeviceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteDeviceBindingsByUser = `-- name: DeleteDeviceBindingsByUser :execrows
@@ -144,6 +183,97 @@ func (q *Queries) IsBotUser(ctx context.Context, id int64) (bool, error) {
 	return is_bot, err
 }
 
+const listAuthKeyIDsOnDevice = `-- name: ListAuthKeyIDsOnDevice :many
+SELECT a.auth_key_id
+FROM authorizations a
+JOIN auth_keys k ON k.auth_key_id = a.auth_key_id
+WHERE a.user_id = $1 AND k.device_id = $2
+ORDER BY a.auth_key_id
+`
+
+type ListAuthKeyIDsOnDeviceParams struct {
+	UserID   int64
+	DeviceID *string
+}
+
+// 解绑时要撤销的候选：账号在 device_id 相同的 auth key 上的授权（含 password_pending）。
+// 只是候选，锁住 auth key 之后要用 ListAuthorizationsOnDeviceForUpdate 重读。
+func (q *Queries) ListAuthKeyIDsOnDevice(ctx context.Context, arg ListAuthKeyIDsOnDeviceParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listAuthKeyIDsOnDevice, arg.UserID, arg.DeviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var auth_key_id int64
+		if err := rows.Scan(&auth_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, auth_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAuthorizationsOnDeviceForUpdate = `-- name: ListAuthorizationsOnDeviceForUpdate :many
+SELECT a.auth_key_id, a.user_id, a.hash, a.layer, a.device_model, a.platform, a.system_version, a.api_id, a.app_version, a.ip, a.created_at, a.active_at, a.password_pending
+FROM authorizations a
+JOIN auth_keys k ON k.auth_key_id = a.auth_key_id
+WHERE a.user_id = $1
+  AND k.device_id = $2
+  AND a.auth_key_id = ANY($3::bigint[])
+ORDER BY a.created_at, a.auth_key_id
+FOR UPDATE OF a
+`
+
+type ListAuthorizationsOnDeviceForUpdateParams struct {
+	UserID     int64
+	DeviceID   *string
+	AuthKeyIds []int64
+}
+
+type ListAuthorizationsOnDeviceForUpdateRow struct {
+	Authorization Authorization
+}
+
+// 锁住 auth key 之后用新的语句快照重读候选：等待期间换了主或换了设备的 key 被排除。
+func (q *Queries) ListAuthorizationsOnDeviceForUpdate(ctx context.Context, arg ListAuthorizationsOnDeviceForUpdateParams) ([]ListAuthorizationsOnDeviceForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, listAuthorizationsOnDeviceForUpdate, arg.UserID, arg.DeviceID, arg.AuthKeyIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAuthorizationsOnDeviceForUpdateRow
+	for rows.Next() {
+		var i ListAuthorizationsOnDeviceForUpdateRow
+		if err := rows.Scan(
+			&i.Authorization.AuthKeyID,
+			&i.Authorization.UserID,
+			&i.Authorization.Hash,
+			&i.Authorization.Layer,
+			&i.Authorization.DeviceModel,
+			&i.Authorization.Platform,
+			&i.Authorization.SystemVersion,
+			&i.Authorization.ApiID,
+			&i.Authorization.AppVersion,
+			&i.Authorization.Ip,
+			&i.Authorization.CreatedAt,
+			&i.Authorization.ActiveAt,
+			&i.Authorization.PasswordPending,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBoundDeviceIDs = `-- name: ListBoundDeviceIDs :many
 SELECT device_id
 FROM account_device_bindings
@@ -242,6 +372,35 @@ func (q *Queries) ListDeviceBindings(ctx context.Context, userID int64) ([]Accou
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAuthKeysForUpdate = `-- name: LockAuthKeysForUpdate :many
+SELECT auth_key_id
+FROM auth_keys
+WHERE auth_key_id = ANY($1::bigint[])
+ORDER BY auth_key_id
+FOR UPDATE
+`
+
+// 按 auth_key_id 顺序锁住 auth key 行（与 Bind 锁同一父行，撤销期间授权不会换主）。
+func (q *Queries) LockAuthKeysForUpdate(ctx context.Context, authKeyIds []int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, lockAuthKeysForUpdate, authKeyIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var auth_key_id int64
+		if err := rows.Scan(&auth_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, auth_key_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

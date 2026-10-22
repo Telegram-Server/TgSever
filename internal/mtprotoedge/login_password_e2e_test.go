@@ -113,6 +113,9 @@ type loginPasswordServer struct {
 	authorizations *memory.AuthorizationStore
 	// authKeys 是服务端用的 auth key store，供测试确认 initConnection 上报的 device_id 已落到 auth key 上。
 	authKeys *memory.AuthKeyStore
+	// router 是服务端的 RPC 路由，也是后台关闭被撤销授权的在线连接的 admin.AuthKeyRevoker
+	// （生产里同样接的是 router），供后台解绑设备在进程内接上。
+	router *rpc.Router
 }
 
 // tombstoningUserStore 在内存 UserStore 外面加一层"已注销"标记。内存 store 没有账号
@@ -229,7 +232,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		}
 		<-outboxDone
 	})
-	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords, authorizations: authorizations, authKeys: authKeyStore}
+	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords, authorizations: authorizations, authKeys: authKeyStore, router: router}
 }
 
 // run 用一个全新的 auth key 连上服务端执行 fn。fn 里的断言失败要 return error，

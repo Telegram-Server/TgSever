@@ -1,4 +1,4 @@
-import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MessagesSquare, Minus, Sparkles, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MessagesSquare, Minus, Sparkles, Star, Trash2, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -149,7 +149,23 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                 {bindingsError ? (
                   <Alert>{t("deviceBinding.loadFailed", { error: bindingsError })}</Alert>
                 ) : (
-                  <DeviceBindingTable rows={bindings ?? []} />
+                  <DeviceBindingTable
+                    rows={bindings ?? []}
+                    actions={
+                      can(permissionAccountsManage)
+                        ? (row) => (
+                            <ActionButton
+                              label={t("deviceBinding.unbind")}
+                              icon={<Unlink size={13} />}
+                              compact
+                              path="/api/actions/unbind-device"
+                              payload={() => ({ user_id: account.ID, device_id: row.device_id })}
+                              onDone={load}
+                            />
+                          )
+                        : undefined
+                    }
+                  />
                 )}
               </section>
             )}

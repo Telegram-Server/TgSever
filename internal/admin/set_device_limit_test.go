@@ -20,18 +20,21 @@ type deviceLimitFixture struct {
 	users *memory.UserStore
 	keys  *memory.AuthKeyStore
 	auths *memory.AuthorizationStore
-	seq   byte
+	// revoker 记下被关闭在线连接的 auth key（解绑设备，#114）。
+	revoker *fakeRevoker
+	seq     byte
 }
 
 func newDeviceLimitFixture(t *testing.T) *deviceLimitFixture {
 	t.Helper()
-	f := &deviceLimitFixture{repo: newMemoryCommandRepo(), users: memory.NewUserStore(), keys: memory.NewAuthKeyStore(), auths: memory.NewAuthorizationStore()}
+	f := &deviceLimitFixture{repo: newMemoryCommandRepo(), users: memory.NewUserStore(), keys: memory.NewAuthKeyStore(), auths: memory.NewAuthorizationStore(), revoker: &fakeRevoker{}}
 	f.auths.LinkAuthKeyAuthority(f.keys)
 	f.auths.LinkAuthorizationUsers(f.users)
 	f.svc = NewService(Dependencies{
 		Commands:     f.repo,
 		Users:        users.NewService(f.users),
 		DeviceLimits: f.auths,
+		Revoker:      f.revoker,
 		Now:          fixedNow,
 	})
 	return f
@@ -54,8 +57,8 @@ func (f *deviceLimitFixture) assertLimit(t *testing.T, userID int64, want int, w
 	}
 }
 
-// signIn 让 userID 在一台新设备上完成登录；deviceID 为空表示客户端从未上报。
-func (f *deviceLimitFixture) signIn(t *testing.T, userID int64, deviceID string) {
+// signIn 让 userID 在一台新设备上完成登录并返回它的 auth key；deviceID 为空表示客户端从未上报。
+func (f *deviceLimitFixture) signIn(t *testing.T, userID int64, deviceID string) [8]byte {
 	t.Helper()
 	ctx := context.Background()
 	f.seq++
@@ -71,6 +74,7 @@ func (f *deviceLimitFixture) signIn(t *testing.T, userID int64, deviceID string)
 	if err := f.auths.Bind(ctx, domain.Authorization{AuthKeyID: key, UserID: userID}); err != nil {
 		t.Fatalf("sign in %q: %v", deviceID, err)
 	}
+	return key
 }
 
 func (f *deviceLimitFixture) assertBound(t *testing.T, userID int64, want ...string) {

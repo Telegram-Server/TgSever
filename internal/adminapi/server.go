@@ -61,6 +61,7 @@ type Service interface {
 	SetLoginPassword(ctx context.Context, req admin.SetLoginPasswordRequest) (admin.CommandResult, error)
 	SetDeviceLimit(ctx context.Context, req admin.SetDeviceLimitRequest) (admin.CommandResult, error)
 	DeviceBindings(ctx context.Context, userID int64) (admin.DeviceBindingList, error)
+	UnbindDevice(ctx context.Context, req admin.UnbindDeviceRequest) (admin.CommandResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
@@ -293,6 +294,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-login-password", s.authenticated(s.handleSetLoginPassword))
 	mux.HandleFunc("POST /v1/accounts/set-device-limit", s.authenticated(s.handleSetDeviceLimit))
 	mux.HandleFunc("GET /v1/accounts/{id}/device-bindings", s.authenticated(s.handleDeviceBindings))
+	mux.HandleFunc("POST /v1/accounts/unbind-device", s.authenticated(s.handleUnbindDevice))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
@@ -797,6 +799,16 @@ func (s *Server) handleDeviceBindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// handleUnbindDevice 解绑账号的一台设备（#114）：删除绑定并让那台设备上的这个账号下线。
+func (s *Server) handleUnbindDevice(w http.ResponseWriter, r *http.Request) {
+	var req admin.UnbindDeviceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.UnbindDevice(r.Context(), req)
+	writeCommandResult(w, result, err)
 }
 
 func (s *Server) handleResolveUserByPhone(w http.ResponseWriter, r *http.Request) {

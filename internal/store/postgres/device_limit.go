@@ -373,3 +373,88 @@ func enforceDeviceBinding(ctx context.Context, q *sqlcgen.Queries, c deviceBindi
 	}
 	return nil
 }
+
+// UnbindDevice 是后台解绑（#114），见 store.DeviceLimitStore。删绑定与撤销授权在同一事务里：
+// 先拿用户锁（与 Bind / 2FA 转正 / 设上限同一把，锁序也与 Bind 相同：用户锁 → auth identity
+// → auth_keys 行），解绑期间这台设备不会被同一账号重新绑定；撤销沿用 revokeByUserExceptTx 的
+// 做法，只删业务授权与 update state，保留协议 key，客户端重连后收到 401。事务失败时什么都
+// 没删，重试安全。
+func (s *AuthorizationStore) UnbindDevice(ctx context.Context, userID int64, deviceID string) ([]domain.Authorization, error) {
+	var out []domain.Authorization
+	err := withAuthIdentityTx(ctx, s.db, "unbind device", func(tx pgx.Tx) error {
+		out = nil
+		if err := lockUsersForUpdate(ctx, tx, userID); err != nil {
+			return fmt.Errorf("lock device binding user: %w", err)
+		}
+		q := sqlcgen.New(tx)
+		n, err := q.DeleteDeviceBinding(ctx, sqlcgen.DeleteDeviceBindingParams{UserID: userID, DeviceID: deviceID})
+		if err != nil {
+			return fmt.Errorf("delete device binding: %w", err)
+		}
+		if n == 0 {
+			return domain.ErrDeviceBindingNotFound
+		}
+		out, err = revokeAuthorizationsOnDeviceTx(ctx, tx, q, userID, deviceID)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrDeviceBindingNotFound) {
+			return nil, domain.ErrDeviceBindingNotFound
+		}
+		return nil, fmt.Errorf("unbind device: %w", err)
+	}
+	return out, nil
+}
+
+// revokeAuthorizationsOnDeviceTx 撤销 userID 在 device_id 为 deviceID 的 auth key 上的全部授权。
+// 候选查询只是提示：锁住 auth identity 与 auth_keys 行之后用新的语句快照重读，等待期间换了主
+// 的 key 不会被误删。
+func revokeAuthorizationsOnDeviceTx(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, userID int64, deviceID string) ([]domain.Authorization, error) {
+	candidates, err := q.ListAuthKeyIDsOnDevice(ctx, sqlcgen.ListAuthKeyIDsOnDeviceParams{UserID: userID, DeviceID: &deviceID})
+	if err != nil {
+		return nil, fmt.Errorf("select unbind revoke candidates: %w", err)
+	}
+	if len(candidates) == 0 {
+		return []domain.Authorization{}, nil
+	}
+	if err := lockPermanentAuthIdentities(ctx, tx, candidates); err != nil {
+		return nil, err
+	}
+	if _, err := q.LockAuthKeysForUpdate(ctx, candidates); err != nil {
+		return nil, fmt.Errorf("lock unbind auth keys: %w", err)
+	}
+	rows, err := q.ListAuthorizationsOnDeviceForUpdate(ctx, sqlcgen.ListAuthorizationsOnDeviceForUpdateParams{
+		UserID: userID, DeviceID: &deviceID, AuthKeyIds: candidates,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("revalidate unbind authorizations: %w", err)
+	}
+	out := make([]domain.Authorization, 0, len(rows))
+	targets := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		a := authorizationFromRow(row.Authorization)
+		a.PasswordPending = row.Authorization.PasswordPending
+		out = append(out, a)
+		targets = append(targets, row.Authorization.AuthKeyID)
+	}
+	if err := deleteRevokedAuthorizationStateTx(ctx, tx, targets); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PreviewUnbindDevice 不加锁地报告解绑会撤销的授权数（试运行）。
+func (s *AuthorizationStore) PreviewUnbindDevice(ctx context.Context, userID int64, deviceID string) (int, error) {
+	exists, err := s.q.DeviceBindingExists(ctx, sqlcgen.DeviceBindingExistsParams{UserID: userID, DeviceID: deviceID})
+	if err != nil {
+		return 0, fmt.Errorf("read device binding: %w", err)
+	}
+	if !exists {
+		return 0, domain.ErrDeviceBindingNotFound
+	}
+	n, err := s.q.CountAuthorizationsOnDevice(ctx, sqlcgen.CountAuthorizationsOnDeviceParams{UserID: userID, DeviceID: &deviceID})
+	if err != nil {
+		return 0, fmt.Errorf("count authorizations on device: %w", err)
+	}
+	return int(n), nil
+}

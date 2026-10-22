@@ -31,7 +31,7 @@ type DeviceLimitFixture struct {
 // 非法值与不存在的账号被拒绝；Bind 与 2FA 转正（MarkPasswordPassed）按 store.DeviceLimitStore
 // 文档里的"绑定规则"放行、绑定或拒绝，拒绝时不写入任何行（转正被拒时删除这条待完成的授权）；
 // 只读预检 CheckDeviceLimit 与执行点同一套规则；退出登录、撤销授权、调低或清除上限都不改
-// 绑定名单，账号注销时名单一起删除；并发争抢最后一个名额时绑定数永不超过上限。
+// 绑定名单，账号注销时名单一起删除；后台解绑（UnbindDevice）释放名额并撤销该设备上的授权；并发争抢最后一个名额时绑定数永不超过上限。
 func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimitFixture) {
 	t.Helper()
 	ctx := context.Background()
@@ -365,6 +365,89 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		assertBoundDevices(t, f, u.ID, "a", "b", "c")
 		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: newDeviceKey(t, f, "d"), UserID: u.ID}); !errors.Is(err, domain.ErrDeviceLimitReached) {
 			t.Fatalf("new device after revoking everything err=%v, want ErrDeviceLimitReached", err)
+		}
+	})
+
+	t.Run("unbinding frees the slot and revokes every authorization on that device", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		other := createDeviceLimitUser(t, f)
+		setDeviceLimit(t, f, u.ID, 2)
+		setDeviceLimit(t, f, other.ID, 2)
+		old1, old2 := newDeviceKey(t, f, "old"), newDeviceKey(t, f, "old")
+		pending := newDeviceKey(t, f, "old")
+		kept := newDeviceKey(t, f, "kept")
+		othersOld := newDeviceKey(t, f, "old")
+		bindDevice(t, f, u.ID, old1, false)
+		bindDevice(t, f, u.ID, old2, false)
+		bindDevice(t, f, u.ID, kept, false)
+		bindDevice(t, f, u.ID, pending, true)
+		bindDevice(t, f, other.ID, othersOld, false)
+		if err := f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: newDeviceKey(t, f, "new"), UserID: u.ID}); !errors.Is(err, domain.ErrDeviceLimitReached) {
+			t.Fatalf("new device on a full list err=%v, want ErrDeviceLimitReached", err)
+		}
+
+		if n, err := f.DeviceLimits.PreviewUnbindDevice(ctx, u.ID, "old"); err != nil || n != 3 {
+			t.Fatalf("preview unbind = %d, %v; want 3 authorizations", n, err)
+		}
+		assertBoundDevices(t, f, u.ID, "old", "kept")
+
+		revoked, err := f.DeviceLimits.UnbindDevice(ctx, u.ID, "old")
+		if err != nil {
+			t.Fatalf("unbind: %v", err)
+		}
+		got := map[[8]byte]bool{}
+		for _, a := range revoked {
+			if a.UserID != u.ID {
+				t.Fatalf("revoked authorization of user %d, want %d", a.UserID, u.ID)
+			}
+			got[a.AuthKeyID] = true
+		}
+		if len(revoked) != 3 || !got[old1] || !got[old2] || !got[pending] {
+			t.Fatalf("revoked=%+v, want the three authorizations on device old", revoked)
+		}
+		for _, key := range [][8]byte{old1, old2, pending} {
+			assertNoAuthorization(t, f, key)
+			// 与远程踢设备一样保留协议 key，客户端重连后才能收到 401。
+			if _, found, err := f.AuthKeys.Get(ctx, key); err != nil || !found {
+				t.Fatalf("protocol key %x found=%v err=%v, want kept", key, found, err)
+			}
+		}
+		if _, found, err := f.Auths.ByAuthKey(ctx, kept); err != nil || !found {
+			t.Fatalf("authorization on the other bound device found=%v err=%v, want kept", found, err)
+		}
+		if _, found, err := f.Auths.ByAuthKey(ctx, othersOld); err != nil || !found {
+			t.Fatalf("another account's authorization on the same device id found=%v err=%v, want kept", found, err)
+		}
+		assertBoundDevices(t, f, u.ID, "kept")
+		assertBoundDevices(t, f, other.ID, "old")
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "new"), false)
+		assertBoundDevices(t, f, u.ID, "kept", "new")
+	})
+
+	t.Run("unbinding a device that is not bound changes nothing", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		// 设上限之前登录、还没有绑定的设备：有授权，但不在名单里。
+		unbound := newDeviceKey(t, f, "unbound")
+		bindDevice(t, f, u.ID, unbound, false)
+		if _, err := f.DeviceLimits.PreviewUnbindDevice(ctx, u.ID, "unbound"); !errors.Is(err, domain.ErrDeviceBindingNotFound) {
+			t.Fatalf("preview unbind err=%v, want ErrDeviceBindingNotFound", err)
+		}
+		if revoked, err := f.DeviceLimits.UnbindDevice(ctx, u.ID, "unbound"); !errors.Is(err, domain.ErrDeviceBindingNotFound) || len(revoked) != 0 {
+			t.Fatalf("unbind = %+v, %v; want ErrDeviceBindingNotFound", revoked, err)
+		}
+		if _, found, err := f.Auths.ByAuthKey(ctx, unbound); err != nil || !found {
+			t.Fatalf("authorization found=%v err=%v, want kept", found, err)
+		}
+		// 设上限时补绑进名单；解绑一次之后再解绑同一台设备就是"不存在"。
+		setDeviceLimit(t, f, u.ID, 2)
+		assertBoundDevices(t, f, u.ID, "unbound")
+		if _, err := f.DeviceLimits.UnbindDevice(ctx, u.ID, "unbound"); err != nil {
+			t.Fatalf("first unbind: %v", err)
+		}
+		if _, err := f.DeviceLimits.UnbindDevice(ctx, u.ID, "unbound"); !errors.Is(err, domain.ErrDeviceBindingNotFound) {
+			t.Fatalf("second unbind err=%v, want ErrDeviceBindingNotFound", err)
 		}
 	})
 

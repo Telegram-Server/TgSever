@@ -558,6 +558,59 @@ func (s *AuthorizationStore) DeleteDeviceBindings(_ context.Context, userID int6
 	return nil
 }
 
+// UnbindDevice 是后台解绑（#114），见 store.DeviceLimitStore。删绑定与撤销授权在同一组锁下
+// 完成（锁序 linkMu → authKeys.mu → mu），与登录的绑定判定互斥。
+func (s *AuthorizationStore) UnbindDevice(_ context.Context, userID int64, deviceID string) ([]domain.Authorization, error) {
+	unlock := s.lockAuthKeysForRead()
+	defer unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bound := s.deviceBindings[userID]
+	if _, ok := bound[deviceID]; !ok {
+		return nil, domain.ErrDeviceBindingNotFound
+	}
+	delete(bound, deviceID)
+	revoked := s.authorizationsOnDeviceLocked(userID, deviceID)
+	for _, a := range revoked {
+		// 只删业务授权，协议 key 保留：与 RevokeByHash 一样让客户端重连后收到 401。
+		s.removeLocked(a.AuthKeyID)
+	}
+	return revoked, nil
+}
+
+// PreviewUnbindDevice 只读地报告解绑会撤销的授权数（试运行）。
+func (s *AuthorizationStore) PreviewUnbindDevice(_ context.Context, userID int64, deviceID string) (int, error) {
+	unlock := s.lockAuthKeysForRead()
+	defer unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.deviceBindings[userID][deviceID]; !ok {
+		return 0, domain.ErrDeviceBindingNotFound
+	}
+	return len(s.authorizationsOnDeviceLocked(userID, deviceID)), nil
+}
+
+// authorizationsOnDeviceLocked 返回 userID 在 device_id 为 deviceID 的 auth key 上的全部授权，
+// 按登录先后。调用方持有 mu，且在 authKeys 不为 nil 时持有 authKeys.mu。
+func (s *AuthorizationStore) authorizationsOnDeviceLocked(userID int64, deviceID string) []domain.Authorization {
+	out := make([]domain.Authorization, 0)
+	if s.authKeys == nil {
+		return out
+	}
+	for id, a := range s.m {
+		if a.UserID == userID && s.authKeys.keys[id].DeviceID == deviceID {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return bytes.Compare(out[i].AuthKeyID[:], out[j].AuthKeyID[:]) < 0
+	})
+	return out
+}
+
 // LinkAuthorizationUsers 接上同一份用户数据：Bind 据此跳过 bot，SetDeviceLimit 据此拒绝
 // 不存在的账号。只接受第一次接入，与 LinkAuthKeyAuthority 相同。
 func (s *AuthorizationStore) LinkAuthorizationUsers(users store.UserStore) {
