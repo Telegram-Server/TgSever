@@ -65,9 +65,11 @@ func TestChannelStoreCreateChannelRecoversFromStaleIDCounter(t *testing.T) {
 		t.Fatalf("seed channel: %v", err)
 	}
 
-	// 落后计数器从 seed id 之前很远处开始（模拟回退），首次分配必撞。
+	// 落后计数器回退到 seed 之前（模拟回退），首次分配恰好落在 seed id 上，必撞。
+	// 每个测试使用独立克隆库，seed id 可能就是 1；若从 seed-3 起步会分配出
+	// 不存在的非正 id，绕过了要验证的主键冲突自愈路径。
 	stale := &staleChannelIDAllocator{}
-	stale.next.Store(seed.Channel.ID - 3)
+	stale.next.Store(seed.Channel.ID - 1)
 	staleStore := NewChannelStore(pool, WithChannelAllocators(stale, nil))
 	// msgIDs 传 nil 会被 fallback 覆盖；channel pts 由 PG 事务直接维护。
 	created, err := staleStore.CreateChannel(ctx, domain.CreateChannelRequest{

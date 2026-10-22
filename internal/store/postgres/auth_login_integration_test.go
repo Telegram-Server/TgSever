@@ -18,7 +18,8 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	phone := fmt.Sprintf("1555%d31", time.Now().UnixNano())
+	// 5c06299e 起手机号必须是合法 E.164（NANP 共 11 位）；纳秒全量拼接会超长。
+	phone := fmt.Sprintf("1555%07d", time.Now().UnixNano()%10_000_000)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE phone = $1", phone)
 	})
@@ -78,8 +79,27 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	if len(list.Dialogs) != 1 || list.Dialogs[0].Peer.ID != domain.OfficialSystemUserID {
 		t.Fatalf("dialogs = %+v, want official login dialog", list.Dialogs)
 	}
-	if len(list.Messages) != 1 || list.Messages[0].ID != msg.ID || !strings.Contains(list.Messages[0].Body, "Login code: 12345") {
-		t.Fatalf("messages = %+v, want returned login message", list.Messages)
+	// 0133dc7b 起 SignUp 之后还会无条件写一条 777000 欢迎消息，因此官方会话的
+	// top 是欢迎消息，历史里同时保留注册时的登录码消息（与 app/auth 内存测试一致）。
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID}
+	history, err := messages.ListByUser(ctx, u.ID, domain.MessageFilter{HasPeer: true, Peer: peer, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListByUser messages: %v", err)
+	}
+	var loginMsg, welcomeMsg domain.Message
+	for _, m := range history.Messages {
+		if strings.Contains(m.Body, "Login code: 12345") {
+			loginMsg = m
+		} else {
+			welcomeMsg = m
+		}
+	}
+	if len(history.Messages) != 2 || loginMsg.ID != msg.ID || welcomeMsg.ID <= msg.ID {
+		t.Fatalf("history = %+v, want returned login message %d + later welcome message", history.Messages, msg.ID)
+	}
+	if len(list.Messages) != 1 || list.Messages[0].ID != welcomeMsg.ID ||
+		list.Dialogs[0].TopMessage != welcomeMsg.ID || list.Dialogs[0].UnreadCount != 2 {
+		t.Fatalf("dialog = %+v messages = %+v, want welcome top %d with 2 unread", list.Dialogs[0], list.Messages, welcomeMsg.ID)
 	}
 	if len(list.Users) != 1 || list.Users[0].ID != domain.OfficialSystemUserID || !list.Users[0].Verified || !list.Users[0].Support {
 		t.Fatalf("users = %+v, want official support user", list.Users)
@@ -90,7 +110,8 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 	pool := testPool(t)
 	ctx := context.Background()
 
-	phone := fmt.Sprintf("1555%d32", time.Now().UnixNano())
+	// 5c06299e 起手机号必须是合法 E.164（NANP 共 11 位）；纳秒全量拼接会超长。
+	phone := fmt.Sprintf("1555%07d", time.Now().UnixNano()%10_000_000)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE phone = $1", phone)
 	})
@@ -145,8 +166,11 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 	if err != nil {
 		t.Fatalf("ReadHistory first login message: %v", err)
 	}
-	if read.MaxID != first.ID || read.StillUnreadCount != 0 {
-		t.Fatalf("read first login message = %+v, want max_id %d unread 0", read, first.ID)
+	// 0133dc7b 起每次登录成功都会在登录码之后追加一条 777000 欢迎消息：
+	// SignUp 后官方历史为 登录码(first) + 欢迎(first+1)，整段已读落在欢迎消息上。
+	welcomeID := first.ID + 1
+	if read.MaxID != welcomeID || read.StillUnreadCount != 0 {
+		t.Fatalf("read first login message = %+v, want max_id %d unread 0", read, welcomeID)
 	}
 
 	assertOfficialDialog := func(wantTop, wantRead, wantUnread int) {
@@ -185,8 +209,9 @@ FROM target`, u.ID, domain.OfficialSystemUserID).Scan(&top, &readMax, &unread, &
 	if err != nil {
 		t.Fatalf("SendCode signin second: %v", err)
 	}
-	secondID := first.ID + 1
-	assertOfficialDialog(secondID, first.ID, 1)
+	// 核心时序：SendCode 返回时登录码消息/会话/未读已提交，尚未 SignIn。
+	secondID := welcomeID + 1
+	assertOfficialDialog(secondID, welcomeID, 1)
 	_, lateSecond, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn second needSignUp=%v err=%v", needSignUp, err)
@@ -194,14 +219,15 @@ FROM target`, u.ID, domain.OfficialSystemUserID).Scan(&top, &readMax, &unread, &
 	if lateSecond.ID != 0 {
 		t.Fatalf("SignIn second returned late login message %+v, want zero", lateSecond)
 	}
-	assertOfficialDialog(secondID, first.ID, 1)
+	// SignIn 只追加欢迎消息，从不补发迟到的登录码；已读水位保持不动。
+	assertOfficialDialog(secondID+1, welcomeID, 2)
 
 	hash, err = svc.SendCode(ctx, phone)
 	if err != nil {
 		t.Fatalf("SendCode signin third: %v", err)
 	}
-	thirdID := first.ID + 2
-	assertOfficialDialog(thirdID, first.ID, 2)
+	thirdID := secondID + 2
+	assertOfficialDialog(thirdID, welcomeID, 3)
 	_, lateThird, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn third needSignUp=%v err=%v", needSignUp, err)
@@ -209,5 +235,5 @@ FROM target`, u.ID, domain.OfficialSystemUserID).Scan(&top, &readMax, &unread, &
 	if lateThird.ID != 0 {
 		t.Fatalf("SignIn third returned late login message %+v, want zero", lateThird)
 	}
-	assertOfficialDialog(thirdID, first.ID, 2)
+	assertOfficialDialog(thirdID+1, welcomeID, 4)
 }

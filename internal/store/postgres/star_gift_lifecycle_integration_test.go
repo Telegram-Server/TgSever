@@ -1801,7 +1801,9 @@ func issueLifecyclePurchaseForm(t *testing.T, ctx context.Context, lifecycle *St
 	}
 	issued, err := lifecycle.IssueStarGiftPurchaseForm(ctx, domain.StarGiftPurchaseForm{
 		BuyerUserID: req.BuyerUserID, To: req.To, GiftID: req.GiftID, RevisionID: req.RevisionID,
-		IncludeUpgrade: req.IncludeUpgrade, HideName: req.HideName, Message: req.Message, ChargeStars: req.ChargeStars,
+		IncludeUpgrade: req.IncludeUpgrade, HideName: req.HideName, Message: req.Message,
+		// 表单必须锁定与购买请求一致的 entities，否则消费时按 purpose 不一致拒绝。
+		MessageEntities: req.MessageEntities, ChargeStars: req.ChargeStars,
 		IssuedAt: req.Date, ExpiresAt: req.Date + 600,
 	})
 	if err != nil {

@@ -72,8 +72,10 @@ func TestPlainPrivateSendHotPathDurableFactsAndQueryCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendPrivateText: %v", err)
 	}
-	if snapshot := stats.Snapshot(); snapshot.Queries != 5 || snapshot.Errors != 0 {
-		t.Fatalf("query stats = %+v, want BEGIN + lock + logical + projection + COMMIT", snapshot)
+	// 用户 advisory lock 之后还要取 dispatch outbox 追加栅栏（3de5c320 引入，
+	// 与 lane 消费方互斥），因此热路径固定为 6 次往返。
+	if snapshot := stats.Snapshot(); snapshot.Queries != 6 || snapshot.Errors != 0 {
+		t.Fatalf("query stats = %+v, want BEGIN + user lock + append fence + logical + projection + COMMIT", snapshot)
 	}
 	if result.SenderMessage.ID != 1 || result.RecipientMessage.ID != 1 ||
 		result.SenderMessage.Pts != 1 || result.RecipientMessage.Pts != 1 {
