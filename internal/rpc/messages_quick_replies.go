@@ -161,16 +161,19 @@ func (r *Router) onMessagesSendQuickReplyMessages(ctx context.Context, req *tg.M
 	if req == nil || req.ShortcutID <= 0 || len(req.ID) > domain.MaxQuickReplyMessages || len(req.RandomID) > domain.MaxQuickReplyMessages {
 		return nil, shortcutInvalidErr()
 	}
-	svc, ok := r.accountBusinessAutomation()
-	if !ok || r.deps.Messages == nil {
-		return nil, shortcutInvalidErr()
-	}
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
 		return nil, err
 	}
 	if peer.Type != domain.PeerTypeUser {
 		return nil, peerIDInvalidErr()
+	}
+	if err := r.checkSendPermission(ctx, userID, peer); err != nil {
+		return nil, err
+	}
+	svc, ok := r.accountBusinessAutomation()
+	if !ok || r.deps.Messages == nil {
+		return nil, shortcutInvalidErr()
 	}
 	list, err := svc.GetQuickReplyMessages(ctx, userID, req.ShortcutID, req.ID)
 	if err != nil {

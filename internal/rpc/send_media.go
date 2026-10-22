@@ -300,6 +300,9 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if !ok || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
+	if err := r.checkSendPermission(ctx, userID, peer); err != nil {
+		return nil, err
+	}
 	suggestedInput, hasSuggestedPost := req.GetSuggestedPost()
 	var mono domain.Channel
 	var monoforum, monoforumAdmin bool
@@ -486,6 +489,9 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 	peer, ok := r.domainPeerFromInputPeer(userID, req.Peer)
 	if !ok || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
+	}
+	if err := r.checkSendPermission(ctx, userID, peer); err != nil {
+		return nil, err
 	}
 	randomIDs := make(map[int64]struct{}, len(req.MultiMedia))
 	reservationItems := make([]domain.AlbumGroupReservationItem, 0, len(req.MultiMedia))

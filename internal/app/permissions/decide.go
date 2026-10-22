@@ -20,6 +20,13 @@ const (
 	actionUnknown ActionKind = iota
 	// ActionEdit 是编辑消息（messages.editMessage），不需要目标信息。
 	ActionEdit
+	// ActionSend 是发送消息（含转发、inline 结果、定时消息立即发送、quick reply 发送、
+	// 秘密聊天的建立与发送），需要目标信息：发往收藏夹（TargetSelf）不受限制。
+	ActionSend
+	// ActionDelete 是删除消息（含开启或修改自动删除计时器），不需要目标信息。
+	ActionDelete
+	// ActionClearHistory 是清空对话，不需要目标信息。
+	ActionClearHistory
 )
 
 // TargetKind 是动作作用的会话种类。没有普通群：megagroup、gigagroup、论坛、monoforum 都算
@@ -118,6 +125,22 @@ func Decide(v View, a Action) Denial {
 	case ActionEdit:
 		if !flags.Edit {
 			return DenyEdit
+		}
+	case ActionSend:
+		// 收藏夹（和自己的对话）不受发送限制。
+		if a.Target.Kind == TargetSelf {
+			return Allowed
+		}
+		if !flags.Send {
+			return DenySend
+		}
+	case ActionDelete:
+		if !flags.Delete {
+			return DenyDelete
+		}
+	case ActionClearHistory:
+		if !flags.ClearHistory {
+			return DenyClearHistory
 		}
 	}
 	return Allowed

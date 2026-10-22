@@ -79,7 +79,11 @@ func (r *Router) onMessagesSendEncryptedFile(ctx context.Context, req *tg.Messag
 		return nil, internalErr()
 	}
 	// 先完成 chat/device 授权，避免无权或终态请求先组装 blob、写元数据后才失败。
-	if _, _, _, err := r.resolveSecretChatPeer(ctx, userID, req.Peer); err != nil {
+	_, counterpart, _, err := r.resolveSecretChatPeer(ctx, userID, req.Peer)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.checkSecretChatCounterpartPermission(ctx, userID, counterpart); err != nil {
 		return nil, err
 	}
 	fileRef, err := r.resolveInputEncryptedFile(ctx, userID, req.File)

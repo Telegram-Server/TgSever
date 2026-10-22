@@ -211,6 +211,9 @@ func (r *Router) onMessagesSendInlineBotResult(ctx context.Context, req *tg.Mess
 	if peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel {
 		return nil, peerIDInvalidErr()
 	}
+	if err := r.checkSendPermission(ctx, userID, peer); err != nil {
+		return nil, err
+	}
 	results, result, ok := r.inlines.resultForSendContext(ctx, r.clock.Now(), userID, req.QueryID, req.ID)
 	if !ok {
 		return nil, inlineResultExpiredErr()

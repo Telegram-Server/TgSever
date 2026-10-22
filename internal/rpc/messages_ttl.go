@@ -35,6 +35,9 @@ func (r *Router) onMessagesSetDefaultHistoryTTL(ctx context.Context, period int)
 	if period < 0 || period > maxHistoryTTLPeriod {
 		return false, ttlPeriodInvalidErr()
 	}
+	if err := r.checkHistoryTTLPermission(ctx, userID, period); err != nil {
+		return false, err
+	}
 	if ttlSvc, ok := r.deps.Messages.(historyTTLMessagesService); r.deps.Messages != nil && ok {
 		if err := ttlSvc.SetDefaultHistoryTTL(ctx, userID, period); err != nil {
 			return false, internalErr()
@@ -50,6 +53,9 @@ func (r *Router) onMessagesSetHistoryTTL(ctx context.Context, req *tg.MessagesSe
 	}
 	if req.Period < 0 || req.Period > maxHistoryTTLPeriod {
 		return nil, ttlPeriodInvalidErr()
+	}
+	if err := r.checkHistoryTTLPermission(ctx, userID, req.Period); err != nil {
+		return nil, err
 	}
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {

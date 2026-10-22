@@ -44,6 +44,76 @@ func TestDecideEdit(t *testing.T) {
 	}
 }
 
+// allTargets 是判定矩阵里的全部目标种类（含不带目标信息的调用）。
+var allTargets = []struct {
+	name   string
+	target Target
+}{
+	{"no target", Target{}},
+	{"private chat", Target{Kind: TargetPrivate, UserID: 2002}},
+	{"group", Target{Kind: TargetGroup}},
+	{"channel", Target{Kind: TargetChannel}},
+	{"secret chat", Target{Kind: TargetSecretChat, UserID: 2002}},
+	{"saved messages", Target{Kind: TargetSelf}},
+}
+
+// decideMatrix 对一个动作跑 总开关关/开 × 该项开/关 × 全部目标。turnOff 只关掉被测的那一项；
+// savedExempt 为 true 时该项关闭后收藏夹仍放行。
+func decideMatrix(t *testing.T, kind ActionKind, turnOff func(*domain.AccountPermissionFlags), want Denial, savedExempt bool) {
+	t.Helper()
+	itemOff := func(p *domain.AccountPermissions) { turnOff(&p.Flags) }
+	onlyItemOn := func(p *domain.AccountPermissions) {
+		// 先只关掉这一项，再全部取反：只有这一项允许，其他各项全部禁止。
+		f := domain.DefaultAccountPermissionFlags()
+		turnOff(&f)
+		p.Flags = domain.AccountPermissionFlags{
+			Send: !f.Send, Delete: !f.Delete, Edit: !f.Edit, ClearHistory: !f.ClearHistory,
+			CreateGroup: !f.CreateGroup, CreateChannel: !f.CreateChannel,
+			JoinGroup: !f.JoinGroup, JoinChannel: !f.JoinChannel,
+			LeaveGroup: !f.LeaveGroup, LeaveChannel: !f.LeaveChannel,
+			AddContact: !f.AddContact,
+		}
+	}
+	masterOff := domain.DefaultAccountPermissions(1001)
+	itemOff(&masterOff)
+	for _, tc := range allTargets {
+		action := Action{Kind: kind, Target: tc.target}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Decide(NewView(masterOff, false), action); got != Allowed {
+				t.Fatalf("master switch off: Decide = %q, want allowed", got)
+			}
+			if got := Decide(enforcedView(nil), action); got != Allowed {
+				t.Fatalf("item allowed: Decide = %q, want allowed", got)
+			}
+			if got := Decide(enforcedView(onlyItemOn), action); got != Allowed {
+				t.Fatalf("only this item allowed: Decide = %q, want allowed", got)
+			}
+			if got := Decide(NewView(domain.AccountPermissions{UserID: 1001, Enabled: true}, true), action); got != Allowed {
+				t.Fatalf("exempt account: Decide = %q, want allowed", got)
+			}
+			wantDenied := want
+			if savedExempt && tc.target.Kind == TargetSelf {
+				wantDenied = Allowed
+			}
+			if got := Decide(enforcedView(itemOff), action); got != wantDenied {
+				t.Fatalf("item off: Decide = %q, want %q", got, wantDenied)
+			}
+		})
+	}
+}
+
+func TestDecideSend(t *testing.T) {
+	decideMatrix(t, ActionSend, func(f *domain.AccountPermissionFlags) { f.Send = false }, DenySend, true)
+}
+
+func TestDecideDelete(t *testing.T) {
+	decideMatrix(t, ActionDelete, func(f *domain.AccountPermissionFlags) { f.Delete = false }, DenyDelete, false)
+}
+
+func TestDecideClearHistory(t *testing.T) {
+	decideMatrix(t, ActionClearHistory, func(f *domain.AccountPermissionFlags) { f.ClearHistory = false }, DenyClearHistory, false)
+}
+
 func TestDenialErrorNames(t *testing.T) {
 	if DenyEdit.Allowed() || !Allowed.Allowed() {
 		t.Fatal("Allowed() mismatch")
