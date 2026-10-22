@@ -79,24 +79,26 @@ func systemLoginPhoneForbidden(phone string) bool {
 // 后生成随机验证码并通过 otpdelivery 投递。已有账号的外部投递是 durable
 // 777000 App-code 的附加渠道，不能替换或削弱原有消息事实。
 type Service struct {
-	users                  store.UserStore
-	auths                  store.AuthorizationStore
-	codes                  store.CodeStore
-	authKeys               store.AuthKeyStore
-	tempKeys               store.TempAuthKeyBindingStore
-	passwords              store.PasswordStore
-	messages               store.MessageStore
-	dialogs                store.DialogStore
-	loginCodeDelivery      store.LoginCodeDeliveryStore
-	loginCodeTemplate      func() (string, error)
-	bots                   store.BotStore
-	fixedCode              string
-	codeTTL                time.Duration
-	codeMaxAttempts        int
-	loginEmails            loginEmailStore
-	loginEmailSender       otpdelivery.Sender
-	phoneCodeSender        otpdelivery.Sender
-	otpDeliveryFailure     func(context.Context, otpdelivery.Request, error)
+	users              store.UserStore
+	auths              store.AuthorizationStore
+	codes              store.CodeStore
+	authKeys           store.AuthKeyStore
+	tempKeys           store.TempAuthKeyBindingStore
+	passwords          store.PasswordStore
+	messages           store.MessageStore
+	dialogs            store.DialogStore
+	loginCodeDelivery  store.LoginCodeDeliveryStore
+	loginCodeTemplate  func() (string, error)
+	bots               store.BotStore
+	fixedCode          string
+	codeTTL            time.Duration
+	codeMaxAttempts    int
+	loginEmails        loginEmailStore
+	loginEmailSender   otpdelivery.Sender
+	phoneCodeSender    otpdelivery.Sender
+	otpDeliveryFailure func(context.Context, otpdelivery.Request, error)
+	// deviceBackfillFailure 观察延迟补绑（#115）的失败；补绑是尽力而为，失败不影响调用方。
+	deviceBackfillFailure  func(context.Context, [8]byte, error)
 	phoneCodeLength        int
 	loginEmailEnabled      bool
 	loginEmailRequireSetup bool
@@ -407,6 +409,14 @@ func WithOTPDeliveryFailureObserver(observer func(context.Context, otpdelivery.R
 	}
 }
 
+// WithDeviceBackfillFailureObserver 观察延迟补绑设备绑定（#115）的失败：auth key 持久化
+// device_id 之后的补绑是尽力而为，失败只交给 observer 记录，不影响客户端信息的写入。
+func WithDeviceBackfillFailureObserver(observer func(ctx context.Context, authKeyID [8]byte, err error)) Option {
+	return func(s *Service) {
+		s.deviceBackfillFailure = observer
+	}
+}
+
 // NewService 创建登录服务。fixedCode 为开发固定验证码。
 func NewService(users store.UserStore, auths store.AuthorizationStore, codes store.CodeStore, authKeys store.AuthKeyStore, tempKeys store.TempAuthKeyBindingStore, fixedCode string, opts ...Option) *Service {
 	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute, codeMaxAttempts: 5, loginEmailCodeLength: 6, phoneCodeLength: 5}
@@ -464,7 +474,24 @@ func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding 
 	if err := s.carryDeviceIDToPermanentKey(ctx, binding.PermAuthKeyID, tempDeviceID); err != nil {
 		return domain.TempAuthKeyBindingResult{}, err
 	}
+	// 带过去的 device_id 对已登录的 perm key 同样是一次"之后才持久化"，走延迟补绑。
+	if tempDeviceID != "" {
+		s.backfillDeviceBinding(ctx, authKeyIDFromInt64(binding.PermAuthKeyID))
+	}
 	return result, nil
+}
+
+// backfillDeviceBinding 是延迟补绑（#115）：authKeyID 刚持久化了 device_id，若它上面是受限
+// 账号已完成的授权、设备尚未绑定且还有名额，就补绑；其余情况 store 什么都不做。尽力而为：
+// 失败只交给 deviceBackfillFailure 记录，不影响调用方，也从不踢下线。
+func (s *Service) backfillDeviceBinding(ctx context.Context, authKeyID [8]byte) {
+	limits, ok := s.auths.(store.DeviceLimitStore)
+	if !ok {
+		return
+	}
+	if _, err := limits.BackfillDeviceBinding(ctx, authKeyID); err != nil && s.deviceBackfillFailure != nil {
+		s.deviceBackfillFailure(ctx, authKeyID, err)
+	}
 }
 
 // carryDeviceIDToPermanentKey 把 temp key 上已持久化的 device_id 带到刚绑定的 perm key 上
@@ -1857,7 +1884,14 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 		authorizationInfo := info
 		authorizationInfo.Layer = 0
 		authorizationInfo.LayerObservationID = 0
-		return s.auths.UpdateClientInfo(ctx, authKeyID, authorizationInfo)
+		if err := s.auths.UpdateClientInfo(ctx, authKeyID, authorizationInfo); err != nil {
+			return err
+		}
+		// 已登录的 key 之后才上报 device_id（老客户端升级后重连）时补绑；temp key 上没有授权，
+		// store 查不到即返回。
+		if domain.ValidDeviceID(info.DeviceID) {
+			s.backfillDeviceBinding(ctx, authKeyID)
+		}
 	}
 	return nil
 }

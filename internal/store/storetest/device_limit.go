@@ -40,11 +40,11 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)
 		assertDeviceLimit(t, f, u.ID, 0, false)
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, 3); err != nil {
+		if _, err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, 3); err != nil {
 			t.Fatalf("set device limit: %v", err)
 		}
 		assertDeviceLimit(t, f, u.ID, 3, true)
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, domain.MaxDeviceLimit); err != nil {
+		if _, err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, domain.MaxDeviceLimit); err != nil {
 			t.Fatalf("replace device limit: %v", err)
 		}
 		assertDeviceLimit(t, f, u.ID, domain.MaxDeviceLimit, true)
@@ -63,13 +63,13 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)
 		for _, limit := range []int{0, -1, domain.MaxDeviceLimit + 1} {
-			if err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, limit); !errors.Is(err, domain.ErrDeviceLimitInvalid) {
+			if _, err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, limit); !errors.Is(err, domain.ErrDeviceLimitInvalid) {
 				t.Fatalf("set device limit %d err=%v, want ErrDeviceLimitInvalid", limit, err)
 			}
 		}
 		assertDeviceLimit(t, f, u.ID, 0, false)
 		const missingUserID = int64(1) << 60
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, missingUserID, 1); !errors.Is(err, domain.ErrUserNotFound) {
+		if _, err := f.DeviceLimits.SetDeviceLimit(ctx, missingUserID, 1); !errors.Is(err, domain.ErrUserNotFound) {
 			t.Fatalf("set device limit on missing user err=%v, want ErrUserNotFound", err)
 		}
 	})
@@ -87,7 +87,7 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 	t.Run("bots are not limited and nothing is bound", func(t *testing.T) {
 		f := newFixture(t)
 		bot := f.NewBot(t)
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
+		if _, err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
 			t.Fatalf("set device limit on bot: %v", err)
 		}
 		bindDevice(t, f, bot.ID, newDeviceKey(t, f, ""), false)
@@ -245,7 +245,7 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		bot := f.NewBot(t)
 		botPending := newDeviceKey(t, f, "")
 		bindDevice(t, f, bot.ID, botPending, true)
-		if err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
+		if _, err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
 			t.Fatalf("set device limit on bot: %v", err)
 		}
 		if err := f.Auths.MarkPasswordPassed(ctx, botPending, bot.ID); err != nil {
@@ -382,6 +382,204 @@ func DeviceLimitContract(t *testing.T, newFixture func(t *testing.T) DeviceLimit
 		assertBoundDevices(t, f, other.ID, "gone-a")
 	})
 
+	t.Run("setting the limit backfills signed-in devices in login order", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		// 上限之前登录的设备：按登录先后 a、无 device_id、停在 2FA 的 p、b、a 的另一把 key、c。
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "a"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, ""), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "p"), true)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "b"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "a"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "c"), false)
+		assertBoundDevices(t, f, u.ID)
+
+		if n := setDeviceLimitBackfilled(t, f, u.ID, 2); n != 2 {
+			t.Fatalf("backfilled=%d, want 2", n)
+		}
+		assertBoundDevices(t, f, u.ID, "a", "b")
+		// 没有 device_id、超出名额或停在 2FA 的设备保持登录，只是不绑定。
+		assertDeviceCount(t, f, u.ID, 6)
+
+		// 调高上限：已绑定的不重复计，继续按登录先后补到上限。
+		if n := setDeviceLimitBackfilled(t, f, u.ID, 5); n != 1 {
+			t.Fatalf("backfilled after raising=%d, want 1", n)
+		}
+		assertBoundDevices(t, f, u.ID, "a", "b", "c")
+		if n := setDeviceLimitBackfilled(t, f, u.ID, 5); n != 0 {
+			t.Fatalf("backfilled on an unchanged limit=%d, want 0", n)
+		}
+		assertDeviceCount(t, f, u.ID, 6)
+	})
+
+	t.Run("setting a limit on a bot backfills nothing", func(t *testing.T) {
+		f := newFixture(t)
+		bot := f.NewBot(t)
+		bindDevice(t, f, bot.ID, newDeviceKey(t, f, "bot-device"), false)
+		if n := setDeviceLimitBackfilled(t, f, bot.ID, 1); n != 0 {
+			t.Fatalf("backfilled for a bot=%d, want 0", n)
+		}
+		assertBoundDevices(t, f, bot.ID)
+	})
+
+	t.Run("previewing the backfill counts without writing", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "a"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, ""), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "a"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "b"), false)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "c"), false)
+		for limit, want := range map[int]int{1: 1, 2: 2, 3: 3, 10: 3} {
+			if n := previewBackfill(t, f, u.ID, limit); n != want {
+				t.Fatalf("preview with limit %d=%d, want %d", limit, n, want)
+			}
+		}
+		assertDeviceLimit(t, f, u.ID, 0, false)
+		assertBoundDevices(t, f, u.ID)
+		// 预览与执行一致，已绑定的设备不再计入。
+		if n := setDeviceLimitBackfilled(t, f, u.ID, 2); n != 2 {
+			t.Fatalf("backfilled=%d, want 2", n)
+		}
+		if n := previewBackfill(t, f, u.ID, 2); n != 0 {
+			t.Fatalf("preview at an already filled limit=%d, want 0", n)
+		}
+		if n := previewBackfill(t, f, u.ID, 4); n != 1 {
+			t.Fatalf("preview of raising the limit=%d, want 1", n)
+		}
+		assertBoundDevices(t, f, u.ID, "a", "b")
+
+		bot := f.NewBot(t)
+		bindDevice(t, f, bot.ID, newDeviceKey(t, f, "bot-device"), false)
+		if n := previewBackfill(t, f, bot.ID, 1); n != 0 {
+			t.Fatalf("preview for a bot=%d, want 0", n)
+		}
+	})
+
+	t.Run("a device id reported after signing in is backfilled while a slot is free", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		// 老客户端在设上限之前登录，没有 device_id。
+		k1, k2, k3 := newDeviceKey(t, f, ""), newDeviceKey(t, f, ""), newDeviceKey(t, f, "")
+		for _, key := range [][8]byte{k1, k2, k3} {
+			bindDevice(t, f, u.ID, key, false)
+		}
+		if n := setDeviceLimitBackfilled(t, f, u.ID, 2); n != 0 {
+			t.Fatalf("backfilled without device ids=%d, want 0", n)
+		}
+		reportDeviceID(t, f, k1, "upgraded-1")
+		if !backfill(t, f, k1) {
+			t.Fatalf("backfill of the first upgraded device=false, want bound")
+		}
+		// 已绑定的设备再次上报不重复绑定。
+		if backfill(t, f, k1) {
+			t.Fatalf("second backfill of a bound device=true, want false")
+		}
+		reportDeviceID(t, f, k2, "upgraded-2")
+		if !backfill(t, f, k2) {
+			t.Fatalf("backfill of the second upgraded device=false, want bound")
+		}
+		// 名额已满：什么都不做，也不踢下线。
+		reportDeviceID(t, f, k3, "upgraded-3")
+		if backfill(t, f, k3) {
+			t.Fatalf("backfill over the limit=true, want false")
+		}
+		assertBoundDevices(t, f, u.ID, "upgraded-1", "upgraded-2")
+		assertDeviceCount(t, f, u.ID, 3)
+	})
+
+	t.Run("backfill skips pending, unlimited, bot and signed-out keys", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		free := newDeviceKey(t, f, "")
+		bindDevice(t, f, u.ID, free, false)
+		reportDeviceID(t, f, free, "unlimited")
+		if backfill(t, f, free) {
+			t.Fatalf("backfill without a limit=true, want false")
+		}
+		assertBoundDevices(t, f, u.ID)
+
+		setDeviceLimit(t, f, u.ID, 3)
+		assertBoundDevices(t, f, u.ID, "unlimited")
+		pending := newDeviceKey(t, f, "")
+		bindDevice(t, f, u.ID, pending, true)
+		reportDeviceID(t, f, pending, "pending")
+		if backfill(t, f, pending) {
+			t.Fatalf("backfill of a password pending authorization=true, want false")
+		}
+		if backfill(t, f, newDeviceKey(t, f, "signed-out")) {
+			t.Fatalf("backfill of a key without an authorization=true, want false")
+		}
+		assertBoundDevices(t, f, u.ID, "unlimited")
+
+		bot := f.NewBot(t)
+		botKey := newDeviceKey(t, f, "")
+		bindDevice(t, f, bot.ID, botKey, false)
+		if _, err := f.DeviceLimits.SetDeviceLimit(ctx, bot.ID, 1); err != nil {
+			t.Fatalf("set device limit on bot: %v", err)
+		}
+		reportDeviceID(t, f, botKey, "bot-device")
+		if backfill(t, f, botKey) {
+			t.Fatalf("backfill for a bot=true, want false")
+		}
+		assertBoundDevices(t, f, bot.ID)
+	})
+
+	t.Run("backfill racing new devices for the last slots never exceeds the limit", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		const limit, each = 3, 6
+		old := make([][8]byte, each)
+		for i := range old {
+			old[i] = newDeviceKey(t, f, "")
+			bindDevice(t, f, u.ID, old[i], false)
+		}
+		setDeviceLimit(t, f, u.ID, limit)
+		bindDevice(t, f, u.ID, newDeviceKey(t, f, "held"), false)
+		for i := range old {
+			reportDeviceID(t, f, old[i], newDeviceIDValue(t))
+		}
+		fresh := make([][8]byte, each)
+		for i := range fresh {
+			fresh[i] = newDeviceKey(t, f, newDeviceIDValue(t))
+		}
+		errs := runConcurrently(2*each, func(i int) error {
+			if i < each {
+				_, err := f.DeviceLimits.BackfillDeviceBinding(ctx, old[i])
+				return err
+			}
+			return f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: fresh[i-each], UserID: u.ID})
+		})
+		countAccepted(t, errs, "backfill or bind")
+		if got := listBindings(t, f, u.ID); len(got) != limit {
+			t.Fatalf("bindings=%d, want exactly %d", len(got), limit)
+		}
+	})
+
+	t.Run("setting the limit while new devices sign in never exceeds it", func(t *testing.T) {
+		f := newFixture(t)
+		u := createDeviceLimitUser(t, f)
+		const limit, each = 3, 6
+		for i := 0; i < each; i++ {
+			bindDevice(t, f, u.ID, newDeviceKey(t, f, newDeviceIDValue(t)), false)
+		}
+		fresh := make([][8]byte, each)
+		for i := range fresh {
+			fresh[i] = newDeviceKey(t, f, newDeviceIDValue(t))
+		}
+		errs := runConcurrently(each+1, func(i int) error {
+			if i == each {
+				_, err := f.DeviceLimits.SetDeviceLimit(ctx, u.ID, limit)
+				return err
+			}
+			return f.Auths.Bind(ctx, domain.Authorization{AuthKeyID: fresh[i], UserID: u.ID})
+		})
+		countAccepted(t, errs, "set limit or bind")
+		if got := listBindings(t, f, u.ID); len(got) != limit {
+			t.Fatalf("bindings=%d, want exactly %d", len(got), limit)
+		}
+	})
+
 	t.Run("concurrent promotes never exceed the limit", func(t *testing.T) {
 		f := newFixture(t)
 		u := createDeviceLimitUser(t, f)
@@ -440,8 +638,42 @@ func createDeviceLimitUser(t *testing.T, f DeviceLimitFixture) domain.User {
 
 func setDeviceLimit(t *testing.T, f DeviceLimitFixture, userID int64, limit int) {
 	t.Helper()
-	if err := f.DeviceLimits.SetDeviceLimit(context.Background(), userID, limit); err != nil {
+	setDeviceLimitBackfilled(t, f, userID, limit)
+}
+
+// setDeviceLimitBackfilled 设上限并返回这次补绑的设备数。
+func setDeviceLimitBackfilled(t *testing.T, f DeviceLimitFixture, userID int64, limit int) int {
+	t.Helper()
+	n, err := f.DeviceLimits.SetDeviceLimit(context.Background(), userID, limit)
+	if err != nil {
 		t.Fatalf("set device limit %d: %v", limit, err)
+	}
+	return n
+}
+
+func previewBackfill(t *testing.T, f DeviceLimitFixture, userID int64, limit int) int {
+	t.Helper()
+	n, err := f.DeviceLimits.PreviewDeviceLimitBackfill(context.Background(), userID, limit)
+	if err != nil {
+		t.Fatalf("preview backfill with limit %d: %v", limit, err)
+	}
+	return n
+}
+
+func backfill(t *testing.T, f DeviceLimitFixture, key [8]byte) bool {
+	t.Helper()
+	bound, err := f.DeviceLimits.BackfillDeviceBinding(context.Background(), key)
+	if err != nil {
+		t.Fatalf("backfill device binding on %x: %v", key, err)
+	}
+	return bound
+}
+
+// reportDeviceID 模拟老客户端升级后重连：已登录的 key 之后才持久化 device_id。
+func reportDeviceID(t *testing.T, f DeviceLimitFixture, key [8]byte, deviceID string) {
+	t.Helper()
+	if err := f.AuthKeys.UpdateClientInfo(context.Background(), key, store.AuthKeyClientInfo{DeviceID: deviceID}); err != nil {
+		t.Fatalf("persist device id on %x: %v", key, err)
 	}
 }
 

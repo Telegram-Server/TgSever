@@ -1702,6 +1702,11 @@ func run(logger *zap.Logger) error {
 				zap.String("channel", string(request.Channel)),
 				zap.Error(err))
 		}),
+		auth.WithDeviceBackfillFailureObserver(func(_ context.Context, authKeyID [8]byte, err error) {
+			logger.Named("auth").Warn("延迟补绑设备绑定失败，设备保持登录、不绑定",
+				zap.String("auth_key_id", fmt.Sprintf("%x", authKeyID)),
+				zap.Error(err))
+		}),
 		auth.WithLoginEmail(auth.LoginEmailOptions{
 			Enabled:      cfg.LoginEmailEnable,
 			RequireSetup: cfg.LoginEmailRequireSetup,

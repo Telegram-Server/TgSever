@@ -11,7 +11,9 @@ import (
 
 // 后台给账号设置或清除设备上限（#105）。走普通的命令通道：试运行、按 command id 幂等、写审计。
 // 上限按已绑定设备数计（#112，绑定规则见 store.DeviceLimitStore），只作用于以后的新登录：
-// 调低到比已绑定数还少时不踢任何设备、不删绑定；清除上限也保留绑定名单。系统账号、bot、已注销与
+// 调低到比已绑定数还少时不踢任何设备、不删绑定；清除上限也保留绑定名单。设上限时在同一事务里
+// 把已登录、上报过 device_id 的设备按登录先后补绑到上限（#115），结果的 backfilled_devices
+// 给出补绑数（试运行里是将要补绑的数量）。系统账号、bot、已注销与
 // 不存在的账号一律拒绝（USER_INVALID）；取值必须在 [domain.MinDeviceLimit, domain.MaxDeviceLimit]。
 
 const ActionSetDeviceLimit = "account.set_device_limit"
@@ -56,7 +58,17 @@ func (s *Service) SetDeviceLimit(ctx context.Context, req SetDeviceLimitRequest)
 		if req.DeviceLimit != nil {
 			details["device_limit"] = *req.DeviceLimit
 		}
+		// backfilled_devices：设上限时按登录先后补绑的设备数（#115）；试运行里是将要补绑的数量，
+		// 清除上限时恒为 0。
+		details["backfilled_devices"] = 0
 		if req.DryRun {
+			if req.DeviceLimit != nil {
+				n, err := s.deviceLimits.PreviewDeviceLimitBackfill(ctx, req.UserID, *req.DeviceLimit)
+				if err != nil {
+					return CommandResult{Details: details}, deviceLimitStoreError(err)
+				}
+				details["backfilled_devices"] = n
+			}
 			return CommandResult{Message: "dry-run completed", Details: details}, nil
 		}
 		if req.DeviceLimit == nil {
@@ -65,9 +77,11 @@ func (s *Service) SetDeviceLimit(ctx context.Context, req SetDeviceLimitRequest)
 			}
 			return CommandResult{Message: "device limit cleared", Details: details}, nil
 		}
-		if err := s.deviceLimits.SetDeviceLimit(ctx, req.UserID, *req.DeviceLimit); err != nil {
+		n, err := s.deviceLimits.SetDeviceLimit(ctx, req.UserID, *req.DeviceLimit)
+		if err != nil {
 			return CommandResult{Details: details}, deviceLimitStoreError(err)
 		}
+		details["backfilled_devices"] = n
 		return CommandResult{Message: "device limit set", Details: details}, nil
 	})
 }

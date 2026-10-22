@@ -84,7 +84,7 @@ func (f deviceLimitFixture) signInOn(t *testing.T, phone string, key [8]byte) er
 
 func (f deviceLimitFixture) setLimit(t *testing.T, userID int64, limit int) {
 	t.Helper()
-	if err := f.auths.SetDeviceLimit(context.Background(), userID, limit); err != nil {
+	if _, err := f.auths.SetDeviceLimit(context.Background(), userID, limit); err != nil {
 		t.Fatalf("SetDeviceLimit(%d): %v", limit, err)
 	}
 }

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"sort"
@@ -441,24 +442,81 @@ func (s *AuthorizationStore) enforceDeviceBindingLocked(a domain.Authorization, 
 		return domain.ErrDeviceLimitReached
 	}
 	if write {
-		if bound == nil {
-			if s.deviceBindings == nil {
-				s.deviceBindings = make(map[int64]map[string]domain.DeviceBinding)
-			}
-			bound = make(map[string]domain.DeviceBinding)
-			s.deviceBindings[a.UserID] = bound
-		}
-		bound[deviceID] = domain.DeviceBinding{
-			UserID:      a.UserID,
-			DeviceID:    deviceID,
-			DeviceModel: a.DeviceModel,
-			Platform:    a.Platform,
-			AppVersion:  a.AppVersion,
-			BoundAt:     now,
-			LastUsedAt:  now,
-		}
+		s.insertDeviceBindingLocked(a, deviceID, now)
 	}
 	return nil
+}
+
+// insertDeviceBindingLocked 把 deviceID 写进 a.UserID 的绑定名单，设备信息取自授权 a。
+// 调用方持有 mu 写锁，并已判定名额。
+func (s *AuthorizationStore) insertDeviceBindingLocked(a domain.Authorization, deviceID string, now time.Time) {
+	bound := s.deviceBindings[a.UserID]
+	if bound == nil {
+		if s.deviceBindings == nil {
+			s.deviceBindings = make(map[int64]map[string]domain.DeviceBinding)
+		}
+		bound = make(map[string]domain.DeviceBinding)
+		s.deviceBindings[a.UserID] = bound
+	}
+	bound[deviceID] = domain.DeviceBinding{
+		UserID:      a.UserID,
+		DeviceID:    deviceID,
+		DeviceModel: a.DeviceModel,
+		Platform:    a.Platform,
+		AppVersion:  a.AppVersion,
+		BoundAt:     now,
+		LastUsedAt:  now,
+	}
+}
+
+// backfillDeviceBindingsLocked 是设上限时的补绑（#115）：按登录时间先后遍历账号的已完成
+// 授权，把 auth key 上有合法 device_id、尚未绑定的设备绑定，直到绑定数达到 limit；返回
+// 补绑数。write=false 只计数（试运行）。调用方持有 mu（write 时写锁），且在 authKeys 不为
+// nil 时持有 authKeys.mu 读锁（锁序 linkMu → authKeys.mu → mu）。
+func (s *AuthorizationStore) backfillDeviceBindingsLocked(userID int64, limit int, write bool, now time.Time) int {
+	if s.authKeys == nil {
+		return 0
+	}
+	completed := make([]domain.Authorization, 0)
+	for _, a := range s.m {
+		if a.UserID == userID && !a.PasswordPending {
+			completed = append(completed, a)
+		}
+	}
+	sort.Slice(completed, func(i, j int) bool {
+		if !completed[i].CreatedAt.Equal(completed[j].CreatedAt) {
+			return completed[i].CreatedAt.Before(completed[j].CreatedAt)
+		}
+		return bytes.Compare(completed[i].AuthKeyID[:], completed[j].AuthKeyID[:]) < 0
+	})
+	bound := s.deviceBindings[userID]
+	used := len(bound)
+	planned := make(map[string]struct{})
+	backfilled := 0
+	for _, a := range completed {
+		if used >= limit {
+			break
+		}
+		deviceID := s.authKeys.keys[a.AuthKeyID].DeviceID
+		if !domain.ValidDeviceID(deviceID) {
+			continue
+		}
+		if _, ok := bound[deviceID]; ok {
+			continue
+		}
+		if _, ok := planned[deviceID]; ok {
+			continue
+		}
+		planned[deviceID] = struct{}{}
+		used++
+		backfilled++
+		if write {
+			// 同一次补绑里按登录先后错开绑定时间，名单的顺序与登录先后一致。
+			s.insertDeviceBindingLocked(a, deviceID, now.Add(time.Duration(backfilled)))
+			bound = s.deviceBindings[userID]
+		}
+	}
+	return backfilled
 }
 
 // authKeyDeviceID 读 auth key 上持久化的 device_id；没有接上 auth key 数据或 key 不存在时
@@ -540,24 +598,100 @@ func (s *AuthorizationStore) GetDeviceLimit(_ context.Context, userID int64) (in
 	return limit, ok, nil
 }
 
-func (s *AuthorizationStore) SetDeviceLimit(ctx context.Context, userID int64, limit int) error {
+// SetDeviceLimit 写上限并在同一把锁下补绑（#115），返回补绑数。bot 只写上限、不补绑。
+func (s *AuthorizationStore) SetDeviceLimit(ctx context.Context, userID int64, limit int) (int, error) {
 	if !domain.ValidDeviceLimit(limit) {
-		return domain.ErrDeviceLimitInvalid
+		return 0, domain.ErrDeviceLimitInvalid
 	}
+	limited := true
 	if users := s.linkedUsers(); users != nil {
-		if _, found, err := users.ByID(ctx, userID); err != nil {
-			return err
-		} else if !found {
-			return domain.ErrUserNotFound
+		u, found, err := users.ByID(ctx, userID)
+		if err != nil {
+			return 0, err
 		}
+		if !found {
+			return 0, domain.ErrUserNotFound
+		}
+		limited = !u.Bot
 	}
+	unlock := s.lockAuthKeysForRead()
+	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.deviceLimits == nil {
 		s.deviceLimits = make(map[int64]int)
 	}
 	s.deviceLimits[userID] = limit
-	return nil
+	if !limited {
+		return 0, nil
+	}
+	return s.backfillDeviceBindingsLocked(userID, limit, true, time.Now()), nil
+}
+
+// PreviewDeviceLimitBackfill 只读地计算把上限设为 limit 时会补绑的设备数。
+func (s *AuthorizationStore) PreviewDeviceLimitBackfill(ctx context.Context, userID int64, limit int) (int, error) {
+	if !domain.ValidDeviceLimit(limit) {
+		return 0, domain.ErrDeviceLimitInvalid
+	}
+	limited, err := s.deviceLimitApplies(ctx, userID)
+	if err != nil || !limited {
+		return 0, err
+	}
+	unlock := s.lockAuthKeysForRead()
+	defer unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.backfillDeviceBindingsLocked(userID, limit, false, time.Time{}), nil
+}
+
+// BackfillDeviceBinding 是延迟补绑（#115）：见 store.DeviceLimitStore。
+func (s *AuthorizationStore) BackfillDeviceBinding(ctx context.Context, authKeyID [8]byte) (bool, error) {
+	s.mu.RLock()
+	a, ok := s.m[authKeyID]
+	_, hasLimit := s.deviceLimits[a.UserID]
+	s.mu.RUnlock()
+	if !ok || a.PasswordPending || !hasLimit {
+		return false, nil
+	}
+	limited, err := s.deviceLimitApplies(ctx, a.UserID)
+	if err != nil || !limited {
+		return false, err
+	}
+	deviceID := s.authKeyDeviceID(authKeyID)
+	if !domain.ValidDeviceID(deviceID) {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.m[authKeyID]
+	if !ok || current.UserID != a.UserID || current.PasswordPending {
+		return false, nil
+	}
+	limit, ok := s.deviceLimits[current.UserID]
+	if !ok {
+		return false, nil
+	}
+	bound := s.deviceBindings[current.UserID]
+	if _, ok := bound[deviceID]; ok || len(bound) >= limit {
+		return false, nil
+	}
+	s.insertDeviceBindingLocked(current, deviceID, time.Now())
+	return true, nil
+}
+
+// lockAuthKeysForRead 按锁序（linkMu → authKeys.mu）拿读锁，供随后在 mu 下读 key 上的
+// device_id；返回的函数释放这两把锁。
+func (s *AuthorizationStore) lockAuthKeysForRead() func() {
+	s.linkMu.RLock()
+	keys := s.authKeys
+	if keys == nil {
+		return s.linkMu.RUnlock
+	}
+	keys.mu.RLock()
+	return func() {
+		keys.mu.RUnlock()
+		s.linkMu.RUnlock()
+	}
 }
 
 func (s *AuthorizationStore) CheckDeviceLimit(ctx context.Context, userID int64, authKeyID [8]byte) error {

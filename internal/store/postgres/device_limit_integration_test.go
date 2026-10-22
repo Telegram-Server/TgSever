@@ -23,7 +23,7 @@ func TestDeviceLimitOnlyRowIsNotAFreezeRecordPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if err := auths.SetDeviceLimit(ctx, u.ID, 2); err != nil {
+	if _, err := auths.SetDeviceLimit(ctx, u.ID, 2); err != nil {
 		t.Fatalf("set device limit: %v", err)
 	}
 	if got, found, err := admin.GetAccountFreeze(ctx, u.ID); err != nil || found {
@@ -73,7 +73,7 @@ func TestSetDeviceLimitWaitsForAnInFlightLoginPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if err := auths.SetDeviceLimit(ctx, u.ID, 5); err != nil {
+	if _, err := auths.SetDeviceLimit(ctx, u.ID, 5); err != nil {
 		t.Fatalf("set initial device limit: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestSetDeviceLimitWaitsForAnInFlightLoginPostgres(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- auths.SetDeviceLimit(ctx, u.ID, 1) }()
+	go func() { _, err := auths.SetDeviceLimit(ctx, u.ID, 1); done <- err }()
 	select {
 	case err := <-done:
 		t.Fatalf("SetDeviceLimit returned (err=%v) while a login held the user lock", err)
