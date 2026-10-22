@@ -60,6 +60,7 @@ type Service interface {
 	CreateAccount(ctx context.Context, req admin.CreateAccountRequest) (admin.CommandResult, error)
 	SetLoginPassword(ctx context.Context, req admin.SetLoginPasswordRequest) (admin.CommandResult, error)
 	SetDeviceLimit(ctx context.Context, req admin.SetDeviceLimitRequest) (admin.CommandResult, error)
+	DeviceBindings(ctx context.Context, userID int64) (admin.DeviceBindingList, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
@@ -291,6 +292,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/create", s.authenticated(s.handleCreateAccount))
 	mux.HandleFunc("POST /v1/accounts/set-login-password", s.authenticated(s.handleSetLoginPassword))
 	mux.HandleFunc("POST /v1/accounts/set-device-limit", s.authenticated(s.handleSetDeviceLimit))
+	mux.HandleFunc("GET /v1/accounts/{id}/device-bindings", s.authenticated(s.handleDeviceBindings))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
@@ -781,6 +783,20 @@ func (s *Server) handleSetDeviceLimit(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.svc.SetDeviceLimit(r.Context(), req)
 	writeCommandResult(w, result, err)
+}
+
+// handleDeviceBindings 列出账号的设备绑定名单（#113）；没有绑定时 bindings 是空数组。
+func (s *Server) handleDeviceBindings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	list, err := s.svc.DeviceBindings(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 func (s *Server) handleResolveUserByPhone(w http.ResponseWriter, r *http.Request) {

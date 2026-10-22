@@ -52,6 +52,23 @@ export type AuthorizationRow = {
   ActiveAt: string;
 };
 
+// DeviceBinding is one device bound to an account under its device limit
+// (GET /api/accounts/{id}/device-bindings). Model, platform and app version are
+// the values reported by the sign-in that bound it.
+export type DeviceBinding = {
+  device_id: string;
+  device_model: string;
+  platform: string;
+  app_version: string;
+  bound_at: string;
+  last_used_at: string;
+};
+
+export type DeviceBindingList = {
+  user_id: number;
+  bindings: DeviceBinding[];
+};
+
 // SharedDeviceAccount is one account whose authorizations matched a
 // SharedDeviceGroup's device fingerprint.
 export type SharedDeviceAccount = {

@@ -292,6 +292,7 @@ Every mutating request carries in its body:
 | GET | `/api/accounts` | Params: `q` (search), `before_id` (int64), `before_active_us` (int64, microseconds), `limit` (int). Response: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `next_before_active_us`, `listing`. |
 | GET | `/api/accounts/{id}` | Account card: profile, flags, statistics, `DeviceLimit` (int 1..100, `null` = unlimited). |
 | GET | `/api/accounts/{id}/avatar` | Account avatar (file). |
+| GET | `/api/accounts/{id}/device-bindings` | Devices bound to the account (see `set-device-limit`), oldest binding first. Response: `user_id`, `bindings` (empty array when none) of `device_id`, `device_model`, `platform`, `app_version` (as reported at binding time), `bound_at`, `last_used_at` (RFC 3339). Proxied from Admin API `/v1/accounts/{id}/device-bindings`, not cached. |
 | GET | `/api/account-ratings` | Params: `q`, `min_level` (int), `user_id` (int64), `before_id` (int64), `limit` (int). Response: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/account-ratings/{user_id}` | Response: `rating`, `events`. |
 

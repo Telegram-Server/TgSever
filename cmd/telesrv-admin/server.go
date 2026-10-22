@@ -93,6 +93,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/accounts/shared-devices", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleSharedDeviceGroupsAPI)))
 	mux.Handle("GET /api/accounts/{id}", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountDetailAPI)))
 	mux.Handle("GET /api/accounts/{id}/avatar", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountAvatarAPI)))
+	mux.Handle("GET /api/accounts/{id}/device-bindings", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleDeviceBindingsAPI)))
 	mux.Handle("GET /api/channels", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelDetailAPI)))
 	mux.Handle("GET /api/channels/{id}/avatar", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelAvatarAPI)))
@@ -967,6 +968,16 @@ func (s *server) handleAccountDetailAPI(w http.ResponseWriter, r *http.Request) 
 
 func (s *server) handleAccountAvatarAPI(w http.ResponseWriter, r *http.Request) {
 	s.proxyAvatar(w, r, "accounts")
+}
+
+// handleDeviceBindingsAPI 代理账号的设备绑定名单（#113）。不缓存：解绑（#114）之后要立刻看到新名单。
+func (s *server) handleDeviceBindingsAPI(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInt64(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid account id")
+		return
+	}
+	s.proxyAdminJSONNoStore(w, r, fmt.Sprintf("/v1/accounts/%d/device-bindings", id), 1<<20)
 }
 
 func (s *server) handleChannelAvatarAPI(w http.ResponseWriter, r *http.Request) {

@@ -858,6 +858,10 @@ func (fakeService) SetDeviceLimit(_ context.Context, req admin.SetDeviceLimitReq
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) DeviceBindings(_ context.Context, userID int64) (admin.DeviceBindingList, error) {
+	return admin.DeviceBindingList{UserID: userID, Bindings: []admin.DeviceBinding{}}, nil
+}
+
 func (fakeService) SetPhone(_ context.Context, req admin.SetPhoneRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }

@@ -316,6 +316,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | GET | `/api/accounts` | Параметры: `q` (поиск), `before_id` (int64), `before_active_us` (int64, микросекунды), `limit` (int). Ответ: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `next_before_active_us`, `listing`. |
 | GET | `/api/accounts/{id}` | Карточка аккаунта: профиль, флаги, статистика, `DeviceLimit` (int 1..100, `null` — без ограничений) (проксируется/читается из БД). |
 | GET | `/api/accounts/{id}/avatar` | Аватар аккаунта (файл). |
+| GET | `/api/accounts/{id}/device-bindings` | Устройства, привязанные к аккаунту (см. `set-device-limit`), от самой ранней привязки. Ответ: `user_id`, `bindings` (пустой массив, если привязок нет) с полями `device_id`, `device_model`, `platform`, `app_version` (на момент привязки), `bound_at`, `last_used_at` (RFC 3339). Проксируется в Admin API `/v1/accounts/{id}/device-bindings`, не кэшируется. |
 | GET | `/api/account-ratings` | Параметры: `q`, `min_level` (int), `user_id` (int64), `before_id` (int64), `limit` (int). Ответ: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/account-ratings/{user_id}` | Ответ: `rating`, `events`. |
 
