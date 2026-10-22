@@ -6,6 +6,7 @@ import { Avatar } from "../components/Avatar";
 import { AvatarModal } from "../components/AvatarModal";
 import { AuthorizationTable } from "../components/AuthorizationTable";
 import { DeviceBindingTable } from "../components/DeviceBindingTable";
+import { AccountPermissionsSection } from "../components/AccountPermissionsSection";
 import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary, UsernameCell } from "../components/ui";
 import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
 import { ColorAction, DeviceLimitAction, EmojiStatusAction, LoginEmailAction, LoginPasswordAction, PhoneAction, ProfileAction, SupportAction, UsernameAction } from "../components/attributes";
@@ -176,6 +177,9 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                 )}
               </section>
             )}
+            {/* Staff permission control (#118). Bots and deleted accounts are
+                refused as targets by the server, like the device limit. */}
+            {deviceLimitApplies && <AccountPermissionsSection userID={account.ID} navigate={navigate} />}
             <section className="section-block">
               <SectionHead title={t("account.authorizationsTitle")} text={t("account.authorizationsCount", { count: detail.Authorizations.length })} />
               <AuthorizationTable rows={detail.Authorizations} userID={account.ID} onDone={load} />
