@@ -76,17 +76,11 @@ func (r *Router) checkPermissionRPC(ctx context.Context, method string) error {
 // checkPermission 读取 userID 的权限视图并判定 action；被拒绝时返回 403 TELESRV_PERMISSION_*。
 // 读取失败时拒绝（fail closed），与冻结闸门一致。
 func (r *Router) checkPermission(ctx context.Context, userID int64, action permissions.Action) error {
-	if r == nil || r.deps.Permissions == nil || userID == 0 {
-		return nil
+	view, enforced, err := r.enforcedPermissionView(ctx, userID)
+	if err != nil || !enforced {
+		return err
 	}
-	view, err := r.deps.Permissions.View(ctx, userID)
-	if err != nil {
-		return internalErr()
-	}
-	if denial := permissions.Decide(view, action); !denial.Allowed() {
-		return permissionDeniedErr(denial)
-	}
-	return nil
+	return decidePermission(view, action)
 }
 
 // checkSendPermission 判定 userID 向 peer 发送消息：和自己的对话（收藏夹）放行，私聊带上对方
@@ -110,15 +104,9 @@ func sendPermissionTarget(userID int64, peer domain.Peer) permissions.Target {
 // 秘密聊天，只在权限控制作用于这个账号时才查；查不到时对方留空（照样按发送权限判定），
 // 由后续的 store 调用返回原本的错误。
 func (r *Router) checkSecretChatSendPermission(ctx context.Context, userID int64, chatID int) error {
-	if r == nil || r.deps.Permissions == nil || userID == 0 {
-		return nil
-	}
-	view, err := r.deps.Permissions.View(ctx, userID)
-	if err != nil {
-		return internalErr()
-	}
-	if !view.Enforced() {
-		return nil
+	view, enforced, err := r.enforcedPermissionView(ctx, userID)
+	if err != nil || !enforced {
+		return err
 	}
 	target := permissions.Target{Kind: permissions.TargetSecretChat}
 	if r.deps.SecretChats != nil {
@@ -130,10 +118,7 @@ func (r *Router) checkSecretChatSendPermission(ctx context.Context, userID int64
 			target.UserID = chat.PeerOf(userID)
 		}
 	}
-	if denial := permissions.Decide(view, permissions.Action{Kind: permissions.ActionSend, Target: target}); !denial.Allowed() {
-		return permissionDeniedErr(denial)
-	}
-	return nil
+	return decidePermission(view, permissions.Action{Kind: permissions.ActionSend, Target: target})
 }
 
 // checkSecretChatCounterpartPermission 判定 userID 与已知对方 counterpartID 建链或在秘密聊天里发送。
@@ -150,6 +135,26 @@ func (r *Router) checkHistoryTTLPermission(ctx context.Context, userID int64, pe
 		return nil
 	}
 	return r.checkPermission(ctx, userID, permissions.Action{Kind: permissions.ActionDelete})
+}
+
+// enforcedPermissionView 读取权限视图并报告权限控制是否作用于 userID；读取失败时 fail closed。
+func (r *Router) enforcedPermissionView(ctx context.Context, userID int64) (permissions.View, bool, error) {
+	if r == nil || r.deps.Permissions == nil || userID == 0 {
+		return permissions.View{}, false, nil
+	}
+	view, err := r.deps.Permissions.View(ctx, userID)
+	if err != nil {
+		return permissions.View{}, false, internalErr()
+	}
+	return view, view.Enforced(), nil
+}
+
+// decidePermission 判定 action；被拒绝时返回 403 TELESRV_PERMISSION_*。
+func decidePermission(view permissions.View, action permissions.Action) error {
+	if denial := permissions.Decide(view, action); !denial.Allowed() {
+		return permissionDeniedErr(denial)
+	}
+	return nil
 }
 
 func permissionDeniedErr(denial permissions.Denial) error {

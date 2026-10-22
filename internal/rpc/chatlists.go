@@ -217,6 +217,9 @@ func (r *Router) onChatlistsJoinChatlistInvite(ctx context.Context, req *tg.Chat
 	if err != nil {
 		return nil, err
 	}
+	if err := r.checkChatlistJoinPermission(ctx, userID, peers); err != nil {
+		return nil, err
+	}
 	result, err := r.deps.Chatlists.JoinInvite(ctx, userID, req.Slug, peers, int(r.clock.Now().Unix()))
 	if err != nil {
 		return nil, chatlistErr(err)
@@ -257,6 +260,9 @@ func (r *Router) onChatlistsJoinChatlistUpdates(ctx context.Context, req *tg.Cha
 	}
 	peers, err := r.dialogFolderPeersFromInput(ctx, userID, req.Peers)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.checkChatlistJoinPermission(ctx, userID, peers); err != nil {
 		return nil, err
 	}
 	result, err := r.deps.Chatlists.JoinUpdates(ctx, userID, chatlistFilterID(req.Chatlist), peers, int(r.clock.Now().Unix()))
