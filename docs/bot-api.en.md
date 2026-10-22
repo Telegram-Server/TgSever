@@ -180,7 +180,7 @@ list above is the whitelist that survives.
 
 ## Method summary
 
-Implemented (79 methods + 1 file route):
+Implemented (83 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
@@ -197,6 +197,7 @@ Implemented (79 methods + 1 file route):
 | Callback | `answerCallbackQuery` |
 | Chat queries | `getChat`, `getChatMember`, `getChatAdministrators`, `getChatMemberCount` |
 | Chat management | `banChatMember`, `unbanChatMember`, `restrictChatMember`, `promoteChatMember`, `setChatAdministratorCustomTitle`, `setChatPermissions`, `pinChatMessage`, `unpinChatMessage`, `unpinAllChatMessages`, `setChatTitle`, `setChatDescription`, `setChatPhoto`, `deleteChatPhoto`, `leaveChat` |
+| Invite links | `createChatInviteLink`, `editChatInviteLink`, `revokeChatInviteLink`, `exportChatInviteLink` |
 | Files | `getFile`, `GET /file/bot<TOKEN>/<file_path>` |
 | Webhooks | `setWebhook`, `deleteWebhook`, `getWebhookInfo` |
 | Menus & status | `setChatMenuButton`, `getChatMenuButton`, `setUserEmojiStatus` |
@@ -767,6 +768,38 @@ Differences from the official gateway:
   `PHOTO_INVALID`;
 - there are no basic groups, so methods and errors specific to them do not
   exist.
+
+## Methods: invite links
+
+The bot must be the creator or an admin with the invite-users or change-info
+right; otherwise every method fails with
+`Bad Request: not enough rights to manage chat invite links`. Creating and
+exporting go through `messages.exportChatInvite`, editing and revoking through
+`messages.editExportedChatInvite`, as the bot, so the owner sees the links as
+created by the bot. Supergroups and channels only.
+
+| Method | Parameters | Returns |
+|---|---|---|
+| `createChatInviteLink` | `chat_id`, `name`, `expire_date`, `member_limit`, `creates_join_request` | `ChatInviteLink` |
+| `editChatInviteLink` | `chat_id`, `invite_link`, `name`, `expire_date`, `member_limit`, `creates_join_request` | `ChatInviteLink` |
+| `revokeChatInviteLink` | `chat_id`, `invite_link` | `ChatInviteLink` with `is_revoked=true`; revoking the primary link generates a new one |
+| `exportChatInviteLink` | `chat_id` | the bot's new primary link as a string; its previous primary link stops working |
+
+Parameter checks (`Bad Request: ...`, before anything is changed): `name` is at
+most 32 characters, `member_limit` is 1–99999, and `member_limit` cannot be
+combined with `creates_join_request=true`; `invite_link` is required for edit
+and revoke.
+
+`ChatInviteLink` carries `invite_link`, `creator`, `creates_join_request`,
+`is_primary`, `is_revoked`, and, when set, `name`, `expire_date`,
+`member_limit` and `pending_join_request_count`.
+
+Differences from the official gateway:
+
+- `editChatInviteLink` changes only the parameters that are passed; officially
+  an omitted parameter is reset;
+- a link created without any parameter counts as a primary link of the bot
+  (`is_primary=true`), and `exportChatInviteLink` revokes it as well.
 
 ## Methods: files
 
