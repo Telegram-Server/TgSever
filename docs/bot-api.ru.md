@@ -52,8 +52,9 @@
 - `python-telegram-bot`: `--base-url http://host:8081/bot` и
   `--base-file-url http://host:8081/file/bot`;
 - `aiogram`: `TelegramAPIServer.from_base("http://host:8081")`;
-- grammY: `new Api("host:8081")` либо
-  `api.config.use((ctx) => ({ apiRoot: "http://host:8081/bot" }))`.
+- grammY: `new Bot(token, { client: { apiRoot: "http://host:8081" } })`
+  (grammY сам добавляет `/bot<TOKEN>/<METHOD>`, поэтому в `apiRoot` нет
+  суффикса `/bot` и завершающего слэша).
 
 ## Аутентификация
 
@@ -249,7 +250,9 @@ Ephemeral-сообщения (Bot API 10.2) приходят как обычны
 Особенности проекции `Message`:
 
 - `chat` широковещательного канала имеет `type: "channel"` и несёт `title` и
-  `username`, если канал есть в обновлении; супергруппы — `type: "supergroup"`;
+  `username`, если канал есть в обновлении; супергруппы — `type: "supergroup"`.
+  Посты каналов приходят как `message` / `edited_message`, а не как
+  `channel_post` / `edited_channel_post`;
 - элементы альбома несут `media_group_id` (строку);
 - результаты `sendDice` несут `dice` (`emoji`, `value`);
 - пересланные сообщения несут `forward_origin` типа `user`, `chat`,
@@ -1203,15 +1206,14 @@ Message entities (для `entities` / `caption_entities`, а также entity
 - платежи: `createInvoiceLink`, `getStarTransactions`,
   `editUserStarSubscription`, `getMyStarBalance` и методы управления
   подарками помимо `getAvailableGifts` / `sendGift`;
-- администрирование чатов: `setChatStickerSet`, `deleteChatStickerSet`, пригласительные ссылки
-  (`exportChatInviteLink`, `createChatInviteLink`, `editChatInviteLink`,
-  `revokeChatInviteLink`, ссылки-подписки), заявки на вступление
-  (`approveChatJoinRequest`, `declineChatJoinRequest`);
+- администрирование чатов: `setChatStickerSet`, `deleteChatStickerSet`,
+  `setChatMemberTag`, ссылки-подписки (`createChatSubscriptionInviteLink`,
+  `editChatSubscriptionInviteLink`) и сценарий запросов на вступление
+  (`answerChatJoinRequestQuery`, `sendChatJoinRequestWebApp`);
 - темы форума: `createForumTopic`, `editForumTopic`, `closeForumTopic`,
   `getForumTopicIconStickers` и остальное семейство тем;
-- запросы: `getUserChatBoosts`;
-- администрирование бота: `setMyDefaultAdministratorRights`,
-  `getMyDefaultAdministratorRights`;
+- запросы: `getUserChatBoosts`, `getUserProfileAudios`,
+  `getUserPersonalChatMessages`;
 - реакции (`setMessageReaction`), стикеры и стикерпаки, stories, методы
   business-аккаунтов и Telegram Passport.
 

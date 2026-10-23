@@ -52,8 +52,9 @@ Client configuration:
 - `python-telegram-bot`: pass `--base-url http://host:8081/bot` and
   `--base-file-url http://host:8081/file/bot`.
 - `aiogram`: `TelegramAPIServer.from_base("http://host:8081")`.
-- grammY: `new Api("host:8081")` / `api.config.use((ctx) => ({ apiRoot:
-  "http://host:8081/bot" }))`.
+- grammY: `new Bot(token, { client: { apiRoot: "http://host:8081" } })`
+  (grammY appends `/bot<TOKEN>/<METHOD>` itself, so `apiRoot` has no `/bot`
+  suffix and no trailing slash).
 
 ## Authentication
 
@@ -251,7 +252,8 @@ Replies go back through `reply_parameters.ephemeral_message_id`; see
 
 - `chat` of a broadcast channel is `type: "channel"` and carries `title` and
   `username` when the update has the channel at hand; supergroups are
-  `type: "supergroup"`;
+  `type: "supergroup"`. Channel posts arrive as `message` / `edited_message`,
+  not as `channel_post` / `edited_channel_post`;
 - album items carry `media_group_id` (a string);
 - `sendDice` results carry `dice` (`emoji`, `value`);
 - forwarded messages carry `forward_origin` of type `user`, `chat`,
@@ -1204,15 +1206,15 @@ commonly reached ones:
 - payments: `createInvoiceLink`, `getStarTransactions`,
   `editUserStarSubscription`, `getMyStarBalance`, and the gift-management
   methods beyond `getAvailableGifts` / `sendGift`;
-- chat administration: `setChatStickerSet`, `deleteChatStickerSet`, invite links
-  (`exportChatInviteLink`, `createChatInviteLink`, `editChatInviteLink`,
-  `revokeChatInviteLink`, subscription links), join requests
-  (`approveChatJoinRequest`, `declineChatJoinRequest`);
+- chat administration: `setChatStickerSet`, `deleteChatStickerSet`,
+  `setChatMemberTag`, subscription invite links
+  (`createChatSubscriptionInviteLink`, `editChatSubscriptionInviteLink`), and
+  the join-request query flow (`answerChatJoinRequestQuery`,
+  `sendChatJoinRequestWebApp`);
 - forum topics: `createForumTopic`, `editForumTopic`, `closeForumTopic`,
   `getForumTopicIconStickers` and the rest of the topic family;
-- queries: `getUserChatBoosts`;
-- bot administration: `setMyDefaultAdministratorRights`,
-  `getMyDefaultAdministratorRights`;
+- queries: `getUserChatBoosts`, `getUserProfileAudios`,
+  `getUserPersonalChatMessages`;
 - reactions (`setMessageReaction`), stickers and sticker sets, stories,
   business-account methods, and Telegram Passport.
 
