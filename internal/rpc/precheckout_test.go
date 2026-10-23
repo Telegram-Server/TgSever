@@ -68,6 +68,18 @@ func (c *invoiceChain) answerNext(botID int64, ans domain.BotPreCheckoutAnswer) 
 	return false
 }
 
+// shortenPreCheckoutWait makes an unanswered gate give up quickly, for subtests
+// that expect no approval to arrive. The 10 second contract itself is pinned by
+// TestPreCheckoutTimeoutIsTenSeconds.
+func shortenPreCheckoutWait(t *testing.T) time.Duration {
+	t.Helper()
+	const wait = 300 * time.Millisecond
+	prev := preCheckoutWait
+	preCheckoutWait = wait
+	t.Cleanup(func() { preCheckoutWait = prev })
+	return wait
+}
+
 // The gate has to actually block: only the owning bot's answer opens it.
 func TestBotInvoicePreCheckoutGate(t *testing.T) {
 	t.Run("approved lets the payment settle", func(t *testing.T) {
@@ -107,12 +119,13 @@ func TestBotInvoicePreCheckoutGate(t *testing.T) {
 		}
 	})
 
-	t.Run("silence fails the payment after ten seconds", func(t *testing.T) {
+	t.Run("silence fails the payment when the window closes", func(t *testing.T) {
+		wait := shortenPreCheckoutWait(t)
 		chain := newInvoiceChain(t)
 		invoice, stored := chain.sellInvoice(t, "gate-silent", 100)
 		// A late answer must not rescue a payment that already failed.
 		go func() {
-			time.Sleep(preCheckoutTimeout + 500*time.Millisecond)
+			time.Sleep(wait + 200*time.Millisecond)
 			chain.answerNext(chain.botID, domain.BotPreCheckoutAnswer{OK: true})
 		}()
 		start := time.Now()
@@ -124,8 +137,8 @@ func TestBotInvoicePreCheckoutGate(t *testing.T) {
 		if code, ok := tgerr.As(err); !ok || code.Code != 400 {
 			t.Fatalf("timeout error = %v, want a 400 rpc_error", err)
 		}
-		if elapsed < preCheckoutTimeout {
-			t.Fatalf("gave up after %v, want it to wait the full %v", elapsed, preCheckoutTimeout)
+		if elapsed < wait {
+			t.Fatalf("gave up after %v, want it to wait the full %v", elapsed, wait)
 		}
 		if chain.walletBalance(t) != 0 {
 			t.Fatalf("bot wallet = %d after a timeout, want 0", chain.walletBalance(t))
@@ -133,6 +146,8 @@ func TestBotInvoicePreCheckoutGate(t *testing.T) {
 	})
 
 	t.Run("a foreign bot cannot open the gate", func(t *testing.T) {
+		// The foreign answer is refused, so the gate only closes on the timer.
+		shortenPreCheckoutWait(t)
 		chain := newInvoiceChain(t)
 		invoice, stored := chain.sellInvoice(t, "gate-foreign", 100)
 		go chain.answerNext(chain.otherBotID, domain.BotPreCheckoutAnswer{OK: true})
@@ -155,6 +170,9 @@ func TestPreCheckoutTimeoutIsTenSeconds(t *testing.T) {
 	if preCheckoutTimeout != 10*time.Second {
 		t.Fatalf("pre-checkout timer = %v, want 10s", preCheckoutTimeout)
 	}
+	if preCheckoutWait != preCheckoutTimeout {
+		t.Fatalf("pre-checkout wait = %v, want the %v contract", preCheckoutWait, preCheckoutTimeout)
+	}
 }
 
 // A declined payment must not leave the invoice flagged as paid, or the retry
@@ -166,8 +184,9 @@ func TestDeclinedPreCheckoutLeavesInvoiceUnsettled(t *testing.T) {
 	if err := chain.payStarsForm(t, invoice, stored.ID); err == nil {
 		t.Fatal("decline was ignored")
 	}
+	// Invoices are keyed by the buyer's box, the same key botInvoiceForMessage uses.
 	reloaded, found, err := chain.router.deps.Bots.BotInvoiceByMessage(context.Background(),
-		chain.botID, chain.botID, invoice.MsgID)
+		chain.botID, chain.buyerID, invoice.MsgID)
 	if err != nil || !found {
 		t.Fatalf("lookup after decline: %v found=%v", err, found)
 	}

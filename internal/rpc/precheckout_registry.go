@@ -18,6 +18,10 @@ import (
 // 要防的事。
 const preCheckoutTimeout = preCheckoutTimeoutSeconds * time.Second
 
+// preCheckoutWait 是 await 实际使用的等待时长，生产恒等于 preCheckoutTimeout；测试把它
+// 缩短，免得每个"bot 不应答"的用例都真等 10 秒。
+var preCheckoutWait = preCheckoutTimeout
+
 // preCheckoutRegistry 持有一次挂起的 pre-checkout 询问及其应答通道。
 //
 // 与 callbackRegistry 的差别在于时效：callback 允许 25s 且超时只影响按钮动画，
@@ -115,7 +119,7 @@ func (p *preCheckoutRegistry) size() int {
 // 返回的 answered 为 false 时，调用方必须让付款失败——把"没有批准"降级成"直接
 // 扣款"正是 pre-checkout 要防的事。
 func (p *preCheckoutRegistry) await(ctx context.Context, queryID int64, entry *pendingPreCheckout) (domain.BotPreCheckoutAnswer, bool) {
-	timer := time.NewTimer(preCheckoutTimeout)
+	timer := time.NewTimer(preCheckoutWait)
 	defer timer.Stop()
 	defer p.deregister(queryID)
 
