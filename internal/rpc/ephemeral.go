@@ -28,7 +28,7 @@ func (r *Router) registerEphemeral(d *tlprofile.Dispatcher) {
 		return r.onEphemeralGetCallbackAnswer(ctx, request)
 	})
 	registerRPC[*tg.EphemeralEditMessageRequest](d, tlprofile.SemanticMethodEphemeralEditMessage, func(ctx context.Context, request *tg.EphemeralEditMessageRequest) (any, error) {
-		return r.onEphemeralEditWelcomeMessage(ctx, request)
+		return r.onEphemeralEditMessage(ctx, request)
 	})
 	registerRPC[*tg.EphemeralDeleteWelcomeMessageRequest](d, tlprofile.SemanticMethodEphemeralDeleteWelcomeMessage, func(ctx context.Context, request *tg.EphemeralDeleteWelcomeMessageRequest) (any, error) {
 		return r.onEphemeralDeleteWelcomeMessage(ctx, request)

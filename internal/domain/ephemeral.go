@@ -257,6 +257,9 @@ const (
 	EphemeralEditMedia       EphemeralEditMode = "media"
 	EphemeralEditCaption     EphemeralEditMode = "caption"
 	EphemeralEditReplyMarkup EphemeralEditMode = "reply_markup"
+	// EphemeralEditAny 是 MTProto ephemeral.editMessage 的语义：由设置了哪些字段
+	// 决定改什么，文本按已存消息解释为正文或说明，形状规则与上面各模式一致。
+	EphemeralEditAny EphemeralEditMode = "any"
 )
 
 func (m EphemeralMessage) ValidateForCreate(now time.Time) error {

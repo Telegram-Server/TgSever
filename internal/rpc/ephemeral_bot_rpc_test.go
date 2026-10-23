@@ -242,4 +242,71 @@ func TestEphemeralCallbackReachesOnlineBotAsEphemeralCallbackQuery(t *testing.T)
 	}
 }
 
-var _ = tgerr.Is
+func (f *ephemeralBotFixture) editRequest(id int, text string) *tg.EphemeralEditMessageRequest {
+	request := &tg.EphemeralEditMessageRequest{Peer: f.peer, ReceiverID: &tg.InputUser{UserID: ephemeralHumanID}, ID: id}
+	request.SetMessage(text)
+	return request
+}
+
+func TestEphemeralBotEditMessageUpdatesReceiver(t *testing.T) {
+	f := newEphemeralBotFixture(t)
+	sent := f.botSend(t, "draft", 801)
+	updates, err := f.router.onEphemeralEditMessage(f.botCtx(), f.editRequest(sent.ID, "final"))
+	if err != nil {
+		t.Fatalf("bot edit: %v", err)
+	}
+	if edited := singleEphemeralUpdate[*tg.UpdateEditEphemeralMessage](t, updates).Message; edited.Message != "final" || !edited.Out {
+		t.Fatalf("edit result = %+v", edited)
+	}
+	push := f.lastPush(t, ephemeralHumanID)
+	if push.semantic != tlprofile.SemanticTypeUpdateEditEphemeralMessage {
+		t.Fatalf("edit push semantic = %#x", push.semantic)
+	}
+	if received := singleEphemeralUpdate[*tg.UpdateEditEphemeralMessage](t, push.message).Message; received.ID != sent.ID || received.Message != "final" {
+		t.Fatalf("receiver saw = %+v", received)
+	}
+}
+
+func TestEphemeralBotDeleteMessageUpdatesReceiver(t *testing.T) {
+	f := newEphemeralBotFixture(t)
+	sent := f.botSend(t, "oops", 901)
+	ok, err := f.router.onEphemeralDeleteMessage(f.botCtx(), &tg.EphemeralDeleteMessageRequest{
+		Peer: f.peer, ReceiverID: &tg.InputUser{UserID: ephemeralHumanID}, ID: sent.ID,
+	})
+	if err != nil || !ok {
+		t.Fatalf("bot delete = %v, %v", ok, err)
+	}
+	push := f.lastPush(t, ephemeralHumanID)
+	if push.semantic != tlprofile.SemanticTypeUpdateDeleteEphemeralMessages {
+		t.Fatalf("delete push semantic = %#x", push.semantic)
+	}
+	if deleted := singleEphemeralUpdate[*tg.UpdateDeleteEphemeralMessages](t, push.message); len(deleted.IDs) != 1 || deleted.IDs[0] != sent.ID {
+		t.Fatalf("delete update = %+v", deleted)
+	}
+}
+
+func TestEphemeralEditAndDeleteRequireOwnMessage(t *testing.T) {
+	f := newEphemeralBotFixture(t)
+	sent := f.botSend(t, "mine", 1001)
+	otherBot := ephemeralCtx(ephemeralOtherBotID, ephemeralOtherKey, 33)
+
+	if _, err := f.router.onEphemeralEditMessage(otherBot, f.editRequest(sent.ID, "hijack")); !tgerr.Is(err, "CHAT_WRITE_FORBIDDEN") {
+		t.Fatalf("other bot edit err=%v, want CHAT_WRITE_FORBIDDEN", err)
+	}
+	if _, err := f.router.onEphemeralDeleteMessage(otherBot, &tg.EphemeralDeleteMessageRequest{
+		Peer: f.peer, ReceiverID: &tg.InputUser{UserID: ephemeralHumanID}, ID: sent.ID,
+	}); !tgerr.Is(err, "CHAT_WRITE_FORBIDDEN") {
+		t.Fatalf("other bot delete err=%v, want CHAT_WRITE_FORBIDDEN", err)
+	}
+	// 非 bot 账号的非 welcome 编辑沿用原规则。
+	if _, err := f.router.onEphemeralEditMessage(f.humanCtx(), f.editRequest(sent.ID, "human")); !tgerr.Is(err, "INPUT_REQUEST_INVALID") {
+		t.Fatalf("human edit err=%v, want INPUT_REQUEST_INVALID", err)
+	}
+	updates, err := f.router.onEphemeralEditMessage(f.botCtx(), f.editRequest(sent.ID, "still mine"))
+	if err != nil {
+		t.Fatalf("owner edit after rejected attempts: %v", err)
+	}
+	if edited := singleEphemeralUpdate[*tg.UpdateEditEphemeralMessage](t, updates).Message; edited.Message != "still mine" {
+		t.Fatalf("edited = %+v", edited)
+	}
+}
