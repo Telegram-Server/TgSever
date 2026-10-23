@@ -62,6 +62,8 @@ type BlocklistMutationSnapshot struct {
 	PhoneRules     domain.PrivacyRules
 	Peers          []BlocklistPeerFacts
 	RequiredEvents []BlocklistRequiredEvent
+	// BotUpdates 是同一事务里写入 bot qts 序列的 updateBotStopped 记录（带 qts，#148）。
+	BotUpdates []domain.BotUpdate `json:",omitempty"`
 }
 
 type BlocklistRequiredEvent struct {

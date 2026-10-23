@@ -286,6 +286,8 @@ func (r *Router) mutateContactBlocklist(ctx context.Context, kind store.Blocklis
 	if len(result.Changes) > 0 {
 		r.invalidateRPCProjectionForViewer(userID)
 	}
+	// 拉黑/解除拉黑 bot 的 updateBotStopped 已与名单同事务写入，提交后在线推送（#148）。
+	r.pushBotUpdates(ctx, result.BotUpdates)
 	return true, nil
 }
 
