@@ -12,7 +12,7 @@ import (
 
 // TestScheduledMessagesContractPostgres 跑定时消息共享契约。ClaimDueScheduledMessages 是
 // 全局扫描，契约断言"恰好认领哪几行"，所以独占一个库，不受同包其它测试残留行干扰，
-// 也不会改写别人的租约。门控于 TELESRV_TEST_POSTGRES_DSN。
+// 也不会改写别人的租约。
 func TestScheduledMessagesContractPostgres(t *testing.T) {
 	ctx := context.Background()
 	pool, err := Open(ctx, pgtest.NewDatabase(t))
@@ -34,7 +34,7 @@ func TestScheduledMessagesContractPostgres(t *testing.T) {
 
 // TestScheduledMessageColumnsRoundTrip 只断言 postgres 专有的列：契约看不到的
 // lease_until / last_error / sent_message_id，以及私聊 dialogs.has_scheduled 标志随
-// 队列增减维护。门控于 TELESRV_TEST_POSTGRES_DSN。
+// 队列增减维护。
 func TestScheduledMessageColumnsRoundTrip(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

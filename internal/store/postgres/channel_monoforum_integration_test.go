@@ -10,7 +10,7 @@ import (
 // TestChannelStoreEnablingDirectMessagesCreatesMonoforum 回归迁移 0020 + monoforum 生命周期:
 // 开启频道私信(Direct Messages)为广播母频道事务内建/关联一个 monoforum 虚拟频道,
 // 新列(monoforum/linked_monoforum_id)经共享 channelColumns + scan 正确往返;再次开启复用、
-// 同步价格;非广播不建。门控于 TELESRV_TEST_POSTGRES_DSN。
+// 同步价格;非广播不建。
 func TestChannelStoreEnablingDirectMessagesCreatesMonoforum(t *testing.T) {
 	pool := testPool(t) // 未设 DSN 会 t.Skip
 	ctx := context.Background()

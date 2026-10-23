@@ -44,7 +44,9 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # 集成测试专用的 Postgres：数据放 tmpfs、关掉 fsync 等持久化保证，只在 test profile 下启动：
+  # 可选。go test 默认自己启动私有 PostgreSQL（见 internal/store/postgres/pgtest），不需要它；
+  # 想让测试连一个固定实例调试时才用。集成测试专用：数据放 tmpfs、关掉 fsync 等持久化保证，
+  # 只在 test profile 下启动：
   #   docker compose --profile test up -d postgres-test
   #   TELESRV_TEST_POSTGRES_DSN=postgres://telesrv:telesrv@127.0.0.1:5433/telesrv_test?sslmode=disable
   # 测试每个用例从模板库克隆一个库、用完删除（见 internal/store/postgres/pgtest）；落盘实例上

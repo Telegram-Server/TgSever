@@ -167,5 +167,5 @@ init-data header injected.
 - `internal/store/postgres/star_gift_withdrawal_race_integration_test.go` —
   ten concurrent withdrawals collapse into one request row.
 
-The PostgreSQL ones run only when `TELESRV_TEST_POSTGRES_DSN` names a database
-whose name contains `test`.
+The PostgreSQL ones run on a private PostgreSQL that `go test` starts by itself
+(see `internal/store/postgres/pgtest`); no database needs to be prepared.

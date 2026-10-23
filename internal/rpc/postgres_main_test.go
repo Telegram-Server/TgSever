@@ -12,12 +12,12 @@ import (
 )
 
 // TestMain 让本包的 Postgres 测试使用从模板库克隆出的独立库（见 pgtest），
-// 不再与其他包共用 TELESRV_TEST_POSTGRES_DSN 指向的库；未设该变量时只是照常运行。
+// 不再与其他包共用一个库；只跑内存测试时不会启动 PostgreSQL。
 func TestMain(m *testing.M) {
 	os.Exit(pgtest.Run(m, pgtest.Options{Prefix: "rpc", Migrate: postgres.Migrate}))
 }
 
-// testPostgresPool 打开指向本包共享克隆库的连接池；未设 TELESRV_TEST_POSTGRES_DSN 时跳过。
+// testPostgresPool 打开指向本包共享克隆库的连接池（首次调用时启动私有 PostgreSQL）。
 // 同包测试共享这个库，数据要用唯一 id；依赖全表状态的测试用 pgtest.NewDatabase(t)。
 func testPostgresPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()

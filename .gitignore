@@ -31,6 +31,8 @@ __pycache__/
 logs/
 tmp/
 .gocache/
+# pgtest 私有 PostgreSQL：下载的二进制、迁移快照、运行中的集群（见 internal/store/postgres/pgtest）。
+/.pgtest/
 .tdesktop-e2e/
 # Telegram 授权会话与 QR 登录产物（giftfetch -login-qr / appearancefetch /
 # giftfetch_telethon.py）。这些文件等价于账号凭据，任何情况下都不得入库。

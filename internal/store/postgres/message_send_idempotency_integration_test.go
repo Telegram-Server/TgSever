@@ -374,7 +374,7 @@ func (row privatePreflightRow) Scan(dest ...any) error {
 func TestMessageStorePrivateRandomIDConflictFallbackUsesTransactionConnection(t *testing.T) {
 	dsn := pgtest.TestDSN(t)
 	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
+		t.Skip("PostgreSQL is not available to this test process (see pgtest)")
 	}
 	if err := Migrate(dsn); err != nil {
 		t.Fatalf("migrate: %v", err)

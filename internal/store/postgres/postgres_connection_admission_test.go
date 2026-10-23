@@ -80,7 +80,7 @@ func TestBoundPostgresAdmissionPoolIdle(t *testing.T) {
 func TestPostgresAdmissionReservesCapacityBeforeOpeningBackend(t *testing.T) {
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
+		t.Skip("PostgreSQL is not available to this test process (see pgtest)")
 	}
 	ctx := context.Background()
 	controller, err := postgresAdmissionControllerForDSN(ctx, dsn)
@@ -184,7 +184,7 @@ WHERE pid = pg_backend_pid()
 func TestPostgresAdmissionSlotReleasesWithPoolConnection(t *testing.T) {
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
+		t.Skip("PostgreSQL is not available to this test process (see pgtest)")
 	}
 	observer := testPool(t)
 	ctx := context.Background()
@@ -221,7 +221,7 @@ WHERE pid = $1 AND locktype = 'advisory' AND classid = $2::oid`, backendPID, uin
 func TestPostgresPoolReturnsBurstAdmissionSlotsAfterIdle(t *testing.T) {
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
+		t.Skip("PostgreSQL is not available to this test process (see pgtest)")
 	}
 	ctx := context.Background()
 	pool, err := Open(ctx, dsn, WithMaxConns(3), WithMinConns(1))

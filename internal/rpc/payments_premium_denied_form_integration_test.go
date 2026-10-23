@@ -17,9 +17,8 @@ import (
 	"telesrv/internal/store/postgres"
 )
 
-// testPremiumPostgresPool 打开本包共享克隆库的连接池（testPostgresPool），未设
-// TELESRV_TEST_POSTGRES_DSN 则跳过；放在 rpc 包内，以便把真实 PremiumStore 接进 Router
-// 验证支付表单路径。
+// testPremiumPostgresPool 打开本包共享克隆库的连接池（testPostgresPool）；放在 rpc 包内，
+// 以便把真实 PremiumStore 接进 Router 验证支付表单路径。
 func testPremiumPostgresPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	return testPostgresPool(t)

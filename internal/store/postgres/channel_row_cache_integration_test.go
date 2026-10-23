@@ -10,7 +10,7 @@ import (
 )
 
 // TestChannelRowCacheInvalidatesOnNotify 端到端验证：channels 触发器(0117) → LISTEN/NOTIFY →
-// ChannelChangeListener → ChannelRowCache 失效闭环。门控于 TELESRV_TEST_POSTGRES_DSN。
+// ChannelChangeListener → ChannelRowCache 失效闭环。
 //
 // 用「listener 连接时的 flush」作为就绪信号(轮询缓存被清空即确认 listener 已 LISTEN)，避免靠
 // sleep 猜时序导致竞态。

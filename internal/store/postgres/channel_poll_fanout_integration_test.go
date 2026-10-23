@@ -11,7 +11,7 @@ import (
 // TestChannelPollFanoutViewsPostgres 验证 Phase 4 poll 模板化的 postgres 路径：新批量 SQL
 // （batchPollViewerOptions / batchChannelMemberAvailableMinID + pollViewerAggregates(viewer=0)）
 // 正确运行，且 ChannelPollFanoutViews 对每个 viewer 与逐 viewer GetChannelMessages（旧 fan-out 路径）
-// 的 enrich poll 字节等价、可见性一致。门控于 TELESRV_TEST_POSTGRES_DSN。
+// 的 enrich poll 字节等价、可见性一致。
 func TestChannelPollFanoutViewsPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

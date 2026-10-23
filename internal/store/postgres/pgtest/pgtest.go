@@ -12,6 +12,15 @@
 //   - 按测试克隆库：NewDatabase(t) 给依赖全局状态（全表计数、全局认领、TRUNCATE）的测试
 //     独占一个库，t.Cleanup 时删除。
 //
+// 数据库从哪来：
+//
+//   - 默认启动一个本测试进程独占的私有集群（cluster.go）：PostgreSQL 二进制按需下载到模块根
+//     目录的 .pgtest/（或 EnvBin 指向的本地目录），从"已迁移到 head 的数据目录快照"拷贝出来、
+//     随机端口启动，进程结束即删除。不需要预先装 PostgreSQL 或起 Docker，多个 go test 同时
+//     跑互不影响，也不会在任何共享服务器上留下模板库。
+//   - 设置了 EnvDSN 时改用它指向的服务器（比如想在自己的库里调试），行为同以前。
+//   - 设置了 EnvSkip 时不启动任何数据库，需要库的测试 Skip。
+//
 // 本包不 import internal/store/postgres（否则 postgres 包内测试会成环），迁移函数由调用方
 // 在 Options.Migrate 里传入，通常就是 postgres.Migrate。
 //
@@ -22,7 +31,7 @@
 //	}
 //
 //	func TestX(t *testing.T) {
-//		pool, err := postgres.Open(ctx, pgtest.DSN(t)) // 包级共享库；未设 DSN 时 Skip
+//		pool, err := postgres.Open(ctx, pgtest.DSN(t)) // 包级共享库
 //		...
 //	}
 //
@@ -31,7 +40,7 @@
 //		...
 //	}
 //
-// 测试账号需要 CREATEDB 权限（CI 的 postgres service 用户是超级用户）。
+// 使用 EnvDSN 时测试账号需要 CREATEDB 权限。
 package pgtest
 
 import (
@@ -58,14 +67,14 @@ import (
 	"telesrv/deploy"
 )
 
-// EnvDSN 指向一个专用测试库（库名必须含 "test"）。它只作为连接参数与维护入口：
-// 测试数据写进由它克隆出来的库，不写进它本身。
+// EnvDSN 可选，指向一个专用测试库（库名必须含 "test"）；未设置时用私有集群。它只作为连接
+// 参数与维护入口：测试数据写进由它克隆出来的库，不写进它本身。
 const EnvDSN = "TELESRV_TEST_POSTGRES_DSN"
 
-// EnvCloneStrategy 选择克隆库时 CREATE DATABASE 的 STRATEGY（WAL_LOG 或 FILE_COPY），
-// 未设置时用服务器默认的 WAL_LOG。FILE_COPY 直接拷贝模板目录，克隆约快一倍，但每次都触发
-// checkpoint：只在 fsync=off 的内存实例上划算（deploy/docker-compose.yml 的 postgres-test、
-// CI 的 tmpfs service），落盘实例上反而更慢。
+// EnvCloneStrategy 选择克隆库时 CREATE DATABASE 的 STRATEGY（WAL_LOG 或 FILE_COPY）。
+// 私有集群默认 FILE_COPY，EnvDSN 指向的服务器默认用服务器自己的 WAL_LOG。FILE_COPY 直接拷贝
+// 模板目录，克隆约快一倍，但每次都触发 checkpoint：只在 fsync=off 的实例上划算（私有集群、
+// deploy/docker-compose.yml 的 postgres-test），普通落盘实例上反而更慢。
 const EnvCloneStrategy = "PGTEST_CLONE_STRATEGY"
 
 // templateLockKey 串行化多个测试进程创建同一模板库（"pgtmpl" 的 ASCII）。
@@ -88,8 +97,13 @@ var state struct {
 	mu         sync.Mutex
 	registered bool
 	opts       Options
-	base       string // 原始 EnvDSN
+	base       string // 原始 EnvDSN，或私有集群里 clusterDatabase 的 DSN（resolveBase 之后）
+	skip       bool   // EnvSkip
 	extra      map[string]struct{}
+
+	baseOnce sync.Once
+	baseErr  error
+	private  *privateCluster
 
 	tmplOnce sync.Once
 	tmplName string
@@ -101,8 +115,9 @@ var state struct {
 	pkgErr  error
 }
 
-// Run 在 TestMain 中调用：登记选项、运行测试、删除本进程创建的克隆库。返回值交给 os.Exit。
-// 未设置 EnvDSN 时只运行测试；需要库的测试会在 DSN/NewDatabase 里 Skip。
+// Run 在 TestMain 中调用：登记选项、运行测试、删除本进程创建的克隆库或私有集群。返回值交给
+// os.Exit。私有集群在第一个需要库的测试里才启动（ExportEnv 时在 m.Run 之前），只跑纯内存测试的
+// 包不付这个代价。
 func Run(m *testing.M, opts Options) int {
 	if opts.Migrate == nil {
 		panic("pgtest: Options.Migrate is required")
@@ -111,11 +126,16 @@ func Run(m *testing.M, opts Options) int {
 	state.registered = true
 	state.opts = opts
 	state.base = strings.TrimSpace(os.Getenv(EnvDSN))
+	state.skip = state.base == "" && strings.TrimSpace(os.Getenv(EnvSkip)) != ""
 	state.extra = make(map[string]struct{})
 	state.mu.Unlock()
 
-	if opts.ExportEnv && state.base != "" {
-		if dsn, err := packageDatabase(); err == nil {
+	if opts.ExportEnv && !state.skip {
+		dsn, err := "", resolveBase()
+		if err == nil {
+			dsn, err = packageDatabase()
+		}
+		if err == nil {
 			_ = os.Setenv(EnvDSN, dsn)
 		} else {
 			// 不在这里退出：不需要库的测试照常跑，需要库的测试在 DSN(t) 里报这个错。
@@ -125,7 +145,10 @@ func Run(m *testing.M, opts Options) int {
 
 	code := m.Run()
 
-	if state.base != "" {
+	if state.private != nil {
+		// 整个集群一起丢弃，不必逐个删库。
+		state.private.stop()
+	} else if state.base != "" {
 		state.mu.Lock()
 		names := make([]string, 0, len(state.extra)+1)
 		for name := range state.extra {
@@ -144,7 +167,7 @@ func Run(m *testing.M, opts Options) int {
 	return code
 }
 
-// BaseDSN 返回原始的 EnvDSN（ExportEnv 改写环境变量之前的值）；未设置时 Skip。
+// BaseDSN 返回原始的 EnvDSN（ExportEnv 改写环境变量之前的值），或私有集群的入口库 DSN。
 func BaseDSN(tb testing.TB) string {
 	tb.Helper()
 	requireConfigured(tb)
@@ -152,7 +175,7 @@ func BaseDSN(tb testing.TB) string {
 }
 
 // DSN 返回本包共享克隆库的 DSN；第一次调用时创建（ExportEnv 时已在 Run 中创建）。
-// 未设置 EnvDSN 时 Skip。同包测试共享这个库，数据要么用唯一 id，要么自己清理。
+// 同包测试共享这个库，数据要么用唯一 id，要么自己清理。
 func DSN(tb testing.TB) string {
 	tb.Helper()
 	requireConfigured(tb)
@@ -165,7 +188,6 @@ func DSN(tb testing.TB) string {
 
 // NewDatabase 为当前测试克隆一个独占库并返回其 DSN，测试结束时删除（WITH FORCE，
 // 测试里没关的连接也会被断开）。给依赖全局状态的测试用：全表计数、全局认领、TRUNCATE。
-// 未设置 EnvDSN 时 Skip。
 func NewDatabase(tb testing.TB) string {
 	tb.Helper()
 	requireConfigured(tb)
@@ -219,7 +241,7 @@ var perTest struct {
 //
 // 同一个测试（含其子测试）多次调用返回同一个库，模拟重启的"再开一个连接池"仍然看到同样的数据。
 // 第一次调用发生在子测试里时，库归该子测试所有，且不调用 Parallel（子测试的 Parallel 会让父测试
-// 先于它返回，改变语义）。测试结束时删库。未设置 EnvDSN 时 Skip。
+// 先于它返回，改变语义）。测试结束时删库。
 //
 // 依赖整个服务器状态（max_connections、pg_stat_activity）的测试不要用它，留在串行的包级库上。
 func TestDSN(t *testing.T) string {
@@ -298,17 +320,33 @@ func HeadVersion() (uint, error) {
 func requireConfigured(tb testing.TB) {
 	tb.Helper()
 	state.mu.Lock()
-	registered, base := state.registered, state.base
+	registered, skip := state.registered, state.skip
 	state.mu.Unlock()
 	if !registered {
-		if os.Getenv(EnvDSN) == "" {
-			tb.Skip("set " + EnvDSN + " to run postgres integration test")
-		}
 		tb.Fatal("pgtest: call pgtest.Run from this package's TestMain")
 	}
-	if base == "" {
-		tb.Skip("set " + EnvDSN + " to run postgres integration test")
+	if skip {
+		tb.Skip(EnvSkip + " is set")
 	}
+	if err := resolveBase(); err != nil {
+		tb.Fatalf("pgtest: %v", err)
+	}
+}
+
+// resolveBase 确定入口 DSN：EnvDSN，或启动本进程的私有集群（只启动一次）。
+func resolveBase() error {
+	state.baseOnce.Do(func() {
+		if state.base != "" {
+			return
+		}
+		c, dsn, err := startPrivateCluster()
+		if err != nil {
+			state.baseErr = fmt.Errorf("start private PostgreSQL (or set %s / %s): %w", EnvDSN, EnvSkip, err)
+			return
+		}
+		state.private, state.base = c, dsn
+	})
+	return state.baseErr
 }
 
 func packageDatabase() (string, error) {
@@ -337,13 +375,15 @@ func packageDatabase() (string, error) {
 
 func templateDatabase() (string, error) {
 	state.tmplOnce.Do(func() {
-		state.tmplName, state.tmplErr = ensureTemplate()
+		state.tmplName, state.tmplErr = ensureTemplate(state.base)
 	})
 	return state.tmplName, state.tmplErr
 }
 
-func ensureTemplate() (string, error) {
-	cfg, err := pgx.ParseConfig(state.base)
+// ensureTemplate 在 base 所在的服务器上建（或复用）模板库。私有集群的快照建好时模板已在里面，
+// 这里只是确认一下。
+func ensureTemplate(base string) (string, error) {
+	cfg, err := pgx.ParseConfig(base)
 	if err != nil {
 		return "", fmt.Errorf("parse %s: %w", EnvDSN, err)
 	}
@@ -361,7 +401,7 @@ func ensureTemplate() (string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
-	conn, err := maintenanceConn(ctx)
+	conn, err := maintenanceConn(ctx, base)
 	if err != nil {
 		return "", err
 	}
@@ -395,7 +435,7 @@ func ensureTemplate() (string, error) {
 		_, _ = conn.Exec(context.Background(), `DROP DATABASE IF EXISTS `+ident(name)+` WITH (FORCE)`)
 		return "", err
 	}
-	dsn, err := withDatabase(state.base, name)
+	dsn, err := withDatabase(base, name)
 	if err != nil {
 		return fail(err)
 	}
@@ -436,12 +476,12 @@ func verifyHead(ctx context.Context, dsn string, head uint) error {
 func createClone(name, tmpl string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
-	conn, err := maintenanceConn(ctx)
+	conn, err := maintenanceConn(ctx, state.base)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	strategy, err := cloneStrategy()
+	strategy, err := cloneStrategy(state.private != nil)
 	if err != nil {
 		return err
 	}
@@ -451,10 +491,14 @@ func createClone(name, tmpl string) error {
 	return nil
 }
 
-// cloneStrategy 返回追加在 CREATE DATABASE 之后的 STRATEGY 子句；未设置 EnvCloneStrategy 时为空。
-func cloneStrategy() (string, error) {
+// cloneStrategy 返回追加在 CREATE DATABASE 之后的 STRATEGY 子句；未设置 EnvCloneStrategy 时
+// 私有集群用 FILE_COPY，外部服务器沿用其默认。
+func cloneStrategy(private bool) (string, error) {
 	switch v := strings.ToUpper(strings.TrimSpace(os.Getenv(EnvCloneStrategy))); v {
 	case "":
+		if private {
+			return " STRATEGY FILE_COPY", nil
+		}
 		return "", nil
 	case "WAL_LOG", "FILE_COPY":
 		return " STRATEGY " + v, nil
@@ -466,7 +510,7 @@ func cloneStrategy() (string, error) {
 func dropDatabase(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
-	conn, err := maintenanceConn(ctx)
+	conn, err := maintenanceConn(ctx, state.base)
 	if err != nil {
 		return err
 	}
@@ -475,10 +519,10 @@ func dropDatabase(name string) error {
 	return err
 }
 
-// maintenanceConn 连到 postgres 库做 CREATE/DROP DATABASE；连不上（没有该库的权限）时
-// 退回 EnvDSN 指向的库本身。
-func maintenanceConn(ctx context.Context) (*pgx.Conn, error) {
-	dsn, err := withDatabase(state.base, "postgres")
+// maintenanceConn 连到 base 所在服务器的 postgres 库做 CREATE/DROP DATABASE；连不上（没有该库
+// 的权限）时退回 base 指向的库本身。
+func maintenanceConn(ctx context.Context, base string) (*pgx.Conn, error) {
+	dsn, err := withDatabase(base, "postgres")
 	if err != nil {
 		return nil, err
 	}
@@ -490,7 +534,7 @@ func maintenanceConn(ctx context.Context) (*pgx.Conn, error) {
 	if !errors.As(err, &pgErr) {
 		return nil, fmt.Errorf("connect maintenance database: %w", err)
 	}
-	conn, err = pgx.Connect(ctx, state.base)
+	conn, err = pgx.Connect(ctx, base)
 	if err != nil {
 		return nil, fmt.Errorf("connect maintenance database: %w", err)
 	}

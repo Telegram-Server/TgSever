@@ -11,7 +11,6 @@ import (
 // TestSecretChatStorePostgres 验证密聊握手状态机 PG 实现的行为契约（与 memory 实现
 // 同构）：create/get、chat_id=random_id、duplicate、accept CAS、double-accept、
 // discard 幂等、accept-after-discard。
-// 门控于 TELESRV_TEST_POSTGRES_DSN。
 func TestSecretChatStorePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

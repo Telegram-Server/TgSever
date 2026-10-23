@@ -9,7 +9,7 @@ import (
 
 // TestEncryptedQueueStorePostgres 验证密聊 qts 投递队列 PG 实现：qts 单调分配（首值 1、
 // 无空洞）、幂等去重（同 random_id 返既有 qts/date）、按 qts seek 补差分、reserved/
-// confirmed 水位、ack 标记。门控于 TELESRV_TEST_POSTGRES_DSN。
+// confirmed 水位、ack 标记。
 func TestEncryptedQueueStorePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -154,7 +154,7 @@ func TestEncryptedStateEventsPostgres(t *testing.T) {
 }
 
 // TestEncryptedFilesPostgres 验证密聊文件元数据 PG 实现：put/get round-trip、access_hash
-// 校验、不存在返回 found=false。门控于 TELESRV_TEST_POSTGRES_DSN。
+// 校验、不存在返回 found=false。
 func TestEncryptedFilesPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

@@ -193,12 +193,10 @@ Run unit tests:
 go test ./...
 ```
 
-Run the real PostgreSQL bootstrap/concurrency/privacy/refund/expiry tests
-against a dedicated
-database whose name contains `test`:
+Run the real PostgreSQL bootstrap/concurrency/privacy/refund/expiry tests (they
+start a private PostgreSQL themselves, see `internal/store/postgres/pgtest`):
 
 ```powershell
-$env:TELESRV_TEST_POSTGRES_DSN = "postgres://user:password@127.0.0.1:5432/telesrv_test?sslmode=disable"
 go test ./internal/store/postgres -run "TestPremiumPurchaseAtomicConcurrentIdempotentRefundAndExpiry|TestAccountSettingsRoundTripPostgres" -count=1 -v
 ```
 

@@ -4,7 +4,7 @@ Telegram-compatible MTProto server written in Go. This file is a module map so y
 
 ## Identity and branches
 
-- Go module is `telesrv` (Go 1.25), repo is `gramsrv`, binary is `telesrv`. First compatibility target: **Telegram Desktop**. Protocol comes from `github.com/iamxvbaba/td` (fork of gotd/td); do not vendor or fork `td` here.
+- Go module is `telesrv` (Go 1.26), repo is `gramsrv`, binary is `telesrv`. First compatibility target: **Telegram Desktop**. Protocol comes from `github.com/iamxvbaba/td` (fork of gotd/td); do not vendor or fork `td` here.
 - `main` = **monolith** (this branch), `v2` = microservices (Edge/Core/Egress/File/SFU). CI runs on `main`, `grammy`, `admin`. Current checkout: `main`.
 - Comments and package docs are commonly written in **Chinese** (e.g. `cmd/telesrv/main.go`, `internal/config/config.go`). Read them; match the style for new code. PowerShell artifacts may display `???` for Chinese in some terminals — the files are UTF-8.
 - No Makefile, no linter config, no test framework beyond stdlib `testing`. Formatting = `gofmt`.
@@ -14,26 +14,25 @@ Telegram-compatible MTProto server written in Go. This file is a module map so y
 ```powershell
 go build -o bin/gramsrv.exe ./cmd/telesrv        # main server
 go vet ./...
-go test ./... -count=1                            # CI gate; Postgres tests skip unless TELESRV_TEST_POSTGRES_DSN is set (CI sets it)
+go test ./... -count=1                            # CI gate; includes the Postgres tests (private PostgreSQL, no setup)
 ```
 
 ### Tests that need Postgres
 
-Postgres integration tests are `*_integration_test.go` in `internal/store/postgres` and `cmd/telesrv-admin` (plus a few in `internal/rpc` and `internal/loadtest`). They **skip** unless `TELESRV_TEST_POSTGRES_DSN` is set, and the DSN's database name **must contain "test"** or they fail fast. The DSN's role needs **CREATEDB**.
+Postgres integration tests are `*_integration_test.go` in `internal/store/postgres` and `cmd/telesrv-admin` (plus a few in `internal/rpc` and `internal/loadtest`). **They need no setup**: plain `go test ./...` runs them on a private PostgreSQL 17 that each test process starts for itself.
 
-The shared machinery is `internal/store/postgres/pgtest` (wired in each package's `TestMain`):
+The machinery is `internal/store/postgres/pgtest` (wired in each package's `TestMain`):
 
-- **Template database** `telesrv_tmpl_<hash>_test`, named after a hash of the embedded migrations. Built once — migrated from empty to head and checked against the head version — then marked `IS_TEMPLATE`. Reused while the migrations are unchanged; a migration change builds a new one (cold run ≈ 15 s). Stale templates from old hashes are not pruned automatically: `ALTER DATABASE … IS_TEMPLATE false; DROP DATABASE …`.
-- **Per-test clone, parallel** — the default in `internal/store/postgres`: `testPool(t)` (and `pgtest.TestDSN(t)`) clone a database for the calling top-level test and mark it `t.Parallel()`. Isolation is structural, so tests run concurrently without auditing them for shared state; repeated calls within one test (and its subtests) return the same database. At most 8 such databases live at once (`PGTEST_PARALLEL_DBS`; 24 is fine on the tmpfs instance below). Only tests that depend on the whole server (connection admission, `max_connections`) stay on the serial per-package database.
-- **Per-package clone** (`<pkg>_<rand>_test`), dropped when the test binary exits. `pgtest.DSN(t)` points at it; in `internal/store/postgres` the `TestMain` also rewrites `TELESRV_TEST_POSTGRES_DSN` to it. Tests on it run serially and share it: use unique ids or clean up.
+- **Private cluster** (default). On first use the zonky PostgreSQL 17.11 binaries for the platform (Linux, macOS, Windows x64) are downloaded into `.pgtest/dist/` at the module root, SHA-256 pinned in `pgtest/dist.go`; `.pgtest/` is git-ignored and nothing is written to the user cache or system temp directory. A data directory already migrated to head is kept in `.pgtest/snapshots/`, named after the PostgreSQL version and a hash of the embedded migrations: built once (≈15 s), rebuilt when a migration changes, unused old ones pruned after a week. Each test process copies the snapshot and starts it on a random loopback port with `fsync=off` (≈0.3 s), and deletes it when it exits — under `/dev/shm` on Linux, `.pgtest/run/` elsewhere. Concurrent `go test` runs never share a server; a run killed by a timeout or Ctrl-C leaves a cluster that the next run stops and removes.
+- **Environment**: `TELESRV_TEST_POSTGRES_HOME` moves `.pgtest/` (another drive, say); `TELESRV_TEST_POSTGRES_BIN` points at an already extracted PostgreSQL 17 (`bin/initdb`, `bin/pg_ctl`) and skips the download; `TELESRV_TEST_POSTGRES_MIRROR` adds a Maven mirror in front of the built-in ones (Maven Central, its Google mirror, Aliyun); `TELESRV_TEST_POSTGRES_SKIP=1` runs no PostgreSQL at all and skips those tests. Running as root (cloud containers), PostgreSQL runs as `postgres`/`nobody` (`TELESRV_TEST_POSTGRES_RUN_AS`). Windows needs the Visual C++ 2015–2022 x64 runtime; a missing one is reported with the download link. Excluding `.pgtest/` from Windows Defender real-time scanning speeds it up noticeably.
+- **External server** (optional): with `TELESRV_TEST_POSTGRES_DSN` set, tests use that server instead, as before. Its database name **must contain "test"** and its role needs **CREATEDB**; pgtest builds a template database `telesrv_tmpl_<hash>_test` there, which is never pruned (`ALTER DATABASE … IS_TEMPLATE false; DROP DATABASE …`), and a killed run can leave `*_test` clones behind. `docker compose -f deploy/docker-compose.yml --profile test up -d postgres-test` starts a suitable tmpfs instance on port 5433 (`PGPASSWORD` = its `POSTGRES_PASSWORD`; `PGTEST_CLONE_STRATEGY=FILE_COPY` clones faster there). Never point a dev server at it — it empties on restart.
+- **Per-test clone, parallel** — the default in `internal/store/postgres`: `testPool(t)` (and `pgtest.TestDSN(t)`) clone a database for the calling top-level test and mark it `t.Parallel()`. Isolation is structural, so tests run concurrently without auditing them for shared state; repeated calls within one test (and its subtests) return the same database. At most 8 such databases live at once (`PGTEST_PARALLEL_DBS`). Only tests that depend on the whole server (connection admission, `max_connections`) stay on the serial per-package database.
+- **Per-package clone** (`<pkg>_<rand>_test`). `pgtest.DSN(t)` points at it; in `internal/store/postgres` the `TestMain` also rewrites `TELESRV_TEST_POSTGRES_DSN` to it. Tests on it run serially and share it: use unique ids or clean up.
 - **Per-test clone without parallelism**: `pgtest.NewDatabase(t)`.
-- **Use the tmpfs test instance.** Every test creates and drops a database; on a disk-backed server each `CREATE/DROP DATABASE` writes WAL and forces a checkpoint, and the package is disk-bound (≈160 s vs ≈110 s, full `go test ./...` ≈440 s → ≈150 s). `docker compose -f deploy/docker-compose.yml --profile test up -d postgres-test` starts one on port 5433 with `fsync=off` on tmpfs; point `TELESRV_TEST_POSTGRES_DSN` at `postgres://telesrv@127.0.0.1:5433/telesrv_test?sslmode=disable` and set `PGPASSWORD` to the `POSTGRES_PASSWORD` of the `postgres-test` service (pgx reads it). Also set `PGTEST_CLONE_STRATEGY=FILE_COPY` there: copying the template directory clones about twice as fast as WAL-logging it (package ≈72 s → ≈56 s); never on a disk-backed server, where every copy forces a checkpoint. Never point a dev server at it — it empties on restart.
-- A killed test run (timeout, Ctrl-C) can leave `*_test` clones behind; drop them by hand.
 
-Run a focused subset like CI does:
+Run a focused subset:
 
 ```powershell
-$env:TELESRV_TEST_POSTGRES_DSN="postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable"
 go test ./internal/store/postgres -run '^(TestOfficialStarGiftInventoryPostgres|TestStarsLedgerPostgres)$' -count=1
 go test ./cmd/telesrv-admin -run '^(TestOperatorCommand|TestAuditTrail)$' -count=1
 ```

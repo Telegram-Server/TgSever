@@ -12,7 +12,7 @@ import (
 // 评论入口拿不到「最近回复者头像」——而 memory store 一直在填,属双 store 不一致。
 // 这里验证 Postgres 也按「各回复者最新一条回复 id 倒序、去重、取前 3」回填,与 memory 对齐。
 func TestChannelStoreRecentRepliersPostgres(t *testing.T) {
-	pool := testPool(t) // 未设 TELESRV_TEST_POSTGRES_DSN 会 t.Skip
+	pool := testPool(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

@@ -33,6 +33,7 @@ require (
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/sideshow/apns2 v0.25.0
 	github.com/tyler-smith/go-bip39 v1.1.0
+	github.com/ulikunitz/xz v0.5.12
 	github.com/xssnick/tonutils-go v1.19.0
 	github.com/yutopp/go-rtmp v0.0.7
 	go.uber.org/multierr v1.11.0

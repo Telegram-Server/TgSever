@@ -9,7 +9,6 @@ import (
 
 // TestDeleteChannelCascadesLinkedMonoforumPostgres 回归 Risk A:删除开启了 Direct Messages 的母广播
 // 频道时,关联 monoforum 在同一事务内被软删并随结果返回。不级联会留下指向已删父频道的孤儿 mono。
-// 门控于 TELESRV_TEST_POSTGRES_DSN。
 func TestDeleteChannelCascadesLinkedMonoforumPostgres(t *testing.T) {
 	pool := testPool(t) // 未设 DSN 会 t.Skip
 	ctx := context.Background()

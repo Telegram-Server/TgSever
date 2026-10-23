@@ -16,7 +16,7 @@ import (
 )
 
 // testPool 为当前测试打开一个连接池，指向本包共享的克隆库（模板库已迁移到最新，见
-// main_test.go 与 pgtest）；未设 TELESRV_TEST_POSTGRES_DSN 则跳过。同包测试共享这个库：
+// main_test.go 与 pgtest）。同包测试共享这个库：
 // 依赖全表状态的测试改用 pgtest.NewDatabase(t) 独占一个库。
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()

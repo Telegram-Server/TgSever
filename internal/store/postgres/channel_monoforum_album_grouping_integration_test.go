@@ -9,7 +9,6 @@ import (
 )
 
 // TestSendMonoforumMessageKeepsAlbumGroupedIDPostgres 跑 monoforum 相册分组共享契约。
-// 门控于 TELESRV_TEST_POSTGRES_DSN。
 func TestSendMonoforumMessageKeepsAlbumGroupedIDPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

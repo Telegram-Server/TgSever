@@ -42,7 +42,7 @@ type invoiceChain struct {
 func newInvoiceChain(t *testing.T) *invoiceChain {
 	t.Helper()
 	ctx := context.Background()
-	// Skips unless TELESRV_TEST_POSTGRES_DSN is set: this exercises the atomic
+	// Runs on pgtest's PostgreSQL: this exercises the atomic
 	// PostgreSQL invoice aggregate.
 	pool := testPostgresPool(t)
 	suffix := time.Now().UnixNano()

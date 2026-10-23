@@ -9,7 +9,7 @@ import (
 )
 
 // TestMain 让压测用例跑在从模板库克隆出的独立库上（见 pgtest），结束时删除；
-// 克隆库只在用例真正需要时才创建，未设 TELESRV_TEST_POSTGRES_DSN 时什么也不做。
+// 克隆库只在用例真正需要时才创建。
 func TestMain(m *testing.M) {
 	os.Exit(pgtest.Run(m, pgtest.Options{Prefix: "loadtest", Migrate: postgres.Migrate}))
 }
