@@ -1,11 +1,13 @@
 package rpc
 
 import (
+	"context"
 	"slices"
 	"testing"
 
 	"github.com/iamxvbaba/td/tg"
 
+	appchannels "telesrv/internal/app/channels"
 	"telesrv/internal/domain"
 )
 
@@ -103,6 +105,25 @@ func TestBotAPIDeleteMessagesInGroupFailsWhenNothingCanBeDeleted(t *testing.T) {
 		err := f.router.BotAPIDeleteMessages(f.ctx, f.bot.ID, f.chatID, []int{1, 9_999})
 		wantBotAPIError(t, err, "MESSAGE_DELETE_FORBIDDEN")
 	})
+
+	// 机器人看不到 id=1 时，带上它也只是"找不到"（review #7）。
+	t.Run("creation message not visible", func(t *testing.T) {
+		f := newBotAPIBridgeFixture(t)
+		f.promoteBot(t, domain.ChannelAdminRights{DeleteMessages: true})
+		f.router.deps.Channels = hiddenCreationMessage{f.channels}
+
+		err := f.router.BotAPIDeleteMessages(f.ctx, f.bot.ID, f.chatID, []int{1, 9_999})
+		wantBotAPIError(t, err, "MESSAGE_ID_INVALID")
+	})
+}
+
+// hiddenCreationMessage 让 id=1 的建群服务消息读不到，其余能力委托给真实服务。
+type hiddenCreationMessage struct{ *appchannels.Service }
+
+func (h hiddenCreationMessage) GetMessages(ctx context.Context, userID, channelID int64, ids []int) (domain.ChannelHistory, error) {
+	list, err := h.Service.GetMessages(ctx, userID, channelID, ids)
+	list.Messages = slices.DeleteFunc(list.Messages, func(msg domain.ChannelMessage) bool { return msg.ID == 1 })
+	return list, err
 }
 
 // 私聊只删 chat_id 会话里的消息；别的会话里同一消息盒的 id 不受影响。

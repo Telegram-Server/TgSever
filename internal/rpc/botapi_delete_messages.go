@@ -128,13 +128,29 @@ func (r *Router) botAPIDeleteChannelMessages(ctx context.Context, botID, chatID 
 		return botAPIChannelDeleteErr(err)
 	}
 	if len(res.DeletedIDs) == 0 {
-		if slices.Contains(ids, 1) {
-			// id=1 建群服务消息存在但存储层恒跳过，属于不能删除而不是找不到。
+		// 存储层恒跳过 id=1 的建群服务消息：它确实存在时属于不能删除而不是找不到；
+		// 不存在或机器人看不到时，与其余 id 一样按找不到处理。
+		if slices.Contains(ids, 1) && r.botAPIChannelCreationMessageVisible(ctx, botID, channel.ChannelID) {
 			return tgerr400("MESSAGE_DELETE_FORBIDDEN")
 		}
 		return errors.New("MESSAGE_ID_INVALID")
 	}
 	return nil
+}
+
+// botAPIChannelCreationMessageVisible 报告机器人能否看到 id=1 的建群服务消息；读取失败按
+// 看不到处理，只影响错误说明的措辞。
+func (r *Router) botAPIChannelCreationMessageVisible(ctx context.Context, botID, channelID int64) bool {
+	history, err := r.deps.Channels.GetMessages(ctx, botID, channelID, []int{1})
+	if err != nil {
+		return false
+	}
+	for _, msg := range history.Messages {
+		if msg.ID == 1 && !msg.Deleted && msg.Action != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // botAPICanDeleteAnyChannelMessage 与存储层的删除权判定一致：群主，或有删除消息
