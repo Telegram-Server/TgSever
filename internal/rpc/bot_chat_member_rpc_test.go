@@ -21,8 +21,17 @@ import (
 // 封禁各推一条带 qts 的 updateChannelParticipant，user_id 是变动的成员；chat 按 bot 自己的
 // 身份投影，封禁的是别人时 bot 仍看到频道本身；封禁不再附带无 qts 的同一变化。不是管理员的
 // bot 收不到任何 updateChannelParticipant（反例）。
-func TestAdminBotReceivesOtherMemberChangesOnline(t *testing.T) {
-	ctx := context.Background()
+// adminBotAudienceFixture 是带 bot qts 序列的最小 Router（#146）。
+type adminBotAudienceFixture struct {
+	router     *Router
+	users      *memory.UserStore
+	botUpdates *memory.BotUpdateStore
+	channels   *channelsapp.Service
+	sessions   *phoneCaptureSessions
+}
+
+func newAdminBotAudienceFixture(t *testing.T) *adminBotAudienceFixture {
+	t.Helper()
 	users := memory.NewUserStore()
 	botUpdates := memory.NewBotUpdateStore(users)
 	channelStore := memory.NewChannelStore()
@@ -37,17 +46,46 @@ func TestAdminBotReceivesOtherMemberChangesOnline(t *testing.T) {
 		Files:      &fakeFiles{},
 		Sessions:   sessions,
 	}, zaptest.NewLogger(t), clock.System)
-	newUser := func(hash int64, bot bool) domain.User {
-		t.Helper()
-		u, err := users.Create(ctx, domain.User{AccessHash: hash, FirstName: "u", Bot: bot})
-		if err != nil {
-			t.Fatal(err)
+	return &adminBotAudienceFixture{router: router, users: users, botUpdates: botUpdates, channels: channels, sessions: sessions}
+}
+
+func (f *adminBotAudienceFixture) newUser(t *testing.T, hash int64, bot bool) domain.User {
+	t.Helper()
+	u, err := f.users.Create(context.Background(), domain.User{AccessHash: hash, FirstName: "u", Bot: bot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+func (f *adminBotAudienceFixture) userCtx(u domain.User) context.Context {
+	return WithAuthKeyID(WithSessionID(WithUserID(context.Background(), u.ID), 82000+u.ID), [8]byte{8, 2, byte(u.ID)})
+}
+
+// pushedParticipants 返回推给 userID 的全部 updateChannelParticipant。
+func (f *adminBotAudienceFixture) pushedParticipants(userID int64) []*tg.UpdateChannelParticipant {
+	var out []*tg.UpdateChannelParticipant
+	for _, rec := range f.sessions.records() {
+		if rec.userID != userID {
+			continue
 		}
-		return u
+		if updates, ok := rec.msg.(*tg.Updates); ok {
+			for _, update := range updates.Updates {
+				if p, ok := update.(*tg.UpdateChannelParticipant); ok {
+					out = append(out, p)
+				}
+			}
+		}
 	}
-	userCtx := func(u domain.User) context.Context {
-		return WithAuthKeyID(WithSessionID(WithUserID(ctx, u.ID), 82000+u.ID), [8]byte{8, 2, byte(u.ID)})
-	}
+	return out
+}
+
+func TestAdminBotReceivesOtherMemberChangesOnline(t *testing.T) {
+	ctx := context.Background()
+	fx := newAdminBotAudienceFixture(t)
+	router, botUpdates, channels, sessions := fx.router, fx.botUpdates, fx.channels, fx.sessions
+	newUser := func(hash int64, bot bool) domain.User { return fx.newUser(t, hash, bot) }
+	userCtx := fx.userCtx
 	owner, bot, plainBot := newUser(8201, false), newUser(8202, true), newUser(8206, true)
 	linkJoiner, requester, batchRequester := newUser(8203, false), newUser(8204, false), newUser(8205, false)
 	now := int(time.Now().Unix())
