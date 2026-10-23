@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/iamxvbaba/td/tg"
 
@@ -227,4 +228,47 @@ func TestBotAPIChatJoinRequestNotRequeuedForPendingRequest(t *testing.T) {
 			t.Fatalf("chat_join_request events after repeat = %d, want 1", len(got))
 		}
 	})
+}
+
+// countingUserLookups 统计按 id 查用户的次数，其余能力委托给真实服务。
+type countingUserLookups struct {
+	UsersService
+	lookups map[int64]int
+}
+
+func (c countingUserLookups) ByID(ctx context.Context, currentUserID, userID int64) (domain.User, bool, error) {
+	c.lookups[userID]++
+	return c.UsersService.ByID(ctx, currentUserID, userID)
+}
+
+// 同一批 chat_join_request 里，链接创建者的资料只查一次，每条更新的 invite_link 都带上它
+// （review #9）。
+func TestBotAPIChatJoinRequestBatchLooksUpEachCreatorOnce(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	counting := countingUserLookups{UsersService: f.router.deps.Users, lookups: map[int64]int{}}
+	f.router.deps.Users = counting
+	chat := domain.Peer{Type: domain.PeerTypeChannel, ID: f.channel.ID}
+	request := func(id int64, hash string) domain.BotAPIUpdate {
+		return domain.BotAPIUpdate{
+			ID: id, BotUserID: f.bot.ID, Kind: domain.BotAPIUpdateChatJoinRequest, Peer: chat, Date: 50,
+			ChatJoinRequest: &domain.BotChatJoinRequest{
+				Chat: chat, UserID: f.member.ID, Date: 50,
+				Invite: &domain.ChannelInvite{ChannelID: f.channel.ID, Hash: hash, AdminUserID: f.owner.ID, RequestNeeded: true},
+			},
+		}
+	}
+
+	events, _ := f.router.botAPIQueuedUpdateEvents(f.ctx, f.bot.ID, []domain.BotAPIUpdate{request(1, "first"), request(2, "second"), request(3, "first")}, time.Now())
+	if len(events) != 3 {
+		t.Fatalf("events = %+v, want three chat_join_request", events)
+	}
+	for _, event := range events {
+		link := event.BotChatJoinRequest.InviteLink
+		if link == nil || link.Creator.ID != f.owner.ID || link.Creator.FirstName != "Owner" {
+			t.Fatalf("invite_link = %+v, want the owner as creator", link)
+		}
+	}
+	if got := counting.lookups[f.owner.ID]; got != 1 {
+		t.Fatalf("owner looked up %d times, want once per batch", got)
+	}
 }

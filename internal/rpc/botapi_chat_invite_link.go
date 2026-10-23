@@ -194,10 +194,22 @@ func domainChannelInviteFromTG(channelID int64, hash string, invite *tg.ChatInvi
 // botAPIChatInviteLink 把 domain 邀请记录组装成 Bot API ChatInviteLink 所需的全部数据：
 // 对外链接与机器人视角的创建者资料。邀请链接方法与 chat_join_request 更新共用。
 func (r *Router) botAPIChatInviteLink(ctx context.Context, botID int64, invite domain.ChannelInvite) domain.BotAPIChatInviteLink {
-	creator := domain.User{ID: invite.AdminUserID}
-	if r.deps.Users != nil && invite.AdminUserID != 0 {
-		if user, found, err := r.deps.Users.ByID(ctx, botID, invite.AdminUserID); err == nil && found {
-			creator = user
+	return r.botAPIChatInviteLinkWithCreators(ctx, botID, invite, nil)
+}
+
+// botAPIChatInviteLinkWithCreators 同 botAPIChatInviteLink；creators 非 nil 时按创建者 id
+// 记住查到的资料，一批更新里同一个创建者只查一次。
+func (r *Router) botAPIChatInviteLinkWithCreators(ctx context.Context, botID int64, invite domain.ChannelInvite, creators map[int64]domain.User) domain.BotAPIChatInviteLink {
+	creator, cached := creators[invite.AdminUserID]
+	if !cached {
+		creator = domain.User{ID: invite.AdminUserID}
+		if r.deps.Users != nil && invite.AdminUserID != 0 {
+			if user, found, err := r.deps.Users.ByID(ctx, botID, invite.AdminUserID); err == nil && found {
+				creator = user
+			}
+		}
+		if creators != nil {
+			creators[invite.AdminUserID] = creator
 		}
 	}
 	link := publicLinkWithBaseURL(r.cfg.PublicBaseURL, "+"+invite.Hash)

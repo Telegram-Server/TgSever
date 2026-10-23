@@ -111,6 +111,7 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 	channelMessages := r.botAPIQueuedChannelMessages(ctx, botID, channelIDs)
 	events := make([]domain.UpdateEvent, 0, len(items))
 	leadingSkipped := int64(0)
+	var inviteCreators map[int64]domain.User
 	for _, item := range items {
 		event, ok := botAPIQueuedUpdateEventFromMessages(botID, item, privateMessages, channelMessages, now)
 		if !ok {
@@ -120,8 +121,12 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 			continue
 		}
 		if update := event.BotChatJoinRequest; update != nil && update.Request.Invite != nil {
-			// 对外链接与创建者资料按收件机器人视角在读取时组装，与邀请链接方法的返回值一致。
-			link := r.botAPIChatInviteLink(ctx, botID, *update.Request.Invite)
+			// 对外链接与创建者资料按收件机器人视角在读取时组装，与邀请链接方法的返回值一致；
+			// 同一批里同一个创建者只查一次。
+			if inviteCreators == nil {
+				inviteCreators = make(map[int64]domain.User)
+			}
+			link := r.botAPIChatInviteLinkWithCreators(ctx, botID, *update.Request.Invite, inviteCreators)
 			update.InviteLink = &link
 		}
 		events = append(events, event)
