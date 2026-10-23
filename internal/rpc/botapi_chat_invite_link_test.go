@@ -306,3 +306,28 @@ func TestBotAPIEditChatInviteLinkRejectsLimitWithApproval(t *testing.T) {
 		t.Fatalf("turn approval off on a limited link: %v", err)
 	}
 }
+
+// 处理器已经提交了撤销或修改，之后的重读失败不能让机器人收到错误（review #6）：
+// 结果按处理器返回的链接组装，修改确实生效。
+func TestBotAPIChatInviteLinkSurvivesFailedReload(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.promoteBot(t, domain.ChannelAdminRights{InviteUsers: true})
+	created, err := f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{Name: inviteOption("promo")})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	f.router.deps.Channels = unreadableInvites{f.channels}
+
+	renamed, err := f.router.BotAPIEditChatInviteLink(f.ctx, f.bot.ID, f.chatID, created.Link, domain.BotAPIChatInviteLinkOptions{Name: inviteOption("spring")})
+	if err != nil || renamed.Invite.Title != "spring" || renamed.Link != created.Link || renamed.Creator.ID != f.bot.ID {
+		t.Fatalf("rename with failing reload = %+v (%s), %v; want the renamed link", renamed.Invite, renamed.Link, err)
+	}
+	revoked, err := f.router.BotAPIRevokeChatInviteLink(f.ctx, f.bot.ID, f.chatID, created.Link)
+	if err != nil || !revoked.Invite.Revoked || revoked.Invite.Title != "spring" {
+		t.Fatalf("revoke with failing reload = %+v, %v; want the revoked link", revoked.Invite, err)
+	}
+	f.router.deps.Channels = f.channels
+	if seen := f.ownerSeesInvite(t, created.Link); !seen.Revoked || seen.Title != "spring" {
+		t.Fatalf("owner sees %+v, want the link renamed and revoked", seen)
+	}
+}

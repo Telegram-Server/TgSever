@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -146,8 +147,9 @@ func (r *Router) botAPIEditChatInvite(ctx context.Context, botID, chatID int64, 
 	return r.botAPIReloadChatInviteLink(ctx, botID, peer.ChannelID, edited)
 }
 
-// botAPIReloadChatInviteLink 按处理器返回的链接重读 domain 邀请记录（带待审批数等
-// TL 对象里没有完整表达的字段），再补上创建者资料。
+// botAPIReloadChatInviteLink 按处理器返回的链接重读 domain 邀请记录，再补上创建者资料。
+// 调用时处理器已经提交了修改：重读失败（期间被降权、数据库瞬时故障）不能让机器人以为
+// 操作没生效而重试，所以退回用处理器返回的 TL 对象组装结果。
 func (r *Router) botAPIReloadChatInviteLink(ctx context.Context, botID, channelID int64, exported tg.ExportedChatInviteClass) (domain.BotAPIChatInviteLink, error) {
 	tgInvite, ok := exported.(*tg.ChatInviteExported)
 	if !ok {
@@ -163,9 +165,30 @@ func (r *Router) botAPIReloadChatInviteLink(ctx context.Context, botID, channelI
 		Hash:      hash,
 	})
 	if err != nil {
-		return domain.BotAPIChatInviteLink{}, channelInviteErr(err)
+		r.log.Warn("reload invite link for bot api failed; answering from the handler result",
+			zap.Int64("bot_user_id", botID), zap.Int64("channel_id", channelID), zap.Error(err))
+		invite = domainChannelInviteFromTG(channelID, hash, tgInvite)
 	}
 	return r.botAPIChatInviteLink(ctx, botID, invite), nil
+}
+
+// domainChannelInviteFromTG 把处理器返回的 chatInviteExported 还原成 domain 邀请记录；
+// 只缺 InviteID，Bot API 投影用不到它。
+func domainChannelInviteFromTG(channelID int64, hash string, invite *tg.ChatInviteExported) domain.ChannelInvite {
+	return domain.ChannelInvite{
+		ChannelID:      channelID,
+		Hash:           hash,
+		AdminUserID:    invite.AdminID,
+		Title:          invite.Title,
+		Permanent:      invite.Permanent,
+		Revoked:        invite.Revoked,
+		RequestNeeded:  invite.RequestNeeded,
+		ExpireDate:     invite.ExpireDate,
+		UsageLimit:     invite.UsageLimit,
+		UsageCount:     invite.Usage,
+		RequestedCount: invite.Requested,
+		Date:           invite.Date,
+	}
 }
 
 // botAPIChatInviteLink 把 domain 邀请记录组装成 Bot API ChatInviteLink 所需的全部数据：
