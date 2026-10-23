@@ -15,6 +15,8 @@ type BotUpdate struct {
 	Date int
 	// ChannelParticipant 是 updateChannelParticipant：bot 在超级群/频道里的成员状态变化。
 	ChannelParticipant *BotChannelParticipantUpdate `json:",omitempty"`
+	// ChatInviteRequester 是 updateBotChatInviteRequester：有用户提交了入群申请（#149）。
+	ChatInviteRequester *BotChatInviteRequesterUpdate `json:",omitempty"`
 }
 
 // BotChannelParticipantUpdate 是一次超级群/频道成员状态变化的内容。
