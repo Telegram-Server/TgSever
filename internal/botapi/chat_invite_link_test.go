@@ -233,3 +233,16 @@ func TestChatInviteLinkMethodsReportMissingRights(t *testing.T) {
 		}
 	}
 }
+
+// 只传人数上限或只开审批、但与链接现状冲突时，网关给出与同一请求里两者都传时相同的官方描述。
+func TestEditChatInviteLinkReportsLimitWithApproval(t *testing.T) {
+	gateway := newFakeChatInviteLinkGateway()
+	gateway.err = errors.New(domain.BotAPIInviteLimitWithApproval)
+	h := newTestHandler(t, gateway)
+
+	rec := callMethod(t, h, "editChatInviteLink", `{"chat_id":-1001234,"invite_link":"https://t.me/+abc","creates_join_request":true}`)
+	resp := decodeAPIResponse(t, rec)
+	if rec.Code != http.StatusBadRequest || resp.Description != inviteLimitWithApprovalDescription {
+		t.Fatalf("editChatInviteLink = %d %q, want the official limit-with-approval error", rec.Code, resp.Description)
+	}
+}

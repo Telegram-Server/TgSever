@@ -2,6 +2,8 @@ package botapi
 
 import (
 	"net/http"
+
+	"telesrv/internal/domain"
 )
 
 // officialErrorDescriptions 把网关错误码映射成官方 Bot API 的错误说明文本。bot 库
@@ -77,8 +79,13 @@ var senderChatBanErrors = newOfficialErrorDescriptions(map[string]string{
 
 // chatInviteLinkErrors 是 create/edit/revoke/exportChatInviteLink 的官方失败说明。
 var chatInviteLinkErrors = newOfficialErrorDescriptions(map[string]string{
-	"CHAT_ADMIN_REQUIRED": "Bad Request: not enough rights to manage chat invite links",
+	"CHAT_ADMIN_REQUIRED":                "Bad Request: not enough rights to manage chat invite links",
+	domain.BotAPIInviteLimitWithApproval: inviteLimitWithApprovalDescription,
 })
+
+// inviteLimitWithApprovalDescription 是人数上限与需要审批同时出现时的官方说明：同一请求里
+// 两者都传时网关直接拒绝，只传一个时由网关按链接现状判定。
+const inviteLimitWithApprovalDescription = "Bad Request: member limit can't be specified for links requiring administrator approval"
 
 // joinRequestErrors 是 approveChatJoinRequest / declineChatJoinRequest 的官方失败说明：
 // 官方对这几种 MTProto 错误原样转出，前面加 "Bad Request: "。

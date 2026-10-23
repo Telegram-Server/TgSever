@@ -250,3 +250,59 @@ func TestChatInviteTitleLimitCountsCharacters(t *testing.T) {
 	_, err = f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{Name: inviteOption(longest + "x")})
 	wantBotAPIError(t, err, "LIMIT_INVALID")
 }
+
+// 别的管理员建的链接，机器人修改后拿到的只是遮住后半段的形式，不能直接拿来入群；
+// 机器人自己建的链接仍返回完整链接。
+func TestBotAPIChatInviteLinkMasksOtherAdminsLinks(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.promoteBot(t, domain.ChannelAdminRights{InviteUsers: true})
+	hash := f.exportInvite(t, false)
+	full := publicLinkWithBaseURL(f.router.cfg.PublicBaseURL, "+"+hash)
+
+	edited, err := f.router.BotAPIEditChatInviteLink(f.ctx, f.bot.ID, f.chatID, full, domain.BotAPIChatInviteLinkOptions{Name: inviteOption("renamed")})
+	if err != nil {
+		t.Fatalf("edit owner's link: %v", err)
+	}
+	want := strings.TrimSuffix(full, hash[len(hash)/2:]) + "…"
+	if edited.Link != want || strings.Contains(edited.Link, hash) || edited.Creator.ID != f.owner.ID {
+		t.Fatalf("edited link = %q (creator %d), want %q created by the owner", edited.Link, edited.Creator.ID, want)
+	}
+
+	own, err := f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !strings.HasSuffix(own.Link, "+"+own.Invite.Hash) {
+		t.Fatalf("bot's own link = %q, want the full link", own.Link)
+	}
+}
+
+// 人数上限与需要审批不能同时存在：只传其中一个字段时，也要和链接现有的另一个字段合起来判定。
+func TestBotAPIEditChatInviteLinkRejectsLimitWithApproval(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	f.promoteBot(t, domain.ChannelAdminRights{InviteUsers: true})
+	limited, err := f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{MemberLimit: inviteOption(10)})
+	if err != nil {
+		t.Fatalf("create limited: %v", err)
+	}
+	approval, err := f.router.BotAPICreateChatInviteLink(f.ctx, f.bot.ID, f.chatID, domain.BotAPIChatInviteLinkOptions{CreatesJoinRequest: inviteOption(true)})
+	if err != nil {
+		t.Fatalf("create approval: %v", err)
+	}
+
+	_, err = f.router.BotAPIEditChatInviteLink(f.ctx, f.bot.ID, f.chatID, limited.Link, domain.BotAPIChatInviteLinkOptions{CreatesJoinRequest: inviteOption(true)})
+	wantBotAPIError(t, err, domain.BotAPIInviteLimitWithApproval)
+	_, err = f.router.BotAPIEditChatInviteLink(f.ctx, f.bot.ID, f.chatID, approval.Link, domain.BotAPIChatInviteLinkOptions{MemberLimit: inviteOption(5)})
+	wantBotAPIError(t, err, domain.BotAPIInviteLimitWithApproval)
+	if seen := f.ownerSeesInvite(t, limited.Link); seen.RequestNeeded || seen.UsageLimit != 10 {
+		t.Fatalf("limited link after rejected edit = %+v, want it untouched", seen)
+	}
+	if seen := f.ownerSeesInvite(t, approval.Link); !seen.RequestNeeded || seen.UsageLimit != 0 {
+		t.Fatalf("approval link after rejected edit = %+v, want it untouched", seen)
+	}
+
+	// 关掉审批不会冲突。
+	if _, err := f.router.BotAPIEditChatInviteLink(f.ctx, f.bot.ID, f.chatID, limited.Link, domain.BotAPIChatInviteLinkOptions{CreatesJoinRequest: inviteOption(false)}); err != nil {
+		t.Fatalf("turn approval off on a limited link: %v", err)
+	}
+}

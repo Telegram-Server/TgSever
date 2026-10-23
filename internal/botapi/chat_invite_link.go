@@ -141,7 +141,7 @@ func chatInviteLinkOptions(values map[string]string) (domain.BotAPIChatInviteLin
 		options.CreatesJoinRequest = &v
 	}
 	if options.MemberLimit != nil && options.CreatesJoinRequest != nil && *options.CreatesJoinRequest {
-		return options, "Bad Request: member limit can't be specified for links requiring administrator approval"
+		return options, inviteLimitWithApprovalDescription
 	}
 	return options, ""
 }

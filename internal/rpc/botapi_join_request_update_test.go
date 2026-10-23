@@ -113,8 +113,9 @@ func TestBotAPIChatJoinRequestReachesInviteAdminBots(t *testing.T) {
 					}
 					return
 				}
+				// 链接是群主建的，机器人只能看到遮住后半段的形式。
 				if link == nil || link.Invite.Hash != hash || !link.Invite.RequestNeeded ||
-					link.Link != publicLinkWithBaseURL(f.router.cfg.PublicBaseURL, "+"+hash) ||
+					link.Link != botAPIMaskedInviteLink(publicLinkWithBaseURL(f.router.cfg.PublicBaseURL, "+"+hash)) ||
 					link.Creator.ID != f.owner.ID || link.Creator.FirstName != "Owner" {
 					t.Fatalf("invite_link = %+v, want the link %q created by the owner", link, hash)
 				}

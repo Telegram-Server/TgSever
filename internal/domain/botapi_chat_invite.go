@@ -24,3 +24,7 @@ const (
 	BotAPIInviteLinkMemberLimitMin = 1
 	BotAPIInviteLinkMemberLimitMax = 99999
 )
+
+// BotAPIInviteLimitWithApproval 是编辑后链接会同时需要审批且有人数上限时的网关错误码；
+// 官方不允许这种组合。
+const BotAPIInviteLimitWithApproval = "INVITE_LIMIT_WITH_APPROVAL"

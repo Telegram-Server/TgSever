@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/iamxvbaba/td/tg"
 
@@ -55,7 +56,45 @@ func (r *Router) BotAPIEditChatInviteLink(ctx context.Context, botID, chatID int
 	if options.CreatesJoinRequest != nil {
 		req.SetRequestNeeded(*options.CreatesJoinRequest)
 	}
+	// 两个字段同时传入时的冲突由网关拦下；只传一个时要和链接现有的另一个字段合起来看，
+	// 否则分两次编辑就能得到"需要审批又有人数上限"的链接。
+	if (options.MemberLimit == nil) != (options.CreatesJoinRequest == nil) {
+		if err := r.botAPICheckInviteLimitWithApproval(ctx, botID, chatID, link, options); err != nil {
+			return domain.BotAPIChatInviteLink{}, err
+		}
+	}
 	return r.botAPIEditChatInvite(ctx, botID, chatID, req)
+}
+
+// botAPICheckInviteLimitWithApproval 拒绝编辑后同时需要审批且有人数上限的链接，与官方一致。
+func (r *Router) botAPICheckInviteLimitWithApproval(ctx context.Context, botID, chatID int64, link string, options domain.BotAPIChatInviteLinkOptions) error {
+	peer, err := r.botAPIInputChannelPeer(ctx, botID, chatID)
+	if err != nil {
+		return err
+	}
+	hash, err := channelInviteHashFromLink(link)
+	if err != nil {
+		return err
+	}
+	current, err := r.deps.Channels.GetExportedInvite(ctx, botID, domain.GetChannelInviteRequest{
+		UserID:    botID,
+		ChannelID: peer.ChannelID,
+		Hash:      hash,
+	})
+	if err != nil {
+		return channelInviteErr(err)
+	}
+	usageLimit, requestNeeded := current.UsageLimit, current.RequestNeeded
+	if options.MemberLimit != nil {
+		usageLimit = *options.MemberLimit
+	}
+	if options.CreatesJoinRequest != nil {
+		requestNeeded = *options.CreatesJoinRequest
+	}
+	if requestNeeded && usageLimit > 0 {
+		return errors.New(domain.BotAPIInviteLimitWithApproval)
+	}
+	return nil
 }
 
 // BotAPIRevokeChatInviteLink 实现 revokeChatInviteLink，返回撤销后的链接；撤销主链接时
@@ -138,9 +177,24 @@ func (r *Router) botAPIChatInviteLink(ctx context.Context, botID int64, invite d
 			creator = user
 		}
 	}
+	link := publicLinkWithBaseURL(r.cfg.PublicBaseURL, "+"+invite.Hash)
+	if invite.AdminUserID != botID {
+		link = botAPIMaskedInviteLink(link)
+	}
 	return domain.BotAPIChatInviteLink{
 		Invite:  invite,
-		Link:    publicLinkWithBaseURL(r.cfg.PublicBaseURL, "+"+invite.Hash),
+		Link:    link,
 		Creator: creator,
 	}
+}
+
+// botAPIMaskedInviteLink 按官方 ChatInviteLink 的规则遮住别的管理员创建的链接：hash 的后半段
+// 换成 "…"，机器人拿不到能直接使用的链接。
+func botAPIMaskedInviteLink(link string) string {
+	idx := strings.LastIndex(link, "+")
+	if idx < 0 {
+		return link
+	}
+	hash := link[idx+1:]
+	return link[:idx+1] + hash[:len(hash)/2] + "…"
 }
