@@ -8,8 +8,7 @@ import (
 )
 
 // BotCallbackPending is the short-lived, protocol-neutral ownership record for
-// one messages.getBotCallbackAnswer request. It is deliberately ephemeral: the
-// durable Bot API update remains in BotAPIUpdateStore, while this record only
+// one messages.getBotCallbackAnswer request. It is deliberately ephemeral: it only
 // coordinates the synchronous client answer across server instances.
 type BotCallbackPending struct {
 	QueryID   int64
