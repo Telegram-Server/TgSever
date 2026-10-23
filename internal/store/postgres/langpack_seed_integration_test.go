@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,21 +117,52 @@ func postgresLangPackValue(items []domain.LangPackString, key string) string {
 	return ""
 }
 
+// TestBundledLangPackSeedPostgres 把真实的内置语言包写进 PostgreSQL：每个客户端目录取最小的
+// 一个文件（各平台的 .strings 方言都覆盖到），断言首遍写入的条数等于解析结果、原样重放写入
+// 0 条、元数据计数与有效行一致。完整的 113 MB 语料由 app/langpack 的内存测试覆盖，这里只验证
+// PostgreSQL 一侧，不必把全部文件（26 秒）再灌一遍。
 func TestBundledLangPackSeedPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	scopes := []string{"android", "android_x", "ios", "macos", "tdesktop", "weba"}
+
+	bundled := filepath.Join("..", "..", "..", "data", "langpack")
+	root := t.TempDir()
+	var scopes []string
+	want := 0
+	dirs, err := os.ReadDir(bundled)
+	if err != nil {
+		t.Fatalf("read bundled langpacks: %v", err)
+	}
+	for _, dir := range dirs {
+		if !dir.IsDir() {
+			continue
+		}
+		smallest := smallestLangPackFile(t, filepath.Join(bundled, dir.Name()))
+		if smallest == "" {
+			continue
+		}
+		dst := filepath.Join(root, dir.Name(), filepath.Base(smallest))
+		copyTestFile(t, smallest, dst)
+		pack, err := applangpack.ParseTDesktopFile(dst)
+		if err != nil {
+			t.Fatalf("parse %s: %v", dst, err)
+		}
+		scopes = append(scopes, pack.LangPack)
+		want += len(pack.Strings)
+	}
+	if len(scopes) < 5 || want == 0 {
+		t.Fatalf("sampled %d bundled packs with %d strings, want every client directory", len(scopes), want)
+	}
 
 	service := applangpack.NewService(NewLangPackStore(pool))
-	root := filepath.Join("..", "..", "..", "data", "langpack")
 	started := time.Now()
 	seeded, err := service.SeedDirectory(ctx, root)
 	firstDuration := time.Since(started)
 	if err != nil {
 		t.Fatalf("seed bundled langpacks to postgres: %v", err)
 	}
-	if seeded < 50000 {
-		t.Fatalf("seeded bundled strings = %d, want full catalog", seeded)
+	if seeded != want {
+		t.Fatalf("seeded bundled strings = %d, want %d parsed from the sampled files", seeded, want)
 	}
 
 	started = time.Now()
@@ -147,8 +179,41 @@ SELECT
 `, scopes).Scan(&metadataCount, &activeCount); err != nil {
 		t.Fatalf("count seeded langpack rows: %v", err)
 	}
-	if metadataCount != activeCount {
-		t.Fatalf("seeded strings_count = %d, active rows = %d", metadataCount, activeCount)
+	if metadataCount != activeCount || metadataCount != int64(want) {
+		t.Fatalf("seeded strings_count = %d, active rows = %d, want %d", metadataCount, activeCount, want)
 	}
 	t.Logf("bundled langpack seed: first=%s unchanged=%s strings=%d", firstDuration, secondDuration, metadataCount)
+}
+
+func smallestLangPackFile(t *testing.T, dir string) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.strings"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	best, bestSize := "", int64(-1)
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bestSize < 0 || info.Size() < bestSize {
+			best, bestSize = f, info.Size()
+		}
+	}
+	return best
+}
+
+func copyTestFile(t *testing.T, src, dst string) {
+	t.Helper()
+	body, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

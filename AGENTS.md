@@ -15,7 +15,10 @@ Telegram-compatible MTProto server written in Go. This file is a module map so y
 go build -o bin/gramsrv.exe ./cmd/telesrv        # main server
 go vet ./...
 go test ./... -count=1                            # CI gate; includes the Postgres tests (private PostgreSQL, no setup)
+go test ./...                                     # while developing
 ```
+
+While developing, leave `-count=1` off: `go test` caches each package's result and reruns only the packages a change can affect, Postgres tests included. After a typical one-file edit the whole suite takes ≈35–45 s instead of ≈95 s, almost all of it compiling. `-count=1` is for CI and for chasing flakes.
 
 ### Tests that need Postgres
 

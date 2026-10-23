@@ -11,9 +11,12 @@ func TestMessageStoreUnpinAllBatchBoundary(t *testing.T) {
 	f := newPGBlocklistFixture(t, 1)
 	ctx := context.Background()
 	a, b := f.owner.ID, f.peers[0].ID
-	messages := newTestMessageStore(f.pool)
+	// 分批边界与上限的具体数值无关：上限 3 时 "3 条 + 1 条" 走的是同一段代码，
+	// 不必按 domain.MaxUnpinAllBatch 真造上千条置顶。
+	const batchLimit = 3
+	messages := newTestMessageStore(f.pool, withUnpinAllBatch(batchLimit))
 	want := map[int64]map[int]bool{a: {}, b: {}}
-	for i := 0; i <= domain.MaxUnpinAllBatch; i++ {
+	for i := 0; i <= batchLimit; i++ {
 		sent, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{SenderUserID: a, RecipientUserID: b, RandomID: int64(i + 1), Message: "owned batch boundary", Date: 1700000100})
 		if err != nil {
 			t.Fatal(err)
@@ -38,7 +41,7 @@ func TestMessageStoreUnpinAllBatchBoundary(t *testing.T) {
 		before[user] = pts
 	}
 	req := domain.UnpinAllPrivateMessagesRequest{OwnerUserID: a, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: b}, Date: 1700000102, OriginAuthKeyID: [8]byte{1}, OriginSessionID: 7}
-	for batch, count := range []int{domain.MaxUnpinAllBatch, 1} {
+	for batch, count := range []int{batchLimit, 1} {
 		result, err := messages.UnpinAllPrivateMessages(ctx, req)
 		if err != nil || len(result.Updated) != 2 || result.Offset != 1-batch {
 			t.Fatalf("batch %d: %+v %v", batch, result, err)
@@ -76,5 +79,12 @@ func TestMessageStoreUnpinAllBatchBoundary(t *testing.T) {
 		if err != nil || len(events) != 2 {
 			t.Fatal("batch/noop PTS", user, len(events), err)
 		}
+	}
+}
+
+// 生产路径的上限必须仍是 domain.MaxUnpinAllBatch：上面的边界测试为了快调小了它。
+func TestMessageStoreUnpinAllBatchDefaultsToDomainLimit(t *testing.T) {
+	if got := NewMessageStore(nil).unpinAllBatch; got != domain.MaxUnpinAllBatch {
+		t.Fatalf("unpin all batch = %d, want domain.MaxUnpinAllBatch %d", got, domain.MaxUnpinAllBatch)
 	}
 }

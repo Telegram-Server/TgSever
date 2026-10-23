@@ -335,11 +335,11 @@ SELECT id
 FROM channel_messages
 WHERE channel_id = $1 AND id <= $2 AND id > 1 AND NOT deleted
 ORDER BY id DESC
-LIMIT $3`, req.ChannelID, maxID, domain.MaxDeleteHistoryBatch)
+LIMIT $3`, req.ChannelID, maxID, s.deleteHistoryBatch)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, fmt.Errorf("list channel history delete ids: %w", err)
 	}
-	ids := make([]int, 0, domain.MaxDeleteHistoryBatch)
+	ids := make([]int, 0, s.deleteHistoryBatch)
 	for rows.Next() {
 		var id int
 		if err := rows.Scan(&id); err != nil {
@@ -364,7 +364,7 @@ LIMIT $3`, req.ChannelID, maxID, domain.MaxDeleteHistoryBatch)
 	committed = true
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 	offset := 0
-	if len(deleted) == domain.MaxDeleteHistoryBatch {
+	if len(deleted) == s.deleteHistoryBatch {
 		offset = 1
 	}
 	return domain.DeleteChannelHistoryResult{Channel: channel, Event: event, DeletedIDs: deleted, Recipients: recipients, Offset: offset}, nil
@@ -405,11 +405,11 @@ SELECT id
 FROM channel_messages
 WHERE channel_id = $1 AND sender_user_id = $2 AND id > 1 AND NOT deleted
 ORDER BY id DESC
-LIMIT $3`, req.ChannelID, req.ParticipantUserID, domain.MaxDeleteHistoryBatch)
+LIMIT $3`, req.ChannelID, req.ParticipantUserID, s.deleteHistoryBatch)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, fmt.Errorf("list participant channel history delete ids: %w", err)
 	}
-	ids := make([]int, 0, domain.MaxDeleteHistoryBatch)
+	ids := make([]int, 0, s.deleteHistoryBatch)
 	for rows.Next() {
 		var id int
 		if err := rows.Scan(&id); err != nil {
@@ -434,7 +434,7 @@ LIMIT $3`, req.ChannelID, req.ParticipantUserID, domain.MaxDeleteHistoryBatch)
 	committed = true
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 	offset := 0
-	if len(deleted) == domain.MaxDeleteHistoryBatch {
+	if len(deleted) == s.deleteHistoryBatch {
 		offset = 1
 	}
 	return domain.DeleteChannelHistoryResult{Channel: channel, Event: event, DeletedIDs: deleted, Recipients: recipients, Offset: offset}, nil

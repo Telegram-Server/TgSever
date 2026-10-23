@@ -224,7 +224,14 @@ func TestPostgresPoolReturnsBurstAdmissionSlotsAfterIdle(t *testing.T) {
 		t.Skip("PostgreSQL is not available to this test process (see pgtest)")
 	}
 	ctx := context.Background()
-	pool, err := Open(ctx, dsn, WithMaxConns(3), WithMinConns(1))
+	// 回收路径与具体时长无关：生产上限（5s 空闲 / 1s 巡检）由
+	// TestBoundPostgresAdmissionPoolIdleCapsIdleTimers 固定，这里用短时长免得真等 6 秒。
+	const idle, health = 300 * time.Millisecond, 100 * time.Millisecond
+	shortIdle := func(cfg *pgxpool.Config) {
+		cfg.MaxConnIdleTime = idle
+		cfg.HealthCheckPeriod = health
+	}
+	pool, err := Open(ctx, dsn, WithMaxConns(3), WithMinConns(1), shortIdle)
 	if err != nil {
 		t.Fatalf("open elastic pool: %v", err)
 	}
@@ -245,7 +252,7 @@ func TestPostgresPoolReturnsBurstAdmissionSlotsAfterIdle(t *testing.T) {
 		t.Fatalf("burst pool total connections = %d, want 3", got)
 	}
 
-	deadline := time.Now().Add(postgresAdmissionMaxConnIdleTime + 3*postgresAdmissionHealthCheckPeriod)
+	deadline := time.Now().Add(idle + 3*health + 2*time.Second)
 	for time.Now().Before(deadline) {
 		stat := pool.Stat()
 		if stat.TotalConns() == 1 && stat.IdleConns() == 1 && stat.MaxIdleDestroyCount() >= 2 {
@@ -258,4 +265,22 @@ func TestPostgresPoolReturnsBurstAdmissionSlotsAfterIdle(t *testing.T) {
 		"burst connections were not returned: total=%d idle=%d idle_destroyed=%d",
 		stat.TotalConns(), stat.IdleConns(), stat.MaxIdleDestroyCount(),
 	)
+}
+
+func TestBoundPostgresAdmissionPoolIdleCapsIdleTimers(t *testing.T) {
+	for _, tt := range []struct {
+		idle, health         time.Duration
+		wantIdle, wantHealth time.Duration
+	}{
+		{0, 0, postgresAdmissionMaxConnIdleTime, postgresAdmissionHealthCheckPeriod},
+		{time.Hour, time.Minute, postgresAdmissionMaxConnIdleTime, postgresAdmissionHealthCheckPeriod},
+		{time.Second, 100 * time.Millisecond, time.Second, 100 * time.Millisecond},
+	} {
+		cfg := &pgxpool.Config{MaxConnIdleTime: tt.idle, HealthCheckPeriod: tt.health}
+		boundPostgresAdmissionPoolIdle(cfg)
+		if cfg.MaxConnIdleTime != tt.wantIdle || cfg.HealthCheckPeriod != tt.wantHealth {
+			t.Errorf("bound(%v, %v) = %v, %v; want %v, %v", tt.idle, tt.health,
+				cfg.MaxConnIdleTime, cfg.HealthCheckPeriod, tt.wantIdle, tt.wantHealth)
+		}
+	}
 }

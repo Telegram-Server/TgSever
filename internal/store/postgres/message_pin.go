@@ -240,7 +240,7 @@ func (s *MessageStore) UnpinAllPrivateMessages(ctx context.Context, req domain.U
 		OwnerUserID: req.OwnerUserID,
 		PeerType:    string(req.Peer.Type),
 		PeerID:      req.Peer.ID,
-		LimitCount:  domain.MaxUnpinAllBatch,
+		LimitCount:  int32(s.unpinAllBatch),
 	})
 	if err != nil {
 		return res, fmt.Errorf("unpin own messages: %w", err)
@@ -252,7 +252,7 @@ func (s *MessageStore) UnpinAllPrivateMessages(ctx context.Context, req domain.U
 		committed = true
 		return res, nil
 	}
-	if len(ownRows) == domain.MaxUnpinAllBatch {
+	if len(ownRows) == s.unpinAllBatch {
 		more, moreErr := qtx.HasPinnedMessageBoxByPeer(ctx, sqlcgen.HasPinnedMessageBoxByPeerParams{
 			OwnerUserID: req.OwnerUserID,
 			PeerType:    string(req.Peer.Type),

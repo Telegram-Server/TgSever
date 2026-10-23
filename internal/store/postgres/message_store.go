@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"telesrv/internal/domain"
 	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
 )
@@ -17,6 +18,9 @@ type MessageStore struct {
 	boxIDs           store.BoxIDAllocator
 	privateSendLanes *userLaneActor
 	log              *zap.Logger
+	// unpinAllBatch 是单次 UnpinAllPrivateMessages 最多清除的置顶数，恒为
+	// domain.MaxUnpinAllBatch；测试用 withUnpinAllBatch 调小，不必真造上千条置顶。
+	unpinAllBatch int
 }
 
 type txBeginner interface {
@@ -40,9 +44,16 @@ func WithMessageLogger(log *zap.Logger) MessageStoreOption {
 	}
 }
 
+// withUnpinAllBatch 调小 unpinAllBatch，只给本包测试用。
+func withUnpinAllBatch(n int) MessageStoreOption {
+	return func(s *MessageStore) {
+		s.unpinAllBatch = n
+	}
+}
+
 // NewMessageStore 基于 pgx 连接池（或事务）创建 MessageStore。
 func NewMessageStore(db sqlcgen.DBTX, opts ...MessageStoreOption) *MessageStore {
-	s := &MessageStore{db: db, q: sqlcgen.New(db), privateSendLanes: defaultPrivateSendLaneActor}
+	s := &MessageStore{db: db, q: sqlcgen.New(db), privateSendLanes: defaultPrivateSendLaneActor, unpinAllBatch: domain.MaxUnpinAllBatch}
 	for _, opt := range opts {
 		opt(s)
 	}

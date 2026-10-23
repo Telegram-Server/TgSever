@@ -1298,7 +1298,10 @@ func TestChannelStoreDeleteHistoryForEveryoneBatchesHugeMaxID(t *testing.T) {
 	}
 	var channelID int64
 
-	channels := NewChannelStore(pool)
+	// 分批与续删逻辑与批量上限的具体数值无关：上限 3 时 "3 条 + 2 条" 走同一段代码，
+	// 不必按 domain.MaxDeleteHistoryBatch 真删上千条。
+	const batchLimit = 3
+	channels := NewChannelStore(pool, withChannelDeleteHistoryBatch(batchLimit))
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,
 		Title:         "Bulk Delete " + suffix,
@@ -1317,7 +1320,7 @@ func TestChannelStoreDeleteHistoryForEveryoneBatchesHugeMaxID(t *testing.T) {
 		t.Fatalf("read channel pts after create: %v", err)
 	}
 
-	total := domain.MaxDeleteHistoryBatch + 2
+	total := batchLimit + 2
 	if _, err := pool.Exec(ctx, `
 WITH src AS (
   SELECT generate_series(2, $3::int + 1) AS id
@@ -1391,9 +1394,9 @@ WHERE id = $1`, channelID, total+1, basePts+total); err != nil {
 	if err != nil {
 		t.Fatalf("DeleteChannelHistory first batch: %v", err)
 	}
-	wantFirstPts := basePts + total + domain.MaxDeleteHistoryBatch
-	if first.Offset != 1 || first.Event.Pts != wantFirstPts || first.Event.PtsCount != domain.MaxDeleteHistoryBatch || len(first.DeletedIDs) != domain.MaxDeleteHistoryBatch {
-		t.Fatalf("first batch = %+v, want offset=1 pts=%d pts_count=%d", first, wantFirstPts, domain.MaxDeleteHistoryBatch)
+	wantFirstPts := basePts + total + batchLimit
+	if first.Offset != 1 || first.Event.Pts != wantFirstPts || first.Event.PtsCount != batchLimit || len(first.DeletedIDs) != batchLimit {
+		t.Fatalf("first batch = %+v, want offset=1 pts=%d pts_count=%d", first, wantFirstPts, batchLimit)
 	}
 	var remaining int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM channel_messages WHERE channel_id = $1 AND NOT deleted`, channelID).Scan(&remaining); err != nil {
@@ -1442,5 +1445,12 @@ WHERE id = $1`, channelID, total+1, basePts+total); err != nil {
 	rows.Close()
 	if len(dialogTops) != 2 || dialogTops[0] != 1 || dialogTops[1] != 1 {
 		t.Fatalf("member dialog tops after full clear = %v, want create service message visible for both members", dialogTops)
+	}
+}
+
+// 生产路径的上限必须仍是 domain.MaxDeleteHistoryBatch：上面的分批测试为了快调小了它。
+func TestChannelStoreDeleteHistoryBatchDefaultsToDomainLimit(t *testing.T) {
+	if got := NewChannelStore(nil).deleteHistoryBatch; got != domain.MaxDeleteHistoryBatch {
+		t.Fatalf("channel delete history batch = %d, want domain.MaxDeleteHistoryBatch %d", got, domain.MaxDeleteHistoryBatch)
 	}
 }

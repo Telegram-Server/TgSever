@@ -31,6 +31,16 @@ type ChannelStore struct {
 	// paidReactionStartingGrant mirrors app/stars lazy grant policy inside the
 	// paid reaction settlement transaction.
 	paidReactionStartingGrant int64
+	// deleteHistoryBatch 是单次频道 deleteHistory 最多清除的消息数，恒为
+	// domain.MaxDeleteHistoryBatch；测试用 withChannelDeleteHistoryBatch 调小。
+	deleteHistoryBatch int
+}
+
+// withChannelDeleteHistoryBatch 调小 deleteHistoryBatch，只给本包测试用。
+func withChannelDeleteHistoryBatch(n int) ChannelStoreOption {
+	return func(s *ChannelStore) {
+		s.deleteHistoryBatch = n
+	}
 }
 
 // ChannelStoreOption 调整 PostgreSQL ChannelStore 依赖。
@@ -136,7 +146,7 @@ func (s *ChannelStore) boostCacheActive(db sqlcgen.DBTX) bool {
 
 // NewChannelStore 基于 pgx 连接池（或事务）创建 ChannelStore。
 func NewChannelStore(db sqlcgen.DBTX, opts ...ChannelStoreOption) *ChannelStore {
-	s := &ChannelStore{db: db, paidReactionStartingGrant: domain.DefaultStarsStartingGrant}
+	s := &ChannelStore{db: db, paidReactionStartingGrant: domain.DefaultStarsStartingGrant, deleteHistoryBatch: domain.MaxDeleteHistoryBatch}
 	for _, opt := range opts {
 		opt(s)
 	}
