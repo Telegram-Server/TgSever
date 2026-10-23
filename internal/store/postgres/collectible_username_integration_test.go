@@ -5,10 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"telesrv/internal/store/postgres/sqlcgen"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
 )
@@ -16,7 +15,7 @@ import (
 // collectibleTestUser inserts a bare user row and returns its user peer. The
 // registry rows for collectibles reference no peer table, but the editable-slot
 // assertions and the peer-deletion trigger both need a real user.
-func collectibleTestUser(t *testing.T, pool *pgxpool.Pool, seed int64, username string) domain.Peer {
+func collectibleTestUser(t *testing.T, pool sqlcgen.DBTX, seed int64, username string) domain.Peer {
 	t.Helper()
 	ctx := context.Background()
 	var id int64
@@ -31,7 +30,7 @@ RETURNING id`, seed, fmt.Sprintf("%d", seed), username).Scan(&id); err != nil {
 
 // setEditableUsername installs an editable registry row through the same helper
 // the client-driven username path uses.
-func setEditableUsername(t *testing.T, pool *pgxpool.Pool, peer domain.Peer, username string) {
+func setEditableUsername(t *testing.T, pool testDB, peer domain.Peer, username string) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)
@@ -71,7 +70,7 @@ func mintRequest(username string, owner domain.Peer, commandKey string) domain.M
 	}
 }
 
-func registryRows(t *testing.T, pool *pgxpool.Pool, peer domain.Peer) []domain.Username {
+func registryRows(t *testing.T, pool sqlcgen.DBTX, peer domain.Peer) []domain.Username {
 	t.Helper()
 	list, err := listPeerUsernames(context.Background(), pool, peer)
 	if err != nil {
@@ -81,7 +80,7 @@ func registryRows(t *testing.T, pool *pgxpool.Pool, peer domain.Peer) []domain.U
 }
 
 func TestCollectibleUsernameResolveAndSearchUseActiveRegistry(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	seed := time.Now().UnixNano() % 1_000_000
 	viewer := collectibleTestUser(t, pool, 3_100_000_000+seed, "")
@@ -176,7 +175,7 @@ func TestCollectibleUsernameResolveAndSearchUseActiveRegistry(t *testing.T) {
 }
 
 func TestCollectibleUsernameSearchPrefixUsesActiveRegistryIndex(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -237,7 +236,7 @@ WHERE peer_type = 'user'
 // name is not projected into any peer's registry, and the provenance log records
 // the mint.
 func TestCollectibleUsernameMintIntoVault(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	name := fmt.Sprintf("vault%d", time.Now().UnixNano()%1_000_000)
@@ -276,7 +275,7 @@ func TestCollectibleUsernameMintIntoVault(t *testing.T) {
 // asset immediately, and the command-key replay that must return the recorded
 // state instead of minting twice.
 func TestCollectibleUsernameMintWithOwnerAndReplay(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -323,7 +322,7 @@ func TestCollectibleUsernameMintWithOwnerAndReplay(t *testing.T) {
 // TestCollectibleUsernameMintRejectsOccupiedEditableName proves the collectible
 // registry and the editable slot share one occupancy namespace.
 func TestCollectibleUsernameMintRejectsOccupiedEditableName(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -342,7 +341,7 @@ func TestCollectibleUsernameMintRejectsOccupiedEditableName(t *testing.T) {
 // TestCollectibleUsernameTransferPreservesRecipientEditableSlot is the core
 // regression: moving an asset must not disturb either peer's editable username.
 func TestCollectibleUsernameTransferPreservesRecipientEditableSlot(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -407,7 +406,7 @@ func TestCollectibleUsernameTransferPreservesRecipientEditableSlot(t *testing.T)
 // TestCollectibleUsernameBurnReleasesName covers a burn: the asset is retired and
 // the name stops resolving, so an ordinary peer can claim it as its editable slot.
 func TestCollectibleUsernameBurnReleasesName(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -456,7 +455,7 @@ func TestCollectibleUsernameBurnReleasesName(t *testing.T) {
 // TestCollectibleUsernamePeerLimit covers the per-peer bound on both entry paths:
 // minting straight to the holder and transferring into it.
 func TestCollectibleUsernamePeerLimit(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -510,7 +509,7 @@ func TestCollectibleUsernamePeerLimit(t *testing.T) {
 // surface: activation, ordering and the bulk deactivation, none of which may
 // touch the editable slot.
 func TestCollectibleUsernameRegistryToggleAndReorder(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -591,7 +590,7 @@ func TestCollectibleUsernameRegistryToggleAndReorder(t *testing.T) {
 // surgery: rewriting or clearing the editable slot must leave collectible rows
 // and their assets untouched.
 func TestCollectibleUsernameEditableEditKeepsCollectibles(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -627,7 +626,7 @@ func TestCollectibleUsernameEditableEditKeepsCollectibles(t *testing.T) {
 // spans live assets only, so a burned name can be issued again while its burned
 // rows remain as provenance.
 func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -681,7 +680,7 @@ func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {
 // TestCollectibleUsernameDelete covers the hard delete: asset, registry row and
 // provenance all disappear and the name becomes fully free.
 func TestCollectibleUsernameDelete(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000

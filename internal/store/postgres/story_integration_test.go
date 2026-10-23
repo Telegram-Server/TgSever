@@ -3,16 +3,15 @@ package postgres
 import (
 	"context"
 	"errors"
+	"telesrv/internal/store/postgres/sqlcgen"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
 	storepkg "telesrv/internal/store"
 )
 
 func TestStoryStoreReadMaxHiddenAndPeerMaxIDsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, viewer := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -140,7 +139,7 @@ func TestStoryStoreReadMaxHiddenAndPeerMaxIDsPostgres(t *testing.T) {
 }
 
 func TestStoryStoreListActiveStoriesPaginatesByPeerPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -225,7 +224,7 @@ func TestStoryStoreListActiveStoriesPaginatesByPeerPostgres(t *testing.T) {
 }
 
 func TestStoryStoreSelfUserViewAndReactionDoNotPolluteOwnerInteractionsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, _ := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -269,7 +268,7 @@ func TestStoryStoreSelfUserViewAndReactionDoNotPolluteOwnerInteractionsPostgres(
 }
 
 func TestStoryStoreBlocklistHidesOwnerStoriesFromViewerPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, blockedViewer := createStoryTestUsers(t, ctx, pool)
 	users := NewUserStore(pool)
@@ -386,7 +385,7 @@ ON CONFLICT (owner_user_id, blocked_user_id) DO UPDATE SET date = EXCLUDED.date`
 }
 
 func TestStoryStoreChannelStoriesRequireActiveMemberPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -538,7 +537,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelPeer.ID, member.ID, 1700000314);
 }
 
 func TestStoryStoreMediaAreasRoundTripEditClearPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, _ := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -690,7 +689,7 @@ func TestStoryStoreMediaAreasRoundTripEditClearPostgres(t *testing.T) {
 }
 
 func TestStoryStoreArchiveCountAndSeekPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, _ := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -732,7 +731,7 @@ func TestStoryStoreArchiveCountAndSeekPostgres(t *testing.T) {
 }
 
 func TestStoryStoreViewsAndReactionPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, viewer := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -872,7 +871,7 @@ func TestStoryStoreViewsAndReactionPostgres(t *testing.T) {
 }
 
 func TestStoryStoreExpiredUnpinnedStoriesDoNotAcceptNewInteractionsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, viewer := createStoryTestUsers(t, ctx, pool)
 	_, otherViewer := createStoryTestUsers(t, ctx, pool)
@@ -906,7 +905,7 @@ func TestStoryStoreExpiredUnpinnedStoriesDoNotAcceptNewInteractionsPostgres(t *t
 }
 
 func TestStoryStoreForwardRoundTripEditAndClonePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, sourceUser := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -999,7 +998,7 @@ func TestStoryStoreForwardRoundTripEditAndClonePostgres(t *testing.T) {
 }
 
 func TestStoryStorePublicRepostForwardCountAndViewsListPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	sourceUser, repostUser := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -1065,7 +1064,7 @@ func TestStoryStorePublicRepostForwardCountAndViewsListPostgres(t *testing.T) {
 }
 
 func TestStoryStorePublicForwardListReturnsRepostsOnlyPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	sourceUser, repostUser := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -1180,7 +1179,7 @@ func TestStoryStorePublicForwardListReturnsRepostsOnlyPostgres(t *testing.T) {
 }
 
 func TestStoryStorePublicRepostStoryReactionsListPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	sourceUser, repostUser := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -1553,7 +1552,7 @@ func assertPGStoryForwardName(t *testing.T, story domain.Story, wantName string,
 }
 
 func TestStoryStoreViewListFiltersPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, contactViewer := createStoryTestUsers(t, ctx, pool)
 	users := NewUserStore(pool)
@@ -1669,7 +1668,7 @@ ON CONFLICT (user_id, contact_user_id) DO UPDATE SET
 }
 
 func TestStoryStoreViewerIDsIncludeCachedStoryExposurePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, _ := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -1737,7 +1736,7 @@ func TestStoryStoreViewerIDsIncludeCachedStoryExposurePostgres(t *testing.T) {
 }
 
 func TestStoryStorePrivacyVisibilityPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, selectedViewer := createStoryTestUsers(t, ctx, pool)
 	users := NewUserStore(pool)
@@ -1901,7 +1900,7 @@ ON CONFLICT (user_id, contact_user_id) DO UPDATE SET
 }
 
 func TestStoryStoreCreateEditDeleteAndPinnedPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, _ := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -2048,7 +2047,7 @@ func TestStoryStoreCreateEditDeleteAndPinnedPostgres(t *testing.T) {
 }
 
 func TestStoryStorePinnedToTopOrderPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, _ := createStoryTestUsers(t, ctx, pool)
 	store := NewStoryStore(pool)
@@ -2162,7 +2161,7 @@ func samePGStoryIDs(got, want []int) bool {
 }
 
 func TestStoryUpdateEventPayloadPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owner, _ := createStoryTestUsers(t, ctx, pool)
 	events := NewUpdateEventStore(pool)
@@ -2220,7 +2219,7 @@ func TestStoryUpdateEventPayloadPostgres(t *testing.T) {
 	}
 }
 
-func createStoryTestUsers(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (domain.User, domain.User) {
+func createStoryTestUsers(t *testing.T, ctx context.Context, pool sqlcgen.DBTX) (domain.User, domain.User) {
 	t.Helper()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -2238,7 +2237,7 @@ func createStoryTestUsers(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 	return owner, viewer
 }
 
-func cleanupStoryTestRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerID, viewerID int64) {
+func cleanupStoryTestRows(t *testing.T, ctx context.Context, pool sqlcgen.DBTX, ownerID, viewerID int64) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 DELETE FROM story_hidden_peers
@@ -2276,7 +2275,7 @@ WHERE id = ANY($1::bigint[])`, []int64{ownerID, viewerID}); err != nil {
 	}
 }
 
-func cleanupChannelStoryTestRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, channelID int64, userIDs []int64) {
+func cleanupChannelStoryTestRows(t *testing.T, ctx context.Context, pool sqlcgen.DBTX, channelID int64, userIDs []int64) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 DELETE FROM story_hidden_peers
@@ -2325,7 +2324,7 @@ func storyListContains(list domain.StoryList, peer domain.Peer, storyID int) boo
 	return false
 }
 
-func cleanupStoryPagingTestRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, viewerID int64, ownerIDs []int64) {
+func cleanupStoryPagingTestRows(t *testing.T, ctx context.Context, pool sqlcgen.DBTX, viewerID int64, ownerIDs []int64) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 DELETE FROM story_hidden_peers

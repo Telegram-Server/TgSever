@@ -11,7 +11,7 @@ import (
 )
 
 func TestChannelStoreReadHistorySenderFanoutUsesConstantStatements(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	baseCtx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -84,7 +84,7 @@ WHERE channel_id=$1 AND user_id=$2`, channelID, sender.ID).Scan(&readOutbox); er
 }
 
 func TestChannelStoreReadOutboxDoesNotRegressSenderDialogUnread(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -180,7 +180,7 @@ func TestChannelStoreReadOutboxDoesNotRegressSenderDialogUnread(t *testing.T) {
 }
 
 func TestChannelStoreReadHistoryNoopDoesNotRewriteDialogState(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -286,7 +286,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&dialogUpdat
 }
 
 func TestChannelStoreChannelUnreadExcludesOwnOutgoing(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -390,7 +390,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, owner.ID).Scan(&storedUnread
 }
 
 func TestChannelStoreBroadcastUnreadDerivesDespiteStaleCache(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -491,7 +491,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&storedUnrea
 }
 
 func TestChannelStoreLargeMegagroupUnreadDerivesDespiteStaleCache(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -627,7 +627,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&storedTop, 
 }
 
 func TestChannelStoreLargeMegagroupUnreadSkipsDeletedHole(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -719,7 +719,7 @@ WHERE id = $1`, channelID, domain.MaxSynchronousChannelDialogFanout+1); err != n
 }
 
 func TestChannelStoreSmallMegagroupDeleteDerivesUnread(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -839,7 +839,7 @@ func TestChannelStoreSmallMegagroupDeleteDerivesUnread(t *testing.T) {
 }
 
 func TestChannelStoreDeleteMessagesMaintainsUnreadMentionIndex(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -998,7 +998,7 @@ ON CONFLICT DO NOTHING`, channelID, plain.Message.ID, member.ID); err != nil {
 }
 
 func TestChannelStoreReadMessageContentsClearsVisibleUnreadReactions(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -1117,7 +1117,7 @@ WHERE channel_id = $1 AND message_id = $2 AND reacted_user_id = $3`,
 }
 
 func TestChannelReadOutboxDerivesFromPublicWatermark(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

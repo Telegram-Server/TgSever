@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
 	"sort"
 	"strings"
@@ -226,13 +227,17 @@ func (s *ChannelStore) GetChannel(ctx context.Context, viewerUserID, channelID i
 		}, nil
 	}
 	// getChannelDialog 与 countActiveUserBoostsForPeer 互不依赖，并发执行省一次串行往返。
-	// 两者都走 s.db（pgxpool，并发安全，各取独立连接），各写自己的返回变量。
+	// 连接池上各取独立连接，各写自己的返回变量；s.db 是事务（单连接）时同一连接上不能并发
+	// 查询（pgx 报 conn busy），退化为依次执行。
 	var (
 		dialog         domain.ChannelDialog
 		selfBoosts     int
 		exportedInvite *domain.ChannelInvite
 	)
 	g, gctx := errgroup.WithContext(ctx)
+	if _, pooled := s.db.(*pgxpool.Pool); !pooled {
+		g.SetLimit(1)
+	}
 	g.Go(func() error {
 		var derr error
 		dialog, derr = s.getChannelDialog(gctx, s.db, viewerUserID, channel)
