@@ -134,16 +134,18 @@ func (s *Service) mixBannedSenderChatHashes(ctx context.Context, userID, channel
 	if !ok {
 		return hash, nil
 	}
-	page, err := bans.ListChannelBannedSenderChats(ctx, userID, channelID, key.query, 0, key.offset+key.limit)
+	// 只取频道 id：封禁和解封本身已经 bump 了 channel_participants 版本，这里只为感知
+	// 页里频道的改名、换头像。
+	ids, err := bans.ListChannelBannedSenderChatIDs(ctx, channelID, key.query, key.offset+key.limit)
 	if err != nil {
 		return 0, err
 	}
-	if len(page.Bans) == 0 {
+	if len(ids) == 0 {
 		return hash, nil
 	}
-	keys := make([]store.ReadModelKey, 0, len(page.Bans))
-	for _, ban := range page.Bans {
-		keys = append(keys, store.ReadModelKey{Model: readmodel.ModelChannelBase, OwnerUserID: 0, PeerType: domain.PeerTypeChannel, PeerID: ban.SenderChatID})
+	keys := make([]store.ReadModelKey, 0, len(ids))
+	for _, id := range ids {
+		keys = append(keys, store.ReadModelKey{Model: readmodel.ModelChannelBase, OwnerUserID: 0, PeerType: domain.PeerTypeChannel, PeerID: id})
 	}
 	rows, err := s.versions.ReadModelHashes(ctx, keys)
 	if err != nil {

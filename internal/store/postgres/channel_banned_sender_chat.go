@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -165,6 +166,24 @@ func (s *ChannelStore) ListChannelBannedSenderChats(ctx context.Context, viewerU
 		}
 	}
 	return out, nil
+}
+
+// ListChannelBannedSenderChatIDs 返回前 limit 条封禁记录的频道 id（见 store.ChannelBannedSenderChatStore）。
+func (s *ChannelStore) ListChannelBannedSenderChatIDs(ctx context.Context, channelID int64, query string, limit int) ([]int64, error) {
+	if channelID == 0 || limit <= 0 {
+		return nil, nil
+	}
+	pattern := ""
+	if query = strings.ToLower(strings.TrimSpace(query)); query != "" {
+		pattern = adminLogLikePattern(query)
+	}
+	ids, err := sqlcgen.New(s.db).ListChannelBannedSenderChatIDs(ctx, sqlcgen.ListChannelBannedSenderChatIDsParams{
+		ChannelID: channelID, Pattern: pattern, PageLimit: int32(min(limit, math.MaxInt32)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list channel banned sender chat ids: %w", err)
+	}
+	return ids, nil
 }
 
 // GetSenderChatsByIDs 一次读出一批频道 peer 的基础行（见 store.ChannelBannedSenderChatStore）。

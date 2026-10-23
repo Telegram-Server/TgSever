@@ -115,6 +115,47 @@ func (q *Queries) InsertChannelBannedSenderChat(ctx context.Context, arg InsertC
 	return i, err
 }
 
+const listChannelBannedSenderChatIDs = `-- name: ListChannelBannedSenderChatIDs :many
+SELECT b.sender_chat_id
+FROM channel_banned_sender_chats b
+JOIN channels c ON c.id = b.sender_chat_id
+WHERE b.channel_id = $1
+  AND NOT c.deleted
+  AND ($2::text = ''
+       OR lower(c.title) LIKE $2::text ESCAPE '\'
+       OR lower(coalesce(c.username, '')) LIKE $2::text ESCAPE '\')
+ORDER BY b.sender_chat_id
+LIMIT $3
+`
+
+type ListChannelBannedSenderChatIDsParams struct {
+	ChannelID int64
+	Pattern   string
+	PageLimit int32
+}
+
+// kicked 筛选的缓存 hash 只需要前若干条封禁记录的频道 id：与 ListChannelBannedSenderChats
+// 同样的过滤和排序，不计数、不读频道行。
+func (q *Queries) ListChannelBannedSenderChatIDs(ctx context.Context, arg ListChannelBannedSenderChatIDsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listChannelBannedSenderChatIDs, arg.ChannelID, arg.Pattern, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var sender_chat_id int64
+		if err := rows.Scan(&sender_chat_id); err != nil {
+			return nil, err
+		}
+		items = append(items, sender_chat_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChannelBannedSenderChats = `-- name: ListChannelBannedSenderChats :many
 SELECT b.channel_id, b.sender_chat_id, b.banned_by_user_id, b.banned_at
 FROM channel_banned_sender_chats b

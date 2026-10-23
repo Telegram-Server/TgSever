@@ -176,6 +176,28 @@ func ChannelBannedSenderChats(t *testing.T, s ChannelBannedSenderChatStore, user
 		if found.Count != 1 || len(found.Bans) != 1 || found.Bans[0].SenderChatID != beta {
 			t.Fatalf("search beta = %+v", found)
 		}
+
+		// 只取 id 的读取与列表同序、同过滤，limit 截断。
+		ids := func(query string, limit int) []int64 {
+			t.Helper()
+			got, err := s.ListChannelBannedSenderChatIDs(ctx, groupID, query, limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return got
+		}
+		if got := ids("", 10); !slices.Equal(got, []int64{lo, hi}) {
+			t.Fatalf("banned ids = %v, want [%d %d]", got, lo, hi)
+		}
+		if got := ids("", 1); !slices.Equal(got, []int64{lo}) {
+			t.Fatalf("banned ids limit 1 = %v, want [%d]", got, lo)
+		}
+		if got := ids("beta", 10); !slices.Equal(got, []int64{beta}) {
+			t.Fatalf("banned ids for beta = %v, want [%d]", got, beta)
+		}
+		if got := ids("", 0); len(got) != 0 {
+			t.Fatalf("banned ids limit 0 = %v, want none", got)
+		}
 	})
 
 	t.Run("解封、重复解封幂等", func(t *testing.T) {

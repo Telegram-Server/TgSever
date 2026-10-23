@@ -84,20 +84,7 @@ func (s *ChannelStore) ListChannelBannedSenderChats(_ context.Context, viewerUse
 	if err != nil || !isChannelAdmin(viewer) {
 		return domain.ChannelBannedSenderChatList{}, nil
 	}
-	query = strings.ToLower(strings.TrimSpace(query))
-	items := make([]domain.ChannelBannedSenderChat, 0, len(s.bannedSenderChats[channelID]))
-	for _, record := range s.bannedSenderChats[channelID] {
-		// 已删除的频道不计入、不列出，与 SenderChats 保持一致（封禁记录保留，仍可解封）。
-		sender, ok := s.channels[record.SenderChatID]
-		if !ok || sender.Deleted {
-			continue
-		}
-		if query != "" && !senderChatMatchesQuery(sender, query) {
-			continue
-		}
-		items = append(items, record)
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].SenderChatID < items[j].SenderChatID })
+	items := s.bannedSenderChatsMatchingLocked(channelID, query)
 	out := domain.ChannelBannedSenderChatList{Count: len(items)}
 	if offset < 0 {
 		offset = 0
@@ -111,6 +98,40 @@ func (s *ChannelStore) ListChannelBannedSenderChats(_ context.Context, viewerUse
 		out.SenderChats = append(out.SenderChats, s.channels[record.SenderChatID])
 	}
 	return out, nil
+}
+
+// bannedSenderChatsMatchingLocked 返回 query 过滤后的封禁记录（按 SenderChatID 升序）。
+// 已删除的频道不计入、不列出（封禁记录保留，仍可解封）。调用方持有 s.mu。
+func (s *ChannelStore) bannedSenderChatsMatchingLocked(channelID int64, query string) []domain.ChannelBannedSenderChat {
+	query = strings.ToLower(strings.TrimSpace(query))
+	items := make([]domain.ChannelBannedSenderChat, 0, len(s.bannedSenderChats[channelID]))
+	for _, record := range s.bannedSenderChats[channelID] {
+		sender, ok := s.channels[record.SenderChatID]
+		if !ok || sender.Deleted {
+			continue
+		}
+		if query != "" && !senderChatMatchesQuery(sender, query) {
+			continue
+		}
+		items = append(items, record)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].SenderChatID < items[j].SenderChatID })
+	return items
+}
+
+// ListChannelBannedSenderChatIDs 返回前 limit 条封禁记录的频道 id（见 store.ChannelBannedSenderChatStore）。
+func (s *ChannelStore) ListChannelBannedSenderChatIDs(_ context.Context, channelID int64, query string, limit int) ([]int64, error) {
+	if channelID == 0 || limit <= 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := s.bannedSenderChatsMatchingLocked(channelID, query)
+	ids := make([]int64, 0, min(limit, len(items)))
+	for _, record := range items[:min(limit, len(items))] {
+		ids = append(ids, record.SenderChatID)
+	}
+	return ids, nil
 }
 
 func senderChatMatchesQuery(channel domain.Channel, query string) bool {

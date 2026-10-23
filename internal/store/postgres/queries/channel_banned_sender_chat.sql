@@ -53,3 +53,17 @@ SELECT id, access_hash, title, broadcast, megagroup
 FROM channels
 WHERE id = ANY(sqlc.arg(ids)::bigint[]) AND deleted
 ORDER BY id;
+
+-- name: ListChannelBannedSenderChatIDs :many
+-- kicked 筛选的缓存 hash 只需要前若干条封禁记录的频道 id：与 ListChannelBannedSenderChats
+-- 同样的过滤和排序，不计数、不读频道行。
+SELECT b.sender_chat_id
+FROM channel_banned_sender_chats b
+JOIN channels c ON c.id = b.sender_chat_id
+WHERE b.channel_id = sqlc.arg(channel_id)
+  AND NOT c.deleted
+  AND (sqlc.arg(pattern)::text = ''
+       OR lower(c.title) LIKE sqlc.arg(pattern)::text ESCAPE '\'
+       OR lower(coalesce(c.username, '')) LIKE sqlc.arg(pattern)::text ESCAPE '\')
+ORDER BY b.sender_chat_id
+LIMIT sqlc.arg(page_limit);
