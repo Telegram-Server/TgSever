@@ -87,6 +87,15 @@ WHERE model = 'dialog_light' AND owner_user_id = $1 AND peer_type = 'user' AND p
 		t.Fatalf("read initial dialog projection version: %v", err)
 	}
 
+	// Inserting the user already publishes a user_visibility version (the read
+	// model triggers since 0193), so the freeze is measured as one bump past it.
+	var visibilityBefore int64
+	if err := tx.QueryRow(ctx, `
+SELECT COALESCE((SELECT version FROM read_model_versions
+WHERE model = 'user_visibility' AND owner_user_id = 0 AND peer_type = 'user' AND peer_id = $1), 0)`, activeUserID).Scan(&visibilityBefore); err != nil {
+		t.Fatalf("read initial user visibility version: %v", err)
+	}
+
 	since := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
 	want := domain.AccountFreeze{
 		UserID:    activeUserID,
@@ -127,8 +136,8 @@ WHERE model = 'dialog_light' AND owner_user_id = $1 AND peer_type = 'user' AND p
 	}
 	if err := tx.QueryRow(ctx, `
 SELECT version FROM read_model_versions
-WHERE model = 'user_visibility' AND owner_user_id = 0 AND peer_type = 'user' AND peer_id = $1`, activeUserID).Scan(&visibilityVersion); err != nil || visibilityVersion != 1 {
-		t.Fatalf("user visibility version = %d err=%v, want 1", visibilityVersion, err)
+WHERE model = 'user_visibility' AND owner_user_id = 0 AND peer_type = 'user' AND peer_id = $1`, activeUserID).Scan(&visibilityVersion); err != nil || visibilityVersion != visibilityBefore+1 {
+		t.Fatalf("user visibility version = %d err=%v, want %d", visibilityVersion, err, visibilityBefore+1)
 	}
 
 	claimAt := time.Now().UTC().Add(time.Minute)

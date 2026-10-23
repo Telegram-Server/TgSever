@@ -586,7 +586,7 @@ func TestChannelStoreSendMessageViaBotIDSurvivesReadPaths(t *testing.T) {
 		}
 	}
 
-	sent, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+	viaReq := domain.SendChannelMessageRequest{
 		UserID:      owner.ID,
 		ChannelID:   channelID,
 		RandomID:    990301,
@@ -594,7 +594,8 @@ func TestChannelStoreSendMessageViaBotIDSurvivesReadPaths(t *testing.T) {
 		ViaBotID:    bot.ID,
 		ReplyMarkup: markup,
 		Date:        1700001101,
-	})
+	}
+	sent, err := channels.SendChannelMessage(ctx, viaReq)
 	if err != nil {
 		t.Fatalf("send channel via: %v", err)
 	}
@@ -1404,6 +1405,12 @@ func TestChannelStoreDeleteHistoryForEveryoneBatchesHugeMaxID(t *testing.T) {
 		t.Fatalf("create channel: %v", err)
 	}
 	channelID = created.Channel.ID
+	// Seed events after whatever pts creating the channel used: the create
+	// service message is not necessarily the only event at pts 1.
+	var basePts int
+	if err := pool.QueryRow(ctx, `SELECT pts FROM channels WHERE id = $1`, channelID).Scan(&basePts); err != nil {
+		t.Fatalf("read channel pts after create: %v", err)
+	}
 
 	total := domain.MaxDeleteHistoryBatch + 2
 	if _, err := pool.Exec(ctx, `
@@ -1449,7 +1456,7 @@ INSERT INTO channel_update_events (
 )
 SELECT
   $1::bigint,
-  id,
+  $4::int + id - 1,
   1,
   message_date,
   'new_channel_message',
@@ -1457,15 +1464,15 @@ SELECT
   $2::bigint,
   '{}'::jsonb
 FROM msgs
-`, channelID, owner.ID, total); err != nil {
+`, channelID, owner.ID, total, basePts); err != nil {
 		t.Fatalf("seed bulk channel messages: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
 UPDATE channels
 SET top_message_id = $2,
-    pts = $2,
+    pts = $3,
     updated_at = now()
-WHERE id = $1`, channelID, total+1); err != nil {
+WHERE id = $1`, channelID, total+1, basePts+total); err != nil {
 		t.Fatalf("update channel bulk top: %v", err)
 	}
 
@@ -1479,7 +1486,7 @@ WHERE id = $1`, channelID, total+1); err != nil {
 	if err != nil {
 		t.Fatalf("DeleteChannelHistory first batch: %v", err)
 	}
-	wantFirstPts := total + 1 + domain.MaxDeleteHistoryBatch
+	wantFirstPts := basePts + total + domain.MaxDeleteHistoryBatch
 	if first.Offset != 1 || first.Event.Pts != wantFirstPts || first.Event.PtsCount != domain.MaxDeleteHistoryBatch || len(first.DeletedIDs) != domain.MaxDeleteHistoryBatch {
 		t.Fatalf("first batch = %+v, want offset=1 pts=%d pts_count=%d", first, wantFirstPts, domain.MaxDeleteHistoryBatch)
 	}
