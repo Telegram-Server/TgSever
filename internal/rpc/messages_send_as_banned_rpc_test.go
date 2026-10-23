@@ -186,6 +186,10 @@ func (failingSenderChatBans) IsSenderChatBanned(context.Context, int64, int64) (
 	return false, errors.New("store down")
 }
 
+func (failingSenderChatBans) BannedSenderChatsAmong(context.Context, int64, []int64) (map[int64]bool, error) {
+	return nil, errors.New("store down")
+}
+
 // 封禁查询失败时按拒绝处理：显式 send_as 返回 INTERNAL_SERVER_ERROR，不放行；以本人身份发言不查询，不受影响。
 func TestBannedSenderChatLookupFailureFailsClosed(t *testing.T) {
 	f := newBannedSendAsFixture(t)
@@ -497,6 +501,12 @@ func TestBannedSenderChatExcludedFromGetSendAs(t *testing.T) {
 	f.setBanned(false)
 	if _, ok := findSendAsChannel(candidates(), f.banned.ID); !ok {
 		t.Fatal("channel not offered again after unban")
+	}
+
+	// 候选一次批量查询；查询失败时按拒绝处理，不把可能被封的频道列出来。
+	f.router.deps.Channels = failingSenderChatBans{f.router.deps.Channels}
+	if _, err := f.router.onChannelsGetSendAs(f.posterCtx(), &tg.ChannelsGetSendAsRequest{Peer: inputPeerChannel(f.group)}); !tgerr.Is(err, "INTERNAL_SERVER_ERROR") {
+		t.Fatalf("get send as with failing ban lookup: err = %v, want INTERNAL_SERVER_ERROR", err)
 	}
 }
 

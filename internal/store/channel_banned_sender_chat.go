@@ -18,6 +18,9 @@ type ChannelBannedSenderChatStore interface {
 	EditChannelBannedSenderChat(ctx context.Context, req domain.EditChannelBannedSenderChatRequest) (domain.EditChannelBannedSenderChatResult, error)
 	// GetChannelBannedSenderChat 不做查看者鉴权，直接返回封禁记录；供发言拦截等内部路径使用。
 	GetChannelBannedSenderChat(ctx context.Context, channelID, senderChatID int64) (domain.ChannelBannedSenderChat, bool, error)
+	// ListBannedSenderChatIDsAmong 返回 senderChatIDs 中在 channelID 里被封禁的那些（升序、去重），
+	// 一次查询；不做查看者鉴权，供 channels.getSendAs 过滤候选。
+	ListBannedSenderChatIDsAmong(ctx context.Context, channelID int64, senderChatIDs []int64) ([]int64, error)
 	// ListChannelBannedSenderChats 返回一页封禁记录（按 SenderChatID 升序）和总数。查看者必须是
 	// 管理员，否则返回空列表（与 kicked 筛选对非管理员的语义一致）。query 非空时按频道标题或
 	// 用户名（不区分大小写）子串过滤。limit<=0 时只返回 Count。

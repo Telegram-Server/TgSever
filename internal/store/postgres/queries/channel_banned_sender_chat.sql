@@ -67,3 +67,11 @@ WHERE b.channel_id = sqlc.arg(channel_id)
        OR lower(coalesce(c.username, '')) LIKE sqlc.arg(pattern)::text ESCAPE '\')
 ORDER BY b.sender_chat_id
 LIMIT sqlc.arg(page_limit);
+
+-- name: ListBannedSenderChatIDsAmong :many
+-- 一组候选频道里在本群被封禁的那些：channels.getSendAs 一次查完全部候选。
+SELECT sender_chat_id
+FROM channel_banned_sender_chats
+WHERE channel_id = sqlc.arg(channel_id)
+  AND sender_chat_id = ANY(sqlc.arg(sender_chat_ids)::bigint[])
+ORDER BY sender_chat_id;

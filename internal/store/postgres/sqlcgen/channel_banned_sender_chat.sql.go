@@ -115,6 +115,40 @@ func (q *Queries) InsertChannelBannedSenderChat(ctx context.Context, arg InsertC
 	return i, err
 }
 
+const listBannedSenderChatIDsAmong = `-- name: ListBannedSenderChatIDsAmong :many
+SELECT sender_chat_id
+FROM channel_banned_sender_chats
+WHERE channel_id = $1
+  AND sender_chat_id = ANY($2::bigint[])
+ORDER BY sender_chat_id
+`
+
+type ListBannedSenderChatIDsAmongParams struct {
+	ChannelID     int64
+	SenderChatIds []int64
+}
+
+// 一组候选频道里在本群被封禁的那些：channels.getSendAs 一次查完全部候选。
+func (q *Queries) ListBannedSenderChatIDsAmong(ctx context.Context, arg ListBannedSenderChatIDsAmongParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listBannedSenderChatIDsAmong, arg.ChannelID, arg.SenderChatIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var sender_chat_id int64
+		if err := rows.Scan(&sender_chat_id); err != nil {
+			return nil, err
+		}
+		items = append(items, sender_chat_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChannelBannedSenderChatIDs = `-- name: ListChannelBannedSenderChatIDs :many
 SELECT b.sender_chat_id
 FROM channel_banned_sender_chats b

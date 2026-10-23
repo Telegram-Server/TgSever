@@ -780,6 +780,8 @@ type ChannelsService interface {
 	EditBannedSenderChat(ctx context.Context, userID int64, req domain.EditChannelBannedSenderChatRequest) (domain.EditChannelBannedSenderChatResult, error)
 	// IsSenderChatBanned 报告频道 senderChatID 是否在 channelID 里被封禁（发言拦截用，不鉴权）。
 	IsSenderChatBanned(ctx context.Context, channelID, senderChatID int64) (bool, error)
+	// BannedSenderChatsAmong 一次查出候选频道中在 channelID 里被封禁的那些（getSendAs 用，不鉴权）。
+	BannedSenderChatsAmong(ctx context.Context, channelID int64, senderChatIDs []int64) (map[int64]bool, error)
 	// GetSenderChatParticipant 返回被封禁频道 peer 的成员投影与频道基础行（查看者须为管理员）。
 	GetSenderChatParticipant(ctx context.Context, userID, channelID, senderChatID int64) (domain.ChannelMember, domain.Channel, error)
 	EditDefaultBannedRights(ctx context.Context, userID int64, req domain.EditChannelDefaultBannedRightsRequest) (domain.Channel, error)

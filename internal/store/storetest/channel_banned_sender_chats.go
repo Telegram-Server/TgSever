@@ -198,6 +198,19 @@ func ChannelBannedSenderChats(t *testing.T, s ChannelBannedSenderChatStore, user
 		if got := ids("", 0); len(got) != 0 {
 			t.Fatalf("banned ids limit 0 = %v, want none", got)
 		}
+
+		// 一组候选里被封禁的那些：去重、升序，未封禁的和 0 不返回。
+		gamma := newBroadcast("Gamma Weekly")
+		among, err := s.ListBannedSenderChatIDsAmong(ctx, groupID, []int64{hi, 0, gamma, lo, hi})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(among, []int64{lo, hi}) {
+			t.Fatalf("banned among candidates = %v, want [%d %d]", among, lo, hi)
+		}
+		if none, err := s.ListBannedSenderChatIDsAmong(ctx, groupID, []int64{gamma}); err != nil || len(none) != 0 {
+			t.Fatalf("banned among unbanned candidates = %v, %v; want none", none, err)
+		}
 	})
 
 	t.Run("解封、重复解封幂等", func(t *testing.T) {

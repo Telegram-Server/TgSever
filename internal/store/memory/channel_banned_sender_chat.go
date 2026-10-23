@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 
@@ -117,6 +118,24 @@ func (s *ChannelStore) bannedSenderChatsMatchingLocked(channelID int64, query st
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].SenderChatID < items[j].SenderChatID })
 	return items
+}
+
+// ListBannedSenderChatIDsAmong 返回候选频道中被封禁的那些（见 store.ChannelBannedSenderChatStore）。
+func (s *ChannelStore) ListBannedSenderChatIDsAmong(_ context.Context, channelID int64, senderChatIDs []int64) ([]int64, error) {
+	if channelID == 0 || len(senderChatIDs) == 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	bans := s.bannedSenderChats[channelID]
+	out := make([]int64, 0, len(senderChatIDs))
+	for _, id := range senderChatIDs {
+		if _, banned := bans[id]; banned && id != 0 && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // ListChannelBannedSenderChatIDs 返回前 limit 条封禁记录的频道 id（见 store.ChannelBannedSenderChatStore）。

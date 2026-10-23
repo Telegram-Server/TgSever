@@ -395,16 +395,20 @@ func (r *Router) onChannelsGetSendAs(ctx context.Context, req *tg.ChannelsGetSen
 			// Broadcast profile authors are free; in groups only linked or verified channels are exempt from Premium.
 			if len(owned) > 0 && (!view.Channel.Broadcast || view.Channel.SignatureProfiles && canSendAsForeignChannel(view)) {
 				extras := make([]domain.Channel, 0, len(owned))
+				candidateIDs := make([]int64, 0, len(owned))
 				for _, ch := range owned {
-					if ch.ID == 0 || ch.ID == view.Channel.ID {
-						continue
+					if ch.ID != 0 && ch.ID != view.Channel.ID {
+						candidateIDs = append(candidateIDs, ch.ID)
 					}
-					// 在本群被封禁的频道不能作为发言身份（#138），不列为候选；查询失败按拒绝处理。
-					banned, banErr := r.deps.Channels.IsSenderChatBanned(ctx, view.Channel.ID, ch.ID)
-					if banErr != nil {
-						return nil, internalErr()
-					}
-					if banned {
+				}
+				// 在本群被封禁的频道不能作为发言身份（#138），不列为候选：全部候选一次查完；
+				// 查询失败按拒绝处理。
+				banned, banErr := r.deps.Channels.BannedSenderChatsAmong(ctx, view.Channel.ID, candidateIDs)
+				if banErr != nil {
+					return nil, internalErr()
+				}
+				for _, ch := range owned {
+					if ch.ID == 0 || ch.ID == view.Channel.ID || banned[ch.ID] {
 						continue
 					}
 					sendAs := tg.SendAsPeer{Peer: &tg.PeerChannel{ChannelID: ch.ID}}

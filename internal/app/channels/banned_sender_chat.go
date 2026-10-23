@@ -64,6 +64,24 @@ func (s *Service) IsSenderChatBanned(ctx context.Context, channelID, senderChatI
 	return banned, err
 }
 
+// BannedSenderChatsAmong 返回 senderChatIDs 中在 channelID 里被封禁的那些，一次查询。不做查看者
+// 鉴权，供 channels.getSendAs 过滤候选；存储不支持该能力时视为都未封禁。
+func (s *Service) BannedSenderChatsAmong(ctx context.Context, channelID int64, senderChatIDs []int64) (map[int64]bool, error) {
+	bans, ok := s.bannedSenderChatStore()
+	if !ok || channelID == 0 || len(senderChatIDs) == 0 {
+		return nil, nil
+	}
+	ids, err := bans.ListBannedSenderChatIDsAmong(ctx, channelID, senderChatIDs)
+	if err != nil {
+		return nil, err
+	}
+	banned := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		banned[id] = true
+	}
+	return banned, nil
+}
+
 // GetSenderChatParticipant 返回频道 peer 在群里的成员投影（只有被封禁一种状态）和该频道的
 // 基础行。查看者必须是管理员（domain.ErrChannelAdminRequired）；没有封禁记录时返回
 // domain.ErrUserNotParticipant。

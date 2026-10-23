@@ -168,6 +168,21 @@ func (s *ChannelStore) ListChannelBannedSenderChats(ctx context.Context, viewerU
 	return out, nil
 }
 
+// ListBannedSenderChatIDsAmong 返回候选频道中被封禁的那些（见 store.ChannelBannedSenderChatStore）。
+func (s *ChannelStore) ListBannedSenderChatIDsAmong(ctx context.Context, channelID int64, senderChatIDs []int64) ([]int64, error) {
+	senderChatIDs = uniqueNonZeroInt64s(senderChatIDs...)
+	if channelID == 0 || len(senderChatIDs) == 0 {
+		return nil, nil
+	}
+	ids, err := sqlcgen.New(s.db).ListBannedSenderChatIDsAmong(ctx, sqlcgen.ListBannedSenderChatIDsAmongParams{
+		ChannelID: channelID, SenderChatIds: senderChatIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list banned sender chat ids among: %w", err)
+	}
+	return ids, nil
+}
+
 // ListChannelBannedSenderChatIDs 返回前 limit 条封禁记录的频道 id（见 store.ChannelBannedSenderChatStore）。
 func (s *ChannelStore) ListChannelBannedSenderChatIDs(ctx context.Context, channelID int64, query string, limit int) ([]int64, error) {
 	if channelID == 0 || limit <= 0 {
