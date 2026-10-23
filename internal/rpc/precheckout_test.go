@@ -167,7 +167,7 @@ func TestDeclinedPreCheckoutLeavesInvoiceUnsettled(t *testing.T) {
 		t.Fatal("decline was ignored")
 	}
 	reloaded, found, err := chain.router.deps.Bots.BotInvoiceByMessage(context.Background(),
-		chain.botID, chain.botID, invoice.MsgID)
+		chain.botID, chain.buyerID, invoice.MsgID)
 	if err != nil || !found {
 		t.Fatalf("lookup after decline: %v found=%v", err, found)
 	}
