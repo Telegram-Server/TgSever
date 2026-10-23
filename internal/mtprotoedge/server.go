@@ -726,18 +726,22 @@ func (s *Server) serveTCP(ctx context.Context, ln net.Listener) error {
 	return <-errCh
 }
 
+// muxSniffTimeout 是同端口复用嗅探(读首 4 字节做 HTTP/TCP 分流)的读超时，必须对齐「建立
+// session 前」的读超时 s.handshakeTimeout(默认 60s)——与 serveDetectedConn/serveConn 的
+// pre-session 读 deadline 完全一致。一条尚未发出首帧的连接正处于「pre-session idle」状态：合法
+// MTProto 客户端(如 DrKLO)会预开「暖」连接、在有请求前并不立即发送 obfuscated2 init。此前用
+// minDuration(5s,...) 把嗅探压到 5s，比非 mux 路径激进 12 倍，会把这些暖连接在 5s 误杀，触发
+// 客户端 6s 重连风暴并误判「后端不健康」回退到外部 DNS。per-conn goroutine 模型已消解
+// slow-loris 接入饥饿，故嗅探用满 handshakeTimeout 是安全的。
+func (s *Server) muxSniffTimeout() time.Duration {
+	return s.handshakeTimeout
+}
+
 func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// 嗅探(读首 4 字节做 HTTP/TCP 分流)的读超时必须对齐「建立 session 前」的读超时
-	// s.handshakeTimeout(默认 60s)——与 serveDetectedConn/serveConn 的 pre-session 读
-	// deadline 完全一致。一条尚未发出首帧的连接正处于「pre-session idle」状态：合法 MTProto
-	// 客户端(如 DrKLO)会预开「暖」连接、在有请求前并不立即发送 obfuscated2 init。此前用
-	// minDuration(5s,...) 把嗅探压到 5s，比非 mux 路径激进 12 倍，会把这些暖连接在 5s 误杀，
-	// 触发客户端 6s 重连风暴并误判「后端不健康」回退到外部 DNS。per-conn goroutine 模型已消解
-	// slow-loris 接入饥饿，故嗅探用满 handshakeTimeout 是安全的。
-	mux := newSamePortMux(ln, s.handshakeTimeout, s.observeConnectionIntake)
+	mux := newSamePortMux(ln, s.muxSniffTimeout(), s.observeConnectionIntake)
 	wsRawLn, wsHandler := transport.WebsocketListener(ln.Addr())
 	wsLn := newTransportPacketMessageListener(wsRawLn)
 

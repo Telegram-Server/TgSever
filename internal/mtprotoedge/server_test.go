@@ -454,45 +454,66 @@ func TestSamePortWebSocketTransportRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSamePortMuxIdleConnNotReapedBeforeHandshakeTimeout 回归：WebSocket 同端口复用的嗅探
+// TestSamePortMuxSniffTimeoutFollowsHandshakeIdleTimeout 回归：WebSocket 同端口复用的嗅探
 // 读超时（读首 4 字节做 HTTP/TCP 分流）必须对齐 HandshakeIdleTimeout，而不是旧的硬上限 5s。
 // 合法 MTProto 客户端（DrKLO）会预开「暖」连接、在有请求前并不立即发 obfuscated2 init；旧实现
-// 用 minDuration(5s, handshakeTimeout) 把嗅探压到 5s，比非 mux 路径（serveDetectedConn 用满
-// handshakeTimeout）激进 12 倍，会把这些暖连接在 5s 误杀，触发 DrKLO 6s 重连风暴 + EPOLLRDHUP
-// + 误判后端不健康回退外部 DNS（见 docs/client-compat-notes.md）。
+// 用 minDuration(5s, handshakeTimeout) 把嗅探压到 5s，会把这些暖连接误杀，触发 DrKLO 6s 重连
+// 风暴 + 误判后端不健康回退外部 DNS（见 docs/client-compat-notes.md）。
 //
-// HandshakeIdleTimeout 必须 >5s 才能暴露旧的截断：连一条裸 TCP、不发任何字节，本地用 6s 读
-// deadline。新实现下连接在 8s 嗅探超时前一直存活，故本地 Read 因自身 deadline 超时（net timeout）；
-// 旧实现下服务端 5s 即 FIN，本地 Read 会在 6s 前拿到 EOF/reset —— 据此判定回归。
-func TestSamePortMuxIdleConnNotReapedBeforeHandshakeTimeout(t *testing.T) {
-	addr, _, _ := startTestServer(t, Options{
-		WebSocket:            true,
-		ObfuscatedTCP:        true,
-		HandshakeIdleTimeout: 8 * time.Second, // 必须 >5s 才能区分「对齐 handshakeTimeout」与旧的 5s 截断
-	})
+// 那个上限只有配置 >5s 时才看得出来，端到端真等 6s 太贵，所以拆成两半：这里断言配置 8s 时
+// 服务端算出的嗅探超时、以及 mux 保存的值都是 8s（不被压到 5s）；
+// TestSamePortMuxIdleConnLivesUntilHandshakeIdleTimeout 断言 mux 确实按这个值设读 deadline。
+func TestSamePortMuxSniffTimeoutFollowsHandshakeIdleTimeout(t *testing.T) {
+	const idle = 8 * time.Second
+	_, _, srv := startTestServer(t, Options{WebSocket: true, ObfuscatedTCP: true, HandshakeIdleTimeout: idle})
+	if got := srv.muxSniffTimeout(); got != idle {
+		t.Fatalf("mux sniff timeout = %v, want HandshakeIdleTimeout %v", got, idle)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	if got := newSamePortMux(ln, idle).sniffTimeout; got != idle {
+		t.Fatalf("samePortMux kept sniff timeout %v, want %v", got, idle)
+	}
+}
+
+// TestSamePortMuxIdleConnLivesUntilHandshakeIdleTimeout 用一个很短的 HandshakeIdleTimeout 端到端
+// 验证两侧：一条不发任何字节的暖连接在超时之前一直存活，到超时后由服务端关闭。
+func TestSamePortMuxIdleConnLivesUntilHandshakeIdleTimeout(t *testing.T) {
+	const idle = 400 * time.Millisecond
+	addr, _, _ := startTestServer(t, Options{WebSocket: true, ObfuscatedTCP: true, HandshakeIdleTimeout: idle})
 
 	raw, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	defer func() { _ = raw.Close() }()
+	start := time.Now()
+	buf := make([]byte, 1)
 
-	// 不发任何字节，模拟客户端预开、暂未发首帧的暖连接。
-	if err := raw.SetReadDeadline(time.Now().Add(6 * time.Second)); err != nil {
+	// 不发任何字节，模拟客户端预开、暂未发首帧的暖连接。超时一半时，只有本地读 deadline 到期才
+	// 说明连接还活着；EOF/reset 意味着服务端提前回收了它。
+	if err := raw.SetReadDeadline(start.Add(idle / 2)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
-	n, err := raw.Read(make([]byte, 1))
+	n, err := raw.Read(buf)
 	if err == nil {
 		t.Fatalf("unexpected %d bytes on idle pre-handshake conn (server should send nothing)", n)
 	}
-	// 只有「本地读 deadline 超时」才说明连接在 6s 时仍存活（嗅探超时已对齐 8s）。
-	// 任何由对端关闭导致的 EOF/reset 都意味着服务端在 handshakeTimeout 前过早回收了连接。
 	var nerr net.Error
-	if errors.As(err, &nerr) && nerr.Timeout() {
-		return
+	if !errors.As(err, &nerr) || !nerr.Timeout() {
+		t.Fatalf("server closed idle pre-handshake conn after %v, before HandshakeIdleTimeout %v (err=%v)", time.Since(start), idle, err)
 	}
-	t.Fatalf("server closed idle pre-handshake conn before handshake idle timeout (err=%v); "+
-		"same-port mux sniff timeout must align with HandshakeIdleTimeout, not a 5s cap", err)
+
+	// 过了超时，服务端必须关闭连接：读到 EOF/reset，而不是本地 deadline 到期。
+	if err := raw.SetReadDeadline(start.Add(idle + 2*time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	if _, err := raw.Read(buf); errors.As(err, &nerr) && nerr.Timeout() {
+		t.Fatalf("server kept idle pre-handshake conn open well past HandshakeIdleTimeout %v", idle)
+	}
 }
 
 func expectFrameLen(t *testing.T, frames <-chan int, want int) {

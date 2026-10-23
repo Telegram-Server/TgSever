@@ -18,10 +18,6 @@ import (
 // 要防的事。
 const preCheckoutTimeout = preCheckoutTimeoutSeconds * time.Second
 
-// preCheckoutWait 是 await 实际使用的等待时长，生产恒等于 preCheckoutTimeout；测试把它
-// 缩短，免得每个"bot 不应答"的用例都真等 10 秒。
-var preCheckoutWait = preCheckoutTimeout
-
 // preCheckoutRegistry 持有一次挂起的 pre-checkout 询问及其应答通道。
 //
 // 与 callbackRegistry 的差别在于时效：callback 允许 25s 且超时只影响按钮动画，
@@ -31,6 +27,9 @@ var preCheckoutWait = preCheckoutTimeout
 type preCheckoutRegistry struct {
 	mu      chan struct{}
 	pending map[int64]*pendingPreCheckout
+	// wait 是 await 的等待时长，恒为 preCheckoutTimeout；测试在自己的 Router 上把它缩短，
+	// 免得每个"bot 不应答"的用例都真等 10 秒。
+	wait time.Duration
 }
 
 type pendingPreCheckout struct {
@@ -41,7 +40,7 @@ type pendingPreCheckout struct {
 }
 
 func newPreCheckoutRegistry() *preCheckoutRegistry {
-	return &preCheckoutRegistry{mu: make(chan struct{}, 1), pending: make(map[int64]*pendingPreCheckout)}
+	return &preCheckoutRegistry{mu: make(chan struct{}, 1), pending: make(map[int64]*pendingPreCheckout), wait: preCheckoutTimeout}
 }
 
 // register 登记一次挂起的询问，返回 query_id 与接收通道。调用方必须 defer
@@ -119,7 +118,7 @@ func (p *preCheckoutRegistry) size() int {
 // 返回的 answered 为 false 时，调用方必须让付款失败——把"没有批准"降级成"直接
 // 扣款"正是 pre-checkout 要防的事。
 func (p *preCheckoutRegistry) await(ctx context.Context, queryID int64, entry *pendingPreCheckout) (domain.BotPreCheckoutAnswer, bool) {
-	timer := time.NewTimer(preCheckoutWait)
+	timer := time.NewTimer(p.wait)
 	defer timer.Stop()
 	defer p.deregister(queryID)
 

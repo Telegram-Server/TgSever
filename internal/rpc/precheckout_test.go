@@ -68,15 +68,12 @@ func (c *invoiceChain) answerNext(botID int64, ans domain.BotPreCheckoutAnswer) 
 	return false
 }
 
-// shortenPreCheckoutWait makes an unanswered gate give up quickly, for subtests
-// that expect no approval to arrive. The 10 second contract itself is pinned by
-// TestPreCheckoutTimeoutIsTenSeconds.
-func shortenPreCheckoutWait(t *testing.T) time.Duration {
-	t.Helper()
+// shortenPreCheckoutWait makes this chain's unanswered gate give up quickly, for
+// subtests that expect no approval to arrive. The 10 second contract itself is
+// pinned by TestPreCheckoutTimeoutIsTenSeconds.
+func (c *invoiceChain) shortenPreCheckoutWait() time.Duration {
 	const wait = 300 * time.Millisecond
-	prev := preCheckoutWait
-	preCheckoutWait = wait
-	t.Cleanup(func() { preCheckoutWait = prev })
+	c.router.preCheckouts.wait = wait
 	return wait
 }
 
@@ -120,8 +117,8 @@ func TestBotInvoicePreCheckoutGate(t *testing.T) {
 	})
 
 	t.Run("silence fails the payment when the window closes", func(t *testing.T) {
-		wait := shortenPreCheckoutWait(t)
 		chain := newInvoiceChain(t)
+		wait := chain.shortenPreCheckoutWait()
 		invoice, stored := chain.sellInvoice(t, "gate-silent", 100)
 		// A late answer must not rescue a payment that already failed.
 		go func() {
@@ -146,9 +143,9 @@ func TestBotInvoicePreCheckoutGate(t *testing.T) {
 	})
 
 	t.Run("a foreign bot cannot open the gate", func(t *testing.T) {
-		// The foreign answer is refused, so the gate only closes on the timer.
-		shortenPreCheckoutWait(t)
 		chain := newInvoiceChain(t)
+		// The foreign answer is refused, so the gate only closes on the timer.
+		chain.shortenPreCheckoutWait()
 		invoice, stored := chain.sellInvoice(t, "gate-foreign", 100)
 		go chain.answerNext(chain.otherBotID, domain.BotPreCheckoutAnswer{OK: true})
 		err := chain.payStarsForm(t, invoice, stored.ID)
@@ -170,8 +167,8 @@ func TestPreCheckoutTimeoutIsTenSeconds(t *testing.T) {
 	if preCheckoutTimeout != 10*time.Second {
 		t.Fatalf("pre-checkout timer = %v, want 10s", preCheckoutTimeout)
 	}
-	if preCheckoutWait != preCheckoutTimeout {
-		t.Fatalf("pre-checkout wait = %v, want the %v contract", preCheckoutWait, preCheckoutTimeout)
+	if wait := newPreCheckoutRegistry().wait; wait != preCheckoutTimeout {
+		t.Fatalf("pre-checkout wait = %v, want the %v contract", wait, preCheckoutTimeout)
 	}
 }
 

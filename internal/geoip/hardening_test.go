@@ -146,7 +146,8 @@ func TestResolveDeadlineDrainsFullBatchBeforeReadingResults(t *testing.T) {
 		<-release
 		return parse(body)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// 截止时间只需晚于整批请求在本机 httptest 上开始解析（毫秒级），不必真等一秒。
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	ips := []string{"8.8.8.8", "1.1.1.1", "9.9.9.9", "208.67.222.222", "8.8.4.4"}
 	done := make(chan map[string]Location, 1)

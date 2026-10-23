@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,11 +102,18 @@ func exactTestRPCResult(result bin.Encoder) bin.Encoder {
 	return &opaqueExactTestRPCResult{result: result}
 }
 
-// startTestServer 生成 RSA key、监听随机端口并启动 Server，返回监听地址与公钥。
+// testServerRSAKey 是本进程所有 startTestServer 共用的服务端 RSA key。生成一把 2048 位 key
+// 要几十到上百毫秒，七十多个端到端测试各生成一把占了整包近两成 CPU；需要不同 key 的测试
+// （密钥轮换等）自己生成。
+var testServerRSAKey = sync.OnceValues(func() (*rsa.PrivateKey, error) {
+	return rsa.GenerateKey(rand.Reader, 2048)
+})
+
+// startTestServer 用共享的 RSA key、监听随机端口并启动 Server，返回监听地址与公钥。
 // 通过 t.Cleanup 自动取消并校验优雅退出。opts 的 RSAKey/Logger/DC 会被补默认。
 func startTestServer(t *testing.T, opts Options) (addr string, pub exchange.PublicKey, srv *Server) {
 	t.Helper()
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	rsaKey, err := testServerRSAKey()
 	if err != nil {
 		t.Fatalf("gen rsa: %v", err)
 	}

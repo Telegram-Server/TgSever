@@ -5,6 +5,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/iamxvbaba/td/clock"
@@ -156,28 +157,32 @@ func TestAccountGetAuthorizationsSkipsLookupWithoutAddresses(t *testing.T) {
 }
 
 // 解析是纯展示增强:后端变慢时列表必须照常返回,只是文案回落。
+// 查询超时用 synctest 的虚拟时钟：解析器"卡住"的 8 秒和 3 秒的超时上界都瞬间走完，
+// 测试仍然按真实的超时语义断言。
 func TestAccountGetAuthorizationsFallsBackWhenLookupTimesOut(t *testing.T) {
-	resolver := &stubGeoIPResolver{
-		locations:         map[string]geoip.Location{"203.0.113.7": {Country: "Finland", Region: "Helsinki"}},
-		waitBeforeResolve: authorizationLocationLookupTimeout + 5*time.Second,
-	}
-	router := newGeoIPAuthorizationsRouter(t, resolver, domain.Authorization{AuthKeyID: [8]byte{1}, IP: "203.0.113.7"})
+	synctest.Test(t, func(t *testing.T) {
+		resolver := &stubGeoIPResolver{
+			locations:         map[string]geoip.Location{"203.0.113.7": {Country: "Finland", Region: "Helsinki"}},
+			waitBeforeResolve: authorizationLocationLookupTimeout + 5*time.Second,
+		}
+		router := newGeoIPAuthorizationsRouter(t, resolver, domain.Authorization{AuthKeyID: [8]byte{1}, IP: "203.0.113.7"})
 
-	start := time.Now()
-	out, err := router.onAccountGetAuthorizations(WithUserID(context.Background(), 42))
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("getAuthorizations: %v", err)
-	}
-	if elapsed > authorizationLocationLookupTimeout+2*time.Second {
-		t.Fatalf("getAuthorizations took %v, want the lookup bounded at %v", elapsed, authorizationLocationLookupTimeout)
-	}
-	if len(out.Authorizations) != 1 {
-		t.Fatalf("authorizations = %d, want 1", len(out.Authorizations))
-	}
-	if got := out.Authorizations[0]; got.Country != authorizationLocationUnknown || got.Region != authorizationLocationUnknown {
-		t.Fatalf("country/region = %q/%q, want placeholder after lookup timeout", got.Country, got.Region)
-	}
+		start := time.Now()
+		out, err := router.onAccountGetAuthorizations(WithUserID(context.Background(), 42))
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("getAuthorizations: %v", err)
+		}
+		if elapsed > authorizationLocationLookupTimeout+2*time.Second {
+			t.Fatalf("getAuthorizations took %v, want the lookup bounded at %v", elapsed, authorizationLocationLookupTimeout)
+		}
+		if len(out.Authorizations) != 1 {
+			t.Fatalf("authorizations = %d, want 1", len(out.Authorizations))
+		}
+		if got := out.Authorizations[0]; got.Country != authorizationLocationUnknown || got.Region != authorizationLocationUnknown {
+			t.Fatalf("country/region = %q/%q, want placeholder after lookup timeout", got.Country, got.Region)
+		}
+	})
 }
 
 // 扫码登录回传的那一条授权走同一套解析:只查这一条地址,不该在列表之外退回占位文案。

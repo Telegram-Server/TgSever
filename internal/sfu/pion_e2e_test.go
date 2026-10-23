@@ -267,6 +267,7 @@ func TestPionSFUForwardsOnlyBaseSimulcastLayer(t *testing.T) {
 	// bob 第一条转发流必须是 layer0；观察窗口内绝不能出现 layer1。
 	type accepted struct{ ssrc uint32 }
 	got := make(chan accepted, 4)
+	basePackets := make(chan struct{}, 64)
 	go func() {
 		for {
 			stream, ssrc, err := bob.session.AcceptStream()
@@ -279,6 +280,12 @@ func TestPionSFUForwardsOnlyBaseSimulcastLayer(t *testing.T) {
 				for {
 					if _, err := stream.Read(buf); err != nil {
 						return
+					}
+					if ssrc == base {
+						select {
+						case basePackets <- struct{}{}:
+						default:
+						}
 					}
 				}
 			}()
@@ -299,19 +306,29 @@ func TestPionSFUForwardsOnlyBaseSimulcastLayer(t *testing.T) {
 			t.Fatalf("bob never received base layer stream")
 		}
 	}
-	// 再观察一段时间确认高层不漏。
-	quiet := time.After(2 * time.Second)
-	for {
+	// 再观察一段确认高层不漏。按包数而不是墙钟：alice 每个 tick 同时发 layer0 与 layer1，
+	// bob 在 layer0 上再收到 quietPackets 个包时，同批发出的 layer1 包若会被转发早已建流。
+	const quietPackets = 25
+	for received := 0; received < quietPackets; {
 		select {
 		case in := <-got:
 			if in.ssrc == base+2 {
 				t.Fatalf("higher simulcast layer %#x leaked through SFU", in.ssrc)
 			}
-		case <-quiet:
-			_ = svc.CloseRoom(ctx, callID)
-			return
+		case <-basePackets:
+			received++
+		case <-deadline:
+			t.Fatalf("bob received only %d/%d base layer packets", received, quietPackets)
 		}
 	}
+	select {
+	case in := <-got:
+		if in.ssrc == base+2 {
+			t.Fatalf("higher simulcast layer %#x leaked through SFU", in.ssrc)
+		}
+	default:
+	}
+	_ = svc.CloseRoom(ctx, callID)
 }
 
 func TestPionSFUForwardsOpusBetweenClients(t *testing.T) {
