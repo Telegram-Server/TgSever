@@ -121,12 +121,15 @@ func TestPostgresAdmissionReservesCapacityBeforeOpeningBackend(t *testing.T) {
 		controller.abort(token)
 		t.Fatal("capacity-exhausted reservation unexpectedly succeeded")
 	}
+	// Advisory locks live per database; other packages' admission controllers on
+	// the same server hold their own owner locks in their own databases.
 	var afterBackends, reservations, owners int
 	if err := observer.QueryRow(ctx, `
+WITH here AS (SELECT oid FROM pg_database WHERE datname = current_database())
 SELECT
   (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()),
-  (SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = $1::oid AND granted),
-  (SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = $2::oid AND granted)`,
+  (SELECT count(*) FROM pg_locks, here WHERE locktype = 'advisory' AND database = here.oid AND classid = $1::oid AND granted),
+  (SELECT count(*) FROM pg_locks, here WHERE locktype = 'advisory' AND database = here.oid AND classid = $2::oid AND granted)`,
 		uint32(postgresAdmissionReservationLockClass), uint32(postgresAdmissionLockClass),
 	).Scan(&afterBackends, &reservations, &owners); err != nil {
 		t.Fatalf("inspect reserved capacity: %v", err)

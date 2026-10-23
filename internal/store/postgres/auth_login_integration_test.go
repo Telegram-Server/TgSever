@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +17,8 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	phone := fmt.Sprintf("1555%d31", time.Now().UnixNano())
+	// testPool clones a database per test, so a fixed E.164 number cannot collide.
+	phone := "15555550131"
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE phone = $1", phone)
 	})
@@ -78,8 +78,10 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	if len(list.Dialogs) != 1 || list.Dialogs[0].Peer.ID != domain.OfficialSystemUserID {
 		t.Fatalf("dialogs = %+v, want official login dialog", list.Dialogs)
 	}
-	if len(list.Messages) != 1 || list.Messages[0].ID != msg.ID || !strings.Contains(list.Messages[0].Body, "Login code: 12345") {
-		t.Fatalf("messages = %+v, want returned login message", list.Messages)
+	// Completing the sign-up appends the login welcome notice right after the
+	// code message, so the dialog's top message is the welcome, not the code.
+	if len(list.Messages) != 1 || list.Messages[0].ID != msg.ID+1 || !strings.Contains(list.Messages[0].Body, "Welcome to") {
+		t.Fatalf("messages = %+v, want the welcome notice after login message %d", list.Messages, msg.ID)
 	}
 	if len(list.Users) != 1 || list.Users[0].ID != domain.OfficialSystemUserID || !list.Users[0].Verified || !list.Users[0].Support {
 		t.Fatalf("users = %+v, want official support user", list.Users)
@@ -90,7 +92,7 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 	pool := testPool(t)
 	ctx := context.Background()
 
-	phone := fmt.Sprintf("1555%d32", time.Now().UnixNano())
+	phone := "15555550132"
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE phone = $1", phone)
 	})
@@ -145,8 +147,11 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 	if err != nil {
 		t.Fatalf("ReadHistory first login message: %v", err)
 	}
-	if read.MaxID != first.ID || read.StillUnreadCount != 0 {
-		t.Fatalf("read first login message = %+v, want max_id %d unread 0", read, first.ID)
+	// The sign-up's welcome notice follows the code message, and reading the
+	// whole history moves the watermark past both.
+	readID := first.ID + 1
+	if read.MaxID != readID || read.StillUnreadCount != 0 {
+		t.Fatalf("read first login messages = %+v, want max_id %d unread 0", read, readID)
 	}
 
 	assertOfficialDialog := func(wantTop, wantRead, wantUnread int) {
@@ -185,8 +190,10 @@ FROM target`, u.ID, domain.OfficialSystemUserID).Scan(&top, &readMax, &unread, &
 	if err != nil {
 		t.Fatalf("SendCode signin second: %v", err)
 	}
-	secondID := first.ID + 1
-	assertOfficialDialog(secondID, first.ID, 1)
+	// Each SendCode appends a code message and each completed SignIn appends a
+	// welcome notice; neither may move the read watermark the user set.
+	secondCodeID := readID + 1
+	assertOfficialDialog(secondCodeID, readID, 1)
 	_, lateSecond, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn second needSignUp=%v err=%v", needSignUp, err)
@@ -194,14 +201,15 @@ FROM target`, u.ID, domain.OfficialSystemUserID).Scan(&top, &readMax, &unread, &
 	if lateSecond.ID != 0 {
 		t.Fatalf("SignIn second returned late login message %+v, want zero", lateSecond)
 	}
-	assertOfficialDialog(secondID, first.ID, 1)
+	secondWelcomeID := secondCodeID + 1
+	assertOfficialDialog(secondWelcomeID, readID, 2)
 
 	hash, err = svc.SendCode(ctx, phone)
 	if err != nil {
 		t.Fatalf("SendCode signin third: %v", err)
 	}
-	thirdID := first.ID + 2
-	assertOfficialDialog(thirdID, first.ID, 2)
+	thirdCodeID := secondWelcomeID + 1
+	assertOfficialDialog(thirdCodeID, readID, 3)
 	_, lateThird, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn third needSignUp=%v err=%v", needSignUp, err)
@@ -209,5 +217,5 @@ FROM target`, u.ID, domain.OfficialSystemUserID).Scan(&top, &readMax, &unread, &
 	if lateThird.ID != 0 {
 		t.Fatalf("SignIn third returned late login message %+v, want zero", lateThird)
 	}
-	assertOfficialDialog(thirdID, first.ID, 2)
+	assertOfficialDialog(thirdCodeID+1, readID, 4)
 }

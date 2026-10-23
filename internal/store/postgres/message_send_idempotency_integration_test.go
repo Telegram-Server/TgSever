@@ -273,7 +273,14 @@ func TestMessageStoreConcurrentPrivateHookReplayRunsHookOnce(t *testing.T) {
 	})
 
 	db := &observedBeginDB{Pool: pool, secondBegin: make(chan struct{})}
-	messages := newTestMessageStore(db)
+	// The two sends model two server processes. Within one process the private
+	// send lanes serialize them before Begin, so the second could never reach the
+	// transaction while the first holds its hook; separate actors leave only the
+	// per-user transaction lock and the replay recheck behind it in their way.
+	stores := [2]*MessageStore{newTestMessageStore(db), newTestMessageStore(db)}
+	for _, store := range stores {
+		store.privateSendLanes = newUserLaneActor()
+	}
 	req := domain.SendPrivateTextRequest{
 		SenderUserID: sender.ID, RecipientUserID: recipient.ID, RandomID: 775001,
 		Message: "concurrent hook replay", Date: 1700001400,
@@ -293,13 +300,13 @@ func TestMessageStoreConcurrentPrivateHookReplayRunsHookOnce(t *testing.T) {
 		err    error
 	}
 	results := make(chan sendResult, 2)
-	send := func() {
+	send := func(messages *MessageStore) {
 		result, err := messages.sendPrivateTextWithHooks(ctx, req, hooks)
 		results <- sendResult{result: result, err: err}
 	}
-	go send()
+	go send(stores[0])
 	<-firstHook
-	go send()
+	go send(stores[1])
 	select {
 	case <-db.secondBegin:
 	case <-time.After(3 * time.Second):

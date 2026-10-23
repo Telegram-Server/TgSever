@@ -181,8 +181,10 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 	if !rejoined.BannedRights.SendMessages {
 		t.Fatalf("rejoined member banned rights = %+v, want partial restriction kept", rejoined.BannedRights)
 	}
-	if rejoined.JoinedAt != 1700009009 || rejoined.InviterUserID != 0 {
-		t.Fatalf("rejoined member joined_at/inviter = %d/%d, want fresh join date and no inviter", rejoined.JoinedAt, rejoined.InviterUserID)
+	// 自加入的 inviter 是本人（对齐官方 channelParticipantSelf.inviter_id == user_id，
+	// 见 JoinChannel），不沿用上一段成员关系的邀请人。
+	if rejoined.JoinedAt != 1700009009 || rejoined.InviterUserID != member.ID {
+		t.Fatalf("rejoined member joined_at/inviter = %d/%d, want fresh join date and self inviter %d", rejoined.JoinedAt, rejoined.InviterUserID, member.ID)
 	}
 
 	// creator 离开会把 owner 交给其他活跃成员；旧 creator 重进是普通成员，
