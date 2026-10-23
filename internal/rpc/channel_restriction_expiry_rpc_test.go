@@ -13,7 +13,7 @@ import (
 // 限制期限在 RPC 发送路径上生效：禁言到期前 messages.sendMessage 报 CHAT_WRITE_FORBIDDEN，
 // 到期后可发。读取时的生效值由 storetest.ChannelRestrictionExpiry 覆盖。
 func TestChannelRestrictionExpiryGatesSendMessage(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
+	f := newBotGroupFixture(t)
 	now := int(time.Now().Unix())
 	restrict := func(until, date int) {
 		t.Helper()
@@ -50,7 +50,7 @@ func TestChannelRestrictionExpiryGatesSendMessage(t *testing.T) {
 // 被限制（非踢出）的非成员仍能经 channels.joinChannel 自行加入。限制保留与记录形状由
 // storetest.ChannelRestrictNonMember 覆盖，投影由 tgChannelParticipantForUpdate 的纯函数测试覆盖。
 func TestChannelRestrictNonMemberStaysJoinable(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
+	f := newBotGroupFixture(t)
 	now := int(time.Now().Unix())
 	if _, err := f.channels.LeaveChannel(f.ctx, f.member.ID, f.channel.ID, now); err != nil {
 		t.Fatalf("leave: %v", err)

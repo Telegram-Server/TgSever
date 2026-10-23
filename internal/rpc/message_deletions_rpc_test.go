@@ -114,26 +114,6 @@ func TestMessagesDeleteMessagesRecordsTheDeletingSession(t *testing.T) {
 	}
 }
 
-func TestBotAPIDeleteMessageRecordsTheBot(t *testing.T) {
-	f := newDeletionLogFixture(t)
-	bot := f.bob
-	sent := f.send(t, bot, f.alice, 310_003, "stale menu")
-
-	if ok, err := f.router.BotAPIDeleteMessage(f.ctx, bot.ID, f.alice.ID, sent.SenderMessage.ID); err != nil || !ok {
-		t.Fatalf("BotAPIDeleteMessage = %v, %v", ok, err)
-	}
-
-	got := f.deletionsBy(t, bot.ID)
-	if len(got) != 2 {
-		t.Fatalf("deletions by bot = %+v, want both copies", got)
-	}
-	for _, row := range got {
-		if row.Source != domain.DeletionSourceBot || row.ActorType != domain.DeletionActorBot || row.Scope != domain.DeletionScopeBoth {
-			t.Fatalf("deletion = %+v, want a bot api deletion by bot %d", row, bot.ID)
-		}
-	}
-}
-
 type channelDeletionLogFixture struct {
 	ctx       context.Context
 	owner     int64

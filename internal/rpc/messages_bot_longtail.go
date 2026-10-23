@@ -73,7 +73,6 @@ func (r *Router) onMessagesSendWebViewData(ctx context.Context, req *tg.Messages
 	if err != nil {
 		return nil, messageSendErr(err)
 	}
-	r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
 	var users []tg.UserClass
 	var chats []tg.ChatClass
 	if !res.Duplicate {
@@ -186,7 +185,6 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return nil, internalErr()
 	}
-	r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
 	if fromWebApp {
 		_ = r.deps.Bots.DeleteRequestedWebViewButton(ctx, botUser.ID, userID, webAppReqID)
 	}

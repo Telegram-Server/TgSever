@@ -127,56 +127,6 @@ func TestGetFullUserBotInfoMenuButtonIsPerViewer(t *testing.T) {
 	wantWebViewButton(t, "C", f.fullMenuButton(t, f.c), "https://example.com/global2")
 }
 
-// Bot API 的全局 setChatMenuButton 以用户 0 调网关，应设置全局默认按钮。
-func TestBotAPISetChatMenuButtonWithoutUserSetsDefault(t *testing.T) {
-	f := newUserMenuButtonFixture(t)
-
-	if err := f.router.BotAPISetChatMenuButton(f.ctx, f.bot.ID, 0, domain.BotMenuButton{Type: domain.BotMenuButtonCommands}); err != nil {
-		t.Fatalf("BotAPISetChatMenuButton(default): %v", err)
-	}
-	button, err := f.bots.GetBotMenuButton(f.ctx, f.bot.ID)
-	if err != nil || button.Type != domain.BotMenuButtonCommands {
-		t.Fatalf("default button = %+v, %v; want commands", button, err)
-	}
-}
-
-// Bot API setChatMenuButton(chat_id) 经 Router 写专属按钮：同样只失效该用户的缓存，
-// getChatMenuButton(chat_id) 读回该用户生效的按钮；chat_id 不是普通用户时报 USER_ID_INVALID。
-func TestBotAPIChatMenuButtonGatewayIsPerUser(t *testing.T) {
-	f := newUserMenuButtonFixture(t)
-	f.setFor(t, &tg.InputUserEmpty{}, &tg.BotMenuButton{Text: "Global", URL: "https://example.com/global"})
-	for _, viewer := range []domain.User{f.a, f.b} {
-		wantWebViewButton(t, "warm-up", f.fullMenuButton(t, viewer), "https://example.com/global")
-	}
-
-	personal := domain.BotMenuButton{Type: domain.BotMenuButtonWebView, Text: "A", URL: "https://example.com/a"}
-	if err := f.router.BotAPISetChatMenuButton(f.ctx, f.bot.ID, f.a.ID, personal); err != nil {
-		t.Fatalf("set via bot api: %v", err)
-	}
-	if _, ok := f.router.userFullProjectionCache.Lookup(f.b.ID, f.bot.ID); !ok {
-		t.Fatal("B's cached bot profile was dropped by A's per-user change")
-	}
-	wantWebViewButton(t, "A", f.fullMenuButton(t, f.a), "https://example.com/a")
-	wantWebViewButton(t, "B", f.fullMenuButton(t, f.b), "https://example.com/global")
-	if got, err := f.router.BotAPIGetChatMenuButton(f.ctx, f.bot.ID, f.a.ID); err != nil || got != personal {
-		t.Fatalf("get A via bot api = %+v, %v", got, err)
-	}
-	if got, err := f.router.BotAPIGetChatMenuButton(f.ctx, f.bot.ID, f.b.ID); err != nil || got.URL != "https://example.com/global" {
-		t.Fatalf("get B via bot api = %+v, %v; want the default", got, err)
-	}
-
-	if err := f.router.BotAPISetChatMenuButton(f.ctx, f.bot.ID, 987654321, personal); err == nil || !strings.Contains(err.Error(), "USER_ID_INVALID") {
-		t.Fatalf("unknown user err = %v, want USER_ID_INVALID", err)
-	}
-	if _, err := f.router.BotAPIGetChatMenuButton(f.ctx, f.bot.ID, 987654321); err == nil || !strings.Contains(err.Error(), "USER_ID_INVALID") {
-		t.Fatalf("unknown user get err = %v, want USER_ID_INVALID", err)
-	}
-	// 非机器人不能调用。
-	if err := f.router.BotAPISetChatMenuButton(f.ctx, f.c.ID, f.a.ID, personal); err == nil {
-		t.Fatal("non-bot caller set a menu button")
-	}
-}
-
 // 点菜单按钮打开 Mini App（requestWebView from_bot_menu，客户端未带 url）用当前用户的专属 URL。
 func TestRequestWebViewFromBotMenuUsesViewerButton(t *testing.T) {
 	f := newUserMenuButtonFixture(t)

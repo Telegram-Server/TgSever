@@ -17,27 +17,23 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// botAPIBridgeFixture 是 Bot API 各组网关测试共用的唯一环境：一个机器人、群主 owner、
-// 普通成员 member，以及一个三人都在的公开超级群 @bridgegroup（机器人是普通成员；
-// 需要管理员身份的测试用 promote/promoteBot 提升）。文件服务与投票服务默认就绪，
-// 媒体组、投票、媒体编辑和群头像测试直接可用。
-type botAPIBridgeFixture struct {
+// botGroupFixture 是一个机器人、群主 owner、普通成员 member，以及一个三人都在的公开
+// 超级群 @bridgegroup（机器人是普通成员；需要管理员身份的测试用 promote/promoteBot 提升）。
+// 全部经 MTProto 处理器操作。
+type botGroupFixture struct {
 	ctx      context.Context
 	owner    domain.User
 	member   domain.User
 	bot      domain.User
 	channel  domain.Channel
-	chatID   int64 // channel 的 Bot API chat_id（-100 前缀）
 	router   *Router
-	users    *appusers.Service
 	channels *appchannels.Service
 	messages *appmessages.Service
 	bots     *appbots.Service
 	sessions *captureSessions
-	files    *fakeFiles
 }
 
-func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
+func newBotGroupFixture(t *testing.T) botGroupFixture {
 	t.Helper()
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -80,39 +76,37 @@ func newBotAPIBridgeFixture(t *testing.T) botAPIBridgeFixture {
 	if err != nil {
 		t.Fatalf("set group username: %v", err)
 	}
-	usersService := appusers.NewService(userStore)
 	messagesService := appmessages.NewService(messageStore, dialogStore)
 	sessions := &captureSessions{channelMembers: map[int64][]int64{channel.ID: {owner.ID, member.ID, bot.ID}}}
-	files := &fakeFiles{photos: map[int64]domain.Photo{}, docs: map[int64]domain.Document{}}
 	router := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
-		Users:         usersService,
-		Messages:      messagesService,
-		Channels:      channelsService,
-		Bots:          botsService,
-		Files:         files,
-		Polls:         apppolls.NewService(pollStore),
-		BotAPIUpdates: memory.NewBotAPIUpdateStore(),
-		Sessions:      sessions,
+		Users:    appusers.NewService(userStore),
+		Messages: messagesService,
+		Channels: channelsService,
+		Bots:     botsService,
+		Files:    &fakeFiles{photos: map[int64]domain.Photo{}, docs: map[int64]domain.Document{}},
+		Polls:    apppolls.NewService(pollStore),
+		Sessions: sessions,
 	}, zaptest.NewLogger(t), clock.System)
-	return botAPIBridgeFixture{
+	return botGroupFixture{
 		ctx:      ctx,
 		owner:    owner,
 		member:   member,
 		bot:      bot,
 		channel:  channel,
-		chatID:   -botAPIChannelChatIDBase - channel.ID,
 		router:   router,
-		users:    usersService,
 		channels: channelsService,
 		messages: messagesService,
 		bots:     botsService,
 		sessions: sessions,
-		files:    files,
 	}
 }
 
+func (f botGroupFixture) inputChannel() *tg.InputChannel {
+	return &tg.InputChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash}
+}
+
 // userByID 返回夹具里的用户（owner、member 或 bot），用来构造带 access_hash 的 InputUser。
-func (f botAPIBridgeFixture) userByID(t *testing.T, id int64) domain.User {
+func (f botGroupFixture) userByID(t *testing.T, id int64) domain.User {
 	t.Helper()
 	for _, u := range []domain.User{f.owner, f.member, f.bot} {
 		if u.ID == id {
@@ -124,8 +118,7 @@ func (f botAPIBridgeFixture) userByID(t *testing.T, id int64) domain.User {
 }
 
 // promote 由 by 经 channels.editAdmin 把 target 提为测试群管理员（rank 为空则不设头衔）。
-// 走 MTProto 处理器，与真实客户端一样会推送更新并给机器人入队 chat_member/my_chat_member。
-func (f botAPIBridgeFixture) promote(t *testing.T, by, target int64, rights domain.ChannelAdminRights, rank string) {
+func (f botGroupFixture) promote(t *testing.T, by, target int64, rights domain.ChannelAdminRights, rank string) {
 	t.Helper()
 	user := f.userByID(t, target)
 	req := &tg.ChannelsEditAdminRequest{
@@ -142,44 +135,7 @@ func (f botAPIBridgeFixture) promote(t *testing.T, by, target int64, rights doma
 }
 
 // promoteBot 是 promote 的常用快捷方式：群主把机器人提为管理员。
-func (f botAPIBridgeFixture) promoteBot(t *testing.T, rights domain.ChannelAdminRights) {
+func (f botGroupFixture) promoteBot(t *testing.T, rights domain.ChannelAdminRights) {
 	t.Helper()
 	f.promote(t, f.owner.ID, f.bot.ID, rights, "")
-}
-
-// 官方网关只解析公开群/频道的 @username；用户只能按 id 寻址，不存在的名字同样报错。
-func TestBotAPIResolveChatUsername(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-
-	for _, tc := range []struct {
-		name    string
-		want    int64
-		wantErr bool
-	}{
-		{name: "BridgeGroup", want: f.chatID},
-		{name: "ann_member", wantErr: true},
-		{name: "nobody_here", wantErr: true},
-	} {
-		got, err := f.router.BotAPIResolveChatUsername(f.ctx, f.bot.ID, tc.name)
-		if tc.wantErr {
-			if err == nil {
-				t.Fatalf("resolve @%s = %d, want an error", tc.name, got)
-			}
-			continue
-		}
-		if err != nil || got != tc.want {
-			t.Fatalf("resolve @%s = %d, %v; want %d", tc.name, got, err, tc.want)
-		}
-	}
-}
-
-func TestBotAPIInputPeerRejectsInvalidChatIDs(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
-
-	if _, _, err := f.router.botAPIInputChannel(f.ctx, f.bot.ID, f.member.ID); err == nil {
-		t.Fatal("botAPIInputChannel accepted a user chat id")
-	}
-	if _, _, err := f.router.botAPIInputPeer(f.ctx, f.bot.ID, -5); err == nil {
-		t.Fatal("botAPIInputPeer accepted a basic-group chat id this server does not have")
-	}
 }

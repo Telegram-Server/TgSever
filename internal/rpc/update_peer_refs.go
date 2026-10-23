@@ -8,20 +8,6 @@ import (
 	"telesrv/internal/domain"
 )
 
-func (r *Router) enrichUpdateEvents(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent) []domain.UpdateEvent {
-	if len(events) == 0 {
-		return events
-	}
-	return r.enrichUpdateEventsWithPeerCache(ctx, viewerUserID, events, newViewerPeerCache(r))
-}
-
-func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent, cache *viewerPeerCache) []domain.UpdateEvent {
-	if len(events) == 0 {
-		return events
-	}
-	return r.enrichPreparedUpdateEventsWithPeerCache(ctx, viewerUserID, r.prepareUpdateEventsForViewer(ctx, viewerUserID, events), cache)
-}
-
 func (r *Router) enrichUpdateEventsWithPeerCacheStrict(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent, cache *viewerPeerCache) ([]domain.UpdateEvent, error) {
 	if len(events) == 0 {
 		return events, nil
@@ -57,11 +43,6 @@ func (r *Router) prepareUpdateEventsForViewer(ctx context.Context, viewerUserID 
 			out[i] = r.enrichDraftMessageEvent(ctx, viewerUserID, out[i])
 		}
 	}
-	return out
-}
-
-func (r *Router) enrichPreparedUpdateEventsWithPeerCache(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent, cache *viewerPeerCache) []domain.UpdateEvent {
-	out, _ := r.enrichPreparedUpdateEvents(ctx, viewerUserID, events, cache, false)
 	return out
 }
 

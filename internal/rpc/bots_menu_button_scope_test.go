@@ -13,7 +13,7 @@ import (
 // 或机器人自己的 id 为目标表示默认按钮；不存在的用户报 USER_ID_INVALID。专属按钮与全局
 // 默认互不影响、default 即删除专属按钮由 storetest.BotUserMenuButtons 覆盖。
 func TestBotsSetBotMenuButtonPerUserButton(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
+	f := newBotGroupFixture(t)
 	ctx := WithUserID(f.ctx, f.bot.ID)
 	member := &tg.InputUser{UserID: f.member.ID, AccessHash: f.member.AccessHash}
 

@@ -6,31 +6,6 @@ import (
 	"telesrv/internal/domain"
 )
 
-// The charge id has to be stable across retries: bot_stars_payments uses it as
-// the idempotency key, so a resend that generated a fresh id would mint a second
-// credit for one sale.
-func TestBotInvoiceChargeIDIsStableAndUniquelyPrefixed(t *testing.T) {
-	invoice := domain.BotInvoice{ID: 4242}
-	first := botInvoiceChargeID(invoice)
-	second := botInvoiceChargeID(invoice)
-	if first != second {
-		t.Fatalf("charge id = %q then %q, want a stable value", first, second)
-	}
-	if first == botInvoiceChargeID(domain.BotInvoice{ID: 4243}) {
-		t.Fatal("two invoices produced the same charge id")
-	}
-	if got := botInvoiceChargeID(invoice); got == chargeIDForBot("real-telegram-charge") {
-		t.Fatal("generated charge id collides with a real-looking one")
-	}
-	// The refund uses a derived key, so it must not reuse the credit key or the
-	// receipt unique index would swallow the reversal.
-	if botInvoiceChargeID(invoice)+"-refund" == first {
-		t.Fatal("refund key collides with the credit key")
-	}
-}
-
-func chargeIDForBot(raw string) string { return raw }
-
 // Form ids are generated locally because sendPaymentForm in this layer has no
 // provider: they only have to round-trip and stay out of the real namespace.
 func TestBotInvoiceFormIDRoundTrips(t *testing.T) {

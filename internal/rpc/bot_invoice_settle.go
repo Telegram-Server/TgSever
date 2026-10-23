@@ -2,14 +2,10 @@ package rpc
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"strings"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 
-	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
 
@@ -67,63 +63,5 @@ func (r *Router) botInvoiceSettle(ctx context.Context, userID int64, req *tg.Pay
 	if err != nil {
 		return nil, true, starsErr(err)
 	}
-	// 支付结果是 bot 私聊里一条带 pts 的服务消息（messageActionPaymentSentMe），MTProto
-	// bot 靠 pts 就能收到。Bot API 队列只是网关的投递副本，与普通私聊消息一样在提交后
-	// 入队，不属于支付事务。
-	r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, sent)
 	return &tg.PaymentsPaymentResult{Updates: tgPrivateSendResultUpdates(sent, 0, false, nil, nil)}, true, nil
-}
-
-// botInvoiceChargeID derives a stable charge id from the invoice id.
-//
-// It must be stable across retries so the wallet receipt suppresses a second
-// credit, and it must not look like a real Telegram charge id: the prefix keeps
-// it recognisable in the ledger.
-func botInvoiceChargeID(invoice domain.BotInvoice) string {
-	return fmt.Sprintf("botinv-%d", invoice.ID)
-}
-
-// BotAPIRefundStarPayment implements refundStarPayment. It reverses the exact
-// Stars the charge credited: the bot wallet is debited and the buyer refunded.
-//
-// Nothing is flagged until the request has proved it owns the charge, because a
-// bot calling this with someone else's charge id would otherwise mark it refunded
-// and permanently deny the real owner the refund.
-func (r *Router) BotAPIRefundStarPayment(ctx context.Context, botID, requestedPayerID int64, telegramPaymentChargeID string) (bool, error) {
-	if r.deps.Bots == nil || r.deps.Stars == nil {
-		return false, notImplementedErr()
-	}
-	chargeID := strings.TrimSpace(telegramPaymentChargeID)
-	if chargeID == "" {
-		return false, errors.New("CHARGE_ID_INVALID")
-	}
-	invoice, found, err := r.deps.Bots.BotInvoiceByCharge(ctx, chargeID)
-	if err != nil {
-		if errors.Is(err, domain.ErrBotInvoiceNotFound) {
-			return false, errors.New("CHARGE_ID_NOT_FOUND")
-		}
-		return false, err
-	}
-	if !found {
-		return false, errors.New("CHARGE_ID_NOT_FOUND")
-	}
-	// Only the owning bot may refund its own charge.
-	if invoice.BotUserID != botID {
-		return false, errors.New("CHARGE_ID_NOT_FOUND")
-	}
-	// user_id from the request body is not trusted to say who gets the money. The
-	// payer is recorded on the invoice, so the two have to agree; otherwise a bot
-	// could refund its own charge into an account it controls.
-	if invoice.PayerID <= 0 || requestedPayerID != invoice.PayerID {
-		return false, errors.New("USER_ID_INVALID")
-	}
-
-	payments, ok := r.deps.Bots.(store.BotInvoicePayments)
-	if !ok {
-		return false, notImplementedErr()
-	}
-	if err := payments.RefundBotInvoice(ctx, botID, requestedPayerID, chargeID, int(r.clock.Now().Unix())); err != nil {
-		return false, starsErr(err)
-	}
-	return true, nil
 }

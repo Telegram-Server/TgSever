@@ -88,7 +88,6 @@ func (r *Router) onMessagesCreateChat(ctx context.Context, req *tg.MessagesCreat
 		r.pushChannelExplicitUpdates(ctx, userID, inviteRes.Channel.ID, memberIDs, func(viewerUserID int64) *tg.Updates {
 			return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, inviteRes, cache)
 		})
-		r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, inviteRes, date)...)
 	}
 	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: missingInvitees}, nil
 }
@@ -379,10 +378,6 @@ func (r *Router) onMessagesEditChatCreator(ctx context.Context, req *tg.Messages
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOwnershipTransferUpdatesWithPeerCache(ctx, viewerUserID, userID, res, cache)
 	})
-	r.enqueueBotAPIMemberUpdates(ctx,
-		botAPIMemberChange{Channel: res.Channel, ActorUserID: userID, Previous: res.PreviousOwner, Current: res.OldOwner, Date: res.Date},
-		botAPIMemberChange{Channel: res.Channel, ActorUserID: userID, Previous: res.PreviousNewOwner, Current: res.NewOwner, Date: res.Date},
-	)
 	return updates, nil
 }
 
@@ -455,9 +450,6 @@ func (r *Router) onMessagesEditChatParticipantRank(ctx context.Context, req *tg.
 	updates := r.channelParticipantUpdatesWithPeerCache(ctx, userID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-	})
-	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
-		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
 	})
 	return updates, nil
 }

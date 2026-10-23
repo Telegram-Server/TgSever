@@ -90,65 +90,6 @@ func TestMessagesRequestWebViewProlongAndSendResult(t *testing.T) {
 	}
 }
 
-func TestBotAPIAnswerWebAppQueryUsesRouterWebViewSession(t *testing.T) {
-	ctx := context.Background()
-	f := newInlineBotRPCTestFixture(t)
-	ownerCtx := WithUserID(ctx, f.owner.ID)
-
-	req := &tg.MessagesRequestWebViewRequest{
-		Peer:     inputPeerUser(f.peer),
-		Bot:      inputUser(f.bot),
-		Platform: "tdesktop",
-	}
-	req.SetURL("https://example.test/botapi")
-	got, err := f.router.onMessagesRequestWebView(ownerCtx, req)
-	if err != nil {
-		t.Fatalf("request webview: %v", err)
-	}
-	botQueryID := webViewInitDataFromURL(t, got.URL).Get("query_id")
-	if botQueryID == "" {
-		t.Fatal("bot query id empty")
-	}
-
-	if _, err := f.router.AnswerWebAppQueryFromBotAPI(ctx, f.bot.ID, botQueryID, domain.BotInlineResult{
-		ID:      "botapi-webapp",
-		Type:    "article",
-		Message: "from bot api webapp",
-	}); err != nil {
-		t.Fatalf("answer web app query from bot api: %v", err)
-	}
-	if f.router.webviews.size() != 0 {
-		t.Fatalf("webview registry size = %d, want consumed", f.router.webviews.size())
-	}
-	historyList, err := f.router.deps.Messages.GetHistory(ownerCtx, f.owner.ID, domain.MessageFilter{
-		HasPeer: true,
-		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: f.peer.ID},
-		Limit:   10,
-	})
-	if err != nil {
-		t.Fatalf("get history: %v", err)
-	}
-	history := tgMessagesMessages(f.owner.ID, f.router.enrichMessageList(ownerCtx, f.owner.ID, historyList))
-	messages := messagesFromClass(history)
-	if len(messages) != 1 {
-		t.Fatalf("history messages = %d, want 1", len(messages))
-	}
-	sent, ok := messages[0].(*tg.Message)
-	if !ok || sent.Message != "from bot api webapp" {
-		t.Fatalf("history message = %T %+v, want bot api webapp text", messages[0], messages[0])
-	}
-	if via, ok := sent.GetViaBotID(); !ok || via != f.bot.ID {
-		t.Fatalf("history via_bot_id = %d,%v, want %d,true", via, ok, f.bot.ID)
-	}
-	if _, err := f.router.AnswerWebAppQueryFromBotAPI(ctx, f.bot.ID, botQueryID, domain.BotInlineResult{
-		ID:      "botapi-webapp-repeat",
-		Type:    "article",
-		Message: "repeat",
-	}); err == nil || !strings.Contains(err.Error(), "QUERY_ID_INVALID") {
-		t.Fatalf("repeat answer err = %v, want QUERY_ID_INVALID", err)
-	}
-}
-
 func TestMessagesWebViewRejectsInvalidSessionAndKeepsSessionOnBadResult(t *testing.T) {
 	ctx := context.Background()
 	f := newInlineBotRPCTestFixture(t)

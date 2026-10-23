@@ -90,10 +90,6 @@ func richMessageTooLongErr() error { return tgerr.New(400, "RICH_MESSAGE_TOO_LON
 
 func richMessageDateInvalidErr() error { return tgerr.New(400, "RICH_MESSAGE_DATE_INVALID") }
 
-func richMessageMediaUnsupportedErr() error {
-	return tgerr.New(400, "RICH_MESSAGE_MEDIA_UNSUPPORTED")
-}
-
 func webpageMediaEmptyErr() error { return tgerr.New(400, "WEBPAGE_MEDIA_EMPTY") }
 
 func mediaTypeInvalidErr() error { return tgerr.New(400, "MEDIA_TYPE_INVALID") }

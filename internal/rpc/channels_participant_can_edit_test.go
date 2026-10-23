@@ -12,7 +12,7 @@ import (
 // （谁能编辑谁）由 domain.CanEditChannelAdmin 覆盖，这里只验 getParticipant/getParticipants
 // 把它投影到 TL 上。
 func TestChannelParticipantAdminCarriesCanEdit(t *testing.T) {
-	f := newBotAPIBridgeFixture(t)
+	f := newBotGroupFixture(t)
 	f.promoteBot(t, domain.ChannelAdminRights{AddAdmins: true, BanUsers: true})
 	// 机器人提拔 member：member 的提拔人是机器人。
 	f.promote(t, f.bot.ID, f.member.ID, domain.ChannelAdminRights{BanUsers: true}, "")

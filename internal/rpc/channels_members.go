@@ -386,7 +386,6 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, nil, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, res, cache)
 	})
-	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: missingInvitees}, nil
 }
 
@@ -431,7 +430,6 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
-	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	// Layer 227：channels.joinChannel 返回 messages.ChatInviteJoinResult；
 	// 正常加入即 chatInviteJoinResultOk 包裹本次操作的 updates。
 	return &tg.MessagesChatInviteJoinResultOk{Updates: updates}, nil
@@ -467,7 +465,6 @@ func (r *Router) onChannelsLeaveChannel(ctx context.Context, input tg.InputChann
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
-	r.enqueueBotAPIMemberUpdates(ctx, botAPILeftMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 
@@ -564,9 +561,6 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
 	})
-	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
-		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
-	})
 	return updates, nil
 }
 
@@ -622,9 +616,6 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	}
 	updates := build(userID)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
-	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
-		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
-	})
 	return updates, nil
 }
 
@@ -740,7 +731,6 @@ func (r *Router) onMessagesHideChatJoinRequest(ctx context.Context, req *tg.Mess
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
-	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinRequestMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 
@@ -788,7 +778,6 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
-	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinRequestMemberChanges(userID, res, date)...)
 	return updates, nil
 }
 

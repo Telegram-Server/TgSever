@@ -379,9 +379,6 @@ func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputR
 		BlocksLayer: int(tlprofile.ProfileCanonical),
 		Blocks:      blocks,
 	}
-	if projection, err := botAPIRichMessageProjection(in.Blocks, in.Rtl); err == nil {
-		rich.BotAPIProjection = projection
-	}
 	rich.Photos, err = r.resolveRichMessagePhotos(ctx, refs.photoIDs)
 	if err != nil {
 		return nil, err

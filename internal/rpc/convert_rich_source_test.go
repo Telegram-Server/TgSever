@@ -6,12 +6,9 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
-
-	"telesrv/internal/domain"
 )
 
-// MTProto 的 HTML / Markdown 富文本由服务端解析。非法输入必须在转换层被拒绝，
-// 而不是靠网关的 Bot API 投影顺带拦下。
+// MTProto 的 HTML / Markdown 富文本由服务端解析。非法输入必须在转换层被拒绝。
 func TestRichMessageSourceRejectsInvalidInput(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -36,32 +33,5 @@ func TestRichMessageSourceRejectsInvalidInput(t *testing.T) {
 				t.Fatalf("rich = %+v err = %v, want %s", rich, err, tc.want)
 			}
 		})
-	}
-}
-
-// 网关的 sendRichMessage 仍然走同一套解析器：Bot API 的 HTML 输入被转换成 MTProto
-// 的 InputRichMessageHTML，再由转换层解析。
-func TestBotAPIRichInputReusesMTProtoParser(t *testing.T) {
-	r := &Router{}
-	input, err := tgInputRichMessageFromBotAPI(domain.BotAPIRichMessageInput{HTML: "<h2>Меню</h2><p><b>активна</b></p>"})
-	if err != nil {
-		t.Fatalf("Bot API input: %v", err)
-	}
-	rich, err := r.domainRichMessageFromInput(context.Background(), input)
-	if err != nil {
-		t.Fatalf("parse Bot API HTML: %v", err)
-	}
-	decoded, err := tgRichMessage(rich)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(decoded.Blocks) != 2 {
-		t.Fatalf("blocks = %#v, want heading and paragraph", decoded.Blocks)
-	}
-	if _, ok := decoded.Blocks[0].(*tg.PageBlockHeading2); !ok {
-		t.Fatalf("first block = %T, want heading2", decoded.Blocks[0])
-	}
-	if len(rich.BotAPIProjection) == 0 {
-		t.Fatal("gateway lost its Bot API projection")
 	}
 }

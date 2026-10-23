@@ -250,7 +250,7 @@ func TestTelegramLoginApprovedDeepLinkRejectsAnotherUser(t *testing.T) {
 }
 
 func TestTelegramLoginMessageButtonRereadSignsAndGrantsWriteAccess(t *testing.T) {
-	f := newBotAPIReceiveFixture(t, false)
+	f := newBotGroupFixture(t)
 	sealKey := make([]byte, 32)
 	sealKey[0] = 7
 	sealer, err := telegramloginapp.NewCodeSealer("test", map[string][]byte{"test": sealKey})
@@ -278,8 +278,15 @@ func TestTelegramLoginMessageButtonRereadSignsAndGrantsWriteAccess(t *testing.T)
 	markup := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{{
 		Type: domain.MarkupButtonLoginURL, Text: "Log in", URL: "http://rp.test:3000/login?next=%2Fhome", RequestWriteAccess: true,
 	}}}}
-	if _, err := f.router.BotAPISendMessage(f.ctx, f.bot.ID, f.owner.ID, "Authorize", nil, markup, false, false, 0); err != nil {
-		t.Fatalf("BotAPISendMessage: %v", err)
+	// 与 MTProto 发送路径一样，先解析 login_url 目标再落库。
+	if err := f.router.validateReplyMarkupForPeer(f.ctx, f.bot.ID, domain.Peer{Type: domain.PeerTypeUser, ID: f.owner.ID}, markup); err != nil {
+		t.Fatalf("prepare login markup: %v", err)
+	}
+	if _, err := f.messages.SendPrivateText(f.ctx, f.bot.ID, domain.SendPrivateTextRequest{
+		SenderUserID: f.bot.ID, RecipientUserID: f.owner.ID, RandomID: 9101,
+		Message: "Authorize", ReplyMarkup: markup, Date: 1_780_000_000,
+	}); err != nil {
+		t.Fatalf("send login button: %v", err)
 	}
 	history, err := f.messages.GetHistory(f.ctx, f.owner.ID, domain.MessageFilter{
 		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: f.bot.ID}, Limit: 10,
