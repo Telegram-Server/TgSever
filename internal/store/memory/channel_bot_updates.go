@@ -29,7 +29,7 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 	if err != nil {
 		return res, err
 	}
-	res.BotUpdates, err = s.botUpdates.appendBotOnly(domain.BotChannelParticipantChanges(res, inviterUserID, botUpdateDate(date)))
+	res.BotUpdates, err = s.botUpdates.appendBotOnly(s.withAdminBotAudience(res.Channel.ID, domain.BotChannelParticipantChanges(res, inviterUserID, botUpdateDate(date))))
 	return res, err
 }
 
@@ -41,7 +41,7 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 	if err != nil {
 		return res, err
 	}
-	res.BotUpdates, err = s.botUpdates.appendBotOnly(domain.BotChannelParticipantChanges(res, userID, botUpdateDate(date)))
+	res.BotUpdates, err = s.botUpdates.appendBotOnly(s.withAdminBotAudience(res.Channel.ID, domain.BotChannelParticipantChanges(res, userID, botUpdateDate(date))))
 	return res, err
 }
 
@@ -54,7 +54,7 @@ func (s *ChannelStore) LeaveChannel(_ context.Context, channelID, userID int64, 
 	if err != nil {
 		return res, err
 	}
-	res.BotUpdates, err = s.botUpdates.appendBotOnly(domain.BotChannelParticipantChanges(res, userID, botUpdateDate(date)))
+	res.BotUpdates, err = s.botUpdates.appendBotOnly(s.withAdminBotAudience(res.Channel.ID, domain.BotChannelParticipantChanges(res, userID, botUpdateDate(date))))
 	return res, err
 }
 
@@ -75,7 +75,7 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 		previous = domain.ChannelMember{}
 	}
 	if update, ok := domain.BotChannelParticipantChange(res.Channel, req.UserID, previous, res.Participant, botUpdateDate(res.Date)); ok {
-		res.BotUpdates, err = s.botUpdates.appendBotOnly([]domain.BotUpdate{update})
+		res.BotUpdates, err = s.botUpdates.appendBotOnly(s.withAdminBotAudience(res.Channel.ID, []domain.BotUpdate{update}))
 	}
 	return res, err
 }
@@ -89,7 +89,7 @@ func (s *ChannelStore) EditChannelBanned(_ context.Context, req domain.EditChann
 		return res, err
 	}
 	if update, ok := domain.BotChannelParticipantChange(res.Channel, req.UserID, res.Previous, res.Participant, botUpdateDate(res.Date)); ok {
-		res.BotUpdates, err = s.botUpdates.appendBotOnly([]domain.BotUpdate{update})
+		res.BotUpdates, err = s.botUpdates.appendBotOnly(s.withAdminBotAudience(res.Channel.ID, []domain.BotUpdate{update}))
 	}
 	return res, err
 }

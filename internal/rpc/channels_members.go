@@ -563,7 +563,7 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 	qtsBots := botQtsRecipients(res.BotUpdates)
 	build := func(viewerUserID int64) *tg.Updates {
 		updates := r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-		if _, ok := qtsBots[viewerUserID]; ok {
+		if r.plainParticipantUpdateSkipped(ctx, cache, viewerUserID, qtsBots) {
 			// bot 自己的成员变化只经 qts 序列送达（下面的 pushBotUpdates）。
 			return withoutChannelParticipantUpdates(updates)
 		}
@@ -617,7 +617,7 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	qtsBots := botQtsRecipients(res.BotUpdates)
 	build := func(viewerUserID int64) *tg.Updates {
 		updates := r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-		if _, ok := qtsBots[viewerUserID]; ok {
+		if r.plainParticipantUpdateSkipped(ctx, cache, viewerUserID, qtsBots) {
 			// bot 自己的成员变化只经 qts 序列送达（下面的 pushBotUpdates）。
 			updates = withoutChannelParticipantUpdates(updates)
 		}
@@ -747,6 +747,7 @@ func (r *Router) onMessagesHideChatJoinRequest(ctx context.Context, req *tg.Mess
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
 	return updates, nil
 }
@@ -794,6 +795,7 @@ func (r *Router) onMessagesHideAllChatJoinRequests(ctx context.Context, req *tg.
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	r.pushPendingJoinRequestsToAdmins(ctx, res.Channel)
 	return updates, nil
 }

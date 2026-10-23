@@ -80,7 +80,7 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	botUpdates, err := appendBotOnlyUpdatesTx(ctx, tx, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous}, userID, date))
+	botUpdates, err := appendChannelBotUpdatesTx(ctx, tx, channel.ID, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous}, userID, date))
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
@@ -244,7 +244,7 @@ WHERE id = $1`, channelID, channel.CreatorUserID, adminsDelta); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
 	}
-	botUpdates, err := appendBotOnlyUpdatesTx(ctx, tx, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous}, userID, date))
+	botUpdates, err := appendChannelBotUpdatesTx(ctx, tx, channel.ID, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous}, userID, date))
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
