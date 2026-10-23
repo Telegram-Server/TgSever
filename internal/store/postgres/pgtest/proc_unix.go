@@ -84,4 +84,11 @@ func processAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-func explainExit(error) string { return "" }
+// explainExit 解释 root 运行时最常见的失败：切换后的用户进不了 home 所在目录。
+func explainExit(err error) string {
+	if os.Geteuid() == 0 && errors.Is(err, fs.ErrPermission) {
+		return "PostgreSQL runs as a non-root user that cannot reach this path: put " + EnvHome +
+			" in a directory every user can traverse, or set " + EnvRunAs
+	}
+	return ""
+}

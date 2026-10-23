@@ -122,15 +122,28 @@ func (c *privateCluster) tool(name string) string {
 }
 
 // run 执行一个 PostgreSQL 工具，失败时带上输出和平台相关的提示。
+//
+// 输出写进运行目录里的文件而不是管道：Windows 的 pg_ctl start 用 cmd /c 在后台拉起
+// postgres，二者继承标准输出句柄并一直存活。若是管道（CombinedOutput），写端永远不关，
+// pg_ctl 早已退出这里却一直阻塞；文件句柄被继承不影响 Wait。
 func (c *privateCluster) run(name string, args ...string) error {
 	cmd, err := pgCommand(c.tool(name), args...)
 	if err != nil {
 		return err
 	}
-	out, err := cmd.CombinedOutput()
+	outFile, err := os.CreateTemp(c.runDir, name+"-*.out")
+	if err != nil {
+		return err
+	}
+	// 后台 postgres 还握着句柄时 Windows 删不掉它，留给 discard 随运行目录一起删。
+	defer os.Remove(outFile.Name())
+	cmd.Stdout, cmd.Stderr = outFile, outFile
+	err = cmd.Run()
+	_ = outFile.Close()
 	if err == nil {
 		return nil
 	}
+	out, _ := os.ReadFile(outFile.Name())
 	msg := fmt.Sprintf("%s %s: %v: %s", name, strings.Join(args, " "), err, bytes.TrimSpace(out))
 	if hint := explainExit(err); hint != "" {
 		msg += "\n" + hint
