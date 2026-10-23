@@ -16,6 +16,7 @@ import (
 	appmessages "telesrv/internal/app/messages"
 	appgifts "telesrv/internal/app/stargifts"
 	appstars "telesrv/internal/app/stars"
+	appupdates "telesrv/internal/app/updates"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/postgres"
@@ -39,7 +40,21 @@ type invoiceChain struct {
 	buyerID    int64
 }
 
+// invoiceChainOptions 调整夹具的装配。零值即网关仍在时的完整装配。
+type invoiceChainOptions struct {
+	// withoutBotAPIQueue 不装配 Bot API 更新队列：MTProto bot 收款必须在没有网关
+	// 的情况下照常工作。
+	withoutBotAPIQueue bool
+	// sessions 替换在线推送的落点，用于观察推给 bot 的 update。
+	sessions SessionBinder
+}
+
 func newInvoiceChain(t *testing.T) *invoiceChain {
+	t.Helper()
+	return newInvoiceChainWith(t, invoiceChainOptions{})
+}
+
+func newInvoiceChainWith(t *testing.T, opts invoiceChainOptions) *invoiceChain {
 	t.Helper()
 	ctx := context.Background()
 	// Skips unless TELESRV_TEST_POSTGRES_DSN is set: this exercises the atomic
@@ -67,14 +82,19 @@ func newInvoiceChain(t *testing.T) *invoiceChain {
 	stars := appstars.NewService(postgres.NewStarsStore(pool), appstars.WithStartingGrant(5000))
 	gifts := postgres.NewStarGiftLifecycleStore(pool, msgStore, 0)
 	updates := postgres.NewBotAPIUpdateStore(pool)
-	r := New(Config{}, Deps{
-		Users:         appusers.NewService(users),
-		Bots:          bots,
-		Messages:      messages,
-		Stars:         stars,
-		Gifts:         appgifts.NewService(postgres.NewStarGiftStore(pool), nil, 2, appgifts.WithLifecycleStore(gifts)),
-		BotAPIUpdates: updates,
-	}, zaptest.NewLogger(t), clock.System)
+	deps := Deps{
+		Users:    appusers.NewService(users),
+		Bots:     bots,
+		Messages: messages,
+		Stars:    stars,
+		Gifts:    appgifts.NewService(postgres.NewStarGiftStore(pool), nil, 2, appgifts.WithLifecycleStore(gifts)),
+		Updates:  appupdates.NewService(postgres.NewUpdateStateStore(pool), postgres.NewUpdateEventStore(pool)),
+		Sessions: opts.sessions,
+	}
+	if !opts.withoutBotAPIQueue {
+		deps.BotAPIUpdates = updates
+	}
+	r := New(Config{}, deps, zaptest.NewLogger(t), clock.System)
 
 	third, err := users.Create(ctx, domain.User{Phone: fmt.Sprintf("1556%d", suffix), AccessHash: 5503, FirstName: "Third"})
 	if err != nil {

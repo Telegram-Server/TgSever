@@ -1061,7 +1061,6 @@ func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID i
 	ownerIDs := channelMessageFanoutOwnerIDs(res, extraUserIDs)
 	usernamePeers := channelMessagesFanoutUsernamePeers([]domain.SendChannelMessageResult{res}, extraUserIDs)
 	var usernames map[domain.Peer][]domain.Username
-	skip := skipDeliverySet(res.SkipDeliveryUserIDs)
 	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMessageBox, originUserID, res.Channel.ID, res.Event.Pts, res.Recipients,
 		0,
 		func(bgCtx context.Context, viewers []int64) bool {
@@ -1071,17 +1070,9 @@ func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID i
 			usernames = r.usernameRegistryMap(bgCtx, usernamePeers)
 			return true
 		},
-		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
-			// privacy bot 在 send 时被 SkipDeliveryUserIDs 排除（命令/@/回复以外的消息不可见）。
-			// channelFanoutRecipients 按「在线活跃成员」重算 recipients 会把它加回，故在线 fanout
-			// 必须在此跳过它的直接推送，否则在线 bot 仍能实时收到群里全部消息（持久 history/
-			// difference 已正确隐藏，仅此直接推送泄漏内容）。nudge 安全：bot 落在 seen 里不被 nudge，
-			// 即便 nudge 也会被 filterBotChannelDifference 过滤掉隐藏消息。
-			if _, skipped := skip[viewerUserID]; skipped {
-				return nil
-			}
+		skipDeliveryViewers(res.SkipDeliveryUserIDs, func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelMessageUpdatesWithPeerCacheAndUsernames(bgCtx, viewerUserID, res, 0, fanoutCache, usernames)
-		})
+		}))
 }
 
 // enqueueMonoforumMessageFanout only targets the subscriber sub-dialog and active parent-channel
@@ -1104,6 +1095,25 @@ func (r *Router) enqueueMonoforumMessageFanout(ctx context.Context, originUserID
 		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
 			return r.monoforumDeliveryUpdatesWithPeerCacheAndOverlays(bgCtx, viewerUserID, mono, savedPeer, res, fanoutCache, overlays)
 		})
+}
+
+// skipDeliveryViewers 包装 fanout build：对 SkipDeliveryUserIDs 里的 viewer 返回 nil（不推送）。
+// 新消息与编辑 fanout 共用。privacy bot 在 send/edit 时被 SkipDeliveryUserIDs 排除（命令/@/回复
+// 以外的消息不可见）；channelFanoutRecipients 按「在线活跃成员」重算 recipients 会把它加回，故在线
+// fanout 必须在此跳过它的直接推送，否则在线 bot 仍能实时收到群里全部消息（持久 history/difference
+// 已正确隐藏，仅此直接推送泄漏内容）。nudge 安全：bot 落在 seen 里不被 nudge，即便 nudge 也会被
+// filterBotChannelDifference 过滤掉隐藏消息。
+func skipDeliveryViewers(skipIDs []int64, build func(context.Context, int64) *tg.Updates) func(context.Context, int64) *tg.Updates {
+	skip := skipDeliverySet(skipIDs)
+	if len(skip) == 0 {
+		return build
+	}
+	return func(ctx context.Context, viewerUserID int64) *tg.Updates {
+		if _, skipped := skip[viewerUserID]; skipped {
+			return nil
+		}
+		return build(ctx, viewerUserID)
+	}
 }
 
 // skipDeliverySet 把 SkipDeliveryUserIDs 切片转成查找集合（nil 表示无排除）。
@@ -1181,9 +1191,9 @@ func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUser
 			usernames = r.usernameRegistryMap(bgCtx, usernamePeers)
 			return true
 		},
-		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
+		skipDeliveryViewers(res.SkipDeliveryUserIDs, func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelEditMessageUpdatesWithPeerCacheAndUsernames(bgCtx, viewerUserID, res, fanoutCache, usernames)
-		})
+		}))
 }
 
 // enqueueChannelMessagesFanout 同 enqueueChannelMessageFanout，但把多条结果汇成一个 job（批量转发：

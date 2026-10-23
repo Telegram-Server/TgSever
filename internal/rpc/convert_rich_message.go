@@ -299,9 +299,11 @@ func normalizeOrderedListForClients(list *tg.PageBlockOrderedList) {
 }
 
 // domainRichMessageFromInput 把入站 tg.InputRichMessageClass 解析为 domain 快照：
-// HTML/Markdown 先在服务端解析为 PageBlock，再与 blocks 形态共用限额校验、
-// 序列化和 Bot API 输出投影；内嵌 photos/documents 复用 sendMedia 同款媒体解析。
+// HTML/Markdown 先在服务端解析为 PageBlock（convert_rich_source.go），再与 blocks
+// 形态共用限额校验和序列化；内嵌 photos/documents 复用 sendMedia 同款媒体解析。
 // 返回 nil 表示无富文本载荷。
+//
+// 校验只看 MTProto 语义。Bot API 投影只是附带给网关的读模型，投影不了不影响收发。
 func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputRichMessageClass) (*domain.MessageRichMessage, error) {
 	if input == nil {
 		return nil, nil
@@ -317,7 +319,7 @@ func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputR
 		if value == nil || value.HTML == "" || len(value.Files) != 0 {
 			return nil, richMessageInvalidErr()
 		}
-		blocks, err := parseBotAPIRichHTML(value.HTML)
+		blocks, err := parseRichHTMLSource(value.HTML)
 		if err != nil {
 			return nil, err
 		}
@@ -327,7 +329,7 @@ func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputR
 		if value == nil || value.Markdown == "" || len(value.Files) != 0 {
 			return nil, richMessageInvalidErr()
 		}
-		blocks, err := parseBotAPIRichMarkdown(value.Markdown)
+		blocks, err := parseRichMarkdownSource(value.Markdown)
 		if err != nil {
 			return nil, err
 		}
@@ -335,6 +337,11 @@ func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputR
 		sourceParsed = true
 	default:
 		return nil, richMessageInvalidErr()
+	}
+	if sourceParsed {
+		if err := validateParsedRichSource(in.Blocks); err != nil {
+			return nil, err
+		}
 	}
 	if len(in.Blocks) == 0 {
 		if len(in.Photos) == 0 && len(in.Documents) == 0 {
@@ -372,11 +379,7 @@ func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputR
 		BlocksLayer: int(tlprofile.ProfileCanonical),
 		Blocks:      blocks,
 	}
-	projection, projectionErr := botAPIRichMessageProjection(in.Blocks, in.Rtl)
-	if projectionErr != nil && sourceParsed {
-		return nil, richMessageInvalidErr()
-	}
-	if projectionErr == nil {
+	if projection, err := botAPIRichMessageProjection(in.Blocks, in.Rtl); err == nil {
 		rich.BotAPIProjection = projection
 	}
 	rich.Photos, err = r.resolveRichMessagePhotos(ctx, refs.photoIDs)

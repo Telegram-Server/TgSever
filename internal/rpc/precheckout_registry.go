@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/iamxvbaba/td/tg"
@@ -137,8 +136,8 @@ func (p *preCheckoutRegistry) await(ctx context.Context, queryID int64, entry *p
 	}
 }
 
-// awaitBotPreCheckout 走完整链路：投递 update（Bot API 队列 + MTProto push），然后挂起
-// 最多 10 秒等应答。Bot 不应答即视为拒绝——这正是 Telegram 的约定：10 秒内不答 = 这笔
+// awaitBotPreCheckout 走完整链路：投递 update（MTProto push，装配了网关时另入 Bot API
+// 队列），然后挂起最多 10 秒等应答。Bot 不应答即视为拒绝——这正是 Telegram 的约定：10 秒内不答 = 这笔
 // 支付不成立，所以超时绝不能降级成直接扣款。
 func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID int64, currency string, totalAmount int64, payload string) error {
 	query := domain.BotPreCheckoutQuery{
@@ -148,42 +147,9 @@ func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID
 	queryID, entry := r.preCheckouts.register(botUserID, payerUserID)
 	query.ID = queryID
 
-	// A question that was never queued can never be answered. Carrying on would
-	// spend the full 10 second window waiting for a bot that was never asked, and
-	// then report PAYMENT_FAILED as if the bot had declined - which hides the real
-	// cause. So a queue failure fails the payment here, with the reason logged.
-	if r.deps.BotAPIUpdates == nil {
-		if r.log != nil {
-			r.log.Error("bot invoice pre-checkout not queued",
-				zap.Int64("bot_user_id", botUserID), zap.Error(errors.New("bot api update store not wired")))
-		}
+	if err := r.enqueueBotAPIPreCheckout(ctx, query); err != nil {
 		r.preCheckouts.deregister(queryID)
-		return internalErr()
-	}
-	queued, _, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
-		BotUserID:   botUserID,
-		Kind:        domain.BotAPIUpdatePreCheckoutQuery,
-		Date:        int(r.clock.Now().Unix()),
-		PreCheckout: &query,
-	})
-	if err != nil {
-		if r.log != nil {
-			r.log.Error("bot invoice pre-checkout not queued",
-				zap.Int64("bot_user_id", botUserID),
-				zap.Int64("query_id", queryID),
-				zap.Error(err))
-		}
-		r.preCheckouts.deregister(queryID)
-		return internalErr()
-	}
-	r.notifyBotAPIUpdate(botUserID)
-	if r.log != nil {
-		r.log.Info("bot invoice pre-checkout queued",
-			zap.Int64("bot_user_id", botUserID),
-			zap.Int64("query_id", queryID),
-			zap.Int64("update_id", queued.ID),
-			zap.Int64("payer_id", payerUserID),
-			zap.Int64("total_amount", totalAmount))
+		return err
 	}
 
 	update := &tg.UpdateBotPrecheckoutQuery{
@@ -204,6 +170,42 @@ func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID
 		return nil
 	}
 	return preCheckoutDeclinedErr(reply.Error)
+}
+
+// enqueueBotAPIPreCheckout 在装配了 Bot API 队列时把询问交给网关。没有队列时什么也不
+// 做：MTProto 推送本身就是完整的投递，bot 照常应答。
+//
+// 装配了队列却写入失败时让付款失败：一个从未入队的询问永远不会被网关 bot 应答，继续
+// 等只会白等 10 秒再报 PAYMENT_FAILED，把真正的原因藏起来。
+func (r *Router) enqueueBotAPIPreCheckout(ctx context.Context, query domain.BotPreCheckoutQuery) error {
+	if r.deps.BotAPIUpdates == nil {
+		return nil
+	}
+	queued, _, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
+		BotUserID:   query.BotUserID,
+		Kind:        domain.BotAPIUpdatePreCheckoutQuery,
+		Date:        int(r.clock.Now().Unix()),
+		PreCheckout: &query,
+	})
+	if err != nil {
+		if r.log != nil {
+			r.log.Error("bot invoice pre-checkout not queued",
+				zap.Int64("bot_user_id", query.BotUserID),
+				zap.Int64("query_id", query.ID),
+				zap.Error(err))
+		}
+		return internalErr()
+	}
+	r.notifyBotAPIUpdate(query.BotUserID)
+	if r.log != nil {
+		r.log.Info("bot invoice pre-checkout queued",
+			zap.Int64("bot_user_id", query.BotUserID),
+			zap.Int64("query_id", query.ID),
+			zap.Int64("update_id", queued.ID),
+			zap.Int64("payer_id", query.UserID),
+			zap.Int64("total_amount", query.TotalAmount))
+	}
+	return nil
 }
 
 // serviceBotPreCheckout 让内置 service bot 同步回答 pre-checkout。它们没有 MTProto
