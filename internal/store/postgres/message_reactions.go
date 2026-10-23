@@ -72,6 +72,10 @@ FOR UPDATE`, req.UserID, int32(req.MessageID), string(req.Peer.Type), req.Peer.I
 		}
 		return domain.PrivateMessageReactionsResult{}, fmt.Errorf("get message for reactions: %w", err)
 	}
+	oldReactions, err := privateUserReactionsTx(ctx, tx, target.messageSenderID, target.privateMessageID, req.UserID)
+	if err != nil {
+		return domain.PrivateMessageReactionsResult{}, err
+	}
 	if _, err := tx.Exec(ctx, `
 DELETE FROM private_message_reactions
 WHERE message_sender_id = $1
@@ -167,6 +171,9 @@ WHERE d.user_id = $1
 			res.Reactions = *msg.Reactions
 			break
 		}
+	}
+	if res.BotUpdates, err = appendPrivateReactionBotUpdatesTx(ctx, tx, req, target.messageSenderID, target.privateMessageID, oldReactions, res.Messages); err != nil {
+		return domain.PrivateMessageReactionsResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.PrivateMessageReactionsResult{}, fmt.Errorf("commit set message reactions tx: %w", err)

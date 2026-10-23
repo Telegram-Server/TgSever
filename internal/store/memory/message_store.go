@@ -34,6 +34,8 @@ type MessageStore struct {
 	deletions                 *MessageDeletionStore
 	// scheduled 是账号定时消息队列（scheduled_message.go），零值可用，自带锁。
 	scheduled scheduledMessageQueue
+	// reactionBots 让私聊反应写 bot qts 记录（#150，message_bot_reactions.go）。
+	reactionBots privateReactionBotUpdates
 }
 
 // AttachDeletionStore 注入删除记录（与 ChannelStore 共用同一实例）。

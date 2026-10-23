@@ -15,6 +15,9 @@ type BotUpdate struct {
 	Date int
 	// ChannelParticipant 是 updateChannelParticipant：bot 在超级群/频道里的成员状态变化。
 	ChannelParticipant *BotChannelParticipantUpdate `json:",omitempty"`
+	// MessageReaction / MessageReactions 是消息反应变化（#150），见 bot_message_reaction.go。
+	MessageReaction  *BotMessageReactionUpdate  `json:",omitempty"`
+	MessageReactions *BotMessageReactionsUpdate `json:",omitempty"`
 	// BotStopped 是 updateBotStopped：用户拉黑或解除拉黑了 bot（#148）。
 	BotStopped *BotStoppedUpdate `json:",omitempty"`
 }

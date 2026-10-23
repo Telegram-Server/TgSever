@@ -55,6 +55,7 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		r.pushChannelViewerUpdates(ctx, userID, res.Channel.ID, []int64{userID, res.Message.SenderUserID}, func(viewerUserID int64) *tg.Updates {
 			return r.channelReactionsViewerUpdates(ctx, userID, viewerUserID, res, ids)
 		})
+		r.pushBotUpdates(ctx, res.BotUpdates)
 		return updates, nil
 	}
 	if peer.Type == domain.PeerTypeUser && r.deps.Messages != nil {
@@ -104,6 +105,7 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 			viewerUpdates := r.privateMessageReactionsUpdates(ctx, msg.OwnerUserID, viewerPeer, res)
 			r.pushUserUpdates(ctx, msg.OwnerUserID, viewerUpdates)
 		}
+		r.pushBotUpdates(ctx, res.BotUpdates)
 		return updates, nil
 	}
 	return tgEmptyUpdates(int(r.clock.Now().Unix())), nil

@@ -125,6 +125,10 @@ GROUP BY reaction_type, reaction_value`, req.ChannelID, req.MessageID, req.UserI
 			return domain.ChannelMessageReactionsResult{}, domain.ErrReactionsTooMany
 		}
 	}
+	oldReactions, err := channelUserReactionsTx(ctx, tx, req.ChannelID, req.MessageID, req.UserID)
+	if err != nil {
+		return domain.ChannelMessageReactionsResult{}, err
+	}
 	if _, err := tx.Exec(ctx, `
 DELETE FROM channel_message_reactions
 WHERE channel_id = $1 AND message_id = $2 AND reacted_user_id = $3`, req.ChannelID, req.MessageID, req.UserID); err != nil {
@@ -165,6 +169,10 @@ DO UPDATE SET reaction_count = user_top_reactions.reaction_count + 1, reaction_d
 			return domain.ChannelMessageReactionsResult{}, err
 		}
 	}
+	botUpdates, err := appendChannelReactionBotUpdatesTx(ctx, tx, channel, req, oldReactions)
+	if err != nil {
+		return domain.ChannelMessageReactionsResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ChannelMessageReactionsResult{}, fmt.Errorf("commit set channel message reactions: %w", err)
 	}
@@ -187,6 +195,7 @@ DO UPDATE SET reaction_count = user_top_reactions.reaction_count + 1, reaction_d
 		Messages:   []domain.ChannelMessage{msg},
 		Reactions:  reactions,
 		Recipients: []int64{req.UserID},
+		BotUpdates: botUpdates,
 	}, nil
 }
 

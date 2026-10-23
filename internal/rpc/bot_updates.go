@@ -32,6 +32,9 @@ func tgBotUpdate(update domain.BotUpdate, view *domain.ChannelView) (tg.UpdateCl
 	if update.BotStopped != nil {
 		return tgBotStoppedUpdate(update)
 	}
+	if update.MessageReaction != nil || update.MessageReactions != nil {
+		return tgBotMessageReactionUpdate(update)
+	}
 	p := update.ChannelParticipant
 	if p == nil {
 		return nil, nil, nil
@@ -182,8 +185,7 @@ func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts 
 		}
 		updates = append(updates, update)
 		userIDs = append(userIDs, ids...)
-		if chat != nil && row.ChannelParticipant != nil {
-			channelID := row.ChannelParticipant.Channel.ID
+		if channelID := botUpdateChannelID(row); chat != nil && channelID != 0 {
 			if _, ok := seenChats[channelID]; !ok {
 				seenChats[channelID] = struct{}{}
 				chats = append(chats, chat)
