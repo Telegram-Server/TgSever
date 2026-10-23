@@ -290,15 +290,16 @@ func (s *Service) JoinInvite(ctx context.Context, userID int64, slug string, pee
 		return domain.ChatlistJoinResult{}, domain.ErrChatlistsTooMuch
 	}
 	channelResults, skipped, err := s.joinChannelPeers(ctx, invite.OwnerUserID, userID, selected, date)
+	botUpdates := channelBotUpdates(channelResults)
 	if err != nil {
-		return domain.ChatlistJoinResult{}, err
+		return domain.ChatlistJoinResult{BotUpdates: botUpdates}, err
 	}
 	if selected = peersDifference(selected, skipped); len(selected) == 0 {
 		return domain.ChatlistJoinResult{}, domain.ErrChannelUserBanned
 	}
 	filterID, err := s.nextLocalFilterID(ctx, userID)
 	if err != nil {
-		return domain.ChatlistJoinResult{}, err
+		return domain.ChatlistJoinResult{BotUpdates: botUpdates}, err
 	}
 	folder := importedChatlistFolder(ownerFolder, filterID, selected)
 	membership := domain.ChatlistMembership{
@@ -310,19 +311,20 @@ func (s *Service) JoinInvite(ctx context.Context, userID int64, slug string, pee
 		Date:          date,
 	}
 	if err := s.dialogs.UpsertFolder(ctx, userID, folder); err != nil {
-		if rollbackErr := s.leaveJoinedChannelResults(ctx, userID, channelResults, date); rollbackErr != nil {
-			return domain.ChatlistJoinResult{}, errors.Join(fmt.Errorf("save joined chatlist folder: %w", err), rollbackErr)
+		rollbackUpdates, rollbackErr := s.leaveJoinedChannelResults(ctx, userID, channelResults, date)
+		botUpdates = append(botUpdates, rollbackUpdates...)
+		if rollbackErr != nil {
+			return domain.ChatlistJoinResult{BotUpdates: botUpdates}, errors.Join(fmt.Errorf("save joined chatlist folder: %w", err), rollbackErr)
 		}
-		return domain.ChatlistJoinResult{}, fmt.Errorf("save joined chatlist folder: %w", err)
+		return domain.ChatlistJoinResult{BotUpdates: botUpdates}, fmt.Errorf("save joined chatlist folder: %w", err)
 	}
 	if err := s.chatlists.SaveMembership(ctx, membership); err != nil {
-		rollbackErr := errors.Join(
-			s.dialogs.DeleteFolder(ctx, userID, filterID),
-			s.leaveJoinedChannelResults(ctx, userID, channelResults, date),
-		)
-		return domain.ChatlistJoinResult{}, errors.Join(err, rollbackErr)
+		rollbackUpdates, leaveErr := s.leaveJoinedChannelResults(ctx, userID, channelResults, date)
+		botUpdates = append(botUpdates, rollbackUpdates...)
+		rollbackErr := errors.Join(s.dialogs.DeleteFolder(ctx, userID, filterID), leaveErr)
+		return domain.ChatlistJoinResult{BotUpdates: botUpdates}, errors.Join(err, rollbackErr)
 	}
-	return domain.ChatlistJoinResult{Folder: folder, Membership: membership, Date: date, ChannelResults: channelResults}, nil
+	return domain.ChatlistJoinResult{Folder: folder, Membership: membership, Date: date, ChannelResults: channelResults, BotUpdates: botUpdates}, nil
 }
 
 func (s *Service) GetUpdates(ctx context.Context, userID int64, localFilterID int) (domain.ChatlistUpdates, error) {
@@ -360,8 +362,9 @@ func (s *Service) JoinUpdates(ctx context.Context, userID int64, localFilterID i
 		return domain.ChatlistJoinResult{}, err
 	}
 	channelResults, skipped, err := s.joinChannelPeers(ctx, membership.OwnerUserID, userID, selected, date)
+	botUpdates := channelBotUpdates(channelResults)
 	if err != nil {
-		return domain.ChatlistJoinResult{}, err
+		return domain.ChatlistJoinResult{BotUpdates: botUpdates}, err
 	}
 	if selected = peersDifference(selected, skipped); len(selected) == 0 {
 		return domain.ChatlistJoinResult{}, domain.ErrChannelUserBanned
@@ -369,12 +372,14 @@ func (s *Service) JoinUpdates(ctx context.Context, userID int64, localFilterID i
 	folder.IncludePeers = mergeFolderPeers(folder.IncludePeers, selected)
 	folder.IsChatlist = true
 	if err := s.dialogs.UpsertFolder(ctx, userID, folder); err != nil {
-		if rollbackErr := s.leaveJoinedChannelResults(ctx, userID, channelResults, date); rollbackErr != nil {
-			return domain.ChatlistJoinResult{}, errors.Join(fmt.Errorf("save chatlist updates: %w", err), rollbackErr)
+		rollbackUpdates, rollbackErr := s.leaveJoinedChannelResults(ctx, userID, channelResults, date)
+		botUpdates = append(botUpdates, rollbackUpdates...)
+		if rollbackErr != nil {
+			return domain.ChatlistJoinResult{BotUpdates: botUpdates}, errors.Join(fmt.Errorf("save chatlist updates: %w", err), rollbackErr)
 		}
-		return domain.ChatlistJoinResult{}, fmt.Errorf("save chatlist updates: %w", err)
+		return domain.ChatlistJoinResult{BotUpdates: botUpdates}, fmt.Errorf("save chatlist updates: %w", err)
 	}
-	return domain.ChatlistJoinResult{Folder: folder, Membership: membership, ChannelResults: channelResults}, nil
+	return domain.ChatlistJoinResult{Folder: folder, Membership: membership, ChannelResults: channelResults, BotUpdates: botUpdates}, nil
 }
 
 func (s *Service) HideUpdates(ctx context.Context, userID int64, localFilterID int) error {
@@ -411,17 +416,18 @@ func (s *Service) Leave(ctx context.Context, userID int64, localFilterID int, pe
 		return domain.ChatlistLeaveResult{}, err
 	}
 	channelResults, err := s.leaveChannelPeers(ctx, userID, selected, date)
+	botUpdates := channelBotUpdates(channelResults)
 	if err != nil {
-		return domain.ChatlistLeaveResult{}, err
+		return domain.ChatlistLeaveResult{BotUpdates: botUpdates}, err
 	}
 	if err := s.dialogs.DeleteFolder(ctx, userID, localFilterID); err != nil {
-		return domain.ChatlistLeaveResult{}, err
+		return domain.ChatlistLeaveResult{BotUpdates: botUpdates}, err
 	}
 	if _, err := s.chatlists.DeleteMembershipByLocalFilter(ctx, userID, localFilterID); err != nil {
 		restoreErr := s.dialogs.UpsertFolder(ctx, userID, folder)
-		return domain.ChatlistLeaveResult{}, errors.Join(err, restoreErr)
+		return domain.ChatlistLeaveResult{BotUpdates: botUpdates}, errors.Join(err, restoreErr)
 	}
-	return domain.ChatlistLeaveResult{FilterID: localFilterID, ChannelResults: channelResults, RequestedLeaves: selected}, nil
+	return domain.ChatlistLeaveResult{FilterID: localFilterID, ChannelResults: channelResults, RequestedLeaves: selected, BotUpdates: botUpdates}, nil
 }
 
 func (s *Service) LeaveSuggestions(ctx context.Context, userID int64, localFilterID int) ([]domain.DialogFolderPeer, error) {
@@ -628,6 +634,10 @@ func (s *Service) joinChannelPeers(ctx context.Context, ownerUserID, userID int6
 			res, err = s.channels.JoinChannel(ctx, userID, plan.peer.Peer.ID, date)
 		}
 		if err != nil {
+			if errors.Is(err, domain.ErrInviteRequestSent) {
+				// 入群申请与它的 bot qts 记录已经提交：带上结果，让调用方交出这些记录。
+				return append(results, res), skipped, err
+			}
 			if errors.Is(err, domain.ErrUserAlreadyParticipant) {
 				continue
 			}
@@ -675,22 +685,36 @@ func (s *Service) leaveChannelPeers(ctx context.Context, userID int64, peers []d
 	return results, nil
 }
 
-func (s *Service) leaveJoinedChannelResults(ctx context.Context, userID int64, results []domain.CreateChannelResult, date int) error {
+// leaveJoinedChannelResults 回滚已完成的加入，返回回滚退出写下的 bot qts 记录。
+func (s *Service) leaveJoinedChannelResults(ctx context.Context, userID int64, results []domain.CreateChannelResult, date int) ([]domain.BotUpdate, error) {
 	if s.channels == nil || len(results) == 0 {
-		return nil
+		return nil, nil
 	}
 	var joinedErr error
+	var botUpdates []domain.BotUpdate
 	for _, res := range results {
 		if res.Channel.ID == 0 {
 			continue
 		}
-		if _, err := s.channels.LeaveChannel(ctx, userID, res.Channel.ID, date); err != nil &&
-			!errors.Is(err, domain.ErrUserNotParticipant) &&
-			!errors.Is(err, domain.ErrChannelPrivate) {
-			joinedErr = errors.Join(joinedErr, err)
+		left, err := s.channels.LeaveChannel(ctx, userID, res.Channel.ID, date)
+		if err != nil {
+			if !errors.Is(err, domain.ErrUserNotParticipant) && !errors.Is(err, domain.ErrChannelPrivate) {
+				joinedErr = errors.Join(joinedErr, err)
+			}
+			continue
 		}
+		botUpdates = append(botUpdates, left.BotUpdates...)
 	}
-	return joinedErr
+	return botUpdates, joinedErr
+}
+
+// channelBotUpdates 汇总各频道成员变动写下的 bot qts 记录。
+func channelBotUpdates(results []domain.CreateChannelResult) []domain.BotUpdate {
+	var out []domain.BotUpdate
+	for _, res := range results {
+		out = append(out, res.BotUpdates...)
+	}
+	return out
 }
 
 func (s *Service) deleteInviteIfSaved(ctx context.Context, ownerUserID int64, filterID int, slug string) error {

@@ -68,6 +68,10 @@ type ChatlistJoinResult struct {
 	Membership     ChatlistMembership
 	Date           int
 	ChannelResults []CreateChannelResult
+	// BotUpdates 是这次操作在各源事件事务里写下的全部 bot qts 记录（加入、提交入群申请、
+	// 失败后的回滚退出），调用方在提交后推送一次。操作以错误结束时它也可能非空：入群申请
+	// （ErrInviteRequestSent）与已完成的加入都已提交。
+	BotUpdates []BotUpdate
 }
 
 type ChatlistUpdates struct {
@@ -79,4 +83,7 @@ type ChatlistLeaveResult struct {
 	FilterID        int
 	ChannelResults  []CreateChannelResult
 	RequestedLeaves []DialogFolderPeer
+	// BotUpdates 是退出写下的全部 bot qts 记录；操作以错误结束时它也可能非空（已完成的退出
+	// 都已提交）。
+	BotUpdates []BotUpdate
 }

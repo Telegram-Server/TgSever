@@ -299,6 +299,65 @@ func TestSharedFolderJoinUpdatesAndLeaveUseChannelMemberships(t *testing.T) {
 	}
 }
 
+// 加入、退出、经 chatlist 提交入群申请都把各频道写下的 bot qts 记录汇总到结果里交给 RPC 层
+// 推送；入群申请以 ErrInviteRequestSent 结束时，已完成的加入与申请本身的记录都已提交，同样返回。
+func TestSharedFolderOperationsReturnEveryBotUpdate(t *testing.T) {
+	ctx := context.Background()
+	dialogs := memory.NewDialogStore()
+	const botID = int64(9000)
+	peerA := domain.DialogFolderPeer{Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: 3001}, AccessHash: 31}
+	peerB := domain.DialogFolderPeer{Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: 3002}, AccessHash: 32}
+	channels := &fakeChatlistChannels{botUserID: botID, requestChannels: map[int64]bool{peerB.Peer.ID: true}}
+	svc := NewService(memory.NewChatlistStore(), dialogs, WithChannels(channels), WithSlugGenerator(func() (string, error) { return "slug-bots", nil }))
+	ownerID, viewerID := int64(1001), int64(2002)
+	if err := dialogs.UpsertFolder(ctx, ownerID, domain.DialogFolder{ID: 2, Title: "Team", IncludePeers: []domain.DialogFolderPeer{peerA, peerB}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.ExportInvite(ctx, ownerID, 2, "", []domain.DialogFolderPeer{peerA, peerB}, 100); err != nil {
+		t.Fatal(err)
+	}
+	qtsOf := func(updates []domain.BotUpdate) []int {
+		out := make([]int, 0, len(updates))
+		for _, u := range updates {
+			if u.BotUserID != botID {
+				t.Fatalf("record for %d, want bot %d", u.BotUserID, botID)
+			}
+			out = append(out, u.Qts)
+		}
+		return out
+	}
+
+	requested, err := svc.JoinInvite(ctx, viewerID, "slug-bots", []domain.DialogFolderPeer{peerA, peerB}, 101)
+	if !errors.Is(err, domain.ErrInviteRequestSent) {
+		t.Fatalf("join with a request-only channel err = %v, want ErrInviteRequestSent", err)
+	}
+	if got := qtsOf(requested.BotUpdates); len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("request-sent bot updates = %v, want the join and the request [1 2]", got)
+	}
+
+	joined, err := svc.JoinInvite(ctx, viewerID, "slug-bots", []domain.DialogFolderPeer{peerA}, 102)
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if got := qtsOf(joined.BotUpdates); len(got) != 1 || got[0] != 3 {
+		t.Fatalf("join bot updates = %v, want [3]", got)
+	}
+	updated, err := svc.JoinUpdates(ctx, viewerID, joined.Folder.ID, []domain.DialogFolderPeer{peerB}, 103)
+	if !errors.Is(err, domain.ErrInviteRequestSent) {
+		t.Fatalf("join updates err = %v, want ErrInviteRequestSent", err)
+	}
+	if got := qtsOf(updated.BotUpdates); len(got) != 1 || got[0] != 4 {
+		t.Fatalf("join updates bot updates = %v, want [4]", got)
+	}
+	left, err := svc.Leave(ctx, viewerID, joined.Folder.ID, []domain.DialogFolderPeer{peerA}, 104)
+	if err != nil {
+		t.Fatalf("leave: %v", err)
+	}
+	if got := qtsOf(left.BotUpdates); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("leave bot updates = %v, want [5]", got)
+	}
+}
+
 func TestSharedFolderPublicPeerFallsBackToSelfJoin(t *testing.T) {
 	ctx := context.Background()
 	dialogs := memory.NewDialogStore()
@@ -423,6 +482,27 @@ type fakeChatlistChannels struct {
 	joinIDs    []int64
 	leaveIDs   []int64
 	publicOnly bool
+	// botUserID 非零时每次成员变动都带一条发给它的 qts 记录；requestChannels 里的频道
+	// 只接受入群申请（返回带记录的结果与 ErrInviteRequestSent）。
+	botUserID       int64
+	requestChannels map[int64]bool
+	qts             int
+}
+
+func (f *fakeChatlistChannels) withBotUpdate(res domain.CreateChannelResult) domain.CreateChannelResult {
+	if f.botUserID == 0 {
+		return res
+	}
+	f.qts++
+	res.BotUpdates = []domain.BotUpdate{{BotUserID: f.botUserID, Qts: f.qts, BotStopped: &domain.BotStoppedUpdate{UserID: res.Channel.ID}}}
+	return res
+}
+
+func (f *fakeChatlistChannels) joinOutcome(userID, channelID int64, date int) (domain.CreateChannelResult, error) {
+	if f.requestChannels[channelID] {
+		return f.withBotUpdate(domain.CreateChannelResult{Channel: domain.Channel{ID: channelID}}), domain.ErrInviteRequestSent
+	}
+	return f.withBotUpdate(fakeChatlistChannelResult(userID, channelID, domain.ChannelMemberActive, date)), nil
 }
 
 func (f *fakeChatlistChannels) GetChannel(_ context.Context, userID, channelID int64) (domain.ChannelView, error) {
@@ -457,17 +537,17 @@ func (f *fakeChatlistChannels) InviteToChannel(_ context.Context, userID, channe
 	if len(userIDs) == 0 {
 		return domain.CreateChannelResult{}, domain.ErrUsersTooMuch
 	}
-	return fakeChatlistChannelResult(userIDs[0], channelID, domain.ChannelMemberActive, date), nil
+	return f.joinOutcome(userIDs[0], channelID, date)
 }
 
 func (f *fakeChatlistChannels) JoinChannel(_ context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error) {
 	f.joinIDs = append(f.joinIDs, channelID)
-	return fakeChatlistChannelResult(userID, channelID, domain.ChannelMemberActive, date), nil
+	return f.joinOutcome(userID, channelID, date)
 }
 
 func (f *fakeChatlistChannels) LeaveChannel(_ context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error) {
 	f.leaveIDs = append(f.leaveIDs, channelID)
-	return fakeChatlistChannelResult(userID, channelID, domain.ChannelMemberLeft, date), nil
+	return f.withBotUpdate(fakeChatlistChannelResult(userID, channelID, domain.ChannelMemberLeft, date)), nil
 }
 
 func fakeChatlistChannelResult(userID, channelID int64, status domain.ChannelMemberStatus, date int) domain.CreateChannelResult {

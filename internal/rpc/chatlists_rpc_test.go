@@ -257,6 +257,9 @@ type fakeChatlistsService struct {
 	updates       domain.ChatlistUpdates
 	joinUpdFolder domain.DialogFolder
 	editRevoke    bool
+	// botUpdates / opErr 是加入、退出类操作返回的 bot qts 记录与错误。
+	botUpdates []domain.BotUpdate
+	opErr      error
 }
 
 func (f *fakeChatlistsService) ExportInvite(_ context.Context, _ int64, _ int, _ string, peers []domain.DialogFolderPeer, _ int) (domain.DialogFolder, domain.ChatlistInvite, error) {
@@ -283,7 +286,12 @@ func (f *fakeChatlistsService) CheckInvite(context.Context, int64, string) (doma
 
 func (f *fakeChatlistsService) JoinInvite(_ context.Context, _ int64, _ string, peers []domain.DialogFolderPeer, _ int) (domain.ChatlistJoinResult, error) {
 	f.joinPeers = append([]domain.DialogFolderPeer(nil), peers...)
-	return f.joinResult, nil
+	if f.opErr != nil {
+		return domain.ChatlistJoinResult{BotUpdates: f.botUpdates}, f.opErr
+	}
+	res := f.joinResult
+	res.BotUpdates = f.botUpdates
+	return res, nil
 }
 
 func (f *fakeChatlistsService) GetUpdates(context.Context, int64, int) (domain.ChatlistUpdates, error) {
@@ -291,7 +299,10 @@ func (f *fakeChatlistsService) GetUpdates(context.Context, int64, int) (domain.C
 }
 
 func (f *fakeChatlistsService) JoinUpdates(context.Context, int64, int, []domain.DialogFolderPeer, int) (domain.ChatlistJoinResult, error) {
-	return domain.ChatlistJoinResult{Folder: f.joinUpdFolder}, nil
+	if f.opErr != nil {
+		return domain.ChatlistJoinResult{BotUpdates: f.botUpdates}, f.opErr
+	}
+	return domain.ChatlistJoinResult{Folder: f.joinUpdFolder, BotUpdates: f.botUpdates}, nil
 }
 
 func (f *fakeChatlistsService) HideUpdates(context.Context, int64, int) error {
@@ -299,7 +310,10 @@ func (f *fakeChatlistsService) HideUpdates(context.Context, int64, int) error {
 }
 
 func (f *fakeChatlistsService) Leave(context.Context, int64, int, []domain.DialogFolderPeer, int) (domain.ChatlistLeaveResult, error) {
-	return domain.ChatlistLeaveResult{FilterID: 3}, nil
+	if f.opErr != nil {
+		return domain.ChatlistLeaveResult{BotUpdates: f.botUpdates}, f.opErr
+	}
+	return domain.ChatlistLeaveResult{FilterID: 3, BotUpdates: f.botUpdates}, nil
 }
 
 func (f *fakeChatlistsService) LeaveSuggestions(context.Context, int64, int) ([]domain.DialogFolderPeer, error) {

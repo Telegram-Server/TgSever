@@ -222,9 +222,13 @@ func (r *Router) onChatlistsJoinChatlistInvite(ctx context.Context, req *tg.Chat
 	}
 	result, err := r.deps.Chatlists.JoinInvite(ctx, userID, req.Slug, peers, int(r.clock.Now().Unix()))
 	if err != nil {
+		// 经 chatlist 提交的入群申请（INVITE_REQUEST_SENT）与已完成的加入都已提交。
+		r.pushBotUpdates(ctx, result.BotUpdates)
 		return nil, chatlistErr(err)
 	}
-	return r.chatlistOperationUpdates(ctx, userID, result.Folder.ID, &result.Folder, result.ChannelResults, false)
+	updates, err := r.chatlistOperationUpdates(ctx, userID, result.Folder.ID, &result.Folder, result.ChannelResults, false)
+	r.pushBotUpdates(ctx, result.BotUpdates)
+	return updates, err
 }
 
 func (r *Router) onChatlistsGetChatlistUpdates(ctx context.Context, chatlist tg.InputChatlistDialogFilter) (*tg.ChatlistsChatlistUpdates, error) {
@@ -267,9 +271,12 @@ func (r *Router) onChatlistsJoinChatlistUpdates(ctx context.Context, req *tg.Cha
 	}
 	result, err := r.deps.Chatlists.JoinUpdates(ctx, userID, chatlistFilterID(req.Chatlist), peers, int(r.clock.Now().Unix()))
 	if err != nil {
+		r.pushBotUpdates(ctx, result.BotUpdates)
 		return nil, chatlistErr(err)
 	}
-	return r.chatlistOperationUpdates(ctx, userID, result.Folder.ID, &result.Folder, result.ChannelResults, false)
+	updates, err := r.chatlistOperationUpdates(ctx, userID, result.Folder.ID, &result.Folder, result.ChannelResults, false)
+	r.pushBotUpdates(ctx, result.BotUpdates)
+	return updates, err
 }
 
 func (r *Router) onChatlistsHideChatlistUpdates(ctx context.Context, chatlist tg.InputChatlistDialogFilter) (bool, error) {
@@ -321,9 +328,12 @@ func (r *Router) onChatlistsLeaveChatlist(ctx context.Context, req *tg.Chatlists
 	}
 	result, err := r.deps.Chatlists.Leave(ctx, userID, chatlistFilterID(req.Chatlist), peers, int(r.clock.Now().Unix()))
 	if err != nil {
+		r.pushBotUpdates(ctx, result.BotUpdates)
 		return nil, chatlistErr(err)
 	}
-	return r.chatlistOperationUpdates(ctx, userID, result.FilterID, nil, result.ChannelResults, true)
+	updates, err := r.chatlistOperationUpdates(ctx, userID, result.FilterID, nil, result.ChannelResults, true)
+	r.pushBotUpdates(ctx, result.BotUpdates)
+	return updates, err
 }
 
 func (r *Router) tgExportedChatlistInvite(invite domain.ChatlistInvite) *tg.ExportedChatlistInvite {
