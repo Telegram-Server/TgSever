@@ -110,6 +110,10 @@ func (s *ContactStore) MutateBlocklist(ctx context.Context, m store.BlocklistMut
 		if err := store.ValidateBlocklistEffects(snapshot, effects); err != nil {
 			return err
 		}
+		// 对 bot 的拉黑/解除拉黑与名单同事务写入 bot qts 序列（#148）；bot 身份取自本事务的 facts。
+		if snapshot.BotUpdates, err = appendBotUpdatesTx(ctx, tx, store.BlocklistBotUpdates(snapshot)); err != nil {
+			return err
+		}
 		add, remove := []int64{}, []int64{}
 		for _, c := range changes {
 			if c.Blocked {
