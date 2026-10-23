@@ -18,9 +18,6 @@ func TestContactProfilesOwnerScopedRoundTrip(t *testing.T) {
 	owner := createTestUser(t, ctx, users, "+1900"+suffix+"01", "Owner", "One")
 	altOwner := createTestUser(t, ctx, users, "+1900"+suffix+"02", "AltOwner", "Two")
 	friend := createTestUser(t, ctx, users, "+1900"+suffix+"03", "Canonical", "Friend")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, altOwner.ID, friend.ID})
-	})
 
 	contactStore := NewContactStore(pool)
 	contacts := contactsapp.NewService(contactStore, users)
@@ -182,9 +179,6 @@ func TestDialogUserViewUsesContactProfileAndDialogFlags(t *testing.T) {
 	ownerB := createTestUser(t, ctx, users, "+1910"+suffix+"02", "OwnerB", "")
 	friend := createTestUser(t, ctx, users, "+1910"+suffix+"03", "Shared", "Friend")
 	other := createTestUser(t, ctx, users, "+1910"+suffix+"04", "Other", "Peer")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{ownerA.ID, ownerB.ID, friend.ID, other.ID})
-	})
 
 	contacts := contactsapp.NewService(NewContactStore(pool), users)
 	if _, err := contacts.AddContact(ctx, ownerA.ID, domain.ContactInput{ContactUserID: friend.ID, FirstName: "RemarkA"}); err != nil {
@@ -305,9 +299,6 @@ func TestDialogStoreMarkReadClampsAndRecomputesUnread(t *testing.T) {
 	users := NewUserStore(pool)
 	sender := createTestUser(t, ctx, users, "+1911"+suffix+"01", "DialogReadSender", "")
 	recipient := createTestUser(t, ctx, users, "+1911"+suffix+"02", "DialogReadRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	sent := make([]domain.SendPrivateTextResult, 0, 3)

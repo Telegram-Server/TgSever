@@ -22,9 +22,6 @@ func TestMessageStorePinPrivateMessageSharedAndOneside(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	sent, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
@@ -202,9 +199,6 @@ func TestMessageStoreUnpinAllPrivateMessagesSweepsBothSides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	first, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{

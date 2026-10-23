@@ -29,10 +29,6 @@ func menuButtonFixture(t *testing.T, pool *pgxpool.Pool) (bot domain.User, userA
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM bots WHERE bot_user_id = $1`, bot.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1::bigint[])`, append(ids, bot.ID))
-	})
 	return bot, ids[1], ids[2]
 }
 

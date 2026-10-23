@@ -35,13 +35,6 @@ func TestSuggestedPostLifecyclePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	monoID := enabled.Channel.LinkedMonoforumID
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM suggested_post_lifecycle_wakeups WHERE monoforum_id=$1`, monoID)
-		_, _ = pool.Exec(ctx, `DELETE FROM suggested_post_approvals WHERE monoforum_id=$1`, monoID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_balances WHERE channel_id=$1`, created.Channel.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE id=ANY($1::bigint[])`, []int64{monoID, created.Channel.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{owner.ID, subscriber.ID})
-	})
 	if _, err := pool.Exec(ctx, `INSERT INTO stars_balances(user_id,balance,granted) VALUES($1,100,true) ON CONFLICT(user_id) DO UPDATE SET balance=100,granted=true`, subscriber.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -177,12 +170,6 @@ func TestSuggestedPostApprovalAcceptsDelayedSchedulePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	monoID := enabled.Channel.LinkedMonoforumID
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM suggested_post_lifecycle_wakeups WHERE monoforum_id=$1`, monoID)
-		_, _ = pool.Exec(ctx, `DELETE FROM suggested_post_approvals WHERE monoforum_id=$1`, monoID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE id=ANY($1::bigint[])`, []int64{monoID, created.Channel.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{owner.ID, subscriber.ID})
-	})
 	saved := domain.Peer{Type: domain.PeerTypeUser, ID: subscriber.ID}
 
 	const now = 1_700_020_100
@@ -415,12 +402,6 @@ func TestSuggestedPostLifecyclePostgresIsolatesPoisonedAggregate(t *testing.T) {
 	}
 	monoID := enabled.Channel.LinkedMonoforumID
 	const poisonMonoID = int64(9_223_372_036_854_770_000)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM suggested_post_lifecycle_wakeups WHERE monoforum_id=ANY($1::bigint[])`, []int64{monoID, poisonMonoID})
-		_, _ = pool.Exec(ctx, `DELETE FROM suggested_post_approvals WHERE monoforum_id=ANY($1::bigint[])`, []int64{monoID, poisonMonoID})
-		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE id=ANY($1::bigint[])`, []int64{monoID, created.Channel.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{owner.ID, subscriber.ID})
-	})
 
 	const approvedAt = 1_700_030_100
 	const scheduleAt = approvedAt + 120

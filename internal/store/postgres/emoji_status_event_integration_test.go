@@ -21,7 +21,6 @@ func TestUpdateEmojiStatusWithEventIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, u.ID) })
 
 	status := domain.UserEmojiStatus{DocumentID: 42}
 	event := domain.UpdateEvent{

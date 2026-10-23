@@ -15,7 +15,6 @@ func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 	store := NewPasswordStore(pool)
 
 	const owner = int64(778899001)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM user_sticker_collections WHERE owner_user_id = $1", owner) })
 	_, _ = pool.Exec(ctx, "DELETE FROM user_sticker_collections WHERE owner_user_id = $1", owner)
 
 	faved := domain.StickerCollectionFaved

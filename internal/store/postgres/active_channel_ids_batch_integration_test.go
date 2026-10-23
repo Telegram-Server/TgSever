@@ -29,16 +29,12 @@ func TestChannelStoreListActiveChannelIDPagesPreservesSelectorOrdinality(t *test
 	if err != nil {
 		t.Fatalf("create first channel: %v", err)
 	}
-	second, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+	_, err = channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID, Title: "Batch Second " + suffix, Megagroup: true, Date: 1700007011,
 	})
 	if err != nil {
 		t.Fatalf("create second channel: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", []int64{first.Channel.ID, second.Channel.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, member.ID})
-	})
 	selectors := []activeChannelIDsSelector{
 		{userID: owner.ID, afterChannelID: 0, limit: 1},
 		{userID: member.ID, afterChannelID: 0, limit: 1000},

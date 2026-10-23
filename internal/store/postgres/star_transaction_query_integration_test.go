@@ -15,15 +15,6 @@ func TestStarGiftLedgerTransactionDirectionsPostgres(t *testing.T) {
 	channelID := ownerID + 1
 	lifecycle := NewStarGiftLifecycleStore(pool, nil, 0)
 
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM ton_transactions WHERE user_id=$1`, ownerID)
-		_, _ = pool.Exec(ctx, `DELETE FROM ton_balances WHERE user_id=$1`, ownerID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_transactions WHERE channel_id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_balances WHERE channel_id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_ton_transactions WHERE channel_id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_ton_balances WHERE channel_id=$1`, channelID)
-	})
-
 	if _, err := pool.Exec(ctx, `INSERT INTO ton_balances(user_id,balance_nanoton,granted) VALUES($1,70,true)`, ownerID); err != nil {
 		t.Fatalf("insert ton balance: %v", err)
 	}

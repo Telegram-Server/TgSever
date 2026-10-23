@@ -49,12 +49,6 @@ func TestScheduledMessageColumnsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create peer: %v", err)
 	}
-	ids := []int64{owner.ID, peerUser.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM scheduled_messages WHERE owner_user_id = $1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", ids)
-	})
 
 	messages := NewMessageStore(pool)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: peerUser.ID}

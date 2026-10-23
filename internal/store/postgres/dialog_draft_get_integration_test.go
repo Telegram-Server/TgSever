@@ -20,10 +20,6 @@ func TestDialogDraftGetRoundTrip(t *testing.T) {
 	}
 	userID := owner.ID
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: userID + 1}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM dialog_drafts WHERE user_id = $1", userID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
-	})
 
 	dialogs := NewDialogStore(pool)
 	if _, found, err := dialogs.GetDraft(ctx, userID, peer, 0); err != nil || found {
@@ -60,10 +56,6 @@ func TestListDialogDraftsByPeersMatchesCompositePeerKeys(t *testing.T) {
 	requestedUser := domain.Peer{Type: domain.PeerTypeUser, ID: userID + 1}
 	requestedChannel := domain.Peer{Type: domain.PeerTypeChannel, ID: userID + 2}
 	crossProductPeer := domain.Peer{Type: domain.PeerTypeChannel, ID: requestedUser.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM dialog_drafts WHERE user_id = $1", userID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
-	})
 
 	dialogs := NewDialogStore(pool)
 	for _, draft := range []domain.DialogDraft{

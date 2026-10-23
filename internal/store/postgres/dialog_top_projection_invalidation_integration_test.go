@@ -25,18 +25,6 @@ func TestDialogTopProjectionInvalidationTracksOnlyVisibleTopPayloads(t *testing.
 		t.Fatalf("create friend: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM private_message_reactions WHERE user_id = ANY($1::bigint[]) OR message_sender_id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM read_model_versions WHERE owner_user_id = ANY($1::bigint[]) OR (peer_type = 'user' AND peer_id = ANY($1::bigint[]))", []int64{owner.ID, friend.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	now := int(time.Now().Unix())

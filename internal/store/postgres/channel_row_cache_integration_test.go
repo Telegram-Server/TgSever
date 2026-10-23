@@ -34,12 +34,6 @@ func TestChannelRowCacheInvalidatesOnNotify(t *testing.T) {
 	channels := NewChannelStore(pool, WithChannelRowCache(cache))
 
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,

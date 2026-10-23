@@ -23,11 +23,6 @@ func TestThemeStoreRoundTripPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create creator: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM theme_user_installs WHERE user_id = $1", creator.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM themes WHERE creator_user_id = $1", creator.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", creator.ID)
-	})
 
 	a := domain.Theme{
 		ID:            randomThemeID(),

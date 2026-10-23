@@ -26,16 +26,6 @@ func TestSetMessageReactionsPeerViewpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create friend: %v", err)
 	}
-	t.Cleanup(func() {
-		for _, id := range []int64{owner.ID, friend.ID} {
-			_, _ = pool.Exec(ctx, "DELETE FROM private_message_reactions WHERE user_id = $1 OR message_sender_id = $1", id)
-			_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id = $1", id)
-			_, _ = pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id = $1", id)
-			_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = $1", id)
-			_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id = $1", id)
-			_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", id)
-		}
-	})
 
 	messages := NewMessageStore(pool)
 	now := int(time.Now().Unix())

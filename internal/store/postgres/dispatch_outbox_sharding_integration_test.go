@@ -16,9 +16,6 @@ func TestDispatchOutboxUserHeadBlocksHigherPts(t *testing.T) {
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner := createTestUser(t, ctx, NewUserStore(pool), "+1884"+suffix+"01", "OutboxHead", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -197,9 +194,6 @@ func TestDispatchOutboxAppendRacingLastHeadCompletionKeepsLaneDiscoverable(t *te
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner := createTestUser(t, ctx, NewUserStore(pool), "+1884"+suffix+"91", "OutboxFence", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	appendEvent := func(events *UpdateEventStore, date int) domain.UpdateEvent {
 		t.Helper()
@@ -290,10 +284,6 @@ func TestDispatchOutboxShardClaimersAreMutuallyExclusive(t *testing.T) {
 	}
 	suffix := randomSuffix(t)
 	owner := createTestUser(t, ctx, NewUserStore(pool), "+1885"+suffix+"01", "OutboxLane", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id = $1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	if _, err := NewUpdateEventStore(pool).AppendAllocatedWithDispatch(ctx, owner.ID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDialogPinned,
 		PtsCount: 1,
@@ -349,10 +339,6 @@ func TestDispatchOutboxLeaseExpiryAndBatchCompletionShareLockOrderPostgres(t *te
 	users := NewUserStore(pool)
 	first := createTestUser(t, ctx, users, "+1886"+suffix+"01", "OutboxLockA", "")
 	second := createTestUser(t, ctx, users, "+1886"+suffix+"02", "OutboxLockB", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM dispatch_outbox WHERE target_user_id = ANY($1::bigint[])`, []int64{first.ID, second.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1::bigint[])`, []int64{first.ID, second.ID})
-	})
 	events := NewUpdateEventStore(pool)
 	outbox := NewDispatchOutboxStore(pool, WithLeaseTimeout(time.Second))
 
@@ -415,10 +401,6 @@ func TestDispatchOutboxDurableHeadRejectsStaleRowReference(t *testing.T) {
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner := createTestUser(t, ctx, NewUserStore(pool), "+1886"+suffix+"01", "OutboxHeadFK", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id = $1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	if _, err := NewUpdateEventStore(pool).AppendAllocatedWithDispatch(ctx, owner.ID, domain.UpdateEvent{
 		Type: domain.UpdateEventDialogPinned, PtsCount: 1, Date: 1700002200,
 		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}, Bool: true,

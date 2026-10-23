@@ -30,12 +30,6 @@ func TestChannelStoreRecentRepliersPostgres(t *testing.T) {
 		t.Fatalf("create bob: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, alice.ID, bob.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{

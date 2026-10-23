@@ -31,11 +31,6 @@ INSERT INTO bots (bot_user_id, owner_user_id, token_secret)
 VALUES ($1, $1, 'callback-queue-secret')`, bot.ID); err != nil {
 		t.Fatalf("seed bot: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_update_states WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", bot.ID)
-	})
 
 	callback := &domain.BotCallbackQuery{
 		ID: 880011, BotUserID: bot.ID, UserID: clicker.ID,
@@ -83,12 +78,6 @@ func TestBotAPIInlineCallbackAndWebhookStateRoundTrip(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO bots (bot_user_id, owner_user_id, token_secret) VALUES ($1, $1, 'webhook-secret')`, bot.ID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_webhooks WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_update_states WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", bot.ID)
-	})
 
 	s := NewBotAPIUpdateStore(pool)
 	inline := &domain.BotInlineMessageID{DCID: 2, OwnerID: clicker.ID, ID: 17, AccessHash: 445566}
@@ -185,10 +174,6 @@ func TestBotAPIPollLeaseCrossStoreInstance(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO bots (bot_user_id, owner_user_id, token_secret) VALUES ($1, $1, 'poll-lease-secret')`, bot.ID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_update_states WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", bot.ID)
-	})
 	a, b := NewBotAPIUpdateStore(pool), NewBotAPIUpdateStore(pool)
 	if acquired, err := a.AcquireBotAPIPollLease(ctx, bot.ID, "one", time.Minute); err != nil || !acquired {
 		t.Fatalf("first acquire=%v err=%v", acquired, err)
@@ -224,11 +209,6 @@ func TestBotAPIPollingStateClampFilterTailAndDrop(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO bots (bot_user_id, owner_user_id, token_secret) VALUES ($1, $1, 'poll-state-secret')`, bot.ID); err != nil {
 		t.Fatalf("seed bot: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_update_states WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", bot.ID)
-	})
 
 	s := NewBotAPIUpdateStore(pool)
 	enqueue := func(kind domain.BotAPIUpdateKind, messageID int) (domain.BotAPIUpdate, bool) {
@@ -322,11 +302,6 @@ ON CONFLICT (bot_user_id) DO NOTHING`, u.ID); err != nil {
 	}
 	confirmedBot := newBot("01", "RetentionConfirmedBot")
 	mtprotoOnlyBot := newBot("02", "RetentionMTOnlyBot")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id IN ($1, $2)", confirmedBot, mtprotoOnlyBot)
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_update_states WHERE bot_user_id IN ($1, $2)", confirmedBot, mtprotoOnlyBot)
-		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id IN ($1, $2)", confirmedBot, mtprotoOnlyBot)
-	})
 
 	s := NewBotAPIUpdateStore(pool)
 	now := time.Now().Unix()
@@ -423,11 +398,6 @@ func TestBotAPIEphemeralEnvelopeRoundTrip(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO bots (bot_user_id, owner_user_id, token_secret) VALUES ($1, $1, 'ephemeral-secret')`, bot.ID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_update_states WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", bot.ID)
-	})
 
 	now := time.Now()
 	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: 3901}
@@ -502,10 +472,6 @@ VALUES ($1, $1, 'precheckout-test-secret')
 ON CONFLICT (bot_user_id) DO NOTHING`, botUser.ID); err != nil {
 		t.Fatalf("seed bot: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id = $1", botUser.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", botUser.ID)
-	})
 
 	store := NewBotAPIUpdateStore(pool)
 	now := int(time.Now().Unix())

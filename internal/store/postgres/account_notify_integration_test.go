@@ -20,10 +20,6 @@ func TestNotifySettingsRoundTripPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM notify_settings WHERE owner_user_id = $1", u.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
-	})
 
 	peerA := domain.Peer{Type: domain.PeerTypeUser, ID: 7001}
 	peerB := domain.Peer{Type: domain.PeerTypeChannel, ID: 7002}

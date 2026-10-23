@@ -14,12 +14,6 @@ func TestChannelCreateInitialPtsBaselinePostgres(t *testing.T) {
 	users := NewUserStore(pool)
 	owner := createTestUser(t, ctx, users, "+1887"+suffix+"80", "PtsOwner", "")
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -84,12 +78,6 @@ func TestChannelStoreGetChannelsBatchesVisibleAndPublicPreview(t *testing.T) {
 	member := createTestUser(t, ctx, users, "+1887"+suffix+"82", "BatchMember", "")
 	viewer := createTestUser(t, ctx, users, "+1887"+suffix+"83", "BatchViewer", "")
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, member.ID, viewer.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	joined, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{

@@ -26,9 +26,6 @@ func TestPrivacyRulesDoNotAllocateAccountPts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", user.ID)
-	})
 	var privacyPayloadTableAbsent bool
 	if err := pool.QueryRow(ctx, `
 SELECT to_regclass('public.user_update_privacy_payloads') IS NULL`).Scan(&privacyPayloadTableAbsent); err != nil {

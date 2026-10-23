@@ -44,9 +44,6 @@ func TestTelegramLoginStorePostgresAtomicStateAndCodeConsumption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create oidc bot: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id IN ($1,$2)", owner.ID, bot.ID)
-	})
 
 	store := NewTelegramLoginStore(pool)
 	client, err := store.UpsertTelegramLoginClient(ctx, domain.TelegramLoginClient{
@@ -301,7 +298,6 @@ func TestTelegramLoginStorePostgresNativeCallbackAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM users WHERE id IN ($1,$2)", owner.ID, bot.ID) })
 
 	store := NewTelegramLoginStore(pool)
 	client, err := store.CreateTelegramLoginClient(ctx, domain.TelegramLoginClient{

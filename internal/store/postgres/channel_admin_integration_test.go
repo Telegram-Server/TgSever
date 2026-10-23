@@ -30,12 +30,6 @@ func TestChannelStoreEditAboutPersistsAndChecksPermission(t *testing.T) {
 		t.Fatalf("create member: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, member.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -102,12 +96,6 @@ func TestChannelStoreCreatorCanEditOwnAdminRights(t *testing.T) {
 		t.Fatalf("create admin: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, admin.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -201,12 +189,6 @@ func TestChannelStoreAdminLogFiltersAndSearch(t *testing.T) {
 		t.Fatalf("create invited: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID, invited.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -331,12 +313,6 @@ func TestChannelStoreListSendAsChannelsPostgres(t *testing.T) {
 
 	channels := NewChannelStore(pool)
 	channelIDs := make([]int64, 0, 5)
-	t.Cleanup(func() {
-		for _, id := range channelIDs {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", id)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, host.ID})
-	})
 	mk := func(req domain.CreateChannelRequest) domain.CreateChannelResult {
 		created, err := channels.CreateChannel(ctx, req)
 		if err != nil {
@@ -405,12 +381,6 @@ func TestChannelStoreCommonChannelsOnlySharedMegagroups(t *testing.T) {
 		t.Fatalf("create other: %v", err)
 	}
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID, other.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	create := func(title string, broadcast bool, memberIDs []int64, date int) domain.CreateChannelResult {
@@ -490,12 +460,6 @@ func TestChannelStoreListActiveChannelIDsForUserUsesMembershipIndexState(t *test
 		t.Fatalf("create friend: %v", err)
 	}
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	create := func(title string, date int) domain.CreateChannelResult {
@@ -580,12 +544,6 @@ func TestChannelStoreUserChannelMemberIndexListPaths(t *testing.T) {
 		t.Fatalf("create friend: %v", err)
 	}
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	publicCandidate, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -690,12 +648,6 @@ func TestChannelStoreListStoryPostableChannelsPostgres(t *testing.T) {
 		t.Fatalf("create admin: %v", err)
 	}
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) > 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, admin.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	owned, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -784,12 +736,6 @@ func TestChannelStoreLeftChannelsReturnsPagedLeftMemberships(t *testing.T) {
 		t.Fatalf("create friend: %v", err)
 	}
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	create := func(title string, broadcast bool, date int) domain.CreateChannelResult {
@@ -854,12 +800,6 @@ func TestChannelStoreDiscussionGroupLinksAreBidirectional(t *testing.T) {
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	channels := NewChannelStore(pool)
 	create := func(title string, broadcast bool, date int) domain.CreateChannelResult {

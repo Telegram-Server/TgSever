@@ -115,9 +115,6 @@ func TestAuthorizationStoreRejectsTemporaryProtocolKeyPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", user.ID)
-	})
 
 	err = NewAuthorizationStore(pool).Bind(ctx, domain.Authorization{AuthKeyID: temp, UserID: user.ID})
 	if !errors.Is(err, store.ErrAuthKeyNotPermanent) {

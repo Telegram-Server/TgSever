@@ -42,9 +42,6 @@ func TestAuthKeyStoreRoundTrip(t *testing.T) {
 	if _, err := rand.Read(val[:]); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = $1", authKeyIDToInt64(id))
-	})
 
 	want := store.AuthKeyData{
 		ID:         id,
@@ -170,9 +167,6 @@ func TestAuthKeyStoreClientInfoRoundTrip(t *testing.T) {
 	if _, err := rand.Read(val[:]); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = $1", authKeyIDToInt64(id))
-	})
 
 	keys := NewAuthKeyStore(pool)
 	if err := keys.Save(ctx, store.AuthKeyData{ID: id, Value: val, ServerSalt: 0x0badf00d}); err != nil {

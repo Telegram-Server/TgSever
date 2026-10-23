@@ -23,10 +23,5 @@ func TestSendMonoforumMessageKeepsAlbumGroupedIDPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sub: %v", err)
 	}
-	// 契约中途 Fatal 也要清理：广播频道与 monoforum 都由 owner 创建，按创建者删除。
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE creator_user_id = $1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, sub.ID})
-	})
 	storetest.MonoforumAlbumGrouping(t, NewChannelStore(pool), owner.ID, sub.ID, "Mono Album "+suffix)
 }

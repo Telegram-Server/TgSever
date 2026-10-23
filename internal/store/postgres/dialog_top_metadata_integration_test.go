@@ -26,15 +26,6 @@ func TestDialogTopMessageCarriesFullMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	ids := []int64{sender.ID, recipient.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", ids)
-	})
 
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	const groupedID = int64(990000000777)
@@ -107,13 +98,6 @@ func TestSavedDialogTopMessageCarriesFullMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create alice: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id = $1", alice.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id = $1", alice.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id = $1", alice.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM saved_dialog_pins WHERE user_id = $1", alice.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", alice.ID)
-	})
 
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	const groupedID = int64(990000000888)

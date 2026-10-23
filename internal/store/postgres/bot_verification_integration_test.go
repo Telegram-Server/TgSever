@@ -68,10 +68,6 @@ func botVerificationTestIcon(t *testing.T, pool *pgxpool.Pool, s *BotVerificatio
 	if err != nil {
 		t.Fatalf("upsert verification icon %q: %v", name, err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM verification_icons WHERE id = $1`, icon.ID)
-	})
 	return icon
 }
 

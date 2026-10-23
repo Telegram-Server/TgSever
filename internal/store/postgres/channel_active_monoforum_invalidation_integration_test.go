@@ -32,10 +32,6 @@ func TestChannelActiveMembershipGenerationCoversMonoforumVisibility(t *testing.T
 		t.Fatalf("enable monoforum: %v", err)
 	}
 	monoID := enabled.Channel.LinkedMonoforumID
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", []int64{created.Channel.ID, monoID})
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, subscriber.ID})
-	})
 	version := func(userID int64) int64 {
 		t.Helper()
 		var value int64

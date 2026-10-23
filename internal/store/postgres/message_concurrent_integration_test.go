@@ -36,15 +36,6 @@ func TestSendPrivateTextConcurrentNoPtsGap(t *testing.T) {
 		t.Fatalf("create recipient: %v", err)
 	}
 	ids := []int64{sender.ID, recipient.ID}
-	t.Cleanup(func() {
-		// 按 FK 依赖序清理子表（message_boxes.from_user_id 为 RESTRICT）再删用户。
-		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", ids)
-	})
 	var initialWatermarks int
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)::int

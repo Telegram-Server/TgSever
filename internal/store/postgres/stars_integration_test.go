@@ -21,11 +21,6 @@ func TestStarsLedgerPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id = $1", u.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id = $1", u.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
-	})
 
 	// 空账号：余额 0、未授予。
 	if bal, err := st.GetBalance(ctx, u.ID); err != nil || bal.Balance != 0 || bal.Granted {
@@ -148,11 +143,6 @@ func TestStarsAirdropPostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, "UPDATE users SET is_bot = true WHERE id = $1", bot.ID); err != nil {
 		t.Fatalf("mark bot: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id = ANY($1)", []int64{alice.ID, bot.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id = ANY($1)", []int64{alice.ID, bot.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1)", []int64{alice.ID, bot.ID})
-	})
 
 	if count, err := st.CountCreditAllUsers(ctx); err != nil {
 		t.Fatalf("count credit-all: %v", err)

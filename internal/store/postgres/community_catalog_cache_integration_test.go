@@ -49,10 +49,6 @@ func TestCommunityCatalogCacheInvalidatesFromDatabaseTrigger(t *testing.T) {
 	if communityID == 0 {
 		communityID = 1
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM communities WHERE id=$1", communityID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=$1", owner.ID)
-	})
 	if _, err := pool.Exec(ctx, `
 INSERT INTO communities(id,access_hash,creator_user_id,title,date)
 VALUES($1,$2,$3,$4,$5)`, communityID, -communityID, owner.ID, "Catalog trigger "+suffix, 1700000770); err != nil {

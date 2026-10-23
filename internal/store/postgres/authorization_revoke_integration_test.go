@@ -627,9 +627,6 @@ VALUES ($1, $2, $3)
 RETURNING id`, time.Now().UnixNano(), phone, "revoke-"+suffix).Scan(&userID); err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = db.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
-	})
 	return userID
 }
 

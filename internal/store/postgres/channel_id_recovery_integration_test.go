@@ -49,9 +49,6 @@ func TestChannelStoreCreateChannelRecoversFromStaleIDCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", creator.ID)
-	})
 
 	// 先用默认 PG fallback 分配器造一个真实 channel（占住 max id）。
 	seedStore := NewChannelStore(pool)

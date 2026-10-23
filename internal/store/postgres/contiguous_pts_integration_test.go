@@ -30,9 +30,6 @@ func TestAppendAllocatedFirstPtsRangeAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	event := domain.UpdateEvent{
 		Type:       domain.UpdateEventDeleteMessages,
@@ -104,10 +101,6 @@ func TestAppendRejectsPtsHole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = $1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	events := NewUpdateEventStore(pool)
 	appendPts := func(pts int) {
@@ -165,11 +158,6 @@ func TestAppendWithDispatchWritesEventAndOutboxAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id = $1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = $1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	event := domain.UpdateEvent{
 		UserID:   owner.ID,
@@ -228,9 +216,6 @@ func TestDispatchOutboxLifecycleKeepsDurableEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {

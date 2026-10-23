@@ -30,9 +30,6 @@ func TestBroadcastDeliveryPreservesAutoEntitiesInHistoryAndUpdates(t *testing.T)
 	if err != nil {
 		t.Fatalf("Create broadcast: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM broadcasts WHERE id = $1`, campaign.ID)
-	})
 	if campaign.Message != text || !reflect.DeepEqual(campaign.Entities, want) {
 		t.Fatalf("created campaign message/entities = %q/%+v, want %q/%+v", campaign.Message, campaign.Entities, text, want)
 	}
@@ -119,9 +116,6 @@ func TestBroadcastSelectedClaimsAreDisjointAndDeliveryIsIncomingOnly(t *testing.
 	if err != nil {
 		t.Fatalf("CreateBroadcast: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM broadcasts WHERE id = $1`, campaign.ID)
-	})
 
 	firstClaims, err := broadcasts.ClaimBroadcastRecipients(ctx, "worker-one", 1, time.Minute)
 	if err != nil {
@@ -210,9 +204,6 @@ func TestBroadcastAllMaterializationUsesCreationHighWaterAndBoundedKeysets(t *te
 	if err != nil {
 		t.Fatalf("CreateBroadcast all: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM broadcasts WHERE id = $1`, campaign.ID)
-	})
 	lateUser := createLoginCodeDeliveryTestUser(t, ctx, pool, "BroadcastAllLate")
 
 	for i := 0; i < 10000; i++ {

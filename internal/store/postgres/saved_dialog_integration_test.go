@@ -24,10 +24,6 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM saved_dialog_pins WHERE user_id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	selfPeer := domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID}
@@ -199,9 +195,6 @@ func TestSavedDialogsBackfillRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create owner: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	insert := func(boxID int, fwdPeerID int64, fwdName string, fwdDate int) {
 		t.Helper()

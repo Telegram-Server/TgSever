@@ -31,12 +31,6 @@ func TestPhoneChangeStoreUpdatesUserWithoutPTSPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user2: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM dispatch_outbox WHERE target_user_id = ANY($1::bigint[])", []int64{u1.ID, u2.ID})
-		_, _ = pool.Exec(context.Background(), "DELETE FROM user_update_events WHERE user_id = ANY($1::bigint[])", []int64{u1.ID, u2.ID})
-		_, _ = pool.Exec(context.Background(), "DELETE FROM user_update_watermarks WHERE user_id = ANY($1::bigint[])", []int64{u1.ID, u2.ID})
-		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{u1.ID, u2.ID})
-	})
 
 	authKeyID := [8]byte{7, 6, 5, 4}
 	result, err := changes.ChangePhone(ctx, domain.PhoneChangeRequest{

@@ -20,12 +20,6 @@ func TestChannelStatsPostgresAggregatesAndPagesPublicForwards(t *testing.T) {
 	}
 	channels := NewChannelStore(pool)
 	channelIDs := make([]int64, 0, 3)
-	t.Cleanup(func() {
-		if len(channelIDs) > 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	period := domain.StatsPeriod{MinDate: 1_700_006_400, MaxDate: 1_700_611_200}
 	source, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID, Title: "PG stats source " + suffix, Broadcast: true, Date: period.MinDate - 100,

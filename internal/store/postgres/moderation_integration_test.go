@@ -93,9 +93,6 @@ func TestModerationSponsoredReportIsAtomicUnderConcurrentFinalOptions(t *testing
 	if err != nil || !created {
 		t.Fatalf("impression=%+v created=%v err=%v", impression, created, err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM sponsored_message_impressions WHERE id = $1", impression.ID)
-	})
 	service := moderationapp.NewService(store)
 	type result struct {
 		report  domain.ModerationReport
@@ -257,9 +254,6 @@ func TestModerationCaseActionAppealLinkAndTelemetryPostgres(t *testing.T) {
 	if err != nil || !created || telemetry.ID <= 0 {
 		t.Fatalf("telemetry=%+v created=%v err=%v", telemetry, created, err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM client_telemetry_events WHERE id = $1", telemetry.ID)
-	})
 	retryTelemetry, created, err := telemetryStore.CreateClientTelemetry(ctx, event)
 	if err != nil || created || retryTelemetry.ID != telemetry.ID {
 		t.Fatalf("telemetry retry=%+v created=%v err=%v", retryTelemetry, created, err)

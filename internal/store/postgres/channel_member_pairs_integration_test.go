@@ -15,14 +15,7 @@ func TestFilterActiveChannelMemberPairsPostgresKeepsExactEdges(t *testing.T) {
 	owner := createTestUser(t, ctx, users, "+1911"+suffix+"01", "Pair", "Owner")
 	memberA := createTestUser(t, ctx, users, "+1911"+suffix+"02", "Pair", "A")
 	memberB := createTestUser(t, ctx, users, "+1911"+suffix+"03", "Pair", "B")
-	userIDs := []int64{owner.ID, memberA.ID, memberB.ID}
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) > 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", userIDs)
-	})
 
 	channels := NewChannelStore(pool)
 	first, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{

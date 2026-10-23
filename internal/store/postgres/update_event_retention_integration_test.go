@@ -499,11 +499,6 @@ RETURNING id
 			watermarks[i] = 1
 		}
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM update_states WHERE auth_key_id = ANY($1::bigint[])", authKeyIDs)
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = ANY($1::bigint[])", authKeyIDs)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", userIDs)
-	})
 	if _, err := pool.Exec(ctx, `
 INSERT INTO auth_keys (auth_key_id, body, server_salt, expires_at)
 SELECT id, decode(repeat('00', 256), 'hex'), 0, 0

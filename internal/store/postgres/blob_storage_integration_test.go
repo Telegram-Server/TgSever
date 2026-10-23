@@ -48,9 +48,6 @@ func TestBlobMigrationMetadataRoundTrip(t *testing.T) {
 			t.Fatalf("put %s: %v", blob.LocationKey, err)
 		}
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM file_blobs WHERE location_key = ANY($1::text[])", []string{first.LocationKey, second.LocationKey})
-	})
 
 	counts, err := media.FileBlobBackendCounts(ctx)
 	if err != nil || counts[domain.MediaBackendLocalFS] < 2 {

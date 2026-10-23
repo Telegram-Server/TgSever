@@ -23,9 +23,6 @@ func TestPostgresPrivateNoForwardsAtomicStateAndDifference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	baseRandom := time.Now().UnixNano()
@@ -125,9 +122,6 @@ func TestPostgresPrivateNoForwardsConcurrentOwnershipAndOneShotAnswer(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	baseRandom := time.Now().UnixNano()

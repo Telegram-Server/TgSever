@@ -27,9 +27,6 @@ func TestUserStoreUpdateLastSeenBatchPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create second: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{first.ID, second.ID})
-	})
 
 	if err := users.UpdateLastSeenBatch(ctx, []store.UserLastSeenUpdate{
 		{UserID: second.ID, LastSeenAt: 20},

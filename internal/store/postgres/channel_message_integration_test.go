@@ -34,12 +34,6 @@ func TestChannelStoreSendMessageFansOutDialogRows(t *testing.T) {
 		t.Fatalf("create friend: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -432,12 +426,6 @@ func TestChannelStoreStoryMessageForwardsPublicOnlyAndDeleteRollbackPostgres(t *
 	}
 	channels := NewChannelStore(pool)
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) > 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	publicCreated, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,
 		Title:         "PG Story Forward Public " + suffix,
@@ -553,12 +541,6 @@ func TestChannelStoreSendMessageViaBotIDSurvivesReadPaths(t *testing.T) {
 		t.Fatalf("create bot user: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID, bot.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -728,12 +710,6 @@ func TestChannelStoreSendMessageSkipDeliveryAdvancesReadBoundary(t *testing.T) {
 		t.Fatalf("create bot-like user: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID, bot.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -841,12 +817,6 @@ func TestChannelStoreConcurrentSendAndReadHistoryDoNotSurfaceDeadlock(t *testing
 		t.Fatalf("create member: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(context.Background(), "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, member.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -933,12 +903,6 @@ func TestChannelStoreJoinInitialReadWatermarkSkipsExistingHistory(t *testing.T) 
 		t.Fatalf("create friend: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -1033,12 +997,6 @@ func TestChannelStoreInviteInitialReadWatermarkSkipsExistingHistory(t *testing.T
 		t.Fatalf("create invited: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, invited.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -1101,12 +1059,6 @@ func TestChannelStoreImportInviteInitialReadWatermarkSkipsExistingHistory(t *tes
 		t.Fatalf("create joiner: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, joiner.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -1194,12 +1146,6 @@ func TestChannelStoreSendMessageResolvesReplyTopID(t *testing.T) {
 		t.Fatalf("create friend: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -1284,12 +1230,6 @@ func TestChannelStoreHistorySupportsOffsetDateOnly(t *testing.T) {
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -1357,12 +1297,6 @@ func TestChannelStoreDeleteHistoryForEveryoneBatchesHugeMaxID(t *testing.T) {
 		t.Fatalf("create friend: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{

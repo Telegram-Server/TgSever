@@ -37,14 +37,7 @@ func TestChannelStoreInviteBatchAdvancesDistinctReadModelsOncePostgres(t *testin
 		// lock/write order independent of the request order.
 		userIDs[len(members)-1-i] = members[i].ID
 	}
-	allUserIDs := append([]int64{owner.ID}, userIDs...)
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE id = $1`, channelID)
-		}
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1::bigint[])`, allUserIDs)
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{

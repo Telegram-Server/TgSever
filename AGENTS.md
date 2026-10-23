@@ -41,6 +41,19 @@ go test ./cmd/telesrv-admin -run '^(TestOperatorCommand|TestAuditTrail)$' -count
 - Most `internal/rpc` and `internal/app` tests run against in-memory stores (`internal/store/memory`, `rpc_testkit_*`) and are pure `go test`.
 - Load testing: `cmd/telesrv-load` binary + `internal/loadtest`, `internal/loadharness`.
 
+### Writing tests
+
+Fourteen Postgres tests once failed for weeks and not one of them had found a bug: each pinned a detail some other component was free to change. These rules keep tests about behavior.
+
+- **Assert what the caller can observe, and derive the expectation.** Take ids, pts and counts from the values the code under test returned, from `domain` constants (`domain.FirstChannelEventPts`, not `2`), or as a before/after delta (`visibilityBefore+1`, not `1`). A literal is fine only for what the test itself decided. The failures above assumed "a new channel's first event is pts 1", "sign-up leaves one message", "a rejoin has no inviter".
+- **Per-test databases need no cleanup.** `testPool(t)`, `pgtest.TestDSN(t)` and `pgtest.NewDatabase(t)` drop the whole database afterwards: do not register `t.Cleanup` blocks that `DELETE` rows. They only break when a table is renamed. Subtests share their parent's database, so give them distinct values. Only tests on the shared per-package database (`pgtest.DSN`) clean up.
+- **SQL shape belongs in a budget test.** Asserting query counts or statement order is legitimate only as a deliberate performance contract: a dedicated test (`...QueryCount`, `...Budget`) whose comment lists every statement and why. Behavioral tests never count queries.
+- **No real waiting.** Never `time.Sleep` to wait for something to happen: wait on a channel or signal from the code. For timeouts, expiry and retries in code without real I/O, wrap the test in `synctest.Test` (`testing/synctest`): time is virtual and a 10 s timeout passes instantly. Code on real TCP or PostgreSQL cannot use synctest: make the duration a field or option and shorten it in the test. `time.After` as a failure deadline in a `select` is fine; it never fires in a passing test.
+- **No mutable package state for tests.** A package variable that tests overwrite (a timeout, a clock, a hook) stops the package from running in parallel. Inject it through the constructor or a config field instead. Setting it once in `TestMain`, before any test runs, is fine.
+- **Parallel by default.** New tests call `t.Parallel()` unless they use `t.Setenv` or process-global state.
+- **Test business rules where they live.** A rule implemented in `internal/app/*` is tested there: editing a test in a small package and running it takes under a second, against ≈25 s in `internal/rpc`, which recompiles 190 k lines. `internal/rpc` tests cover TL encoding, layer gating and wiring.
+- **Fast inner loop.** `go test ./internal/app/<pkg> -run '^TestName$'`; add `TELESRV_TEST_POSTGRES_SKIP=1` when the change cannot touch the store.
+
 ### Building the browser surfaces (Node, different repos)
 
 - Admin web UI: `cmd/telesrv-admin/web` (`npm ci`, `npm run build`).

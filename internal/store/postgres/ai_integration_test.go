@@ -26,9 +26,6 @@ func TestAIComposeStoreRoundTripPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create other: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1)", []int64{owner.ID, other.ID})
-	})
 
 	tone := domain.AIComposeTone{
 		ID:            randomAIComposeID(),

@@ -28,10 +28,6 @@ func TestWelcomeMessageStoreDurabilityIdempotencyConcurrencyAndNoPTS(t *testing.
 		t.Fatalf("create channel: %v", err)
 	}
 	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: createdChannel.Channel.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", peer.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	countsBefore := welcomeSideEffectCounts(t, ctx, pool, owner.ID, peer.ID)
 	store := NewWelcomeMessageStore(pool)
@@ -167,10 +163,6 @@ func TestWelcomeMessageJoinDeliveryIsTransactionalLeasedAndTTLBounded(t *testing
 	}
 	channelID := created.Channel.ID
 	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1)", []int64{owner.ID, member.ID, secondMember.ID})
-	})
 
 	welcomeStore := NewWelcomeMessageStore(pool)
 	contents := []domain.WelcomeMessageContent{{Message: "hello new member"}, {Message: "read the rules"}}

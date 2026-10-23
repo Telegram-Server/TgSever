@@ -19,14 +19,6 @@ func TestDeletedSellerIsPulledOffResaleMarketPostgres(t *testing.T) {
 	users := NewUserStore(pool)
 	seller := createTestUser(t, ctx, users, "+1885"+suffix+"01", "GoneSeller", "")
 	buyer := createTestUser(t, ctx, users, "+1885"+suffix+"02", "Buyer", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM account_deletion_requests WHERE user_id = ANY($1)`, []int64{seller.ID, buyer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM star_gift_listings WHERE seller_peer_id = ANY($1)`, []int64{seller.ID, buyer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM stars_transactions WHERE user_id = ANY($1)`, []int64{seller.ID, buyer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM stars_balances WHERE user_id = ANY($1)`, []int64{seller.ID, buyer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM peer_star_gifts WHERE owner_peer_id = ANY($1)`, []int64{seller.ID, buyer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1)`, []int64{seller.ID, buyer.ID})
-	})
 
 	stars := NewStarsStore(pool)
 	for _, u := range []domain.User{seller, buyer} {

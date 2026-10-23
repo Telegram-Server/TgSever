@@ -207,9 +207,6 @@ func TestPaidMonoforumMessageStarsColumnPostgres(t *testing.T) {
 		t.Fatalf("enable paid DM: %v", err)
 	}
 	monoID := enabled.Channel.LinkedMonoforumID
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channel_stars_balances WHERE channel_id = $1", broadcast.Channel.ID)
-	})
 	if _, _, err := NewStarsStore(pool).EnsureGrant(ctx, sub, 25, 1700002000); err != nil {
 		t.Fatalf("grant subscriber stars: %v", err)
 	}

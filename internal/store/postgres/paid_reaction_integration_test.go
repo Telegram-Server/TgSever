@@ -106,9 +106,6 @@ VALUES(9183991,9183992,1,'reaction','user',9183992,1700000000)
 RETURNING id`).Scan(&transactionID); err != nil {
 		t.Fatalf("seed post-upgrade paid reaction credit: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_transactions WHERE id=$1`, transactionID)
-	})
 	downSQL, err := deploy.Migrations.ReadFile("migrations/0178_paid_reaction_atomic_ledger.down.sql")
 	if err != nil {
 		t.Fatalf("read 0178 down: %v", err)
@@ -144,21 +141,8 @@ func TestChannelPaidReactionPostgresOwnerSendAsAndOrderedCrossSettlement(t *test
 	if err != nil {
 		t.Fatalf("create cross admin: %v", err)
 	}
-	userIDs := []int64{owner.ID, admin.ID}
 	channels := NewChannelStore(pool)
 	channelIDs := make([]int64, 0, 3)
-	t.Cleanup(func() {
-		if len(channelIDs) > 0 {
-			_, _ = pool.Exec(ctx, `DELETE FROM channel_paid_reaction_commands WHERE channel_id=ANY($1::bigint[])`, channelIDs)
-			_, _ = pool.Exec(ctx, `DELETE FROM channel_message_paid_reactions WHERE channel_id=ANY($1::bigint[])`, channelIDs)
-			_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_transactions WHERE channel_id=ANY($1::bigint[])`, channelIDs)
-			_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_balances WHERE channel_id=ANY($1::bigint[])`, channelIDs)
-			_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE id=ANY($1::bigint[])`, channelIDs)
-		}
-		_, _ = pool.Exec(ctx, `DELETE FROM stars_transactions WHERE user_id=ANY($1::bigint[])`, userIDs)
-		_, _ = pool.Exec(ctx, `DELETE FROM stars_balances WHERE user_id=ANY($1::bigint[])`, userIDs)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, userIDs)
-	})
 	type paidChannel struct {
 		channel domain.Channel
 		msgID   int
@@ -272,20 +256,7 @@ func TestChannelPaidReactionPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create poor member: %v", err)
 	}
-	userIDs := []int64{owner.ID, member.ID, poor.ID}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channel_paid_reaction_commands WHERE channel_id = $1", channelID)
-			_, _ = pool.Exec(ctx, "DELETE FROM channel_message_paid_reactions WHERE channel_id = $1", channelID)
-			_, _ = pool.Exec(ctx, "DELETE FROM channel_stars_transactions WHERE channel_id = $1", channelID)
-			_, _ = pool.Exec(ctx, "DELETE FROM channel_stars_balances WHERE channel_id = $1", channelID)
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id = ANY($1::bigint[])", userIDs)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id = ANY($1::bigint[])", userIDs)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", userIDs)
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{

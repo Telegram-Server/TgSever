@@ -39,12 +39,6 @@ func TestChannelRecommendationsUsesBoundedCountAndMemberIndex(t *testing.T) {
 	sourceID := baseID
 	joinedID := baseID + 1
 	firstCandidateID := baseID + 2
-	lastChannelID := firstCandidateID + total - 1
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM user_channel_member_index WHERE user_id = $1 AND channel_id BETWEEN $2 AND $3", owner.ID, sourceID, lastChannelID)
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id BETWEEN $1 AND $2", sourceID, lastChannelID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, creator.ID})
-	})
 
 	insertChannel := func(id int64, username string, participants, date int) {
 		t.Helper()

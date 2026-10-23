@@ -173,9 +173,6 @@ func TestBotGiftPurchaseIsNotConvertibleToStarsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bot account: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", bot.ID) // bots 行随 FK CASCADE
-	})
 	human := createTestUser(t, ctx, users, "+1898"+suffix+"02", "BotNoConvertHuman", "")
 	botRecipient := createTestUser(t, ctx, users, "+1898"+suffix+"03", "BotNoConvertTo", "")
 	humanRecipient := createTestUser(t, ctx, users, "+1898"+suffix+"04", "HumanNoConvertTo", "")

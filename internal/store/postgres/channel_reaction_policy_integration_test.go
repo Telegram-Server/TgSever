@@ -91,12 +91,6 @@ func newReactionPolicyTestEnv(t *testing.T, broadcast bool) reactionPolicyTestEn
 		t.Fatalf("create member2: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, member.ID, member2.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -240,12 +234,6 @@ func TestChannelStoreSetAvailableReactionsRefreshesRowCache(t *testing.T) {
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	rowCache := NewChannelRowCache(100)
 	channels := NewChannelStore(pool, WithChannelRowCache(rowCache))

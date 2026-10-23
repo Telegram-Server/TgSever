@@ -37,12 +37,6 @@ func TestChannelMemberCacheInvalidatesOnReadModelNotify(t *testing.T) {
 		WithChannelMemberCache(memberCache))
 
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,
@@ -132,10 +126,6 @@ func TestChannelDialogLightInvalidatesOnChannelMemberAndDialogNotify(t *testing.
 		t.Fatalf("create channel: %v", err)
 	}
 	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: created.Channel.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", created.Channel.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	versionBeforeMember, hashBeforeMember := readDialogLightVersionHash(t, ctx, pool, owner.ID, peer)
 	dialogCache := &fakeDialogReadModelCache{}
@@ -218,12 +208,6 @@ func TestReadModelChangeListenerInvalidatesProjectionCachesFromNotify(t *testing
 	}
 	photoID := time.Now().UnixNano()
 	targetPhotoID := photoID + 1
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM account_privacy_rules WHERE owner_user_id = ANY($1::bigint[])", []int64{owner.ID, target.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM profile_photos WHERE owner_peer_type = 'user' AND owner_peer_id = ANY($1::bigint[])", []int64{owner.ID, target.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM photos WHERE id = ANY($1::bigint[])", []int64{photoID, targetPhotoID})
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, target.ID})
-	})
 
 	contactsCache := &fakeContactReadModelCache{}
 	dialogCache := &fakeDialogReadModelCache{}

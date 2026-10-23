@@ -41,14 +41,10 @@ WHERE channel_id = $1
 // TestGroupCallStoreM2ContractPostgres 跑 overrides/raise-hand 契约（DSN 门控）。
 func TestGroupCallStoreM2ContractPostgres(t *testing.T) {
 	pool := testPool(t)
-	ctx := context.Background()
 	var nextChannel int64 = 920_000_000
 	storetest.RunGroupCallStoreM2Contract(t, func(t *testing.T) (store.GroupCallStore, int64) {
 		nextChannel++
 		channelID := nextChannel
-		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, "DELETE FROM group_calls WHERE channel_id = $1", channelID)
-		})
 		return NewGroupCallStore(pool), channelID
 	})
 }
@@ -58,9 +54,6 @@ func TestGroupCallStoreConcurrentJoinVersions(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	const channelID = 910_900_001
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM group_calls WHERE channel_id = $1", channelID)
-	})
 	st := NewGroupCallStore(pool)
 	// 时间基准取运行时刻：测试库可能与运行中的开发服务器共库，远古
 	// last_check_date 会被线上 sweeper 当幽灵清掉，污染 version/count 断言。

@@ -26,9 +26,6 @@ VALUES ($1, $2, 'collectible test', $3)
 RETURNING id`, seed, fmt.Sprintf("%d", seed), username).Scan(&id); err != nil {
 		t.Fatalf("insert collectible test user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id)
-	})
 	return domain.Peer{Type: domain.PeerTypeUser, ID: id}
 }
 
@@ -58,14 +55,6 @@ func lowerASCII(s string) string {
 		}
 	}
 	return string(out)
-}
-
-func cleanupCollectible(t *testing.T, pool *pgxpool.Pool, usernameLower string) {
-	t.Helper()
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM collectible_usernames WHERE username_lower = $1`, usernameLower)
-	})
 }
 
 func mintRequest(username string, owner domain.Peer, commandKey string) domain.MintCollectibleUsernameRequest {
@@ -100,7 +89,6 @@ func TestCollectibleUsernameResolveAndSearchUseActiveRegistry(t *testing.T) {
 	userEditable := fmt.Sprintf("uedit%d", seed)
 	userCollectible := fmt.Sprintf("unft%d", seed)
 	setEditableUsername(t, pool, userPeer, userEditable)
-	cleanupCollectible(t, pool, lowerASCII(userCollectible))
 
 	registry := NewCollectibleUsernameStore(pool)
 	if _, created, err := registry.MintCollectibleUsername(ctx, mintRequest(userCollectible, userPeer, "")); err != nil || !created {
@@ -136,9 +124,6 @@ func TestCollectibleUsernameResolveAndSearchUseActiveRegistry(t *testing.T) {
 		t.Fatalf("create channel: %v", err)
 	}
 	channelPeer := domain.Peer{Type: domain.PeerTypeChannel, ID: created.Channel.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM channels WHERE id = $1`, channelPeer.ID)
-	})
 	channelEditable := fmt.Sprintf("cedit%d", seed)
 	if _, err := channels.UpdateUsername(ctx, domain.UpdateChannelUsernameRequest{
 		UserID:    userPeer.ID,
@@ -148,7 +133,6 @@ func TestCollectibleUsernameResolveAndSearchUseActiveRegistry(t *testing.T) {
 		t.Fatalf("set channel editable username: %v", err)
 	}
 	channelCollectible := fmt.Sprintf("cnft%d", seed)
-	cleanupCollectible(t, pool, lowerASCII(channelCollectible))
 	if _, created, err := registry.MintCollectibleUsername(ctx, mintRequest(channelCollectible, channelPeer, "")); err != nil || !created {
 		t.Fatalf("mint channel collectible: created=%v err=%v", created, err)
 	}
@@ -257,7 +241,6 @@ func TestCollectibleUsernameMintIntoVault(t *testing.T) {
 	ctx := context.Background()
 	store := NewCollectibleUsernameStore(pool)
 	name := fmt.Sprintf("vault%d", time.Now().UnixNano()%1_000_000)
-	cleanupCollectible(t, pool, lowerASCII(name))
 
 	asset, created, err := store.MintCollectibleUsername(ctx, mintRequest(name, domain.Peer{}, ""))
 	if err != nil || !created {
@@ -299,7 +282,6 @@ func TestCollectibleUsernameMintWithOwnerAndReplay(t *testing.T) {
 	seed := time.Now().UnixNano() % 1_000_000
 	owner := collectibleTestUser(t, pool, 2_100_000_000+seed, "")
 	name := fmt.Sprintf("owned%d", seed)
-	cleanupCollectible(t, pool, lowerASCII(name))
 	key := fmt.Sprintf("mint-%d", seed)
 
 	asset, created, err := store.MintCollectibleUsername(ctx, mintRequest(name, owner, key))
@@ -348,7 +330,6 @@ func TestCollectibleUsernameMintRejectsOccupiedEditableName(t *testing.T) {
 	holder := collectibleTestUser(t, pool, 2_200_000_000+seed, "")
 	name := fmt.Sprintf("taken%d", seed)
 	setEditableUsername(t, pool, holder, name)
-	cleanupCollectible(t, pool, lowerASCII(name))
 
 	if _, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, domain.Peer{}, "")); !errors.Is(err, domain.ErrUsernameOccupied) {
 		t.Fatalf("mint over editable name err = %v, want ErrUsernameOccupied", err)
@@ -372,7 +353,6 @@ func TestCollectibleUsernameTransferPreservesRecipientEditableSlot(t *testing.T)
 	setEditableUsername(t, pool, from, fromEditable)
 	setEditableUsername(t, pool, to, toEditable)
 	name := fmt.Sprintf("moved%d", seed)
-	cleanupCollectible(t, pool, lowerASCII(name))
 
 	asset, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, from, ""))
 	if err != nil {
@@ -434,7 +414,6 @@ func TestCollectibleUsernameBurnReleasesName(t *testing.T) {
 	holder := collectibleTestUser(t, pool, 2_500_000_000+seed, "")
 	claimer := collectibleTestUser(t, pool, 2_600_000_000+seed, "")
 	name := fmt.Sprintf("burned%d", seed)
-	cleanupCollectible(t, pool, lowerASCII(name))
 
 	if _, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, "")); err != nil {
 		t.Fatalf("mint: %v", err)
@@ -483,10 +462,6 @@ func TestCollectibleUsernamePeerLimit(t *testing.T) {
 	seed := time.Now().UnixNano() % 1_000_000
 	holder := collectibleTestUser(t, pool, 2_700_000_000+seed, "")
 	prefix := fmt.Sprintf("lim%d", seed)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM collectible_usernames WHERE username_lower LIKE $1 || '%'`, lowerASCII(prefix))
-	})
 	for i := 0; i < domain.MaxPeerCollectibleUsernames; i++ {
 		name := fmt.Sprintf("%sn%02d", prefix, i)
 		if _, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, "")); err != nil {
@@ -544,8 +519,6 @@ func TestCollectibleUsernameRegistryToggleAndReorder(t *testing.T) {
 	setEditableUsername(t, pool, holder, editable)
 	first := fmt.Sprintf("alpha%d", seed)
 	second := fmt.Sprintf("beta%d", seed)
-	cleanupCollectible(t, pool, lowerASCII(first))
-	cleanupCollectible(t, pool, lowerASCII(second))
 	for _, name := range []string{first, second} {
 		if _, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, "")); err != nil {
 			t.Fatalf("mint %s: %v", name, err)
@@ -624,7 +597,6 @@ func TestCollectibleUsernameEditableEditKeepsCollectibles(t *testing.T) {
 	seed := time.Now().UnixNano() % 1_000_000
 	holder := collectibleTestUser(t, pool, 2_900_000_000+seed, "")
 	name := fmt.Sprintf("keep%d", seed)
-	cleanupCollectible(t, pool, lowerASCII(name))
 	asset, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, ""))
 	if err != nil {
 		t.Fatalf("mint: %v", err)
@@ -661,7 +633,6 @@ func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {
 	seed := time.Now().UnixNano() % 1_000_000
 	holder := collectibleTestUser(t, pool, 3_500_000_000+seed, "")
 	name := fmt.Sprintf("reissue%d", seed)
-	cleanupCollectible(t, pool, lowerASCII(name))
 
 	first, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, ""))
 	if err != nil {
@@ -716,7 +687,6 @@ func TestCollectibleUsernameDelete(t *testing.T) {
 	seed := time.Now().UnixNano() % 1_000_000
 	holder := collectibleTestUser(t, pool, 3_600_000_000+seed, "")
 	name := fmt.Sprintf("mistake%d", seed)
-	cleanupCollectible(t, pool, lowerASCII(name))
 	editable := fmt.Sprintf("keep%d", seed)
 	setEditableUsername(t, pool, holder, editable)
 

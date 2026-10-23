@@ -24,9 +24,6 @@ func TestDialogFoldersRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create stranger: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID, stranger.ID})
-	})
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO contacts (user_id, contact_user_id, mutual)
 		VALUES ($1, $2, true)

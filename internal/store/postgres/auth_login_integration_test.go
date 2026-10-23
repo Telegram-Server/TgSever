@@ -19,9 +19,6 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 
 	// testPool clones a database per test, so a fixed E.164 number cannot collide.
 	phone := "15555550131"
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE phone = $1", phone)
-	})
 
 	users := NewUserStore(pool)
 	dialogs := NewDialogStore(pool)
@@ -48,9 +45,6 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	if err := NewAuthKeyStore(pool).Save(ctx, store.AuthKeyData{ID: authKeyID, Value: authKeyBody}); err != nil {
 		t.Fatalf("save auth key: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = $1", authKeyIDToInt64(authKeyID))
-	})
 	hash, err := svc.SendCode(ctx, phone)
 	if err != nil {
 		t.Fatalf("SendCode: %v", err)
@@ -93,9 +87,6 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 	ctx := context.Background()
 
 	phone := "15555550132"
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE phone = $1", phone)
-	})
 
 	users := NewUserStore(pool)
 	dialogs := NewDialogStore(pool)
@@ -122,9 +113,6 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 	if err := NewAuthKeyStore(pool).Save(ctx, store.AuthKeyData{ID: authKeyID, Value: authKeyBody}); err != nil {
 		t.Fatalf("save auth key: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = $1", authKeyIDToInt64(authKeyID))
-	})
 
 	hash, err := svc.SendCode(ctx, phone)
 	if err != nil {

@@ -16,12 +16,6 @@ func TestChannelMemberIndexListPathPlansUseUserIndex(t *testing.T) {
 	owner := createTestUser(t, ctx, users, "+1887"+suffix+"61", "PlanIndexOwner", "")
 	member := createTestUser(t, ctx, users, "+1887"+suffix+"62", "PlanIndexMember", "")
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, member.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	publicAdmined, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{

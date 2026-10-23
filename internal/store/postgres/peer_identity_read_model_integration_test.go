@@ -35,12 +35,6 @@ func TestPeerIdentityReadModelTokenCreatedWithPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", user.ID)
-	})
 	if hash := peerIdentityHash(t, domain.Peer{Type: domain.PeerTypeUser, ID: user.ID}); hash == 0 {
 		t.Fatal("new user peer_identity hash is zero")
 	}

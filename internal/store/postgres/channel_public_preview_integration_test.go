@@ -24,12 +24,6 @@ func TestPublicChannelAndMegagroupPreviewPostgres(t *testing.T) {
 	}
 	channels := NewChannelStore(pool)
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, viewer.ID})
-	})
 
 	for i, tc := range []struct {
 		name      string
@@ -204,12 +198,6 @@ func TestLinkedDiscussionGuestPeerDialogProjectionPostgres(t *testing.T) {
 		WithChannelRowCache(NewChannelRowCache(32)),
 		WithChannelMemberCache(NewChannelMemberCache(64)))
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, subscriber.ID, outsider.ID})
-	})
 
 	broadcast, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID, Title: "Peer Dialog Source " + suffix, Broadcast: true, Date: 1700009500,

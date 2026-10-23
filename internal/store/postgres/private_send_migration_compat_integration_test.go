@@ -74,9 +74,6 @@ func TestPrivateSendMigration75To77PreservesOldWritersAndRejectsUnknownReceiptsP
 	users := NewUserStore(pool)
 	sender := createTestUser(t, ctx, users, "+1888"+suffix+"01", "MigrationSender", "")
 	recipient := createTestUser(t, ctx, users, "+1888"+suffix+"02", "MigrationRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {

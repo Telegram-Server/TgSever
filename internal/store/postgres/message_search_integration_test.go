@@ -20,7 +20,6 @@ func TestMessageSearchSenderAndCountPredicates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=ANY($1::bigint[])", []int64{a.ID, b.ID}) })
 	s := newTestMessageStore(pool)
 	for i := 1; i <= 6; i++ {
 		sender, recipient := a.ID, b.ID

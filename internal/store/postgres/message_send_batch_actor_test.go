@@ -72,9 +72,6 @@ func TestExecutePlainPrivateSendBatchCommitsDisjointMessagesTogetherPostgres(t *
 		}
 		requests = append(requests, request)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(baseCtx, "DELETE FROM users WHERE id = ANY($1::bigint[])", createdUsers)
-	})
 	messageStore := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	ctx, stats := dbtrace.WithStats(baseCtx)
 	tasks := plainPrivateSendTestTasks(t, ctx, messageStore, requests)
@@ -130,9 +127,6 @@ func TestExecutePlainPrivateSendBatchPreservesBlockedSelfAndReplayPostgres(t *te
 	normalSender, normalRecipient := makeUser(1), makeUser(2)
 	blockedSender, blockedRecipient := makeUser(3), makeUser(4)
 	selfUser := makeUser(5)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", createdUsers)
-	})
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	requests := []domain.SendPrivateTextRequest{
 		{SenderUserID: normalSender, RecipientUserID: normalRecipient, RandomID: 2508252001, Message: "normal", Date: 1800002001, IdempotencyPreflighted: true},
@@ -173,9 +167,6 @@ func TestExecutePlainPrivateSendBatchRollsBackEveryTaskOnProjectionFailurePostgr
 	}
 	firstSender, firstRecipient := makeUser(1), makeUser(2)
 	badSender, badRecipient := makeUser(3), makeUser(4)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", createdUsers)
-	})
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	requests := []domain.SendPrivateTextRequest{
 		{SenderUserID: firstSender, RecipientUserID: firstRecipient, RandomID: 2508253001, Message: "must roll back", Date: 1800003001, IdempotencyPreflighted: true},

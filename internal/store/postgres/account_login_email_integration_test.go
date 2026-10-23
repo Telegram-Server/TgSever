@@ -22,10 +22,6 @@ func TestPasswordStoreLoginEmailUniqueCaseInsensitivePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user2: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM account_passwords WHERE user_id = ANY($1::bigint[])", []int64{u1.ID, u2.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{u1.ID, u2.ID})
-	})
 
 	if err := passwords.Save(ctx, u1.ID, domain.PasswordSettings{LoginEmail: "Owner@Example.Test"}); err != nil {
 		t.Fatalf("save user1 email: %v", err)

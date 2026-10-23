@@ -24,12 +24,6 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 		t.Fatalf("create member: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, member.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -221,11 +215,6 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 
 	// 成员 Tag 是 megagroup 专属：broadcast 上 creator/self 一律 MEGAGROUP_ID_INVALID。
 	var broadcastID int64
-	t.Cleanup(func() {
-		if broadcastID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", broadcastID)
-		}
-	})
 	broadcast, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,
 		Title:         "Rank Broadcast",

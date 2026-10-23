@@ -40,16 +40,6 @@ func newPGBlocklistFixture(t *testing.T, n int) *pgBlocklistFixture {
 			f.peers = append(f.peers, u)
 		}
 	}
-	t.Cleanup(func() {
-		// Stories use a polymorphic owner rather than a users foreign key.
-		// Remove only this fixture's stories before removing its users.
-		if _, err := f.pool.Exec(context.Background(), "DELETE FROM stories WHERE owner_peer_type='user' AND owner_peer_id=$1", f.owner.ID); err != nil {
-			t.Error(err)
-		}
-		if _, err := f.pool.Exec(context.Background(), "DELETE FROM users WHERE id=ANY($1::bigint[])", ids); err != nil {
-			t.Error(err)
-		}
-	})
 	return f
 }
 func (f *pgBlocklistFixture) command(t *testing.T, kind store.BlocklistMutationKind, ids ...int64) store.BlocklistMutation {

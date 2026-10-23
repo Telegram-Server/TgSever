@@ -18,11 +18,6 @@ func TestPremiumPlanAdminOverrideSurvivesConfigSync(t *testing.T) {
 		"premium-plan-integration-create-119",
 		"premium-plan-integration-update-119",
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM premium_audit_events
-WHERE action IN ('plan_create','plan_update') AND command_key=ANY($1::text[])`, commandKeys)
-		_, _ = pool.Exec(ctx, `DELETE FROM premium_plans WHERE months=$1`, months)
-	})
 
 	created, err := premium.UpsertPremiumPlan(ctx, domain.PremiumPlanUpsertRequest{
 		Months: months, DurationDays: 365, AmountStars: 111, Enabled: true,
@@ -94,23 +89,6 @@ func TestPremiumPurchaseAtomicConcurrentIdempotentRefundAndExpiry(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := []int64{buyer.ID, recipient.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM premium_audit_events
-WHERE target_user_id=ANY($1::bigint[]) OR actor_user_id=ANY($1::bigint[])`, ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM premium_entitlements WHERE user_id=ANY($1::bigint[]) OR source_user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id=ANY($1::bigint[]) OR recipient_user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM premium_payment_intents WHERE buyer_user_id=ANY($1::bigint[]) OR recipient_user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM account_settings WHERE user_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM peer_usernames WHERE peer_type='user' AND peer_id=ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=ANY($1::bigint[])", ids)
-	})
 
 	stars := NewStarsStore(pool)
 	if balance, applied, err := stars.EnsureGrant(ctx, buyer.ID, 5000, 1_800_000_000); err != nil ||

@@ -36,12 +36,6 @@ func TestResolveDiscussionReadTargetPostgres(t *testing.T) {
 		WithChannelRowCache(NewChannelRowCache(32)),
 		WithChannelMemberCache(NewChannelMemberCache(64)))
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) > 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, subscriber.ID})
-	})
 	broadcast, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,
 		Title:         "Discussion Read Source " + suffix,

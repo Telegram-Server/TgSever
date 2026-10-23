@@ -23,13 +23,11 @@ func TestMediaPaginationBoundaries(t *testing.T) {
 	owner, other := a.ID, b.ID
 	messages := newTestMessageStore(pool)
 	channels := newTestChannelStore(pool)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=ANY($1::bigint[])", []int64{owner, other}) })
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: "media boundaries", Megagroup: true, MemberUserIDs: []int64{other}, Date: 1700000000})
 	if err != nil {
 		t.Fatal(err)
 	}
 	channel := created.Channel.ID
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id=$1", channel) })
 
 	var privateIDs, channelIDs []int
 	for i := 1; i <= 12; i++ {

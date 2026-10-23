@@ -66,9 +66,6 @@ func TestClaimOfficialUsernameDoesNotDisplaceBot(t *testing.T) {
 	suffix := time.Now().UnixNano()
 	target := fmt.Sprintf("botbrand_%d", suffix)
 	holder := createTestUser(t, ctx, users, fmt.Sprintf("+18882%d", suffix), "Protected", "Bot")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, holder.ID)
-	})
 	if _, err := users.UpdateUsername(ctx, holder.ID, target); err != nil {
 		t.Fatalf("occupy target username: %v", err)
 	}

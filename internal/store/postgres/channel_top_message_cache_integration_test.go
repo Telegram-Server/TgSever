@@ -25,12 +25,6 @@ func TestChannelTopMessageCacheInvalidatesOnTopPayloadNotify(t *testing.T) {
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	topCache := NewChannelTopMessageCache(32)
 	rowCache := NewChannelRowCache(32)

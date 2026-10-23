@@ -57,9 +57,6 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create owner: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	makeBot := func(i int) (domain.User, domain.BotProfile) {
 		u, p, err := bots.CreateBotAccount(ctx, domain.User{
 			AccessHash: int64(100 + i),
@@ -69,9 +66,6 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create bot %d: %v", i, err)
 		}
-		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID) // bots 行随 FK CASCADE
-		})
 		return u, p
 	}
 	bot1, profile1 := makeBot(1)
@@ -120,9 +114,6 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 		Step:      "username",
 		Draft:     map[string]string{"name": "IT Bot"},
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_chat_states WHERE user_id = $1", owner.ID)
-	})
 	if err := bots.UpsertBotChatState(ctx, state); err != nil {
 		t.Fatalf("upsert state: %v", err)
 	}
@@ -235,9 +226,6 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 		authKeyIDToInt64(authKeyID), make([]byte, 256)); err != nil {
 		t.Fatalf("seed auth key: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = $1", authKeyIDToInt64(authKeyID))
-	})
 	token := domain.FormatBotToken(profile1.BotUserID, "rotated-secret")
 	u, err := authSvc.SignInBot(ctx, domain.Authorization{AuthKeyID: authKeyID}, token)
 	if err != nil {

@@ -31,9 +31,6 @@ func TestUserStoreUpdateColorPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create target: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{viewer.ID, target.ID})
-	})
 
 	updated, err := users.UpdateColor(ctx, target.ID, false, domain.PeerColor{
 		HasColor:          true,

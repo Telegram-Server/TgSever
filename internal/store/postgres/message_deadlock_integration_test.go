@@ -34,16 +34,6 @@ func TestMessageStoreBidirectionalConcurrencyNoDeadlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create b: %v", err)
 	}
-	ids := []int64{a.ID, b.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_watermarks WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", ids)
-	})
 
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	date := int(time.Now().Unix())
@@ -134,16 +124,6 @@ func TestMessageStoreBidirectionalRevokeDeleteNoDeadlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create b: %v", err)
 	}
-	ids := []int64{a.ID, b.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(baseCtx, "DELETE FROM dispatch_outbox WHERE target_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(baseCtx, "DELETE FROM user_update_events WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(baseCtx, "DELETE FROM user_update_watermarks WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(baseCtx, "DELETE FROM message_boxes WHERE owner_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(baseCtx, "DELETE FROM private_messages WHERE sender_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(baseCtx, "DELETE FROM dialogs WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(baseCtx, "DELETE FROM users WHERE id = ANY($1::bigint[])", ids)
-	})
 
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	date := int(time.Now().Unix())

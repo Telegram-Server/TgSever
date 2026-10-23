@@ -15,9 +15,6 @@ func TestTranslationSettingsOwnerPeerScopedRoundTrip(t *testing.T) {
 	owner := createTestUser(t, ctx, users, "+1980"+suffix+"01", "Translate", "Owner")
 	other := createTestUser(t, ctx, users, "+1980"+suffix+"02", "Translate", "Other")
 	peerUser := createTestUser(t, ctx, users, "+1980"+suffix+"03", "Translate", "Peer")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, other.ID, peerUser.ID})
-	})
 	store := NewDialogStore(pool)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: peerUser.ID}
 

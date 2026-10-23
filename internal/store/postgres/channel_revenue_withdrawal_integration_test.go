@@ -63,9 +63,6 @@ func TestChannelRevenueWithdrawalDownRefusesCompletedClaimPostgres(t *testing.T)
 	if _, err := pool.Exec(ctx, `DELETE FROM channel_revenue_withdrawals WHERE token_digest=$1`, digest); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_revenue_withdrawals WHERE token_digest=$1`, digest)
-	})
 	if _, err := pool.Exec(ctx, `INSERT INTO channel_revenue_withdrawals
     (token_digest,channel_id,creator_user_id,currency,amount,status,expires_at,created_at,
      completed_at,channel_transaction_id,user_transaction_id,channel_balance_after,user_balance_after)
@@ -117,19 +114,6 @@ func TestChannelRevenueWithdrawalAggregatePostgres(t *testing.T) {
 	passwordChangedAt := matureRevenuePasswordVersion(t, ctx, pool, creator.ID)
 	creatorAuthKeyID, creatorAuthCreatedAt := matureRevenueAuthorization(t, ctx, pool, creator.ID)
 	otherAuthKeyID, otherAuthCreatedAt := matureRevenueAuthorization(t, ctx, pool, other.ID)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_revenue_withdrawals WHERE channel_id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_transactions WHERE channel_id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_balances WHERE channel_id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_ton_transactions WHERE channel_id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channel_ton_balances WHERE channel_id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM stars_transactions WHERE user_id=$1`, creator.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM stars_balances WHERE user_id=$1`, creator.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM ton_transactions WHERE user_id=$1`, creator.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM ton_balances WHERE user_id=$1`, creator.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE id=$1`, channelID)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{creator.ID, other.ID})
-	})
 	stalePasswordChangedAt := passwordChangedAt
 	if _, err := pool.Exec(ctx, `UPDATE account_passwords SET srp_verifier=$2 WHERE user_id=$1`, creator.ID, []byte{1}); err != nil {
 		t.Fatalf("change revenue password version: %v", err)

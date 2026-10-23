@@ -16,9 +16,6 @@ func TestWebPageStoreRoundTrip(t *testing.T) {
 
 	const urlHash = int64(9100000000000000777)
 	_, _ = pool.Exec(ctx, `DELETE FROM web_pages WHERE url_hash = $1`, urlHash)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM web_pages WHERE url_hash = $1`, urlHash)
-	})
 
 	// miss
 	if _, _, found, err := s.GetWebPageByURLHash(ctx, urlHash); err != nil || found {

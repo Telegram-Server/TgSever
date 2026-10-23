@@ -29,9 +29,6 @@ func TestEphemeralReportStoreDurableEvidenceAndIdempotency(t *testing.T) {
 	if err != nil || !created {
 		t.Fatalf("create=%v err=%v", created, err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM ephemeral_abuse_reports WHERE reporter_user_id = $1", reporter)
-	})
 	if created, err := store.CreateEphemeralReport(ctx, report); err != nil || created {
 		t.Fatalf("retry create=%v err=%v", created, err)
 	}

@@ -24,9 +24,6 @@ VALUES ($1, $2, 'rating test', $3, $3)
 RETURNING id`, seed, fmt.Sprintf("%d", seed), createdAt).Scan(&id); err != nil {
 		t.Fatalf("insert rating test user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id)
-	})
 	return id
 }
 
@@ -219,9 +216,6 @@ INSERT INTO stars_transactions (user_id, amount, reason, date)
 VALUES ($1, 1500, 'gift', 0), ($1, 500, 'reaction', 0), ($1, -400, 'purchase', 0)`, userID); err != nil {
 		t.Fatalf("seed stars: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM stars_transactions WHERE user_id = $1`, userID)
-	})
 	revisionID, giftID := ratingTestCatalogRevision(t, pool)
 	if _, err := pool.Exec(ctx, `
 INSERT INTO peer_star_gifts (owner_peer_type, owner_peer_id, msg_id, gift_id, gift_date, catalog_revision_id, lifecycle_status, converted)
@@ -230,10 +224,6 @@ VALUES ('user', $1, 1, $2, 0, $3, 'active', false),
        ('user', $1, 3, $2, 0, $3, 'converted', true)`, userID, giftID, revisionID); err != nil {
 		t.Fatalf("seed gifts: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM peer_star_gifts WHERE owner_peer_type = 'user' AND owner_peer_id = $1`, userID)
-	})
 	// Only statuses that follow a violation decision count; 'dismissed' (which
 	// covers no_violation and a granted appeal) and undecided states do not.
 	now := time.Now().UTC()
@@ -246,10 +236,6 @@ INSERT INTO moderation_cases (
 			t.Fatalf("seed moderation case %s: %v", status, err)
 		}
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM moderation_cases WHERE target_peer_type = 'user' AND target_peer_id = $1`, userID)
-	})
 	if _, err := pool.Exec(ctx, `UPDATE users SET scam = true WHERE id = $1`, userID); err != nil {
 		t.Fatalf("set scam: %v", err)
 	}
@@ -279,10 +265,6 @@ INSERT INTO message_boxes (
 			}
 		}
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM message_boxes WHERE message_sender_id = $1`, userID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM private_messages WHERE sender_user_id = $1`, userID)
-	})
 
 	signals, err := store.AccountRatingSignals(ctx, userID)
 	if err != nil {
@@ -436,9 +418,6 @@ WHERE id = $1`, deleted); err != nil {
 	}); err != nil || !changed {
 		t.Fatalf("seed projection = %v changed=%v", err, changed)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM account_rating WHERE user_id = $1`, middle)
-	})
 	index, _ = positions(t)
 	if _, ok := index[middle]; ok {
 		t.Fatalf("account %d is still a candidate after being seeded", middle)

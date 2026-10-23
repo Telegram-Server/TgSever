@@ -15,7 +15,6 @@ func TestDispatchOutboxExclusionPairInvariantPostgres(t *testing.T) {
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner := createTestUser(t, ctx, NewUserStore(pool), "+1887"+suffix+"01", "OutboxPair", "")
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID) })
 
 	event := domain.UpdateEvent{
 		Type:     domain.UpdateEventDialogPinned,

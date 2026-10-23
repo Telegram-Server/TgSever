@@ -24,12 +24,6 @@ func botAPIMemberUpdateFixture(t *testing.T, pool *pgxpool.Pool) storetest.BotAP
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_update_states WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", bot.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{bot.ID, other.ID})
-	})
 	if _, err := pool.Exec(ctx, `
 INSERT INTO bots (bot_user_id, owner_user_id, token_secret)
 VALUES ($1, $1, 'member-queue-secret')`, bot.ID); err != nil {

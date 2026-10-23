@@ -95,12 +95,6 @@ func TestPeerUsernameNamespaceIsGlobal(t *testing.T) {
 	owner := createTestUser(t, ctx, users, "+1886"+suffix+"81", "GlobalOwner", "")
 	viewer := createTestUser(t, ctx, users, "+1886"+suffix+"82", "GlobalViewer", "")
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, viewer.ID})
-	})
 
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,

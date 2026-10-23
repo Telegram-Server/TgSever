@@ -21,22 +21,6 @@ func TestAccountDeletionRetiresIdentityPostgres(t *testing.T) {
 	users := NewUserStore(pool)
 	deleted := createTestUser(t, ctx, users, fmt.Sprintf("15581%d", nonce), "Ghost", "Owner")
 	peer := createTestUser(t, ctx, users, fmt.Sprintf("15582%d", nonce), "Claim", "Ender")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM collectible_username_transfers WHERE collectible_id IN (
-SELECT id FROM collectible_usernames WHERE username_lower LIKE 'frag$1')`, nonce%1_000_000_000)
-		_, _ = pool.Exec(ctx, `DELETE FROM peer_usernames WHERE peer_type = 'user' AND peer_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM collectible_usernames WHERE username_lower LIKE 'frag$1'`, nonce%1_000_000_000)
-		_, _ = pool.Exec(ctx, `DELETE FROM profile_photos WHERE owner_peer_type = 'user' AND owner_peer_id = ANY($1)`, []int64{deleted.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM photos WHERE id IN (
-SELECT photo_id FROM profile_photos WHERE owner_peer_type = 'user' AND owner_peer_id = ANY($1))`, []int64{deleted.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM account_deletion_requests WHERE user_id = ANY($1)`, []int64{deleted.ID})
-		// Deletion enqueues one tombstone notification per contact/dialog peer.
-		// The queue is global and its FK to users has no cascade, so leaking rows
-		// here would both block the user delete and pollute every later claim.
-		_, _ = pool.Exec(ctx, `DELETE FROM account_deletion_notifications
-WHERE deleted_user_id = ANY($1) OR target_user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1)`, []int64{deleted.ID, peer.ID})
-	})
 
 	username := fmt.Sprintf("ghostname%d", nonce)
 	var updated domain.User

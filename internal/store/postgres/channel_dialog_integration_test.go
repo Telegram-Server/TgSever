@@ -21,12 +21,6 @@ func TestChannelStoreListDialogsUsesDateAndOffset(t *testing.T) {
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) > 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	channels := NewChannelStore(pool)
 	older, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -88,12 +82,6 @@ func TestChannelStoreListDialogsWarmsDialogCache(t *testing.T) {
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	cache := NewChannelDialogCache(16)
 	memberCache := NewChannelMemberCache(16)
@@ -143,12 +131,6 @@ func TestChannelStoreMaterializedSnapshotWarmsExactDialogCache(t *testing.T) {
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	cache := NewChannelDialogCache(16)
 	memberCache := NewChannelMemberCache(16)
@@ -217,12 +199,6 @@ func TestChannelStoreListDialogsScansChannelWallpaper(t *testing.T) {
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -289,12 +265,6 @@ func TestChannelStoreListDialogsDerivesRecipientTopWithoutWriteFanout(t *testing
 		t.Fatalf("create member: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, member.ID})
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -363,10 +333,6 @@ func TestChannelStoreListDialogsSeeksBeyondQueryWindow(t *testing.T) {
 	for i := range ids {
 		ids[i] = baseID + int64(i+1)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	if _, err := pool.Exec(ctx, `
 INSERT INTO channels (
     id, access_hash, creator_user_id, title, broadcast, megagroup,
@@ -471,10 +437,6 @@ func TestChannelStoreListDialogsFolderFiltersBeforeQueryLimit(t *testing.T) {
 		ids[i] = baseID + int64(i+1)
 	}
 	archivedID := ids[0]
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	if _, err := pool.Exec(ctx, `
 INSERT INTO channels (
     id, access_hash, creator_user_id, title, broadcast, megagroup,

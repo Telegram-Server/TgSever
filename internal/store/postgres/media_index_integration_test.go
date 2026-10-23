@@ -21,12 +21,6 @@ func TestChannelMediaIndexSearch(t *testing.T) {
 	}
 	channels := NewChannelStore(pool)
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID, Title: "Media " + suffix, Megagroup: true, Date: 1700002000,
 	})
@@ -166,15 +160,6 @@ func TestPrivateMediaCategoryCountsMaterialized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
-	ids := []int64{alice.ID, bob.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM dialogs WHERE user_id = ANY($1::bigint[])", ids)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", ids)
-	})
 
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	docMedia := func(attrs ...domain.DocumentAttribute) *domain.MessageMedia {

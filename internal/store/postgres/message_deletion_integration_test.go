@@ -23,10 +23,6 @@ func TestMessageDeletionsPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE owner_user_id=ANY($1::bigint[])`, []int64{sender.ID, recipient.ID})
-			_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{sender.ID, recipient.ID})
-		})
 		return storetest.MessageDeletionFixture{Messages: NewMessageStore(pool), Deletions: NewMessageDeletionStore(pool), Sender: sender.ID, Recipient: recipient.ID}
 	})
 }
@@ -45,11 +41,6 @@ func TestChannelMessageDeletionsPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE peer_type='channel' AND peer_id IN (SELECT id FROM channels WHERE creator_user_id=$1)`, owner.ID)
-			_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE creator_user_id=$1`, owner.ID)
-			_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{owner.ID, member.ID})
-		})
 		return storetest.ChannelMessageDeletionFixture{Channels: NewChannelStore(pool), Deletions: NewMessageDeletionStore(pool), Owner: owner.ID, Member: member.ID}
 	})
 }
@@ -63,11 +54,6 @@ func TestModerationChannelDeletionRecordsTheModeratorPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE peer_type='channel' AND peer_id IN (SELECT id FROM channels WHERE creator_user_id=$1)`, owner.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE creator_user_id=$1`, owner.ID)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, owner.ID)
-	})
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner.ID, Title: "Moderated", Megagroup: true, Date: 1_700_130_000})
 	if err != nil {
@@ -109,10 +95,6 @@ func TestMessageDeletionKeepsDeviceAfterLogoutPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM message_deletions WHERE owner_user_id=ANY($1::bigint[])`, []int64{sender.ID, recipient.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, []int64{sender.ID, recipient.ID})
-	})
 	var authKeyID [8]byte
 	var authKey [256]byte
 	if _, err := rand.Read(authKeyID[:]); err != nil {
@@ -124,9 +106,6 @@ func TestMessageDeletionKeepsDeviceAfterLogoutPostgres(t *testing.T) {
 	if err := NewAuthKeyStore(pool).Save(ctx, store.AuthKeyData{ID: authKeyID, Value: authKey}); err != nil {
 		t.Fatalf("save auth key: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM auth_keys WHERE auth_key_id = $1`, authKeyIDToInt64(authKeyID))
-	})
 	authorizations := NewAuthorizationStore(pool)
 	if err := authorizations.Bind(ctx, domain.Authorization{
 		AuthKeyID:   authKeyID,

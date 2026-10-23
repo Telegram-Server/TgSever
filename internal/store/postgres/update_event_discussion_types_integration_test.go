@@ -23,7 +23,6 @@ func TestUpdateEventAppendDiscussionTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID) })
 
 	store := NewUpdateEventStore(pool)
 	const channelID = int64(990077)

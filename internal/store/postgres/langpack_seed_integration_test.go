@@ -16,11 +16,6 @@ func TestLangPackSeedReconciliationPostgres(t *testing.T) {
 	ctx := context.Background()
 	packName := "seedtest-" + randomSuffix(t)
 	store := NewLangPackStore(pool)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM lang_pack_strings WHERE lang_pack = $1", packName)
-		_, _ = pool.Exec(ctx, "DELETE FROM lang_packs WHERE lang_pack = $1", packName)
-		_, _ = pool.Exec(ctx, "DELETE FROM seed_states WHERE key LIKE $1 OR key = $2 OR key = $3", "langpack:v1:entry:"+packName+":%", "langpack:v1:catalog:"+packName, "langpack:v2:catalog:"+packName)
-	})
 
 	seedV1 := domain.LangPackSeed{
 		Catalog: packName,
@@ -125,15 +120,6 @@ func TestBundledLangPackSeedPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	scopes := []string{"android", "android_x", "ios", "macos", "tdesktop", "weba"}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM lang_pack_strings WHERE lang_pack = ANY($1::text[])", scopes)
-		_, _ = pool.Exec(ctx, "DELETE FROM lang_packs WHERE lang_pack = ANY($1::text[])", scopes)
-		for _, scope := range scopes {
-			_, _ = pool.Exec(ctx, "DELETE FROM seed_states WHERE key LIKE $1", "langpack:v1:entry:"+scope+":%")
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM seed_states WHERE key = 'langpack:v1:catalog:langpack'")
-		_, _ = pool.Exec(ctx, "DELETE FROM seed_states WHERE key = 'langpack:v2:catalog:langpack'")
-	})
 
 	service := applangpack.NewService(NewLangPackStore(pool))
 	root := filepath.Join("..", "..", "..", "data", "langpack")

@@ -18,12 +18,6 @@ func TestChannelDifferenceValidCursorBeforeRowCacheInvalidationPostgres(t *testi
 		t.Fatal(err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	cache := NewChannelRowCache(16)
 	channels := NewChannelStore(pool, WithChannelRowCache(cache))
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{

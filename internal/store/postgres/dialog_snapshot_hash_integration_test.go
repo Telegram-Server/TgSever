@@ -30,10 +30,6 @@ func TestChannelDialogSnapshotHashTracksDependenciesWithoutWideHeaders(t *testin
 		t.Fatalf("create channel: %v", err)
 	}
 	channelID := created.Channel.ID
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	channels := NewChannelStore(pool)
 	load := func() domain.ChannelDialogList {
@@ -100,9 +96,6 @@ func TestPrivateDialogSnapshotHashTracksDraftDependency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create peer: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, peer.ID})
-	})
 
 	dialogs := NewDialogStore(pool)
 	dialogPeer := domain.Peer{Type: domain.PeerTypeUser, ID: peer.ID}
@@ -156,9 +149,6 @@ func TestPrivateDialogAllBuiltinSnapshotIncludesMainAndArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, mainPeer.ID, archivePeer.ID})
-	})
 	dialogs := NewDialogStore(pool)
 	for index, peer := range []int64{mainPeer.ID, archivePeer.ID} {
 		if err := dialogs.Upsert(ctx, owner.ID, domain.Dialog{

@@ -37,12 +37,6 @@ func TestChannelPollFanoutViewsPostgres(t *testing.T) {
 
 	channels := NewChannelStore(pool)
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, voted.ID, unvoted.ID, stranger.ID})
-	})
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,
 		Title:         "Poll Fanout " + suffix,

@@ -25,22 +25,6 @@ func TestAccountLifecycleScheduleCancelAndTombstonePostgres(t *testing.T) {
 	peer := createTestUser(t, ctx, users, fmt.Sprintf("15572%d", nonce), "Keep", "Peer")
 	var channelID int64
 	var collectiblePhoneID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE id = $1`, channelID)
-		}
-		if collectiblePhoneID != 0 {
-			_, _ = pool.Exec(ctx, `DELETE FROM collectible_phones WHERE id = $1`, collectiblePhoneID)
-		}
-		_, _ = pool.Exec(ctx, `DELETE FROM stars_transactions WHERE user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM ton_transactions WHERE user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM stars_balances WHERE user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM ton_balances WHERE user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM account_deletion_notifications WHERE target_user_id = ANY($1) OR deleted_user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM account_deletion_requests WHERE user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM private_messages WHERE sender_user_id = ANY($1) OR recipient_user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1)`, []int64{deleted.ID, peer.ID})
-	})
 	deletedUsername := fmt.Sprintf("deleteme%d", nonce)
 	deleted, err := users.UpdateUsername(ctx, deleted.ID, deletedUsername)
 	if err != nil {
@@ -257,12 +241,6 @@ func TestAccountLifecycleDueSourcesAndTTLWatermarkPostgres(t *testing.T) {
 	ttlUser := createTestUser(t, ctx, users, fmt.Sprintf("15671%d", nonce), "TTL", "User")
 	freezeUser := createTestUser(t, ctx, users, fmt.Sprintf("15672%d", nonce), "Frozen", "User")
 	pendingUser := createTestUser(t, ctx, users, fmt.Sprintf("15673%d", nonce), "Pending", "User")
-	ids := []int64{ttlUser.ID, freezeUser.ID, pendingUser.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM account_deletion_notifications WHERE target_user_id = ANY($1) OR deleted_user_id = ANY($1)`, ids)
-		_, _ = pool.Exec(ctx, `DELETE FROM account_deletion_requests WHERE user_id = ANY($1)`, ids)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1)`, ids)
-	})
 	now := time.Now().UTC().Truncate(time.Second)
 	if _, err := pool.Exec(ctx, `UPDATE users SET account_delete_at = $2 WHERE id = $1`, ttlUser.ID, now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
@@ -332,7 +310,6 @@ func TestAccountPasswordChangedAtIgnoresSRPChallengeRotationPostgres(t *testing.
 	pool := testPool(t)
 	ctx := context.Background()
 	user := createTestUser(t, ctx, NewUserStore(pool), fmt.Sprintf("15771%d", time.Now().UnixNano()), "Password", "Clock")
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, user.ID) })
 	if _, err := pool.Exec(ctx, `INSERT INTO account_passwords
 (user_id, has_password, current_algo_salt1, current_algo_salt2, current_algo_g, current_algo_p, srp_verifier, srp_id, srp_b)
 VALUES ($1, true, '\x01', '\x02', 3, '\x03', '\x04', 10, '\x05')`, user.ID); err != nil {

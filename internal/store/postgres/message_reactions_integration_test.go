@@ -16,9 +16,6 @@ func TestMessageStorePrivateMessageReactionsUseOwnerVisibleBoxIDs(t *testing.T) 
 	users := NewUserStore(pool)
 	sender := createTestUser(t, ctx, users, "+1994"+suffix+"01", "ReactionSender", "")
 	recipient := createTestUser(t, ctx, users, "+1994"+suffix+"02", "ReactionRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	sent, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
@@ -141,9 +138,6 @@ func TestDialogTopMessagesCarryPrivateMessageReactions(t *testing.T) {
 	users := NewUserStore(pool)
 	alice := createTestUser(t, ctx, users, "+1995"+suffix+"01", "DialogReactionAlice", "")
 	bob := createTestUser(t, ctx, users, "+1995"+suffix+"02", "DialogReactionBob", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	dialogs := NewDialogStore(pool)

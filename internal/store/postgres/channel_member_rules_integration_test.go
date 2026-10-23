@@ -25,10 +25,6 @@ func memberRulesUsers(t *testing.T, pool *pgxpool.Pool, n int) []int64 {
 		}
 		ids = append(ids, u.ID)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE creator_user_id=ANY($1::bigint[])`, ids)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::bigint[])`, ids)
-	})
 	return ids
 }
 

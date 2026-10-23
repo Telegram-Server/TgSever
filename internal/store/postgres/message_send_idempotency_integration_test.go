@@ -24,9 +24,6 @@ func TestMessageStorePrivateRandomIDConflictMatrix(t *testing.T) {
 	sender := createTestUser(t, ctx, users, "+1881"+suffix+"01", "IDSender", "")
 	recipient := createTestUser(t, ctx, users, "+1881"+suffix+"02", "IDRecipient", "")
 	other := createTestUser(t, ctx, users, "+1881"+suffix+"03", "IDOther", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID, other.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	base := domain.SendPrivateTextRequest{
@@ -93,9 +90,6 @@ func TestMessageStorePrivateRandomIDReplaySelfAndBlocked(t *testing.T) {
 	self := createTestUser(t, ctx, users, "+1882"+suffix+"01", "IDSelf", "")
 	sender := createTestUser(t, ctx, users, "+1882"+suffix+"02", "BlockedSender", "")
 	recipient := createTestUser(t, ctx, users, "+1882"+suffix+"03", "BlockedRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{self.ID, sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	selfReq := domain.SendPrivateTextRequest{
@@ -163,9 +157,6 @@ func TestMessageStorePrivateRandomIDReplayUsesCurrentSnapshotAndDurableDelete(t 
 	users := NewUserStore(pool)
 	sender := createTestUser(t, ctx, users, "+1884"+suffix+"01", "ReceiptSender", "")
 	recipient := createTestUser(t, ctx, users, "+1884"+suffix+"02", "ReceiptRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	type replayState struct {
@@ -268,9 +259,6 @@ func TestMessageStoreConcurrentPrivateHookReplayRunsHookOnce(t *testing.T) {
 	users := NewUserStore(pool)
 	sender := createTestUser(t, ctx, users, "+1885"+suffix+"01", "HookSender", "")
 	recipient := createTestUser(t, ctx, users, "+1885"+suffix+"02", "HookRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	db := &observedBeginDB{Pool: pool, secondBegin: make(chan struct{})}
 	// The two sends model two server processes. Within one process the private
@@ -395,9 +383,6 @@ func TestMessageStorePrivateRandomIDConflictFallbackUsesTransactionConnection(t 
 	users := NewUserStore(pool)
 	sender := createTestUser(t, ctx, users, "+1883"+suffix+"01", "PoolSender", "")
 	recipient := createTestUser(t, ctx, users, "+1883"+suffix+"02", "PoolRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	req := domain.SendPrivateTextRequest{
 		SenderUserID: sender.ID, RecipientUserID: recipient.ID, RandomID: 773001,

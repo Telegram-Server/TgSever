@@ -75,9 +75,6 @@ func TestBusinessStoresRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create friend: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, friend.ID})
-	})
 	username := "owner_" + suffix
 	owner, err = users.UpdateUsername(ctx, owner.ID, username)
 	if err != nil {
@@ -217,9 +214,6 @@ func TestBusinessStoresRoundTrip(t *testing.T) {
 
 	help := NewHelpStore(pool)
 	client := "tdesktop-test-" + suffix
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM app_configs WHERE client = $1", client)
-	})
 	if err := help.UpsertAppConfig(ctx, domain.AppConfig{Client: client, Hash: 9, JSON: []byte(`{"test":true}`)}); err != nil {
 		t.Fatalf("upsert app config: %v", err)
 	}
@@ -231,9 +225,6 @@ func TestBusinessStoresRoundTrip(t *testing.T) {
 		t.Fatalf("app config = %+v found=%v, want hash=9 json", cfg, found)
 	}
 	countryISO := "T" + suffix[:1]
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM countries WHERE iso2 = $1", countryISO)
-	})
 	if err := help.UpsertCountries(ctx, []domain.Country{{
 		ISO2:        countryISO,
 		DefaultName: "Testland",
@@ -259,9 +250,6 @@ func TestBusinessStoresRoundTrip(t *testing.T) {
 
 	langCode := "test-" + suffix
 	lang := NewLangPackStore(pool)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM lang_packs WHERE lang_pack = $1 AND lang_code = $2", "tdesktop", langCode)
-	})
 	if err := lang.UpsertPack(ctx, domain.LangPack{
 		LangPack: "tdesktop",
 		LangCode: langCode,
@@ -308,9 +296,6 @@ func TestHasBusinessAutomationUsesConfiguredGreetingOrAwayState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create owner: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	business := NewPasswordStore(pool)
 	if got, err := business.HasBusinessAutomation(ctx, owner.ID); err != nil || got {

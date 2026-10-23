@@ -20,12 +20,6 @@ func TestChannelDifferenceBaseLoaderRejectsChangedStableCutPostgres(t *testing.T
 		t.Fatal(err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID, Title: "Difference Cut " + suffix, Megagroup: true, Date: 1701000200,
@@ -82,12 +76,6 @@ func TestChannelDifferenceBaseCacheSharesDurablePageAcrossViewersPostgres(t *tes
 		t.Fatal(err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, memberA.ID, memberB.ID})
-	})
 
 	cache := NewChannelDifferenceBaseCache(32, 8<<20, time.Minute)
 	channels := NewChannelStore(pool, WithChannelDifferenceBaseCache(cache))
@@ -156,12 +144,6 @@ func TestChannelDifferenceRetentionInvalidatesSharedBasePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	cache := NewChannelDifferenceBaseCache(32, 8<<20, time.Minute)
 	channels := NewChannelStore(pool, WithChannelDifferenceBaseCache(cache))

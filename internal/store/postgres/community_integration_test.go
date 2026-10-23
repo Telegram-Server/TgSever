@@ -54,13 +54,6 @@ func TestCommunityStoreLifecycleIsAtomicInPostgres(t *testing.T) {
 		t.Fatalf("send public preview message: %v", err)
 	}
 	var communityID int64
-	t.Cleanup(func() {
-		if communityID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM communities WHERE id=$1", communityID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id=ANY($1::bigint[])", []int64{initial.Channel.ID, owned.Channel.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=ANY($1::bigint[])", []int64{owner.ID, member.ID})
-	})
 
 	store := NewCommunityStore(pool, nil, nil)
 	created, err := store.CreateCommunity(ctx, domain.CreateCommunityRequest{

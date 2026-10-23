@@ -32,9 +32,6 @@ func TestMessageStoreSendPrivateTextRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	var originAuthKeyID [8]byte
@@ -130,9 +127,6 @@ func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
 	users := NewUserStore(pool)
 	sender := createTestUser(t, ctx, users, "+1666"+suffix+"31", "WebViewSender", "")
 	recipient := createTestUser(t, ctx, users, "+1666"+suffix+"32", "WebViewRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	req := domain.SendPrivateTextRequest{
@@ -213,9 +207,6 @@ func TestMessageStoreRequestedPeerDisclosureSnapshotRoundTrip(t *testing.T) {
 	users := NewUserStore(pool)
 	sender := createTestUser(t, ctx, users, "+1666"+suffix+"33", "RequestedSender", "")
 	recipient := createTestUser(t, ctx, users, "+1666"+suffix+"34", "RequestedRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	requestedPeer := domain.Peer{Type: domain.PeerTypeChannel, ID: 5501}
 	photo := domain.Photo{ID: 8201, Sizes: []domain.PhotoSize{{
@@ -277,9 +268,6 @@ func TestMessageStorePhoneCallServiceFirstMessageFeedsDialogsAndUpdates(t *testi
 	users := NewUserStore(pool)
 	caller := createTestUser(t, ctx, users, "+1666"+suffix+"41", "CallFirstSender", "")
 	callee := createTestUser(t, ctx, users, "+1666"+suffix+"42", "CallFirstRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{caller.ID, callee.ID})
-	})
 
 	const callID int64 = 0x1020304050607080
 	messages := NewMessageStore(pool)
@@ -387,12 +375,6 @@ func TestUpdateEventStorePreservesChannelForwardRefsWithoutChannelSnapshot(t *te
 	sender := createTestUser(t, ctx, users, "+1666"+suffix+"21", "ForwardSender", "")
 	recipient := createTestUser(t, ctx, users, "+1666"+suffix+"22", "ForwardRecipient", "")
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	created, err := NewChannelStore(pool).CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: sender.ID,
@@ -463,9 +445,6 @@ func TestMessageStoreSendPrivateTextDuplicateDoesNotAppendPts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	req := domain.SendPrivateTextRequest{
@@ -560,9 +539,6 @@ func TestMessageStoreSendPrivateTextRecomputesInboxUnreadFromReadMax(t *testing.
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}
@@ -652,9 +628,6 @@ func TestMessageStoreSendPrivateTextRollbackDoesNotAdvancePts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	if _, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
@@ -722,9 +695,6 @@ func TestMessageStoreConcurrentRandomIDIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	boxCounters := &perUserCounterAllocator{}
 	messages := NewMessageStore(pool, WithMessageAllocators(boxCounters))

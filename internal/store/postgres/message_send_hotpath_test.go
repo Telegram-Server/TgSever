@@ -52,9 +52,6 @@ func TestPlainPrivateSendHotPathDurableFactsAndQueryCount(t *testing.T) {
 	suffix := randomSuffix(t)
 	sender := createTestUser(t, baseCtx, users, "+1667"+suffix+"01", "HotSender", "")
 	recipient := createTestUser(t, baseCtx, users, "+1667"+suffix+"02", "HotRecipient", "")
-	t.Cleanup(func() {
-		_, _ = pool.Exec(baseCtx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	ctx, stats := dbtrace.WithStats(baseCtx)

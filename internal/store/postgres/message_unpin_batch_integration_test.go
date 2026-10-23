@@ -11,20 +11,6 @@ func TestMessageStoreUnpinAllBatchBoundary(t *testing.T) {
 	f := newPGBlocklistFixture(t, 1)
 	ctx := context.Background()
 	a, b := f.owner.ID, f.peers[0].ID
-	t.Cleanup(func() {
-		// Remove only messages made by this two-user fixture before its user
-		// cleanup. Unbind lane heads before message cascades remove their outbox
-		// rows; the peer's from_user_id also prevents deleting the users first.
-		if _, err := f.pool.Exec(ctx, "DELETE FROM dispatch_outbox_user_heads WHERE target_user_id=ANY($1::bigint[])", []int64{a, b}); err != nil {
-			t.Error(err)
-		}
-		if _, err := f.pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id=ANY($1::bigint[])", []int64{a, b}); err != nil {
-			t.Error(err)
-		}
-		if _, err := f.pool.Exec(ctx, "DELETE FROM private_messages WHERE sender_user_id=ANY($1::bigint[]) AND recipient_user_id=ANY($1::bigint[])", []int64{a, b}); err != nil {
-			t.Error(err)
-		}
-	})
 	messages := newTestMessageStore(f.pool)
 	want := map[int64]map[int]bool{a: {}, b: {}}
 	for i := 0; i <= domain.MaxUnpinAllBatch; i++ {

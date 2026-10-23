@@ -14,12 +14,6 @@ func TestChannelStoreSetChannelVerifiedRefreshesRowCache(t *testing.T) {
 	users := NewUserStore(pool)
 	owner := createTestUser(t, ctx, users, "+1886"+suffix+"91", "VerifiedChannelOwner", "")
 	var channelIDs []int64
-	t.Cleanup(func() {
-		if len(channelIDs) != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	cache := NewChannelRowCache(8)
 	channels := NewChannelStore(pool, WithChannelRowCache(cache))

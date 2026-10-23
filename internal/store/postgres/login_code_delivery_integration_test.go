@@ -501,9 +501,6 @@ func createLoginCodeDeliveryTestUser(t *testing.T, ctx context.Context, pool *pg
 	if err != nil {
 		t.Fatalf("create login code test user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, user.ID)
-	})
 	return user
 }
 

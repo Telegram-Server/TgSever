@@ -58,13 +58,6 @@ func TestStarsFriendGiftPurchaseAtomicReplayAndValidationPostgres(t *testing.T) 
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_purchase_commands WHERE buyer_user_id=$1", buyer.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_purchase_forms WHERE buyer_user_id=$1", buyer.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id=$1", recipient.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id=$1", recipient.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=ANY($1::bigint[])", []int64{buyer.ID, recipient.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	store := NewStarsPurchaseStore(pool, messages)
@@ -163,13 +156,6 @@ func TestStarsTopupPurchaseAtomicReplayAndPurposeBindingPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create buyer: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_purchase_commands WHERE buyer_user_id=$1", buyer.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_purchase_forms WHERE buyer_user_id=$1", buyer.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id=$1", buyer.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id=$1", buyer.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=$1", buyer.ID)
-	})
 
 	store := NewStarsPurchaseStore(pool, nil)
 	purposePeer := domain.Peer{Type: domain.PeerTypeUser, ID: buyer.ID + 100}
@@ -247,13 +233,6 @@ func TestStarsGiveawayPurchaseAtomicChannelPTSReplayAndInfoPostgres(t *testing.T
 		t.Fatalf("create channel: %v", err)
 	}
 	channelID := created.Channel.ID
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_giveaways WHERE buyer_user_id=$1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_purchase_commands WHERE buyer_user_id=$1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM stars_purchase_forms WHERE buyer_user_id=$1", owner.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id=$1", channelID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=ANY($1::bigint[])", []int64{owner.ID, member.ID})
-	})
 	before, err := channels.GetChannelByID(ctx, channelID)
 	if err != nil {
 		t.Fatal(err)

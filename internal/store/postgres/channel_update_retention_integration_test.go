@@ -24,12 +24,6 @@ func TestChannelUpdateRetentionFloorDifferenceAndDirtyCheckpointPostgres(t *test
 		t.Fatalf("create owner: %v", err)
 	}
 	var channelID int64
-	t.Cleanup(func() {
-		if channelID != 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	channels := NewChannelStore(pool)
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
@@ -121,12 +115,6 @@ func TestDeleteExpiredChannelUpdateEventsContinuesPastCandidatePagePostgres(t *t
 		t.Fatalf("create retention page owner: %v", err)
 	}
 	channelIDs := make([]int64, 0, 320)
-	t.Cleanup(func() {
-		if len(channelIDs) > 0 {
-			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", channelIDs)
-		}
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	channels := NewChannelStore(pool)
 	for i := 0; i < 320; i++ {
@@ -188,10 +176,6 @@ func TestDeleteExpiredChannelUpdateEventsIsolatesGapAndContinuesPostgres(t *test
 	if err != nil {
 		t.Fatalf("create healthy channel: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = ANY($1::bigint[])", []int64{bad.Channel.ID, healthy.Channel.ID})
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
-	})
 
 	// Deliberately model a persisted invariant violation: the floor is the InitialChannelPts
 	// baseline but the first event ends one pts later than FirstChannelEventPts, with

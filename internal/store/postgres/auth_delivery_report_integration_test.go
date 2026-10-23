@@ -26,9 +26,6 @@ func TestAuthDeliveryReportPostgresIsIdempotentAndRetainedSeparately(t *testing.
 	if err != nil || !created || stored.ID <= 0 {
 		t.Fatalf("stored=%+v created=%v err=%v", stored, created, err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_delivery_reports WHERE id = $1", stored.ID)
-	})
 	retry, created, err := store.CreateAuthDeliveryReport(ctx, report)
 	if err != nil || created || retry.ID != stored.ID ||
 		retry.PhoneHash != stored.PhoneHash || retry.CodeHash != stored.CodeHash {

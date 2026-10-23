@@ -24,9 +24,6 @@ func TestRetentionDownMigrationsRejectAdvancedFloorsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create guarded channel: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channel.Channel.ID)
-	})
 
 	for _, test := range []struct {
 		name      string

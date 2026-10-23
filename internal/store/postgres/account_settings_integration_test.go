@@ -20,10 +20,6 @@ func TestAccountSettingsRoundTripPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM account_settings WHERE user_id = $1", u.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
-	})
 
 	// 未持久化：not found。
 	if _, found, err := store.GetAccountSettings(ctx, u.ID); err != nil || found {

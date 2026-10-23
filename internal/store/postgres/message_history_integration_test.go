@@ -28,9 +28,6 @@ func TestMessageStoreListByUserSupportsForwardAndAroundHistoryOffsets(t *testing
 	if err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	for i := 1; i <= 6; i++ {
@@ -105,9 +102,6 @@ func TestMessageStoreSearchPagesUseHasMoreHintWithoutTotalCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{alice.ID, bob.ID})
-	})
 
 	messages := NewMessageStore(pool)
 	for i := 1; i <= 5; i++ {

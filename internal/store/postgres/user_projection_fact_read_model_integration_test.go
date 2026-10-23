@@ -34,7 +34,7 @@ func TestUserProjectionFactVersionsSeedAndTrackCollectiblePhoneOwners(t *testing
 
 	phone := fmt.Sprintf("888%09d", seed%1_000_000_000)
 	store := NewCollectiblePhoneStore(pool)
-	asset, created, err := store.MintCollectiblePhone(context.Background(), domain.MintCollectiblePhoneRequest{
+	_, created, err := store.MintCollectiblePhone(context.Background(), domain.MintCollectiblePhoneRequest{
 		Phone:          phone,
 		Tier:           domain.CollectiblePhoneTierStandard,
 		OwnerUserID:    first.ID,
@@ -48,9 +48,6 @@ func TestUserProjectionFactVersionsSeedAndTrackCollectiblePhoneOwners(t *testing
 	if err != nil || !created {
 		t.Fatalf("MintCollectiblePhone: created=%v err=%v", created, err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM collectible_phones WHERE id=$1`, asset.ID)
-	})
 	afterMint := userProjectionFactHash(t, "user_collectible_phone", first.ID)
 	if afterMint == initialFirst {
 		t.Fatalf("first owner hash did not change on mint: %d", initialFirst)

@@ -25,9 +25,6 @@ func TestMessageStoreResolveWebPageIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	const url = "https://example.com/x"
 	urlHash := domain.WebPageURLHash(url)

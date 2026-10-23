@@ -37,10 +37,6 @@ func TestAlbumGroupReservationConvergesAcrossPostgresInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create recipient: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM album_group_reservations WHERE sender_user_id = $1", sender.ID)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
-	})
 
 	privatePeer := domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID}
 	full := []domain.AlbumGroupReservationItem{

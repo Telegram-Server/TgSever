@@ -18,13 +18,8 @@ func TestContactProjectionForViewerUserIDsPostgresDoesNotCrossPairs(t *testing.T
 	viewerB := createTestUser(t, ctx, users, "+1910"+suffix+"02", "Viewer", "B")
 	ownerA := createTestUser(t, ctx, users, "+1910"+suffix+"03", "Owner", "A")
 	ownerB := createTestUser(t, ctx, users, "+1910"+suffix+"04", "Owner", "B")
-	userIDs := []int64{viewerA.ID, viewerB.ID, ownerA.ID, ownerB.ID}
 	photoBase := time.Now().UnixNano() & 0x3fffffffffffffff
 	photoIDs := []int64{photoBase + 1, photoBase + 2, photoBase + 3, photoBase + 4}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", userIDs)
-		_, _ = pool.Exec(ctx, "DELETE FROM photos WHERE id = ANY($1::bigint[])", photoIDs)
-	})
 	media := NewMediaStore(pool)
 	for _, photoID := range photoIDs {
 		if err := media.PutPhoto(ctx, domain.Photo{
@@ -105,10 +100,6 @@ func TestGetReverseContactsForViewerUserIDsPostgresDoesNotCrossPairs(t *testing.
 	viewerB := createTestUser(t, ctx, users, "+1911"+suffix+"02", "Viewer", "B")
 	ownerA := createTestUser(t, ctx, users, "+1911"+suffix+"03", "Owner", "A")
 	ownerB := createTestUser(t, ctx, users, "+1911"+suffix+"04", "Owner", "B")
-	userIDs := []int64{viewerA.ID, viewerB.ID, ownerA.ID, ownerB.ID}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", userIDs)
-	})
 
 	contacts := NewContactStore(pool)
 	for _, row := range []struct {

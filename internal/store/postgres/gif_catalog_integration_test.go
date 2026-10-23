@@ -18,10 +18,6 @@ func TestGifCatalogCapacityIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	base := time.Now().UnixNano()
 	const extraDocuments = 2
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM gif_catalog WHERE id >= $1 AND id < $2`, base, base+domain.MaxGifCatalogEntries+extraDocuments)
-		_, _ = pool.Exec(ctx, `DELETE FROM documents WHERE id >= $1 AND id < $2`, base, base+domain.MaxGifCatalogEntries+extraDocuments)
-	})
 
 	var existing, reserved int
 	if err := pool.QueryRow(ctx, `
@@ -98,10 +94,6 @@ func TestGifCatalogCategoryOverrideAndAutoRestore(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	id := time.Now().UnixNano()
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM gif_catalog WHERE id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM documents WHERE id=$1`, id)
-	})
 	if err := NewMediaStore(pool).PutDocument(ctx, domain.Document{ID: id, MimeType: "video/mp4", Size: 1, DCID: 2}); err != nil {
 		t.Fatal(err)
 	}

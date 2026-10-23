@@ -228,9 +228,6 @@ func TestUploadedMediaReceiptFirstWriterWinsPostgres(t *testing.T) {
 	media := NewMediaStore(pool)
 	userID := createRevokeTestUser(t, ctx, pool, "upload-receipt")
 	const fileID = int64(880055501)
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM uploaded_media_receipts WHERE owner_user_id = $1 AND file_id = $2", userID, fileID)
-	})
 	first := domain.UploadedMediaReceipt{
 		OwnerUserID: userID,
 		FileID:      fileID,
@@ -268,9 +265,6 @@ func TestMediaStoreDocumentCacheCopiesAndRefreshes(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DELETE FROM documents WHERE id = $1`, docID); err != nil {
 		t.Fatalf("cleanup document: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM documents WHERE id = $1`, docID)
-	})
 
 	doc := domain.Document{
 		ID:            docID,
