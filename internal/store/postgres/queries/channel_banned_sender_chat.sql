@@ -45,3 +45,11 @@ LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 -- name: SenderChatChannelEverExisted :one
 -- 解封只要求被封频道存在过（含已软删除）：频道删除后封禁记录仍可解除。
 SELECT EXISTS (SELECT 1 FROM channels WHERE id = $1);
+
+-- name: ListDeletedSenderChatsByIDs :many
+-- 已软删除的频道只剩投影 channelForbidden 所需的几列：管理日志和单个成员查询里被封禁
+-- 的频道之后被删除时，仍要能给出它的 peer。
+SELECT id, access_hash, title, broadcast, megagroup
+FROM channels
+WHERE id = ANY(sqlc.arg(ids)::bigint[]) AND deleted
+ORDER BY id;

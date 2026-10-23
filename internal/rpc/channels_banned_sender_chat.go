@@ -54,13 +54,18 @@ func (r *Router) senderChatParticipant(ctx context.Context, userID, channelID, s
 }
 
 // tgSenderChats 把被封禁频道 peer 的基础行投影成 min channel：查看者通常不是这些频道的成员。
+// 已删除的频道投影成 channelForbidden，参与者里的 peer 仍能在 chats 里找到。
 func tgSenderChats(viewerUserID int64, channels []domain.Channel) []tg.ChatClass {
 	out := make([]tg.ChatClass, 0, len(channels))
 	for _, channel := range channels {
-		if channel.ID == 0 {
+		switch {
+		case channel.ID == 0:
 			continue
+		case channel.Deleted:
+			out = append(out, tgChannelForbidden(channel))
+		default:
+			out = append(out, tgChannelChatMin(viewerUserID, channel))
 		}
-		out = append(out, tgChannelChatMin(viewerUserID, channel))
 	}
 	return out
 }

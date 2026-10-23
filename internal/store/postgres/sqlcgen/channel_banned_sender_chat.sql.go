@@ -165,6 +165,49 @@ func (q *Queries) ListChannelBannedSenderChats(ctx context.Context, arg ListChan
 	return items, nil
 }
 
+const listDeletedSenderChatsByIDs = `-- name: ListDeletedSenderChatsByIDs :many
+SELECT id, access_hash, title, broadcast, megagroup
+FROM channels
+WHERE id = ANY($1::bigint[]) AND deleted
+ORDER BY id
+`
+
+type ListDeletedSenderChatsByIDsRow struct {
+	ID         int64
+	AccessHash int64
+	Title      string
+	Broadcast  bool
+	Megagroup  bool
+}
+
+// 已软删除的频道只剩投影 channelForbidden 所需的几列：管理日志和单个成员查询里被封禁
+// 的频道之后被删除时，仍要能给出它的 peer。
+func (q *Queries) ListDeletedSenderChatsByIDs(ctx context.Context, ids []int64) ([]ListDeletedSenderChatsByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listDeletedSenderChatsByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeletedSenderChatsByIDsRow
+	for rows.Next() {
+		var i ListDeletedSenderChatsByIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccessHash,
+			&i.Title,
+			&i.Broadcast,
+			&i.Megagroup,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const senderChatChannelEverExisted = `-- name: SenderChatChannelEverExisted :one
 SELECT EXISTS (SELECT 1 FROM channels WHERE id = $1)
 `

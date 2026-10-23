@@ -128,7 +128,7 @@ func (s *ChannelStore) GetSenderChatsByIDs(_ context.Context, ids []int64) ([]do
 			continue
 		}
 		seen[id] = struct{}{}
-		if channel, ok := s.channels[id]; ok && !channel.Deleted {
+		if channel, ok := s.channels[id]; ok {
 			out = append(out, cloneChannel(channel))
 		}
 	}

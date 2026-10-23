@@ -167,8 +167,8 @@ func (s *ChannelStore) ListChannelBannedSenderChats(ctx context.Context, viewerU
 	return out, nil
 }
 
-// GetSenderChatsByIDs 一次读出一批频道 peer 的基础行（见 store.ChannelBannedSenderChatStore），
-// 走频道行缓存。
+// GetSenderChatsByIDs 一次读出一批频道 peer 的基础行（见 store.ChannelBannedSenderChatStore）。
+// 现存频道走频道行缓存；缓存只装现存频道，剩下的 id 再查一次已删除的频道。
 func (s *ChannelStore) GetSenderChatsByIDs(ctx context.Context, ids []int64) ([]domain.Channel, error) {
 	ids = uniqueNonZeroInt64s(ids...)
 	if len(ids) == 0 {
@@ -178,9 +178,26 @@ func (s *ChannelStore) GetSenderChatsByIDs(ctx context.Context, ids []int64) ([]
 	if err != nil {
 		return nil, err
 	}
-	out := make([]domain.Channel, 0, len(channels))
-	for _, channel := range channels {
-		out = append(out, channel)
+	out := make([]domain.Channel, 0, len(ids))
+	missing := make([]int64, 0, len(ids)-len(channels))
+	for _, id := range ids {
+		if channel, ok := channels[id]; ok {
+			out = append(out, channel)
+		} else {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) > 0 {
+		rows, err := sqlcgen.New(s.db).ListDeletedSenderChatsByIDs(ctx, missing)
+		if err != nil {
+			return nil, fmt.Errorf("list deleted sender chats: %w", err)
+		}
+		for _, row := range rows {
+			out = append(out, domain.Channel{
+				ID: row.ID, AccessHash: row.AccessHash, Title: row.Title,
+				Broadcast: row.Broadcast, Megagroup: row.Megagroup, Deleted: true,
+			})
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil

@@ -23,7 +23,9 @@ type ChannelBannedSenderChatStore interface {
 	// 用户名（不区分大小写）子串过滤。limit<=0 时只返回 Count。
 	// 已删除的频道不计入、不列出。
 	ListChannelBannedSenderChats(ctx context.Context, viewerUserID, channelID int64, query string, offset, limit int) (domain.ChannelBannedSenderChatList, error)
-	// GetSenderChatsByIDs 一次读出一批频道 peer 的基础行（按 id 升序，去重），不存在或已删除的
-	// 跳过，不做查看者鉴权；供管理日志等投影补齐频道 peer。
+	// GetSenderChatsByIDs 一次读出一批频道 peer 的基础行（按 id 升序，去重），不存在的跳过，
+	// 不做查看者鉴权；供管理日志、单个成员查询等投影补齐频道 peer。已删除的频道也返回，
+	// Deleted=true，只保证 ID、AccessHash、Title、Broadcast、Megagroup，供投影成
+	// channelForbidden。
 	GetSenderChatsByIDs(ctx context.Context, ids []int64) ([]domain.Channel, error)
 }

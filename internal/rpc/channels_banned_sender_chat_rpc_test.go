@@ -176,3 +176,42 @@ func TestChannelsBannedChannelPeerProjections(t *testing.T) {
 		t.Fatalf("getParticipant after unban = %v, want USER_NOT_PARTICIPANT", err)
 	}
 }
+
+// 频道被封禁后又被删除：单个成员查询与管理日志里的参与者 peer 仍能在 chats 里找到，
+// 投影成 channelForbidden（review #3）。
+func TestChannelsBannedChannelPeerAfterChannelDeleted(t *testing.T) {
+	f := newBotAPIBridgeFixture(t)
+	sender := f.senderChannel(t, "Gone Channel")
+	peer := inputPeerOfChannel(sender)
+	if err := f.editBannedChannelPeer(f.owner.ID, peer, tg.ChatBannedRights{ViewMessages: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.channels.DeleteChannel(f.ctx, f.member.ID, domain.DeleteChannelRequest{UserID: f.member.ID, ChannelID: sender.ID, Date: 40}); err != nil {
+		t.Fatalf("delete sender channel: %v", err)
+	}
+	ownerCtx := WithUserID(f.ctx, f.owner.ID)
+	hasForbidden := func(where string, chats []tg.ChatClass) {
+		t.Helper()
+		for _, chat := range chats {
+			if ch, ok := chat.(*tg.ChannelForbidden); ok && ch.ID == sender.ID && ch.AccessHash == sender.AccessHash && ch.Title == "Gone Channel" && ch.Broadcast {
+				return
+			}
+		}
+		t.Fatalf("%s chats %+v miss channelForbidden for deleted sender %d", where, chats, sender.ID)
+	}
+
+	one, err := f.router.onChannelsGetParticipant(ownerCtx, &tg.ChannelsGetParticipantRequest{Channel: f.inputChannel(), Participant: peer})
+	if err != nil {
+		t.Fatalf("getParticipant of a deleted banned channel: %v", err)
+	}
+	if banned, ok := one.Participant.(*tg.ChannelParticipantBanned); !ok || banned.Peer.(*tg.PeerChannel).ChannelID != sender.ID {
+		t.Fatalf("participant = %#v, want the banned channel", one.Participant)
+	}
+	hasForbidden("getParticipant", one.Chats)
+
+	logRes, err := f.router.onChannelsGetAdminLog(ownerCtx, &tg.ChannelsGetAdminLogRequest{Channel: f.inputChannel(), Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasForbidden("admin log", logRes.Chats)
+}

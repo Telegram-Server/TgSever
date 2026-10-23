@@ -89,9 +89,14 @@ func (s *Service) GetSenderChatParticipant(ctx context.Context, userID, channelI
 	if !banned {
 		return domain.ChannelMember{}, domain.Channel{}, domain.ErrUserNotParticipant
 	}
-	channel, err := s.channels.GetChannelByID(ctx, senderChatID)
-	if err != nil && !errors.Is(err, domain.ErrChannelInvalid) {
+	// 频道封禁后可能已被删除：仍返回它的基础行（Deleted=true），让投影能给出这个 peer。
+	channels, err := bans.GetSenderChatsByIDs(ctx, []int64{senderChatID})
+	if err != nil {
 		return domain.ChannelMember{}, domain.Channel{}, err
+	}
+	var channel domain.Channel
+	if len(channels) > 0 {
+		channel = channels[0]
 	}
 	return record.Member(), channel, nil
 }

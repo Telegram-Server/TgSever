@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -255,12 +256,19 @@ func ChannelBannedSenderChats(t *testing.T, s ChannelBannedSenderChatStore, user
 		if err != nil {
 			t.Fatal(err)
 		}
-		lo, hi := alpha, beta
-		if lo > hi {
-			lo, hi = hi, lo
+		// 已删除的频道也返回，带 Deleted 标记和投影 channelForbidden 所需的基础字段。
+		want := []int64{alpha, beta, gone}
+		slices.Sort(want)
+		if len(got) != 3 || got[0].ID != want[0] || got[1].ID != want[1] || got[2].ID != want[2] {
+			t.Fatalf("sender chats by ids = %+v, want %v", got, want)
 		}
-		if len(got) != 2 || got[0].ID != lo || got[1].ID != hi || got[0].Title == "" {
-			t.Fatalf("sender chats by ids = %+v, want %d and %d", got, lo, hi)
+		for _, ch := range got {
+			if ch.Deleted != (ch.ID == gone) || ch.Title == "" || ch.AccessHash == 0 {
+				t.Fatalf("sender chat %+v: want Deleted only for %d, with title and access hash", ch, gone)
+			}
+			if ch.ID == gone && !ch.Broadcast {
+				t.Fatalf("deleted sender chat %+v lost its broadcast flag", ch)
+			}
 		}
 	})
 }
