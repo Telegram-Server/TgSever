@@ -94,7 +94,7 @@ func TestSuggestedProfilePhotoOfferBackfillMigrationPostgres(t *testing.T) {
 	}
 	before := profilePhotoRows(t, ctx, pool, everyone)
 
-	raw, err := deploy.Migrations.ReadFile("migrations/20261023010000_suggested_profile_photo_offers.up.sql")
+	raw, err := deploy.Migrations.ReadFile("migrations/20261029010000_suggested_profile_photo_offers.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
