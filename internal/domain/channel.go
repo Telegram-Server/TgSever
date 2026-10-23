@@ -921,6 +921,8 @@ type ChannelMessageReactionsResult struct {
 	Messages   []ChannelMessage
 	Reactions  ChannelMessageReactions
 	Recipients []int64
+	// BotUpdates 是与反应同事务写入的 bot qts 记录（#150），提交后在线推送。
+	BotUpdates []BotUpdate
 }
 
 // DeleteChannelParticipantReactionRequest removes one participant reaction on one message.

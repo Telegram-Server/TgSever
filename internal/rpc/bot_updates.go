@@ -32,6 +32,9 @@ func tgBotUpdate(update domain.BotUpdate, view *domain.ChannelView) (tg.UpdateCl
 	if update.BotStopped != nil {
 		return tgBotStoppedUpdate(update)
 	}
+	if update.MessageReaction != nil || update.MessageReactions != nil {
+		return tgBotMessageReactionUpdate(update)
+	}
 	p := update.ChannelParticipant
 	if p == nil {
 		return nil, nil, nil

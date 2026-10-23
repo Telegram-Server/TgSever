@@ -28,7 +28,7 @@ func (s *ChannelStore) SetAvailableReactions(_ context.Context, userID, channelI
 	return cloneChannel(channel), nil
 }
 
-func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.SetChannelMessageReactionsRequest) (domain.ChannelMessageReactionsResult, error) {
+func (s *ChannelStore) setChannelMessageReactions(_ context.Context, req domain.SetChannelMessageReactionsRequest) (domain.ChannelMessageReactionsResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 || req.MessageID <= 0 || req.MessageID > domain.MaxMessageBoxID {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrChannelInvalid
 	}

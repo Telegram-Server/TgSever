@@ -22,6 +22,10 @@ func botUpdateChannelID(update domain.BotUpdate) int64 {
 		return update.ChannelParticipant.Channel.ID
 	case update.ChatInviteRequester != nil:
 		return update.ChatInviteRequester.Channel.ID
+	case update.MessageReaction != nil:
+		return update.MessageReaction.Channel.ID
+	case update.MessageReactions != nil:
+		return update.MessageReactions.Channel.ID
 	}
 	return 0
 }

@@ -442,6 +442,8 @@ type PrivateMessageReactionsRequest struct {
 type PrivateMessageReactionsResult struct {
 	Messages  []Message
 	Reactions ChannelMessageReactions
+	// BotUpdates 是与反应同事务写入的 bot qts 记录（#150），提交后在线推送。
+	BotUpdates []BotUpdate
 }
 
 // ForwardPrivateMessagesRequest 是私聊文本消息转发命令。

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func (s *MessageStore) SetMessageReactions(_ context.Context, req domain.SetPrivateMessageReactionsRequest) (domain.PrivateMessageReactionsResult, error) {
+func (s *MessageStore) setMessageReactions(_ context.Context, req domain.SetPrivateMessageReactionsRequest) (domain.PrivateMessageReactionsResult, error) {
 	if req.UserID == 0 || req.Peer.Type != domain.PeerTypeUser || req.Peer.ID == 0 || req.MessageID <= 0 || req.MessageID > domain.MaxMessageBoxID {
 		return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
