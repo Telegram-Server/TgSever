@@ -1444,6 +1444,8 @@ type CreateChannelResult struct {
 	Message    ChannelMessage
 	Event      ChannelUpdateEvent
 	Recipients []int64
+	// BotUpdates 是与成员变化同一事务写入的 bot qts 记录（带已分配的 qts），提交后在线推送。
+	BotUpdates []BotUpdate
 }
 
 // MergeJoined 把批量批准入群中的一次结果并入累计结果：Channel/Message/Event/Recipients 取
@@ -1461,6 +1463,7 @@ func (r CreateChannelResult) MergeJoined(next CreateChannelResult) CreateChannel
 		}
 	}
 	next.Members, next.Previous = members, previous
+	next.BotUpdates = append(append([]BotUpdate(nil), r.BotUpdates...), next.BotUpdates...)
 	return next
 }
 
@@ -1537,6 +1540,8 @@ type EditChannelAdminResult struct {
 	Event       ChannelUpdateEvent
 	Recipients  []int64
 	Date        int
+	// BotUpdates 是与成员变化同一事务写入的 bot qts 记录。
+	BotUpdates []BotUpdate
 }
 
 // TransferChannelOwnershipRequest transfers a channel/supergroup to another active member.
@@ -1598,6 +1603,8 @@ type EditChannelBannedResult struct {
 	// 消息及其 channel pts 事件；纯禁言/解禁不生成。
 	Message      ChannelMessage
 	ServiceEvent ChannelUpdateEvent
+	// BotUpdates 是与成员变化同一事务写入的 bot qts 记录。
+	BotUpdates []BotUpdate
 }
 
 // DeleteChannelRequest deletes a channel/supergroup. Only the creator may do this.

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUserID int64, userIDs []int64, date int) (domain.CreateChannelResult, error) {
+func (s *ChannelStore) inviteToChannel(channelID, inviterUserID int64, userIDs []int64, date int) (domain.CreateChannelResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	channel, err := s.channelForMemberLocked(inviterUserID, channelID)

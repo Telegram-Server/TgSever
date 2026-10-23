@@ -80,6 +80,10 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	botUpdates, err := appendBotOnlyUpdatesTx(ctx, tx, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous}, userID, date))
+	if err != nil {
+		return domain.CreateChannelResult{}, err
+	}
 	// 重新入群(含首次)时归还纯 prehistory 来源的读边界:upsert 是 GREATEST,不显式下调的
 	// 话,"隐藏历史期间入群"的成员即使频道后来关闭了隐藏历史也永远看不到旧消息。
 	if err := resetPrehistoryBoundaryTx(ctx, tx, channel, userID); err != nil {
@@ -142,7 +146,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, userID, member.ReadInboxMaxI
 	}
 	committed = true
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, userID, channelID, 0)
-	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous, Message: msg, Event: event, Recipients: recipients}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous, Message: msg, Event: event, Recipients: recipients, BotUpdates: botUpdates}, nil
 }
 
 func (s *ChannelStore) FutureCreatorAfterLeave(ctx context.Context, channelID, userID int64) (domain.ChannelMember, error) {
@@ -240,6 +244,10 @@ WHERE id = $1`, channelID, channel.CreatorUserID, adminsDelta); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
 	}
+	botUpdates, err := appendBotOnlyUpdatesTx(ctx, tx, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous}, userID, date))
+	if err != nil {
+		return domain.CreateChannelResult{}, err
+	}
 	recipients, err := s.listActiveChannelMemberIDs(ctx, tx, channelID, 0)
 	if err != nil {
 		return domain.CreateChannelResult{}, err
@@ -276,7 +284,7 @@ WHERE id = $1`, channelID, channel.CreatorUserID, adminsDelta); err != nil {
 	}
 	committed = true
 	recipients = append(recipients, userID)
-	return domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous, Message: msg, Event: event, Recipients: recipients}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous, Message: msg, Event: event, Recipients: recipients, BotUpdates: botUpdates}, nil
 }
 
 func (s *ChannelStore) futureCreatorAfterLeave(ctx context.Context, db sqlcgen.DBTX, channelID, userID int64) (domain.ChannelMember, error) {

@@ -584,6 +584,18 @@ type BotStarsTransaction struct {
 	Date        int32
 }
 
+type BotUpdate struct {
+	BotUserID int64
+	Qts       int32
+	Date      int32
+	Payload   []byte
+}
+
+type BotUpdateState struct {
+	BotUserID int64
+	Qts       int32
+}
+
 type BotUserMenuButton struct {
 	BotUserID      int64
 	UserID         int64

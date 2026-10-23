@@ -38,6 +38,8 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	previous, err := s.getChannelMember(ctx, tx, req.ChannelID, req.MemberID)
 	previous = previous.EffectiveAt(restrictionNow(req.Date))
 	membershipActivated := err != nil && errors.Is(err, domain.ErrChannelPrivate)
+	// 没有成员记录时下面合成一个"普通成员"占位；bot 的 qts 记录里它应是"此前不在群"。
+	hadMemberRecord := err == nil
 	if err != nil {
 		if !errors.Is(err, domain.ErrChannelPrivate) {
 			return domain.EditChannelAdminResult{}, err
@@ -123,6 +125,16 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.EditChannelAdminResult{}, err
 	}
+	botPrevious := previous
+	if !hadMemberRecord {
+		botPrevious = domain.ChannelMember{}
+	}
+	var botUpdates []domain.BotUpdate
+	if update, ok := domain.BotChannelParticipantChange(channel, req.UserID, botPrevious, member, req.Date); ok {
+		if botUpdates, err = appendBotOnlyUpdatesTx(ctx, tx, []domain.BotUpdate{update}); err != nil {
+			return domain.EditChannelAdminResult{}, err
+		}
+	}
 	// 被重新激活的成员(此前 left/kicked)同样要归还 prehistory 读边界,否则永久空频道。
 	if membershipActivated {
 		if err := resetPrehistoryBoundaryTx(ctx, tx, channel, member.UserID); err != nil {
@@ -163,7 +175,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	committed = true
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 	recipients = append(recipients, req.MemberID)
-	return domain.EditChannelAdminResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date}, nil
+	return domain.EditChannelAdminResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date, BotUpdates: botUpdates}, nil
 }
 
 func (s *ChannelStore) TransferChannelOwnership(ctx context.Context, req domain.TransferChannelOwnershipRequest) (domain.TransferChannelOwnershipResult, error) {
@@ -448,6 +460,12 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.EditChannelBannedResult{}, err
 	}
+	var botUpdates []domain.BotUpdate
+	if update, ok := domain.BotChannelParticipantChange(channel, req.UserID, previous, member, req.Date); ok {
+		if botUpdates, err = appendBotOnlyUpdatesTx(ctx, tx, []domain.BotUpdate{update}); err != nil {
+			return domain.EditChannelBannedResult{}, err
+		}
+	}
 	if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
 		ChannelID:       req.ChannelID,
 		UserID:          req.UserID,
@@ -500,7 +518,7 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	committed = true
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 	recipients = append(recipients, req.Participant.ID)
-	return domain.EditChannelBannedResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date, Message: serviceMsg, ServiceEvent: serviceEvent}, nil
+	return domain.EditChannelBannedResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date, Message: serviceMsg, ServiceEvent: serviceEvent, BotUpdates: botUpdates}, nil
 }
 
 func (s *ChannelStore) EditChannelDefaultBannedRights(ctx context.Context, req domain.EditChannelDefaultBannedRightsRequest) (domain.Channel, error) {

@@ -127,7 +127,7 @@ func (s *ChannelStore) FutureCreatorAfterLeave(_ context.Context, channelID, use
 	return s.futureCreatorAfterLeaveLocked(channelID, userID)
 }
 
-func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error) {
+func (s *ChannelStore) joinChannel(channelID, userID int64, date int) (domain.CreateChannelResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	channel, ok := s.channels[channelID]
@@ -238,7 +238,7 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 	}, nil
 }
 
-func (s *ChannelStore) LeaveChannel(_ context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error) {
+func (s *ChannelStore) leaveChannel(channelID, userID int64, date int) (domain.CreateChannelResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	channel, member, err := s.channelAndMemberLocked(userID, channelID)
@@ -314,7 +314,7 @@ func (s *ChannelStore) LeaveChannel(_ context.Context, channelID, userID int64, 
 	}, nil
 }
 
-func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error) {
+func (s *ChannelStore) editChannelAdmin(req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 || req.MemberID == 0 {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
@@ -564,7 +564,7 @@ func (s *ChannelStore) EditChannelMemberRank(_ context.Context, req domain.EditC
 	}, nil
 }
 
-func (s *ChannelStore) EditChannelBanned(_ context.Context, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error) {
+func (s *ChannelStore) editChannelBanned(req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 || req.Participant.Type != domain.PeerTypeUser || req.Participant.ID == 0 {
 		return domain.EditChannelBannedResult{}, domain.ErrChannelInvalid
 	}

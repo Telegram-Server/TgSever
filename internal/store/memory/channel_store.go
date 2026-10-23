@@ -125,6 +125,10 @@ type ChannelStore struct {
 	usernameRegistry *CollectibleUsernameStore
 	// deletions 是删除记录（与 MessageStore 共用同一实例）；nil 时不记录。
 	deletions *MessageDeletionStore
+	// botUpdates 是 bot qts 序列；nil 时成员变动不写 bot 更新。botUpdateMu 把成员变动与
+	// 对应的 qts 分配串成一个临界区，保证同一 bot 的 qts 顺序与变动顺序一致。
+	botUpdates  *BotUpdateStore
+	botUpdateMu sync.Mutex
 }
 
 // AttachDeletionStore 注入删除记录（与 MessageStore 共用同一实例）。

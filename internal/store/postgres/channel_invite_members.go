@@ -121,6 +121,10 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		channel.ParticipantsCount += len(members)
 		channel.KickedCount = maxInt(channel.KickedCount-restoredKicked, 0)
 	}
+	botUpdates, err := appendBotOnlyUpdatesTx(ctx, tx, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous}, inviterUserID, date))
+	if err != nil {
+		return domain.CreateChannelResult{}, err
+	}
 	var msg domain.ChannelMessage
 	var event domain.ChannelUpdateEvent
 	if len(members) > 0 && channel.Megagroup {
@@ -151,7 +155,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		return domain.CreateChannelResult{}, fmt.Errorf("commit invite channel: %w", err)
 	}
 	committed = true
-	return domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous, Message: msg, Event: event}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous, Message: msg, Event: event, BotUpdates: botUpdates}, nil
 }
 
 func canInviteToChannel(channel domain.Channel, member domain.ChannelMember) bool {
