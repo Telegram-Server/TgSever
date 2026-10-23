@@ -626,6 +626,9 @@ type Config struct {
 	// BotAPIUpdateRetention 是 bot_api_updates 投递队列的最大保留期（官方 Bot API 语义 24h）；
 	// 已确认的行另按固定短宽限提前回收（性能审计 H1）。
 	BotAPIUpdateRetention time.Duration
+	// BotUpdateRetention 是 bot qts 序列（bot_updates）的保留期，默认 24h；更早的 qts 由
+	// updates.getDifference 返回 differenceTooLong。
+	BotUpdateRetention time.Duration
 	// OrphanAuthKeyRetention 是握手已创建、但没有 authorization/temp binding/活跃连接的
 	// auth key 最短保留期。过期后由有界 GC 回收；客户端收到 -404 会重建 key。
 	OrphanAuthKeyRetention time.Duration
@@ -1339,6 +1342,7 @@ func Load() (Config, error) {
 		ChannelNudgeMaxTargets: envIntOr("TELESRV_CHANNEL_NUDGE_MAX_TARGETS", 0),
 		UpdateEventRetention:   envDurationOr("TELESRV_UPDATE_EVENT_RETENTION", 168*time.Hour),
 		BotAPIUpdateRetention:  envDurationOr("TELESRV_BOT_API_UPDATE_RETENTION", 24*time.Hour),
+		BotUpdateRetention:     envDurationOr("TELESRV_BOT_UPDATE_RETENTION", 24*time.Hour),
 		OrphanAuthKeyRetention: envDurationOr("TELESRV_ORPHAN_AUTH_KEY_RETENTION", 24*time.Hour),
 		RetentionInterval:      envDurationOr("TELESRV_RETENTION_INTERVAL", time.Hour),
 		RetentionBatch:         envIntOr("TELESRV_RETENTION_BATCH", 10000),

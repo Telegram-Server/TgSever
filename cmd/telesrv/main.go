@@ -856,6 +856,8 @@ func run(logger *zap.Logger) error {
 	}
 	defer bootstrapUpdateStore.Close()
 	botAPIUpdateStore := postgres.NewBotAPIUpdateStore(pool)
+	// bot qts 序列（#145）：成员变动由 ChannelStore 在同一事务里写入，这里只读与回收。
+	botUpdateStore := postgres.NewBotUpdateStore(pool)
 	botCallbackStore := redisstore.NewBotCallbackRegistryStore(rdb)
 	ephemeralStore := redisstore.NewEphemeralMessageStore(rdb)
 	ephemeralReportStore := postgres.NewEphemeralReportStore(pool)
@@ -1102,6 +1104,7 @@ func run(logger *zap.Logger) error {
 		cfg.RetentionBatch,
 	).WithDispatchOutboxPoisonPolicy(cfg.OutboxPoisonRetention, cfg.OutboxPoisonCleanupInterval).
 		WithBotAPIUpdateRetention(botAPIUpdateStore, cfg.BotAPIUpdateRetention).
+		WithBotUpdateRetention(botUpdateStore, cfg.BotUpdateRetention).
 		WithAuthKeySessionLayerRetention(authKeyStore).
 		WithLoginCodeDeliveryRetention(messageStore).
 		WithClientTelemetryRetention(clientTelemetryStore, 30*24*time.Hour).
@@ -2018,6 +2021,7 @@ func run(logger *zap.Logger) error {
 		Updates:                      updatesService,
 		BootstrapUpdates:             bootstrapUpdateStore,
 		BotAPIUpdates:                botAPIUpdateStore,
+		BotUpdates:                   botUpdateStore,
 		BotCallbacks:                 botCallbackStore,
 		PushDevices:                  pushDeviceStore,
 		Contacts:                     contactsService,

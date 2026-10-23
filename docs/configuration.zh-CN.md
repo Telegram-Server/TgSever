@@ -619,6 +619,7 @@ telesrv 扩展协议（不是官方 Telegram 功能）：客户端不经验证�
 | `TELESRV_CHANNEL_NUDGE_MAX_TARGETS` | int / `0` | 单次 channel fan-out nudge 目标上限；`<=0` 使用内置默认值。 |
 | `TELESRV_UPDATE_EVENT_RETENTION` | duration / `168h` | durable update log 保留期；只删除已被协议安全水位/状态覆盖的事件。 |
 | `TELESRV_BOT_API_UPDATE_RETENTION` | duration / `24h` | Bot API update 队列最长保留期；已确认行另有固定短宽限。 |
+| `TELESRV_BOT_UPDATE_RETENTION` | duration / `24h` | MTProto bot qts 序列（`bot_updates`）的保留期；bot 请求更早的 qts 时返回 `updates.differenceTooLong`。 |
 | `TELESRV_ORPHAN_AUTH_KEY_RETENTION` | duration / `24h` | 没有 authorization/temp binding/活跃连接的握手 auth key 最短保留期。 |
 | `TELESRV_RETENTION_INTERVAL` | duration / `1h` | 通用 retention worker 周期。 |
 | `TELESRV_RETENTION_BATCH` | int / `10000` | 单次通用 retention 最大删除行数。 |

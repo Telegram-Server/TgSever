@@ -115,6 +115,8 @@ type RetentionWorker struct {
 	clientTelemetry             ClientTelemetryRetentionStore
 	authDeliveryReports         AuthDeliveryReportRetentionStore
 	moderation                  ModerationRetentionStore
+	botUpdates                  BotUpdateRetentionStore // 可为 nil（不回收 bot qts 序列）
+	botUpdateRetention          time.Duration
 	orphanAuthKeys              OrphanAuthKeyRetentionStore
 	activeAuthKeys              ActiveRawAuthKeyProvider
 	activeAuthKeyHeartbeat      ActiveAuthKeyHeartbeatStore
@@ -389,6 +391,7 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 			w.logger.Info("回收 bot_api_updates 队列完成", zap.Int("deleted", botAPIDeleted))
 		}
 	}
+	w.runBotUpdateRetention(ctx)
 	if w.userUpdates != nil {
 		userDeleted, err := w.userUpdates.DeleteConfirmedPrefix(ctx, w.retention, w.batch)
 		if err != nil {

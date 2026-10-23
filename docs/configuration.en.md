@@ -639,6 +639,7 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_CHANNEL_NUDGE_MAX_TARGETS` | int / `0` | Maximum targets for one channel fan-out nudge; `<=0` uses the built-in default. |
 | `TELESRV_UPDATE_EVENT_RETENTION` | duration / `168h` | Durable update-log retention. Cleanup only removes events covered by protocol-safe watermarks/state. |
 | `TELESRV_BOT_API_UPDATE_RETENTION` | duration / `24h` | Maximum Bot API update queue retention; acknowledged rows also have a shorter fixed grace period. |
+| `TELESRV_BOT_UPDATE_RETENTION` | duration / `24h` | Retention of the per-bot MTProto qts sequence (`bot_updates`); a bot asking for an older qts gets `updates.differenceTooLong`. |
 | `TELESRV_ORPHAN_AUTH_KEY_RETENTION` | duration / `24h` | Minimum retention for handshake-created keys with no authorization/temp binding/active connection. |
 | `TELESRV_RETENTION_INTERVAL` | duration / `1h` | General retention worker interval. |
 | `TELESRV_RETENTION_BATCH` | int / `10000` | Maximum rows deleted by one general retention batch. |
