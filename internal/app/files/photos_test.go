@@ -9,6 +9,8 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io/fs"
+	"path/filepath"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -779,6 +781,7 @@ func TestCreateAvatarVideoFromBytesStoresVideoLargerThanOnePart(t *testing.T) {
 	for i := range video {
 		video[i] = byte(i*7 + i/1024)
 	}
+	copy(video, testMP4Header)
 	photo, err := svc.CreateAvatarVideoFromBytes(ctx, video, 1.5)
 	if err != nil {
 		t.Fatalf("CreateAvatarVideoFromBytes(%d bytes): %v", len(video), err)
@@ -833,7 +836,46 @@ func TestCreateAvatarVideoFromBytesDoesNotUseUploadQuota(t *testing.T) {
 		t.Fatalf("occupy owner 0 quota: %v", err)
 	}
 	video := make([]byte, MaxUploadPartBytes+100)
+	copy(video, testMP4Header)
 	if _, err := svc.CreateAvatarVideoFromBytes(ctx, video, 0); err != nil {
 		t.Fatalf("CreateAvatarVideoFromBytes with owner 0 quota in use: %v", err)
+	}
+}
+
+// testMP4Header 是一个最小的 ISO BMFF ftyp 盒子（24 字节，major_brand isom），放在测试视频开头。
+var testMP4Header = []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm', 0, 0, 2, 0, 'i', 's', 'o', 'm', 'm', 'p', '4', '1'}
+
+// 视频头像的字节会以 video/mp4 发给所有客户端：不以 ftyp 盒子开头的字节被拒绝，
+// 且不写入任何 blob（review #8）。
+func TestCreateAvatarVideoFromBytesRejectsNonMP4(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	blobs, err := NewLocalFS(dir)
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	svc := NewService(newFakeMediaStore(), blobs, 2, WithVideoThumbnailer(&fakeVideoThumbnailer{thumb: testJPEG(t, 640, 640)}))
+
+	for name, data := range map[string][]byte{
+		"jpeg image":         testJPEG(t, 64, 64),
+		"random bytes":       bytes.Repeat([]byte{0xAB}, 4096),
+		"too short":          testMP4Header[:10],
+		"box size too small": append([]byte{0, 0, 0, 4}, testMP4Header[4:]...),
+	} {
+		if _, err := svc.CreateAvatarVideoFromBytes(ctx, data, 0); !errors.Is(err, domain.ErrPhotoInvalid) {
+			t.Fatalf("%s: err = %v, want ErrPhotoInvalid", name, err)
+		}
+	}
+	var stored []string
+	if err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			stored = append(stored, path)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("rejected videos left blobs behind: %v", stored)
 	}
 }

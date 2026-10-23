@@ -169,11 +169,27 @@ func (s *Service) CreateAvatarVideoFromBytes(ctx context.Context, data []byte, v
 	if len(data) > MaxUploadParts*MaxUploadPartBytes {
 		return domain.Photo{}, domain.ErrFilePartsInvalid
 	}
+	// 字节会以 video/mp4 发给所有客户端：先确认是 MP4（ISO BMFF，以 ftyp 盒子开头），
+	// 不是就拒绝，不写入任何 blob。
+	if !looksLikeMP4(data) {
+		return domain.Photo{}, domain.ErrPhotoInvalid
+	}
 	objectKey, size, sum, err := s.blobs.PutReader(ctx, bytes.NewReader(data))
 	if err != nil {
 		return domain.Photo{}, err
 	}
 	return s.createAvatarVideoFromBlob(ctx, assembledUploadBlob{ObjectKey: objectKey, Size: size, SHA256: sum}, videoStartTs, nil)
+}
+
+// looksLikeMP4 报告 data 是否以 ISO BMFF 的 ftyp 盒子开头：4 字节盒子长度（至少容纳
+// 盒子头与 major_brand）加上 "ftyp"。只看文件头，不解析整个文件。
+func looksLikeMP4(data []byte) bool {
+	if len(data) < 12 || string(data[4:8]) != "ftyp" {
+		return false
+	}
+	size := binary.BigEndian.Uint32(data[0:4])
+	// size 为 1 表示 64 位扩展长度，0 表示盒子延伸到文件末尾；都是合法写法。
+	return size == 0 || size == 1 || size >= 12
 }
 
 // CreateAvatarFromUpload 把已上传文件组装成头像 Photo（'s'/'a'/'c' 尺寸，'a'/'c' 匹配
