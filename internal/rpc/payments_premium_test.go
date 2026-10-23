@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"strconv"
 	"testing"
 	"time"
 
@@ -63,59 +62,6 @@ func (f *fakePremiumRPCService) Revoke(context.Context, domain.PremiumAdminRevok
 }
 func (f *fakePremiumRPCService) Refund(context.Context, domain.PremiumRefundRequest) (domain.PremiumPurchaseResult, error) {
 	return domain.PremiumPurchaseResult{}, nil
-}
-
-func TestBotAPIGiftPremiumSubscriptionUsesCatalogAndStableRequestKey(t *testing.T) {
-	ctx := context.Background()
-	users := memory.NewUserStore()
-	bot, err := users.Create(ctx, domain.User{
-		AccessHash: 8201, Phone: "15550008201", FirstName: "Bot Buyer", Bot: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	recipient, err := users.Create(ctx, domain.User{
-		AccessHash: 8202, Phone: "15550008202", FirstName: "Recipient",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan := domain.PremiumPlan{
-		Months: 3, DurationDays: 90, AmountStars: 750, Enabled: true,
-		SortOrder: 10, Label: "3 months", Version: 2,
-	}
-	premium := &fakePremiumRPCService{
-		plans: []domain.PremiumPlan{plan},
-		purchaseResult: domain.PremiumPurchaseResult{
-			User:    recipient,
-			Balance: domain.StarsBalance{UserID: bot.ID, Balance: 250},
-		},
-	}
-	router := New(Config{AllowDevPayments: true}, Deps{
-		Users:   appusers.NewService(users),
-		Premium: premium,
-	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1_800_000_000, 0)})
-
-	ok, err := router.BotAPIGiftPremiumSubscription(ctx, bot.ID, recipient.ID, 3, 750,
-		domain.PremiumGiftMessage{Text: "Enjoy"}, "update_42")
-	if err != nil || !ok {
-		t.Fatalf("giftPremiumSubscription = %v,%v", ok, err)
-	}
-	wantKey := "botapi-premium:" + strconv.FormatInt(bot.ID, 10) + ":update_42"
-	if premium.issued.IdempotencyKey != wantKey ||
-		premium.issued.BuyerUserID != bot.ID || premium.issued.RecipientUserID != recipient.ID ||
-		premium.issued.AmountStars != plan.AmountStars || premium.issued.PlanVersion != plan.Version {
-		t.Fatalf("issued form = %+v", premium.issued)
-	}
-	if premium.purchase.CommandKey != wantKey || premium.purchase.FormID != 99112233 ||
-		premium.purchase.RecipientUserID != recipient.ID {
-		t.Fatalf("purchase = %+v", premium.purchase)
-	}
-
-	if _, err := router.BotAPIGiftPremiumSubscription(ctx, bot.ID, recipient.ID, 3, 751,
-		domain.PremiumGiftMessage{}, "update_43"); err == nil || err.Error() != "STAR_COUNT_INVALID" {
-		t.Fatalf("wrong catalog price err=%v", err)
-	}
 }
 
 func premiumRPCTestRouter(t *testing.T) (*Router, *fakePremiumRPCService, *memory.UserStore, domain.User, domain.User) {

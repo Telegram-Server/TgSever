@@ -1182,7 +1182,6 @@ type Deps struct {
 	TelegramLogin                TelegramLoginService
 	Updates                      UpdatesService
 	BootstrapUpdates             store.BootstrapUpdateJobStore
-	BotAPIUpdates                store.BotAPIUpdateStore
 	// BotUpdates 是 bot qts 序列（#145）：bot 账号 getState/getDifference 的 qts 来源。
 	BotUpdates   BotUpdatesService
 	BotCallbacks store.BotCallbackRegistryStore

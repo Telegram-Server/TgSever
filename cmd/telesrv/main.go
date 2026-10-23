@@ -76,7 +76,6 @@ import (
 	verificationapp "telesrv/internal/app/verification"
 	walletapp "telesrv/internal/app/wallet"
 	welcomemessagesapp "telesrv/internal/app/welcomemessages"
-	"telesrv/internal/botapi"
 	"telesrv/internal/branding"
 	"telesrv/internal/config"
 	"telesrv/internal/customfragment"
@@ -855,7 +854,6 @@ func run(logger *zap.Logger) error {
 		return err
 	}
 	defer bootstrapUpdateStore.Close()
-	botAPIUpdateStore := postgres.NewBotAPIUpdateStore(pool)
 	// bot qts 序列（#145）：成员变动由 ChannelStore 在同一事务里写入，这里只读与回收。
 	botUpdateStore := postgres.NewBotUpdateStore(pool)
 	botCallbackStore := redisstore.NewBotCallbackRegistryStore(rdb)
@@ -1103,7 +1101,6 @@ func run(logger *zap.Logger) error {
 		cfg.RetentionInterval,
 		cfg.RetentionBatch,
 	).WithDispatchOutboxPoisonPolicy(cfg.OutboxPoisonRetention, cfg.OutboxPoisonCleanupInterval).
-		WithBotAPIUpdateRetention(botAPIUpdateStore, cfg.BotAPIUpdateRetention).
 		WithBotUpdateRetention(botUpdateStore, cfg.BotUpdateRetention).
 		WithAuthKeySessionLayerRetention(authKeyStore).
 		WithLoginCodeDeliveryRetention(messageStore).
@@ -2020,7 +2017,6 @@ func run(logger *zap.Logger) error {
 		TelegramLogin:                telegramLoginRPCDependency(telegramLoginService),
 		Updates:                      updatesService,
 		BootstrapUpdates:             bootstrapUpdateStore,
-		BotAPIUpdates:                botAPIUpdateStore,
 		BotUpdates:                   botUpdateStore,
 		BotCallbacks:                 botCallbackStore,
 		PushDevices:                  pushDeviceStore,
@@ -2284,7 +2280,6 @@ func run(logger *zap.Logger) error {
 	go rpc.NewPhoneExpiryDispatcher(router, logger.Named("rpc").Named("phone-expiry"), cfg.CallExpiryInterval).Run(ctx)
 	go rpc.NewGroupCallSweepDispatcher(router, logger.Named("rpc").Named("groupcall-sweep"), cfg.GroupCallSweepInterval, cfg.GroupCallCheckTTL).Run(ctx)
 	go router.RunChannelFanout(ctx)
-	go router.RunBotAPIEnqueue(ctx)
 	go router.RunPresenceLastSeenBatch(ctx)
 	go router.RunPresenceSweeper(ctx, time.Minute)
 	go activeSessions.RunPendingSweeper(ctx, time.Minute)
@@ -2358,9 +2353,6 @@ func run(logger *zap.Logger) error {
 				log.Warn("donation watcher stopped", zap.Error(err))
 			}(chain.Key, chainLog)
 		}
-	}
-	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, router, logger.Named("botapi")); err != nil {
-		return fmt.Errorf("start bot api: %w", err)
 	}
 	// Scoped tokens carry a bounded permission set; the master token stays
 	// unrestricted, so a deployment that configures none behaves exactly as before.

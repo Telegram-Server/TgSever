@@ -41,12 +41,6 @@ type ActiveAuthKeyHeartbeatStore interface {
 	TouchActiveRawAuthKeys(ctx context.Context, ids [][8]byte) error
 }
 
-// BotAPIUpdateRetentionStore 回收 Bot API getUpdates 投递队列的死行（性能审计 H1）：
-// 已确认且超过宽限期的行 + 按消息 date 超过保留期的行（官方 Bot API updates 最多保留 24h）。
-type BotAPIUpdateRetentionStore interface {
-	DeleteDeliveredOrExpired(ctx context.Context, confirmedGrace, maxAge time.Duration, limit int) (int, error)
-}
-
 // UserUpdateEventRetentionStore 只回收所有当前授权设备都明确确认过的账号事件前缀。
 // 它不是普通 TTL：任一授权缺 state 时确认水位为 0，不得删除该设备可能仍需的事件。
 type UserUpdateEventRetentionStore interface {
@@ -80,10 +74,6 @@ type ModerationRetentionStore interface {
 	DeleteExpiredModerationAppealLinks(ctx context.Context, olderThan time.Time, limit int) (int, error)
 }
 
-// botAPIConfirmedGrace 是已确认 Bot API update 行的删除宽限：确认水位之下的行不会再被
-// getUpdates 读取（fromID 恒 > confirmed），宽限仅防御 offset 回拨调试；回收目标是清堆积。
-const botAPIConfirmedGrace = 15 * time.Minute
-
 // tempAuthKeyExpiryGrace 只是一段数据库物理回收宽限。MTProto edge 在 expires_at
 // 到点即停止入站 RPC、主动推送和重发，并断开连接；ResolveAuthKey 不容忍过期 key。
 // 晚一天删除用于吸收客户端轮换/诊断窗口，不会延长协议有效期。
@@ -108,7 +98,6 @@ type RetentionWorker struct {
 	outbox                      DispatchOutboxRetentionStore
 	tempKeys                    TempAuthKeyRetentionStore // 可为 nil（不回收 temp key 绑定）
 	authKeySessionLayers        AuthKeySessionLayerRetentionStore
-	botAPIUpdates               BotAPIUpdateRetentionStore // 可为 nil（不回收 Bot API 队列）
 	userUpdates                 UserUpdateEventRetentionStore
 	channelUpdates              ChannelUpdateEventRetentionStore
 	loginCodeDeliveries         LoginCodeDeliveryRetentionStore
@@ -122,7 +111,6 @@ type RetentionWorker struct {
 	activeAuthKeyHeartbeat      ActiveAuthKeyHeartbeatStore
 	logger                      *zap.Logger
 	retention                   time.Duration
-	botAPIRetention             time.Duration
 	orphanRetention             time.Duration
 	clientTelemetryRetention    time.Duration
 	authDeliveryReportRetention time.Duration
@@ -169,16 +157,6 @@ func (w *RetentionWorker) WithDispatchOutboxPoisonPolicy(retention, interval tim
 	}
 	w.outboxPoisonRetention = retention
 	w.outboxPoisonInterval = interval
-	return w
-}
-
-// WithBotAPIUpdateRetention 启用 bot_api_updates 队列回收；retention <=0 时用官方语义默认 24h。
-func (w *RetentionWorker) WithBotAPIUpdateRetention(store BotAPIUpdateRetentionStore, retention time.Duration) *RetentionWorker {
-	if retention <= 0 {
-		retention = 24 * time.Hour
-	}
-	w.botAPIUpdates = store
-	w.botAPIRetention = retention
 	return w
 }
 
@@ -381,14 +359,6 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 			} else if orphanDeleted > 0 {
 				w.logger.Info("回收未授权 orphan auth key 完成", zap.Int("deleted", orphanDeleted))
 			}
-		}
-	}
-	if w.botAPIUpdates != nil {
-		botAPIDeleted, err := w.botAPIUpdates.DeleteDeliveredOrExpired(ctx, botAPIConfirmedGrace, w.botAPIRetention, w.batch)
-		if err != nil {
-			w.logger.Warn("回收 bot_api_updates 队列失败", zap.Error(err))
-		} else if botAPIDeleted > 0 {
-			w.logger.Info("回收 bot_api_updates 队列完成", zap.Int("deleted", botAPIDeleted))
 		}
 	}
 	w.runBotUpdateRetention(ctx)

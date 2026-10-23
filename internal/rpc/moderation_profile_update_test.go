@@ -151,7 +151,7 @@ func TestChannelStateRefreshEventBypassesServerProjectionCache(t *testing.T) {
 	channels := &moderationProjectionChannels{}
 	r := New(Config{}, Deps{Channels: channels}, zap.NewNop(), clock.System)
 	const viewerID = int64(5005)
-	events := r.enrichUpdateEvents(context.Background(), viewerID, []domain.UpdateEvent{
+	events := r.prepareUpdateEventsForViewer(context.Background(), viewerID, []domain.UpdateEvent{
 		{
 			UserID: viewerID, Type: domain.UpdateEventChannelState,
 			Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: 7007},

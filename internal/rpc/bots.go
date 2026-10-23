@@ -474,37 +474,6 @@ func (r *Router) setBotMenuButtonForUser(ctx context.Context, botID, userID int6
 	return nil
 }
 
-// BotAPISetChatMenuButton 是 Bot API setChatMenuButton(chat_id = 私聊用户 id) 的网关：
-// 组装带 user_id 的 bots.setBotMenuButton，校验、缓存失效与推送都继承 MTProto 处理器。
-func (r *Router) BotAPISetChatMenuButton(ctx context.Context, botID, userID int64, button domain.BotMenuButton) error {
-	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
-		return errors.New("BOT_INVALID")
-	}
-	// userID 0 是全局默认按钮。
-	var target tg.InputUserClass = &tg.InputUserEmpty{}
-	if userID != 0 {
-		target = &tg.InputUser{UserID: userID}
-	}
-	_, err := r.onBotsSetBotMenuButton(WithUserID(ctx, botID), &tg.BotsSetBotMenuButtonRequest{
-		UserID: target,
-		Button: tgBotMenuButton(button),
-	})
-	return err
-}
-
-// BotAPIGetChatMenuButton 是 Bot API getChatMenuButton(chat_id) 的网关，返回该用户生效的按钮。
-func (r *Router) BotAPIGetChatMenuButton(ctx context.Context, botID, userID int64) (domain.BotMenuButton, error) {
-	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
-		return domain.BotMenuButton{}, errors.New("BOT_INVALID")
-	}
-	ctx = WithUserID(ctx, botID)
-	target, err := r.botMenuButtonTargetUser(ctx, botID, &tg.InputUser{UserID: userID})
-	if err != nil {
-		return domain.BotMenuButton{}, err
-	}
-	return r.deps.Bots.BotMenuButtonForUser(ctx, botID, target)
-}
-
 // botMenuButtonTargetUser 解析 bots.{set,get}BotMenuButton 的 user_id：返回 0 表示
 // 全局默认按钮（缺省、inputUserEmpty、inputUserSelf 或机器人自己的 id，客户端常这样传），
 // 否则返回目标用户 id。

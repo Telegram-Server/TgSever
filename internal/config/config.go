@@ -90,9 +90,6 @@ type Config struct {
 	// 默认仅绑 127.0.0.1，避免 profile 数据对外暴露；置空关闭。生产需远程抓取时走 SSH 隧道，
 	// 不要改成 0.0.0.0。
 	DebugAddr string
-	// BotAPIAddr 是最小 HTTP Bot API 网关监听地址；为空关闭。该网关复用 MTProto
-	// app/store 事实源，不维护独立 bot 状态。
-	BotAPIAddr string
 	// GramsrvBotChatIDs is the exact private-chat allowlist for the built-in
 	// @gramsrv operator bot. Values are numeric user/chat IDs, never usernames.
 	GramsrvBotChatIDs         []int64
@@ -623,9 +620,6 @@ type Config struct {
 	ChannelNudgeMaxTargets int
 	// UpdateEventRetention 是 durable update log 保留期；只清理已被水位/state 覆盖的事件。
 	UpdateEventRetention time.Duration
-	// BotAPIUpdateRetention 是 bot_api_updates 投递队列的最大保留期（官方 Bot API 语义 24h）；
-	// 已确认的行另按固定短宽限提前回收（性能审计 H1）。
-	BotAPIUpdateRetention time.Duration
 	// BotUpdateRetention 是 bot qts 序列（bot_updates）的保留期，默认 24h；更早的 qts 由
 	// updates.getDifference 从最旧的保留记录补起，被回收的更新视为丢弃。
 	BotUpdateRetention time.Duration
@@ -1084,7 +1078,6 @@ func Load() (Config, error) {
 		MTProtoOutboundTrackedGlobalMaxBytes:  envInt64Or("TELESRV_MTPROTO_OUTBOUND_TRACKED_GLOBAL_MAX_BYTES", 512<<20),
 		MTProtoOutboundWriteGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES", 512<<20),
 		DebugAddr:                             envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
-		BotAPIAddr:                            envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
 		GramsrvBotChatIDs:                     gramsrvBotChatIDs,
 		StarGiftCrossCraftUserIDs:             crossCraftUserIDs,
 		AdminAPIAddr:                          envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),
@@ -1341,7 +1334,6 @@ func Load() (Config, error) {
 		),
 		ChannelNudgeMaxTargets: envIntOr("TELESRV_CHANNEL_NUDGE_MAX_TARGETS", 0),
 		UpdateEventRetention:   envDurationOr("TELESRV_UPDATE_EVENT_RETENTION", 168*time.Hour),
-		BotAPIUpdateRetention:  envDurationOr("TELESRV_BOT_API_UPDATE_RETENTION", 24*time.Hour),
 		BotUpdateRetention:     envDurationOr("TELESRV_BOT_UPDATE_RETENTION", 24*time.Hour),
 		OrphanAuthKeyRetention: envDurationOr("TELESRV_ORPHAN_AUTH_KEY_RETENTION", 24*time.Hour),
 		RetentionInterval:      envDurationOr("TELESRV_RETENTION_INTERVAL", time.Hour),

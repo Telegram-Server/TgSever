@@ -1593,13 +1593,11 @@ func TestLoadExplicitEmptyEnvironmentDisablesNullableListeners(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "telesrv.env")
 	writeConfigFile(t, path, `
 TELESRV_DEBUG_ADDR=127.0.0.1:6060
-TELESRV_BOT_API_ADDR=127.0.0.1:8081
 TELESRV_ADMIN_API_ADDR=127.0.0.1:2599
 TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
 `)
 	t.Setenv("TELESRV_CONFIG", path)
 	t.Setenv("TELESRV_DEBUG_ADDR", "")
-	t.Setenv("TELESRV_BOT_API_ADDR", "")
 	t.Setenv("TELESRV_ADMIN_API_ADDR", "")
 	t.Setenv("TELESRV_PUBLIC_LINK_WEB_ADDR", "")
 
@@ -1607,8 +1605,8 @@ TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.DebugAddr != "" || cfg.BotAPIAddr != "" || cfg.AdminAPIAddr != "" || cfg.PublicLinkWebAddr != "" {
-		t.Fatalf("nullable listeners were not disabled: debug=%q bot=%q admin=%q public=%q", cfg.DebugAddr, cfg.BotAPIAddr, cfg.AdminAPIAddr, cfg.PublicLinkWebAddr)
+	if cfg.DebugAddr != "" || cfg.AdminAPIAddr != "" || cfg.PublicLinkWebAddr != "" {
+		t.Fatalf("nullable listeners were not disabled: debug=%q admin=%q public=%q", cfg.DebugAddr, cfg.AdminAPIAddr, cfg.PublicLinkWebAddr)
 	}
 }
 

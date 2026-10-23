@@ -3,16 +3,12 @@ package rpc
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
-	"telesrv/internal/store"
 )
 
 // Bot invoice settlement.
@@ -22,103 +18,6 @@ import (
 // amount it advertised from the stored invoice. That is why the row is the
 // settlement authority rather than a convenience cache, and why settling is
 // driven from the message id alone.
-
-// BotAPISendInvoice implements the Bot API sendInvoice method: it stores an
-// invoice message and records the price the server advertised.
-//
-// The invoice and both message boxes commit together. The invoice key includes
-// the buyer because private message ids are scoped to the buyer's box.
-func (r *Router) BotAPISendInvoice(
-	ctx context.Context,
-	botID, chatID int64,
-	title, description, payload string,
-	amount int64,
-) (domain.Message, error) {
-	if r == nil || r.deps.Messages == nil || r.deps.Bots == nil || botID == 0 {
-		return domain.Message{}, errors.New("BOT_INVALID")
-	}
-	bot, found, err := r.deps.Users.ByID(ctx, botID, botID)
-	if err != nil {
-		return domain.Message{}, err
-	}
-	if !found || !bot.Bot {
-		return domain.Message{}, errors.New("BOT_INVALID")
-	}
-	if amount <= 0 {
-		return domain.Message{}, errors.New("AMOUNT_INVALID")
-	}
-	title = strings.TrimSpace(title)
-	if title == "" || utf8.RuneCountInString(title) > domain.BotInvoiceMaxTitle {
-		return domain.Message{}, errors.New("TITLE_INVALID")
-	}
-	if utf8.RuneCountInString(description) > domain.BotInvoiceMaxDescription {
-		return domain.Message{}, errors.New("DESCRIPTION_INVALID")
-	}
-	if len(payload) > domain.BotInvoiceMaxPayload {
-		return domain.Message{}, errors.New("PAYLOAD_INVALID")
-	}
-	// telesrv models no fiat checkout, so an invoice can only be settled in XTR.
-	// Reject anything else here instead of storing a price nothing can pay.
-	invoice := &domain.Invoice{
-		Title: title, Description: description, AmountStars: amount, StartParam: payload,
-	}
-	if !invoice.Valid() {
-		return domain.Message{}, errors.New("INVOICE_INVALID")
-	}
-	media := &domain.MessageMedia{Kind: domain.MessageMediaKindInvoice, ProductInvoice: invoice}
-	// The pay button is not part of the invoice media: it is a keyboardButtonBuy
-	// in the message reply markup, which the client renders and dispatches through
-	// the same handler as a callback. The built-in Premium bot attaches one for the
-	// same reason; without it the card renders but nothing is payable.
-	markup := &domain.MessageReplyMarkup{
-		Type: domain.MessageReplyMarkupInline,
-		Inline: [][]domain.MarkupButton{{{
-			Type:  domain.MarkupButtonBuy,
-			Text:  fmt.Sprintf("Оплатить %d Stars", amount),
-			Style: domain.MarkupButtonStyleSuccess,
-		}}},
-	}
-
-	now := int(r.clock.Now().Unix())
-	peer, ok := botAPIPeerFromChatID(chatID)
-	if !ok {
-		return domain.Message{}, errors.New("CHAT_ID_INVALID")
-	}
-	if peer.Type != domain.PeerTypeUser {
-		return domain.Message{}, errors.New("CHAT_ID_INVALID")
-	}
-	payments, ok := r.deps.Bots.(store.BotInvoicePayments)
-	if !ok {
-		return domain.Message{}, notImplementedErr()
-	}
-	recipient, found, err := r.deps.Users.ByID(ctx, botID, peer.ID)
-	if err != nil {
-		return domain.Message{}, err
-	}
-	if !found || recipient.Deleted {
-		return domain.Message{}, errors.New("USER_ID_INVALID")
-	}
-	result, err := payments.CreateBotInvoiceMessage(ctx, domain.BotInvoice{
-		BotUserID: botID, ChatID: peer.ID, Title: title, Description: description, Amount: amount, Currency: domain.PremiumCurrencyStars, Payload: payload, Date: now,
-	}, domain.SendPrivateTextRequest{SenderUserID: botID, RecipientUserID: peer.ID, RandomID: randomNonZeroInt64(), Media: media, ReplyMarkup: markup, Date: now})
-	if err != nil {
-		return domain.Message{}, invoiceStoreErr(err)
-	}
-	sent := result.SenderMessage
-
-	return sent, nil
-}
-
-func invoiceStoreErr(err error) error {
-	switch {
-	case errors.Is(err, domain.ErrBotInvoiceSettled):
-		return errors.New("INVOICE_ALREADY_EXISTS")
-	case errors.Is(err, domain.ErrBotInvoiceInvalid):
-		return errors.New("INVOICE_INVALID")
-	default:
-		return err
-	}
-}
 
 // botInvoiceForMessage resolves the invoice behind an inputInvoiceMessage peer
 // and message id, for both the form and the settlement paths.

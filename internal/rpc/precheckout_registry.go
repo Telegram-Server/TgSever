@@ -136,21 +136,10 @@ func (p *preCheckoutRegistry) await(ctx context.Context, queryID int64, entry *p
 	}
 }
 
-// awaitBotPreCheckout 走完整链路：投递 update（MTProto push，装配了网关时另入 Bot API
-// 队列），然后挂起最多 10 秒等应答。Bot 不应答即视为拒绝——这正是 Telegram 的约定：10 秒内不答 = 这笔
-// 支付不成立，所以超时绝不能降级成直接扣款。
+// awaitBotPreCheckout 走完整链路：投递 update（MTProto push），然后挂起最多 10 秒等应答。
+// Bot 不应答即视为拒绝——这正是 Telegram 的约定：10 秒内不答 = 这笔支付不成立，所以超时绝不能降级成直接扣款。
 func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID int64, currency string, totalAmount int64, payload string) error {
-	query := domain.BotPreCheckoutQuery{
-		BotUserID: botUserID, UserID: payerUserID,
-		Currency: currency, TotalAmount: totalAmount, Payload: payload,
-	}
 	queryID, entry := r.preCheckouts.register(botUserID, payerUserID)
-	query.ID = queryID
-
-	if err := r.enqueueBotAPIPreCheckout(ctx, query); err != nil {
-		r.preCheckouts.deregister(queryID)
-		return err
-	}
 
 	update := &tg.UpdateBotPrecheckoutQuery{
 		QueryID: queryID, UserID: payerUserID, Currency: currency, TotalAmount: totalAmount,
@@ -172,44 +161,8 @@ func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID
 	return preCheckoutDeclinedErr(reply.Error)
 }
 
-// enqueueBotAPIPreCheckout 在装配了 Bot API 队列时把询问交给网关。没有队列时什么也不
-// 做：MTProto 推送本身就是完整的投递，bot 照常应答。
-//
-// 装配了队列却写入失败时让付款失败：一个从未入队的询问永远不会被网关 bot 应答，继续
-// 等只会白等 10 秒再报 PAYMENT_FAILED，把真正的原因藏起来。
-func (r *Router) enqueueBotAPIPreCheckout(ctx context.Context, query domain.BotPreCheckoutQuery) error {
-	if r.deps.BotAPIUpdates == nil {
-		return nil
-	}
-	queued, _, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
-		BotUserID:   query.BotUserID,
-		Kind:        domain.BotAPIUpdatePreCheckoutQuery,
-		Date:        int(r.clock.Now().Unix()),
-		PreCheckout: &query,
-	})
-	if err != nil {
-		if r.log != nil {
-			r.log.Error("bot invoice pre-checkout not queued",
-				zap.Int64("bot_user_id", query.BotUserID),
-				zap.Int64("query_id", query.ID),
-				zap.Error(err))
-		}
-		return internalErr()
-	}
-	r.notifyBotAPIUpdate(query.BotUserID)
-	if r.log != nil {
-		r.log.Info("bot invoice pre-checkout queued",
-			zap.Int64("bot_user_id", query.BotUserID),
-			zap.Int64("query_id", query.ID),
-			zap.Int64("update_id", queued.ID),
-			zap.Int64("payer_id", query.UserID),
-			zap.Int64("total_amount", query.TotalAmount))
-	}
-	return nil
-}
-
 // serviceBotPreCheckout 让内置 service bot 同步回答 pre-checkout。它们没有 MTProto
-// 会话也没有 Bot API 消费者，若走"投递 update + 挂起 10 秒"必然每次都超时付款。
+// 会话，若走"投递 update + 挂起 10 秒"必然每次都超时付款。
 //
 // 它是可选能力（type-assert）而非 ServiceBotCallbacks 的成员：绝大多数内置 bot 都不卖
 // 东西，强迫它们实现一个用不到的方法没有意义。
@@ -231,7 +184,7 @@ type botInvoicePreCheckoutResponder interface {
 
 // runPreCheckout 在扣款前向 bot 询问并等待应答。
 //
-// 内置 service bot 没有 MTProto 会话也没有 Bot API 消费者，走"投递 update + 挂起"
+// 内置 service bot 没有 MTProto 会话，走"投递 update + 挂起"
 // 必然超时，因此先尝试同步应答器（与 callback 的处理一致，见 bots_callback.go）。
 // 外部 bot 一律走真实链路：投递 update，然后最多挂起 10 秒。
 func (r *Router) runPreCheckout(ctx context.Context, botUserID, payerUserID int64, currency string, totalAmount int64, payload string) error {

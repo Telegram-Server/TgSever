@@ -96,13 +96,6 @@ func TestRetentionWorkerSkipsNilTempKeyStore(t *testing.T) {
 	}
 }
 
-type fakeBotAPIRetention struct {
-	calls          int
-	confirmedGrace time.Duration
-	maxAge         time.Duration
-	limit          int
-}
-
 type fakeLoginCodeDeliveryRetention struct {
 	calls         int
 	expiredBefore time.Time
@@ -208,41 +201,6 @@ func TestRetentionWorkerSeparatesTelemetryDiagnosticsAndModerationCapabilities(t
 		store.appealBefore.After(after) {
 		t.Fatalf("moderation capability boundaries sponsored=%v appeal=%v",
 			store.sponsoredBefore, store.appealBefore)
-	}
-}
-
-func (f *fakeBotAPIRetention) DeleteDeliveredOrExpired(_ context.Context, confirmedGrace, maxAge time.Duration, limit int) (int, error) {
-	f.calls++
-	f.confirmedGrace = confirmedGrace
-	f.maxAge = maxAge
-	f.limit = limit
-	return 5, nil
-}
-
-func TestRetentionWorkerReclaimsBotAPIUpdates(t *testing.T) {
-	outbox := &fakeOutboxRetention{}
-	botAPI := &fakeBotAPIRetention{}
-	w := NewRetentionWorker(outbox, nil, zap.NewNop(), time.Hour, time.Hour, 100).
-		WithBotAPIUpdateRetention(botAPI, 24*time.Hour)
-
-	w.runOnce(context.Background())
-
-	if botAPI.calls != 1 {
-		t.Fatalf("bot api retention calls = %d, want 1", botAPI.calls)
-	}
-	if botAPI.confirmedGrace != botAPIConfirmedGrace || botAPI.maxAge != 24*time.Hour || botAPI.limit != 100 {
-		t.Fatalf("bot api retention args = (%v, %v, %d), want (%v, 24h, 100)",
-			botAPI.confirmedGrace, botAPI.maxAge, botAPI.limit, botAPIConfirmedGrace)
-	}
-}
-
-func TestRetentionWorkerBotAPIRetentionDefaultsTo24h(t *testing.T) {
-	botAPI := &fakeBotAPIRetention{}
-	w := NewRetentionWorker(&fakeOutboxRetention{}, nil, zap.NewNop(), time.Hour, time.Hour, 100).
-		WithBotAPIUpdateRetention(botAPI, 0)
-	w.runOnce(context.Background())
-	if botAPI.maxAge != 24*time.Hour {
-		t.Fatalf("default bot api retention = %v, want 24h", botAPI.maxAge)
 	}
 }
 

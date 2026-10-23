@@ -173,7 +173,6 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 	if err != nil {
 		return nil, messageEditErr(err)
 	}
-	r.enqueueBotAPIPrivateEditUpdatesAsync(ctx, res)
 	self := res.Self()
 	if self.Event.Pts == 0 || self.Message.ID == 0 {
 		return nil, messageIDInvalidErr()

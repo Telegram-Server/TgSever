@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	appupdates "telesrv/internal/app/updates"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/postgres"
 )
 
@@ -28,11 +30,7 @@ type invoiceChain struct {
 	store  *postgres.MessageStore
 	stars  *appstars.Service
 	gifts  *postgres.StarGiftLifecycleStore
-	// updates is the Bot API queue: storing a message in the bot's chat is not
-	// delivery. The successful_payment assertion below reads it, which is the only
-	// thing that stands between "the message exists" and "getUpdates shows it".
-	updates *postgres.BotAPIUpdateStore
-	botID   int64
+	botID  int64
 	// otherBotID is a second real bot. Ownership tests need a genuine second
 	// bot: an arbitrary unused id would be refused by callerBotID as USER_BOT_REQUIRED
 	// and never reach the ownership check being tested.
@@ -40,11 +38,8 @@ type invoiceChain struct {
 	buyerID    int64
 }
 
-// invoiceChainOptions 调整夹具的装配。零值即网关仍在时的完整装配。
+// invoiceChainOptions 调整夹具的装配。
 type invoiceChainOptions struct {
-	// withoutBotAPIQueue 不装配 Bot API 更新队列：MTProto bot 收款必须在没有网关
-	// 的情况下照常工作。
-	withoutBotAPIQueue bool
 	// sessions 替换在线推送的落点，用于观察推给 bot 的 update。
 	sessions SessionBinder
 }
@@ -81,7 +76,6 @@ func newInvoiceChainWith(t *testing.T, opts invoiceChainOptions) *invoiceChain {
 	messages := appmessages.NewService(msgStore, dialogs)
 	stars := appstars.NewService(postgres.NewStarsStore(pool), appstars.WithStartingGrant(5000))
 	gifts := postgres.NewStarGiftLifecycleStore(pool, msgStore, 0)
-	updates := postgres.NewBotAPIUpdateStore(pool)
 	deps := Deps{
 		Users:    appusers.NewService(users),
 		Bots:     bots,
@@ -90,9 +84,6 @@ func newInvoiceChainWith(t *testing.T, opts invoiceChainOptions) *invoiceChain {
 		Gifts:    appgifts.NewService(postgres.NewStarGiftStore(pool), nil, 2, appgifts.WithLifecycleStore(gifts)),
 		Updates:  appupdates.NewService(postgres.NewUpdateStateStore(pool), postgres.NewUpdateEventStore(pool)),
 		Sessions: opts.sessions,
-	}
-	if !opts.withoutBotAPIQueue {
-		deps.BotAPIUpdates = updates
 	}
 	r := New(Config{}, deps, zaptest.NewLogger(t), clock.System)
 
@@ -122,7 +113,7 @@ func newInvoiceChainWith(t *testing.T, opts invoiceChainOptions) *invoiceChain {
 	if err != nil {
 		t.Fatalf("create second bot: %v", err)
 	}
-	return &invoiceChain{pool, r, msgStore, stars, gifts, updates, bot.ID, other.ID, buyer.ID}
+	return &invoiceChain{pool, r, msgStore, stars, gifts, bot.ID, other.ID, buyer.ID}
 }
 
 // buyerInvoiceID finds the invoice as the buyer sees it, by scanning their own
@@ -170,8 +161,7 @@ func (c *invoiceChain) payerBalance(t *testing.T) int64 {
 func TestBotInvoicePaymentChainFromSendToCredit(t *testing.T) {
 	chain := newInvoiceChain(t)
 
-	msg, err := chain.router.BotAPISendInvoice(context.Background(),
-		chain.botID, chain.buyerID, "Тестовый товар", "Оплата 100 звёздами", "test-item-1", 100)
+	msg, err := chain.sendInvoice("Тестовый товар", "Оплата 100 звёздами", "test-item-1", 100)
 	if err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}
@@ -232,8 +222,7 @@ func TestBotInvoicePaymentChainFromSendToCredit(t *testing.T) {
 // payViaStarsForm sells one more invoice and settles it the way TDesktop does.
 func (c *invoiceChain) payViaStarsForm(t *testing.T, amount int64) {
 	t.Helper()
-	if _, err := c.router.BotAPISendInvoice(context.Background(),
-		c.botID, c.buyerID, "Второй товар", "Оплата звёздами", "test-item-2", amount); err != nil {
+	if _, err := c.sendInvoice("Второй товар", "Оплата звёздами", "test-item-2", amount); err != nil {
 		t.Fatalf("second sendInvoice: %v", err)
 	}
 	payerID := c.newestInvoiceID(t)
@@ -306,8 +295,7 @@ func (c *invoiceChain) pay(t *testing.T, invoiceID int64, invoice *tg.InputInvoi
 func TestBotInvoiceRefundChain(t *testing.T) {
 	chain := newInvoiceChain(t)
 
-	if _, err := chain.router.BotAPISendInvoice(context.Background(),
-		chain.botID, chain.buyerID, "Товар", "Оплата 100 звёздами", "refund-1", 100); err != nil {
+	if _, err := chain.sendInvoice("Товар", "Оплата 100 звёздами", "refund-1", 100); err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}
 	payerID := chain.newestInvoiceID(t)
@@ -324,18 +312,18 @@ func TestBotInvoiceRefundChain(t *testing.T) {
 
 	// A bot that does not own the charge is refused, and must not consume the
 	// refund: the real owner still has to be able to take it.
-	if _, err := chain.router.BotAPIRefundStarPayment(context.Background(), chain.botID+1, chain.buyerID, chargeID); err == nil {
+	if _, err := chain.refund(chain.botID+1, chain.buyerID, chargeID); err == nil {
 		t.Fatal("a foreign bot refunded a charge it does not own")
 	}
 	// The payer named in the request has to be the payer on the invoice.
-	if _, err := chain.router.BotAPIRefundStarPayment(context.Background(), chain.botID, chain.buyerID+1, chargeID); err == nil {
+	if _, err := chain.refund(chain.botID, chain.buyerID+1, chargeID); err == nil {
 		t.Fatal("a refund redirected to another user_id was accepted")
 	}
 	if chain.walletBalance(t) != wallet {
 		t.Fatalf("wallet moved on a refused refund: %d, want %d", chain.walletBalance(t), wallet)
 	}
 
-	if _, err := chain.router.BotAPIRefundStarPayment(context.Background(), chain.botID, chain.buyerID, chargeID); err != nil {
+	if _, err := chain.refund(chain.botID, chain.buyerID, chargeID); err != nil {
 		t.Fatalf("refund: %v", err)
 	}
 	if got := chain.payerBalance(t); got != start+100 {
@@ -346,7 +334,7 @@ func TestBotInvoiceRefundChain(t *testing.T) {
 	}
 
 	// A repeat is a no-op rather than a second reversal.
-	if _, err := chain.router.BotAPIRefundStarPayment(context.Background(), chain.botID, chain.buyerID, chargeID); err != nil {
+	if _, err := chain.refund(chain.botID, chain.buyerID, chargeID); err != nil {
 		t.Fatalf("repeat refund: %v", err)
 	}
 	if got := chain.payerBalance(t); got != start+100 {
@@ -363,8 +351,7 @@ func TestBotInvoiceRefundChain(t *testing.T) {
 func TestBotInvoicePaidNotifiesBotWithChargeID(t *testing.T) {
 	chain := newInvoiceChain(t)
 
-	if _, err := chain.router.BotAPISendInvoice(context.Background(),
-		chain.botID, chain.buyerID, "Товар", "Оплата 100 звёздами", "notify-1", 100); err != nil {
+	if _, err := chain.sendInvoice("Товар", "Оплата 100 звёздами", "notify-1", 100); err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}
 	payerID := chain.newestInvoiceID(t)
@@ -415,33 +402,8 @@ func TestBotInvoicePaidNotifiesBotWithChargeID(t *testing.T) {
 		t.Fatalf("payment messages = %d after a replay, want %d", after, before)
 	}
 
-	// The message existing in the bot's chat is not delivery: getUpdates reads the
-	// queue, so the receipt has to be in it.
-	queued, err := chain.updates.ListBotAPIUpdates(context.Background(), chain.botID, 0, 50)
-	if err != nil {
-		t.Fatalf("read bot api queue: %v", err)
-	}
-	var receipt bool
-	for _, item := range queued {
-		if item.Kind != domain.BotAPIUpdateMessage {
-			continue
-		}
-		got, err := chain.store.GetByIDs(context.Background(), chain.botID, []int{item.MessageID})
-		if err != nil || len(got.Messages) == 0 || got.Messages[0].Media == nil ||
-			got.Messages[0].Media.ServiceAction == nil {
-			continue
-		}
-		if got.Messages[0].Media.ServiceAction.Kind == domain.MessageServiceActionPayment {
-			receipt = true
-		}
-	}
-	if !receipt {
-		t.Fatalf("no successful_payment reached the Bot API queue; the bot would never learn the charge id (%d updates queued)", len(queued))
-	}
-
 	// And the charge id from that message is exactly what a refund needs.
-	if _, err := chain.router.BotAPIRefundStarPayment(context.Background(),
-		chain.botID, chain.buyerID, botInvoiceChargeID(stored)); err != nil {
+	if _, err := chain.refund(chain.botID, chain.buyerID, botInvoiceChargeID(stored)); err != nil {
 		t.Fatalf("refund with the announced charge id: %v", err)
 	}
 }
@@ -469,4 +431,55 @@ func (c *invoiceChain) walletBalance(t *testing.T) int64 {
 		t.Fatal(err)
 	}
 	return balance
+}
+
+// sendInvoice 以 bot 身份在买家私聊里落一张 XTR 发票（发票消息与发票行同事务提交）。
+func (c *invoiceChain) sendInvoice(title, description, payload string, amount int64) (domain.Message, error) {
+	return sendTestBotInvoice(context.Background(), c.router, c.botID, c.buyerID, title, description, payload, amount)
+}
+
+func sendTestBotInvoice(ctx context.Context, r *Router, botID, buyerID int64, title, description, payload string, amount int64) (domain.Message, error) {
+	payments, ok := r.deps.Bots.(store.BotInvoicePayments)
+	if !ok {
+		return domain.Message{}, errors.New("bots service cannot create invoices")
+	}
+	media := &domain.MessageMedia{Kind: domain.MessageMediaKindInvoice, ProductInvoice: &domain.Invoice{
+		Title: title, Description: description, AmountStars: amount, StartParam: payload,
+	}}
+	markup := &domain.MessageReplyMarkup{
+		Type: domain.MessageReplyMarkupInline,
+		Inline: [][]domain.MarkupButton{{{
+			Type: domain.MarkupButtonBuy, Text: fmt.Sprintf("Pay %d Stars", amount), Style: domain.MarkupButtonStyleSuccess,
+		}}},
+	}
+	now := int(r.clock.Now().Unix())
+	result, err := payments.CreateBotInvoiceMessage(ctx, domain.BotInvoice{
+		BotUserID: botID, ChatID: buyerID, Title: title, Description: description,
+		Amount: amount, Currency: domain.PremiumCurrencyStars, Payload: payload, Date: now,
+	}, domain.SendPrivateTextRequest{
+		SenderUserID: botID, RecipientUserID: buyerID, RandomID: randomNonZeroInt64(),
+		Media: media, ReplyMarkup: markup, Date: now,
+	})
+	if err != nil {
+		return domain.Message{}, err
+	}
+	return result.SenderMessage, nil
+}
+
+// refund 经账单业务层退回一笔已付发票；store 按 charge id、bot 和付款人三者匹配，
+// 别的 bot 或别的收款人都找不到这笔账单。
+func (c *invoiceChain) refund(botID, payerID int64, chargeID string) (bool, error) {
+	payments, ok := c.router.deps.Bots.(store.BotInvoicePayments)
+	if !ok {
+		return false, errors.New("bots service cannot refund invoices")
+	}
+	if err := payments.RefundBotInvoice(context.Background(), botID, payerID, chargeID, int(c.router.clock.Now().Unix())); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// botInvoiceChargeID 是 store 结算时写入的 charge id（botinv-<invoice id>）。
+func botInvoiceChargeID(invoice domain.BotInvoice) string {
+	return fmt.Sprintf("botinv-%d", invoice.ID)
 }

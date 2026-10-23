@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -411,7 +410,7 @@ func TestRichMessageOrderedListNumsNormalized(t *testing.T) {
 	assertOrderedListNums(t, "new input", got.Blocks, "1", "2")
 }
 
-func TestBotAPIRichHTMLParsesBedolagaMenuStructures(t *testing.T) {
+func TestRichHTMLParsesBedolagaMenuStructures(t *testing.T) {
 	r := &Router{}
 	rich, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessageHTML{
 		Rtl:        true,
@@ -454,19 +453,6 @@ func TestBotAPIRichHTMLParsesBedolagaMenuStructures(t *testing.T) {
 	if !heading || !table || !details || !footer {
 		t.Fatalf("parsed blocks heading=%v table=%v details=%v footer=%v: %#v", heading, table, details, footer, decoded.Blocks)
 	}
-	var projected struct {
-		RTL    bool `json:"is_rtl"`
-		Blocks []struct {
-			Type string `json:"type"`
-		} `json:"blocks"`
-	}
-	if err := json.Unmarshal(rich.BotAPIProjection, &projected); err != nil {
-		t.Fatalf("decode Bot API projection: %v", err)
-	}
-	if !projected.RTL || len(projected.Blocks) != len(decoded.Blocks) {
-		t.Fatalf("Bot API projection = %s", rich.BotAPIProjection)
-	}
-
 	if _, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessageHTML{
 		HTML: `<h4>Admin</h4><img src="https://example.test/logo.png">`,
 	}); err == nil || !tgerr.Is(err, "WEBPAGE_MEDIA_EMPTY") {
@@ -474,7 +460,7 @@ func TestBotAPIRichHTMLParsesBedolagaMenuStructures(t *testing.T) {
 	}
 }
 
-func TestBotAPIRichMarkdownParsesAndProjects(t *testing.T) {
+func TestRichMarkdownParses(t *testing.T) {
 	r := &Router{}
 	rich, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessageMarkdown{
 		Markdown: "# Bedolaga\n\n**Subscription:** active",
@@ -486,8 +472,8 @@ func TestBotAPIRichMarkdownParsesAndProjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode rich Markdown: %v", err)
 	}
-	if len(decoded.Blocks) < 2 || len(rich.BotAPIProjection) == 0 || !strings.Contains(string(rich.BotAPIProjection), "Bedolaga") {
-		t.Fatalf("Markdown decoded=%#v projection=%s", decoded.Blocks, rich.BotAPIProjection)
+	if len(decoded.Blocks) < 2 {
+		t.Fatalf("Markdown decoded=%#v, want heading and paragraph", decoded.Blocks)
 	}
 }
 

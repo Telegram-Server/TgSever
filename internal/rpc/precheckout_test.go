@@ -15,8 +15,7 @@ import (
 // sellInvoice publishes one invoice and returns it the way a payer would address it.
 func (c *invoiceChain) sellInvoice(t *testing.T, payload string, amount int64) (*tg.InputInvoiceMessage, domain.BotInvoice) {
 	t.Helper()
-	if _, err := c.router.BotAPISendInvoice(context.Background(),
-		c.botID, c.buyerID, "Товар", "Оплата звёздами", payload, amount); err != nil {
+	if _, err := c.sendInvoice("Товар", "Оплата звёздами", payload, amount); err != nil {
 		t.Fatalf("sendInvoice: %v", err)
 	}
 	payerID := c.newestInvoiceID(t)
@@ -206,69 +205,5 @@ func TestAnswerUnknownPreCheckoutIsRejected(t *testing.T) {
 	}
 	if !tgerr.Is(err, "QUERY_ID_INVALID") {
 		t.Fatalf("error = %v, want QUERY_ID_INVALID", err)
-	}
-}
-
-// The pre-checkout question has to survive the whole delivery path: enqueued by
-// the gate, read out of the queue by getUpdates, and projected to the Bot API
-// shape the bot actually parses. It carries no peer and no message, which is
-// exactly why the queue's message lookup used to discard it.
-func TestPreCheckoutReachesBotAPIQueue(t *testing.T) {
-	chain := newInvoiceChain(t)
-	invoice, stored := chain.sellInvoice(t, "gate-delivery", 100)
-
-	// The gate only exists while the payment is in flight, so the payment runs on
-	// its own goroutine and the queue is read underneath it.
-	payErr := make(chan error, 1)
-	go func() { payErr <- chain.payStarsForm(t, invoice, stored.ID) }()
-	go chain.answerNext(chain.botID, domain.BotPreCheckoutAnswer{OK: true})
-
-	// Read it the way getUpdates does, not the way the store does. A row sitting
-	// in the table proves nothing: BotAPIUpdates has to turn it into an event, and
-	// that conversion is where a message-less update used to be rejected.
-	var queued []domain.UpdateEvent
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		events, err := chain.router.BotAPIUpdates(context.Background(), chain.botID, 0)
-		if err != nil {
-			t.Fatalf("BotAPIUpdates: %v", err)
-		}
-		for _, event := range events {
-			if event.Type == domain.UpdateEventBotPreCheckoutQuery {
-				queued = events
-			}
-		}
-		if queued != nil {
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	if queued == nil {
-		t.Fatal("no pre-checkout event reached getUpdates; the bot would time out and refuse the payment")
-	}
-
-	var found bool
-	for _, event := range queued {
-		if event.Type != domain.UpdateEventBotPreCheckoutQuery || event.BotPreCheckout == nil {
-			continue
-		}
-		found = true
-		query := event.BotPreCheckout
-		if query.BotUserID != chain.botID || query.UserID != chain.buyerID {
-			t.Fatalf("queued query = %+v, want the bot and the payer", query)
-		}
-		if query.TotalAmount != 100 || query.Currency != domain.PremiumCurrencyStars {
-			t.Fatalf("queued query = %+v, want 100 XTR", query)
-		}
-		if query.Payload != "gate-delivery" {
-			t.Fatalf("payload = %q, want the invoice payload", query.Payload)
-		}
-	}
-	if !found {
-		t.Fatalf("queue held a pre_checkout kind with no payload: %+v", queued)
-	}
-
-	if err := <-payErr; err != nil {
-		t.Fatalf("payment: %v", err)
 	}
 }

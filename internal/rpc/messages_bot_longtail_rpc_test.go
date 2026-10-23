@@ -10,14 +10,11 @@ import (
 	"github.com/iamxvbaba/td/tgerr"
 
 	"telesrv/internal/domain"
-	"telesrv/internal/store"
-	"telesrv/internal/store/memory"
 )
 
 func TestMessagesSendWebViewDataServiceMessageRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	f := newInlineBotRPCTestFixture(t)
-	f.router.deps.BotAPIUpdates = memory.NewBotAPIUpdateStore()
 	ownerCtx := WithUserID(ctx, f.owner.ID)
 
 	updatesClass, err := f.router.onMessagesSendWebViewData(ownerCtx, &tg.MessagesSendWebViewDataRequest{
@@ -48,14 +45,6 @@ func TestMessagesSendWebViewDataServiceMessageRoundTrip(t *testing.T) {
 	if service.PeerID.(*tg.PeerUser).UserID != f.bot.ID || service.FromID.(*tg.PeerUser).UserID != f.owner.ID {
 		t.Fatalf("service peer/from = %+v/%+v, want bot/user", service.PeerID, service.FromID)
 	}
-	botAPIEvents, err := f.router.BotAPIUpdates(ctx, f.bot.ID, 0)
-	if err != nil || len(botAPIEvents) != 1 || botAPIEvents[0].Message.Media == nil ||
-		botAPIEvents[0].Message.Media.ServiceAction == nil ||
-		botAPIEvents[0].Message.Media.ServiceAction.WebViewData == nil ||
-		botAPIEvents[0].Message.Media.ServiceAction.WebViewData.Data != `{"ok":true}` {
-		t.Fatalf("bot api webview events=%#v err=%v", botAPIEvents, err)
-	}
-
 	botHistory, err := f.router.deps.Messages.GetHistory(ctx, f.bot.ID, domain.MessageFilter{
 		HasPeer: true,
 		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: f.owner.ID},
@@ -149,10 +138,9 @@ func TestMessagesSendBotRequestedPeerRejectsWithoutRequestButtonState(t *testing
 	}
 }
 
-func TestMessagesSendBotRequestedPeerQueuesBotAPIResponse(t *testing.T) {
+func TestMessagesSendBotRequestedPeerRecordsBotServiceMessage(t *testing.T) {
 	ctx := context.Background()
 	f := newInlineBotRPCTestFixture(t)
-	f.router.deps.BotAPIUpdates = memory.NewBotAPIUpdateStore()
 	ownerCtx := WithUserID(ctx, f.owner.ID)
 	button := domain.MarkupButton{
 		Type: domain.MarkupButtonRequestPeer, Text: "Share user", ButtonID: 77,
@@ -172,11 +160,20 @@ func TestMessagesSendBotRequestedPeerQueuesBotAPIResponse(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("send requested peer: %v", err)
 	}
-	events, err := f.router.BotAPIUpdates(ctx, f.bot.ID, 0)
-	if err != nil || len(events) != 1 {
-		t.Fatalf("bot api requested-peer events=%#v err=%v", events, err)
+	botHistory, err := f.router.deps.Messages.GetHistory(ctx, f.bot.ID, domain.MessageFilter{
+		HasPeer: true,
+		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: f.owner.ID},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("bot history: %v", err)
 	}
-	action := events[0].Message.Media.ServiceAction.RequestedPeer
+	var action *domain.MessageRequestedPeerAction
+	for _, msg := range botHistory.Messages {
+		if msg.Media != nil && msg.Media.ServiceAction != nil && msg.Media.ServiceAction.RequestedPeer != nil {
+			action = msg.Media.ServiceAction.RequestedPeer
+		}
+	}
 	if action == nil || action.ButtonID != 77 || len(action.Peers) != 1 || action.Peers[0].ID != f.peer.ID ||
 		len(action.Details) != 1 || action.Details[0].Peer != action.Peers[0] || action.Details[0].FirstName != f.peer.FirstName ||
 		!action.NameRequested || !action.UsernameRequested {
@@ -256,57 +253,6 @@ func TestMessagesPreparedInlineRoundTripSendsMessage(t *testing.T) {
 	sent := messageFromUpdates(t, updatesClass)
 	if sent.Message != "prepared text" {
 		t.Fatalf("sent prepared message = %q, want prepared text", sent.Message)
-	}
-	if via, ok := sent.GetViaBotID(); !ok || via != f.bot.ID {
-		t.Fatalf("sent prepared via_bot_id = %d,%v, want %d,true", via, ok, f.bot.ID)
-	}
-}
-
-func TestBotAPISavePreparedInlineMessageUsesRouterRegistry(t *testing.T) {
-	ctx := context.Background()
-	f := newInlineBotRPCTestFixture(t)
-	ownerCtx := WithUserID(ctx, f.owner.ID)
-
-	id, expireDate, err := f.router.SavePreparedInlineMessageFromBotAPI(ctx, f.bot.ID, f.owner.ID, domain.BotInlineResult{
-		ID:      "botapi-prepared",
-		Type:    "article",
-		Message: "prepared from bot api",
-	}, []string{store.InlineQueryPeerTypePM})
-	if err != nil {
-		t.Fatalf("save prepared inline from bot api: %v", err)
-	}
-	if id == "" || expireDate == 0 {
-		t.Fatalf("prepared id/expire = %q/%d, want non-empty", id, expireDate)
-	}
-	got, err := f.router.onMessagesGetPreparedInlineMessage(ownerCtx, &tg.MessagesGetPreparedInlineMessageRequest{
-		Bot: inputUser(f.bot),
-		ID:  id,
-	})
-	if err != nil {
-		t.Fatalf("get bot api prepared inline: %v", err)
-	}
-	result, ok := got.Result.(*tg.BotInlineResult)
-	if !ok || result.ID != "botapi-prepared" {
-		t.Fatalf("prepared result = %T/%#v, want botapi-prepared", got.Result, got.Result)
-	}
-	if len(got.PeerTypes) != 1 {
-		t.Fatalf("prepared peer types = %d, want 1", len(got.PeerTypes))
-	}
-	if _, ok := got.PeerTypes[0].(*tg.InlineQueryPeerTypePM); !ok {
-		t.Fatalf("prepared peer type = %T, want PM", got.PeerTypes[0])
-	}
-	updatesClass, err := f.router.onMessagesSendInlineBotResult(ownerCtx, &tg.MessagesSendInlineBotResultRequest{
-		Peer:     inputPeerUser(f.peer),
-		RandomID: 9933,
-		QueryID:  got.QueryID,
-		ID:       result.ID,
-	})
-	if err != nil {
-		t.Fatalf("send bot api prepared inline result: %v", err)
-	}
-	sent := messageFromUpdates(t, updatesClass)
-	if sent.Message != "prepared from bot api" {
-		t.Fatalf("sent prepared message = %q, want prepared from bot api", sent.Message)
 	}
 	if via, ok := sent.GetViaBotID(); !ok || via != f.bot.ID {
 		t.Fatalf("sent prepared via_bot_id = %d,%v, want %d,true", via, ok, f.bot.ID)

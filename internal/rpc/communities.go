@@ -455,9 +455,6 @@ func (r *Router) onCommunitiesToggleParticipantBanned(ctx context.Context, req *
 			return updates
 		}
 		r.pushChannelUpdates(ctx, userID, ban.Channel.ID, ban.Recipients, build)
-		r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
-			Channel: ban.Channel, ActorUserID: userID, Previous: ban.Previous, Current: ban.Participant, Date: ban.Date,
-		})
 	}
 	if result.Changed && !req.Unban {
 		forbidden := domain.CommunityView{Community: view.Community, Forbidden: true, Self: domain.CommunityMember{UserID: peer.ID}}

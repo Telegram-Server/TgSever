@@ -10,7 +10,7 @@ import (
 func TestBotInvoiceRefundFailureRollsBackAndCanRetry(t *testing.T) {
 	c := newInvoiceChain(t)
 	ctx := context.Background()
-	if _, err := c.router.BotAPISendInvoice(ctx, c.botID, c.buyerID, "Item", "Description", "refund-fail", 100); err != nil {
+	if _, err := c.sendInvoice("Item", "Description", "refund-fail", 100); err != nil {
 		t.Fatal(err)
 	}
 	id := c.newestInvoiceID(t)
@@ -25,7 +25,7 @@ func TestBotInvoiceRefundFailureRollsBackAndCanRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	balance := c.payerBalance(t)
-	if _, err := c.router.BotAPIRefundStarPayment(ctx, c.botID, c.buyerID, charge); err == nil {
+	if _, err := c.refund(c.botID, c.buyerID, charge); err == nil {
 		t.Fatal("refund without funds succeeded")
 	}
 	got, _, err := c.router.deps.Bots.BotInvoiceByCharge(ctx, charge)
@@ -38,7 +38,7 @@ func TestBotInvoiceRefundFailureRollsBackAndCanRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := c.router.BotAPIRefundStarPayment(ctx, c.botID, c.buyerID, charge); err != nil {
+		if _, err := c.refund(c.botID, c.buyerID, charge); err != nil {
 			t.Fatal(err)
 		}
 	}

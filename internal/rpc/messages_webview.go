@@ -323,58 +323,6 @@ func (r *Router) onMessagesSendWebViewResultMessage(ctx context.Context, req *tg
 	return &tg.WebViewMessageSent{}, nil
 }
 
-// AnswerWebAppQueryFromBotAPI answers a Bot API answerWebAppQuery request using
-// the same webview session registry and message pipeline as MTProto
-// messages.sendWebViewResultMessage. It intentionally accepts only domain
-// values, keeping Bot API parsing out of the MTProto/tg boundary.
-func (r *Router) AnswerWebAppQueryFromBotAPI(ctx context.Context, botID int64, botQueryID string, result domain.BotInlineResult) (string, error) {
-	if botID == 0 || strings.TrimSpace(botQueryID) == "" {
-		return "", queryIDInvalidErr()
-	}
-	if r.deps.Bots == nil {
-		return "", userBotRequiredErr()
-	}
-	if _, found, err := r.deps.Bots.BotInfo(ctx, botID); err != nil {
-		return "", internalErr()
-	} else if !found {
-		return "", userBotRequiredErr()
-	}
-	if err := r.prepareTelegramLoginMarkup(ctx, botID, result.ReplyMarkup); err != nil {
-		return "", replyMarkupErr(err)
-	}
-	if err := r.sendWebViewDomainResultMessage(ctx, botID, botQueryID, result); err != nil {
-		return "", err
-	}
-	return "", nil
-}
-
-// SavePreparedInlineMessageFromBotAPI stores a Bot API prepared inline message
-// in the same short-lived local/shared inline registry used by
-// messages.savePreparedInlineMessage.
-func (r *Router) SavePreparedInlineMessageFromBotAPI(ctx context.Context, botID, userID int64, result domain.BotInlineResult, peerTypes []string) (string, int, error) {
-	if botID == 0 {
-		return "", 0, userBotRequiredErr()
-	}
-	if userID == 0 || r.deps.Users == nil || r.deps.Bots == nil {
-		return "", 0, userIDInvalidErr()
-	}
-	if _, found, err := r.deps.Bots.BotInfo(ctx, botID); err != nil {
-		return "", 0, internalErr()
-	} else if !found {
-		return "", 0, userBotRequiredErr()
-	}
-	if _, found, err := r.deps.Users.ByID(ctx, botID, userID); err != nil {
-		return "", 0, internalErr()
-	} else if !found {
-		return "", 0, userIDInvalidErr()
-	}
-	if err := r.prepareTelegramLoginMarkup(ctx, botID, result.ReplyMarkup); err != nil {
-		return "", 0, replyMarkupErr(err)
-	}
-	id, expireDate := r.inlines.savePreparedInlineContext(ctx, r.clock.Now(), botID, userID, result, peerTypes)
-	return id, expireDate, nil
-}
-
 func (r *Router) sendWebViewDomainResultMessage(ctx context.Context, botID int64, botQueryID string, result domain.BotInlineResult) error {
 	now := r.clock.Now()
 	session, ok := r.webviews.sessionForBotQueryContext(ctx, now, botID, botQueryID)

@@ -89,25 +89,6 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	defer r.callbacks.deregisterContext(context.Background(), botUserID, queryID)
 	callback.ID = queryID
 
-	// Bot API callback_query shares the dedicated durable update_id queue with message and
-	// edited_message. The callback answer waiter itself remains ephemeral/process-local.
-	if r.deps.BotAPIUpdates != nil {
-		if _, created, err := r.deps.BotAPIUpdates.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
-			BotUserID: botUserID,
-			Kind:      domain.BotAPIUpdateCallbackQuery,
-			Peer:      callback.Peer,
-			MessageID: callback.MessageID,
-			Date:      int(r.clock.Now().Unix()),
-			Callback:  &callback,
-		}); err != nil {
-			r.log.Warn("enqueue bot api callback query",
-				zap.Int64("bot_user_id", botUserID), zap.Int64("query_id", queryID), zap.Error(err))
-			return nil, internalErr()
-		} else if created {
-			r.notifyBotAPIUpdate(botUserID)
-		}
-	}
-
 	// updateBotCallbackQuery 是 ephemeral（无 pts/qts，不进 getDifference）；私聊 MessageID
 	// 已翻译为 bot 视角 box id，channel 使用共享 message id。
 	var update tg.UpdateClass

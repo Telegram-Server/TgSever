@@ -38,11 +38,11 @@ func (s *precheckoutSessions) PushToUserExceptAuthKeySession(ctx context.Context
 	return s.captureSessions.PushToUserExceptAuthKeySession(ctx, userID, excludeAuthKeyID, excludeSessionID, typ, msg)
 }
 
-// newMTProtoInvoiceChain 是没有 Bot API 队列的收款链：只剩 MTProto 推送和 pts。
+// newMTProtoInvoiceChain 是只靠 MTProto 推送和 pts 的收款链。
 func newMTProtoInvoiceChain(t *testing.T) (*invoiceChain, *precheckoutSessions) {
 	t.Helper()
 	sessions := newPrecheckoutSessions()
-	chain := newInvoiceChainWith(t, invoiceChainOptions{withoutBotAPIQueue: true, sessions: sessions})
+	chain := newInvoiceChainWith(t, invoiceChainOptions{sessions: sessions})
 	sessions.botID = chain.botID
 	return chain, sessions
 }
@@ -107,9 +107,8 @@ func (c *invoiceChain) botPaymentSentMe(t *testing.T, from *tg.UpdatesState) []*
 	return out
 }
 
-// 网关不在时，pre-checkout 必须照常在线推给 bot，bot 应答后付款完成，支付结果作为带
-// pts 的服务消息送达 bot。
-func TestPreCheckoutWithoutBotAPIQueue(t *testing.T) {
+// pre-checkout 在线推给 bot，bot 应答后付款完成，支付结果作为带 pts 的服务消息送达 bot。
+func TestPreCheckoutOverMTProto(t *testing.T) {
 	t.Run("answered pays and the bot sees the payment by pts", func(t *testing.T) {
 		chain, sessions := newMTProtoInvoiceChain(t)
 		invoice, stored := chain.sellInvoice(t, "mtproto-ok", 100)
@@ -117,7 +116,7 @@ func TestPreCheckoutWithoutBotAPIQueue(t *testing.T) {
 
 		go chain.answerPushed(sessions, true)
 		if err := chain.payStarsForm(t, invoice, stored.ID); err != nil {
-			t.Fatalf("payment without the Bot API queue: %v", err)
+			t.Fatalf("payment over MTProto: %v", err)
 		}
 		if chain.walletBalance(t) != 100 {
 			t.Fatalf("bot wallet = %d, want 100", chain.walletBalance(t))
@@ -128,14 +127,6 @@ func TestPreCheckoutWithoutBotAPIQueue(t *testing.T) {
 		}
 		if paid[0].TotalAmount != 100 || string(paid[0].Payload) != "mtproto-ok" || paid[0].Charge.ID == "" {
 			t.Fatalf("payment action = %+v, want 100 XTR with the payload and a charge id", paid[0])
-		}
-		// 没有网关就没有队列：支付事务不能再往 Bot API 队列里写。
-		queued, err := chain.updates.ListBotAPIUpdates(context.Background(), chain.botID, 0, 50)
-		if err != nil {
-			t.Fatalf("read bot api queue: %v", err)
-		}
-		if len(queued) != 0 {
-			t.Fatalf("payment without the gateway wrote %d Bot API queue rows, want 0", len(queued))
 		}
 	})
 
