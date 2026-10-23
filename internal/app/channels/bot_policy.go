@@ -173,10 +173,6 @@ func (s *Service) loadActiveBotMemberIDs(ctx context.Context, viewerUserID, chan
 }
 
 func (s *Service) skippedBotDeliveryUserIDsForIDs(ctx context.Context, req domain.SendChannelMessageRequest, memberIDs []int64) ([]int64, error) {
-	profiles, err := s.botProfiles(ctx, memberIDs)
-	if err != nil {
-		return nil, err
-	}
 	msg := domain.ChannelMessage{
 		ChannelID:    req.ChannelID,
 		SenderUserID: req.UserID,
@@ -184,24 +180,81 @@ func (s *Service) skippedBotDeliveryUserIDsForIDs(ctx context.Context, req domai
 		ReplyTo:      req.ReplyTo,
 		Action:       req.Action,
 	}
+	return s.skippedPrivacyBotIDs(ctx, req.UserID, memberIDs, []domain.ChannelMessage{msg}, req.MentionUserIDs)
+}
+
+// skippedPrivacyBotIDs 是新消息与编辑推送共用的 privacy bot 跳过规则：memberIDs 中
+// bot_chat_history=false 的 bot，若 msgs 里没有一条对它可见（命令/@/回复它/它发的），就跳过直接推送。
+// actorUserID（发送者/编辑者）本人永不跳过。
+func (s *Service) skippedPrivacyBotIDs(ctx context.Context, actorUserID int64, memberIDs []int64, msgs []domain.ChannelMessage, mentionUserIDs []int64) ([]int64, error) {
+	profiles, err := s.botProfiles(ctx, memberIDs)
+	if err != nil {
+		return nil, err
+	}
 	skip := make([]int64, 0)
 	for _, id := range memberIDs {
-		if id == req.UserID {
+		if id == actorUserID {
 			continue
 		}
 		profile, found := profiles[id]
 		if !found || profile.ChatHistory {
 			continue
 		}
-		visible, err := s.botCanSeeChannelMessage(ctx, id, msg, req.MentionUserIDs)
-		if err != nil {
-			return nil, err
+		visible := false
+		for _, msg := range msgs {
+			ok, err := s.botCanSeeChannelMessage(ctx, id, msg, mentionUserIDs)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				visible = true
+				break
+			}
 		}
 		if !visible {
 			skip = append(skip, id)
 		}
 	}
 	return skip, nil
+}
+
+// applyEditPrivacyBotSkip 按新消息同一套规则给编辑结果填 SkipDeliveryUserIDs 并从 Recipients 扣除，
+// 使在线编辑 fanout 不把 privacy bot 看不见的消息编辑推给它（getChannelDifference 已按同规则过滤）。
+// 可见性按编辑后的消息判断；todo 编辑的服务消息容器只要有一条可见即推送整条更新。
+func (s *Service) applyEditPrivacyBotSkip(ctx context.Context, actorUserID int64, mentionUserIDs []int64, res domain.EditChannelMessageResult) (domain.EditChannelMessageResult, error) {
+	if s.bots == nil || res.Channel.ID == 0 || actorUserID == 0 {
+		return res, nil
+	}
+	msgs := make([]domain.ChannelMessage, 0, 2)
+	if res.Message.ID != 0 {
+		msgs = append(msgs, res.Message)
+	}
+	if res.ServiceEvent.Pts != 0 && res.ServiceMessage.ID != 0 {
+		msgs = append(msgs, res.ServiceMessage)
+	}
+	if len(msgs) == 0 {
+		return res, nil
+	}
+	memberIDs, err := s.loadActiveBotMemberIDs(ctx, actorUserID, res.Channel.ID, domain.MaxSynchronousChannelDialogFanout)
+	if err != nil {
+		return domain.EditChannelMessageResult{}, err
+	}
+	skip, err := s.skippedPrivacyBotIDs(ctx, actorUserID, memberIDs, msgs, mentionUserIDs)
+	if err != nil {
+		return domain.EditChannelMessageResult{}, err
+	}
+	if len(skip) == 0 {
+		return res, nil
+	}
+	res.SkipDeliveryUserIDs = mergeSkippedUserIDs(res.SkipDeliveryUserIDs, skip)
+	recipients := make([]int64, 0, len(res.Recipients))
+	for _, id := range res.Recipients {
+		if !containsInt64(res.SkipDeliveryUserIDs, id) {
+			recipients = append(recipients, id)
+		}
+	}
+	res.Recipients = recipients
+	return res, nil
 }
 
 func (s *Service) filterBotChannelHistory(ctx context.Context, userID int64, history domain.ChannelHistory) domain.ChannelHistory {

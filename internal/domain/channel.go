@@ -2059,6 +2059,9 @@ type EditChannelMessageResult struct {
 	ServiceMessage ChannelMessage
 	ServiceEvent   ChannelUpdateEvent
 	Recipients     []int64
+	// SkipDeliveryUserIDs 同 SendChannelMessageResult：按 bot privacy 规则看不见这条编辑的成员，
+	// Recipients 已扣除；在线 fanout 须据此跳过它们的直接推送。
+	SkipDeliveryUserIDs []int64
 }
 
 // DeleteChannelMessagesRequest deletes a bounded set of channel/supergroup messages.
