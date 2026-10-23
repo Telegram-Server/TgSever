@@ -386,6 +386,7 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, nil, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, res, cache)
 	})
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: missingInvitees}, nil
 }
@@ -431,6 +432,7 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	r.enqueueBotAPIMemberUpdates(ctx, botAPIJoinedMemberChanges(userID, res, date)...)
 	// Layer 227：channels.joinChannel 返回 messages.ChatInviteJoinResult；
 	// 正常加入即 chatInviteJoinResultOk 包裹本次操作的 updates。
@@ -467,6 +469,7 @@ func (r *Router) onChannelsLeaveChannel(ctx context.Context, input tg.InputChann
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	r.enqueueBotAPIMemberUpdates(ctx, botAPILeftMemberChanges(userID, res, date)...)
 	return updates, nil
 }
@@ -560,10 +563,18 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 		r.removeOnlineChannelMemberships(res.Channel.ID, res.Participant.UserID)
 	}
 	cache := newViewerPeerCache(r)
-	updates := r.channelParticipantUpdatesWithPeerCache(ctx, userID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
-		return r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-	})
+	qtsBots := botQtsRecipients(res.BotUpdates)
+	build := func(viewerUserID int64) *tg.Updates {
+		updates := r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
+		if _, ok := qtsBots[viewerUserID]; ok {
+			// bot 自己的成员变化只经 qts 序列送达（下面的 pushBotUpdates）。
+			return withoutChannelParticipantUpdates(updates)
+		}
+		return updates
+	}
+	updates := build(userID)
+	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
 		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
 	})
@@ -609,8 +620,13 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 		r.recordChannelStateForUser(ctx, res.Participant.UserID, res.Channel.ID, false)
 	}
 	cache := newViewerPeerCache(r)
+	qtsBots := botQtsRecipients(res.BotUpdates)
 	build := func(viewerUserID int64) *tg.Updates {
 		updates := r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
+		if _, ok := qtsBots[viewerUserID]; ok {
+			// bot 自己的成员变化只经 qts 序列送达（下面的 pushBotUpdates）。
+			updates = withoutChannelParticipantUpdates(updates)
+		}
 		if updates != nil && res.ServiceEvent.Pts != 0 {
 			// megagroup 踢人服务消息占 channel pts，必须先于 participant
 			// update 应用，让成员面板/人数与消息流一起收敛。
@@ -622,6 +638,7 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	}
 	updates := build(userID)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	r.enqueueBotAPIMemberUpdates(ctx, botAPIMemberChange{
 		Channel: res.Channel, ActorUserID: userID, Previous: res.Previous, Current: res.Participant, Date: res.Date,
 	})

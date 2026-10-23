@@ -53,7 +53,17 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 		return nil, internalErr()
 	}
 	// 密聊 qts 是设备级、独立于账号级 pts 引擎：注入当前设备已分配的 qts（无密聊设备为 0）。
-	st.Qts = r.deviceEncryptedQts(ctx)
+	// bot 不能用密聊，它的 qts 来自账号级的 bot qts 序列，所有会话看到同一条序列。
+	if r.botQtsAccount(ctx, userID) {
+		botState, err := r.botQtsState(ctx, userID)
+		if err != nil {
+			r.log.Error("load bot qts state", zap.Int64("bot_user_id", userID), zap.Error(err))
+			return nil, internalErr()
+		}
+		st.Qts = botState.Qts
+	} else {
+		st.Qts = r.deviceEncryptedQts(ctx)
+	}
 	r.stageUpdatesBaselineAfterDelivery(ctx, userID, &st, mode, nil, true)
 	out := tgUpdateState(st)
 	return ptr(out), nil
@@ -90,6 +100,26 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	// pts_total_limit 是客户端显式请求的 fast-skip：差距超限时返回
 	// differenceTooLong{pts}，客户端据此整体重置会话列表而不是串行翻
 	// 上千页 slice。不传该参数的客户端（TDesktop）永远不会收到 tooLong。
+	botQts := r.botQtsAccount(ctx, userID)
+	if botQts {
+		// 请求的 qts 早于最旧的保留记录：被回收的 bot 更新补不回来，返回 differenceTooLong
+		// 让客户端整体重新同步，而不是给出缺了一段的差分。
+		botState, err := r.botQtsState(ctx, userID)
+		if err != nil {
+			r.log.Error("load bot qts state", zap.Int64("bot_user_id", userID), zap.Error(err))
+			return nil, internalErr()
+		}
+		if botState.DifferenceTooLong(req.Qts) {
+			current, err := r.deps.Updates.CurrentState(ctx, userID)
+			if err != nil {
+				return nil, internalErr()
+			}
+			returnedCursor := from
+			returnedCursor.Pts = current.Pts
+			r.stageUpdatesBaselineAfterDelivery(ctx, userID, &returnedCursor, domain.UpdateStateCommitDeliveredOnly, nil, false)
+			return &tg.UpdatesDifferenceTooLong{Pts: current.Pts}, nil
+		}
+	}
 	if limit, ok := req.GetPtsTotalLimit(); ok && limit > 0 && req.Pts > 0 {
 		current, err := r.deps.Updates.CurrentState(ctx, userID)
 		if err == nil && current.Pts-from.Pts > limit {
@@ -122,11 +152,29 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 			break
 		}
 	}
-	// 密聊设备级 qts 消息（独立于账号级 pts 事件）：按当前设备 req.Qts 补回。
-	encMsgs, newQts, encryptedPartial, err := r.encryptedDifference(ctx, req.Qts)
-	if err != nil {
-		r.log.Error("load secret chat qts difference", zap.Error(err))
-		return nil, internalErr()
+	peerCache := newViewerPeerCache(r)
+	// 密聊设备级 qts 消息（独立于账号级 pts 事件）：按当前设备 req.Qts 补回。bot 没有密聊，
+	// 它的 qts 类更新来自 bot qts 序列。
+	var (
+		encMsgs          []tg.EncryptedMessageClass
+		newQts           int
+		encryptedPartial bool
+		botUpdates       []tg.UpdateClass
+		botUsers         []tg.UserClass
+		botChats         []tg.ChatClass
+	)
+	if botQts {
+		botUpdates, botUsers, botChats, newQts, encryptedPartial, err = r.botQtsDifference(ctx, userID, req.Qts, peerCache)
+		if err != nil {
+			r.log.Error("load bot qts difference", zap.Int64("bot_user_id", userID), zap.Error(err))
+			return nil, internalErr()
+		}
+	} else {
+		encMsgs, newQts, encryptedPartial, err = r.encryptedDifference(ctx, req.Qts)
+		if err != nil {
+			r.log.Error("load secret chat qts difference", zap.Error(err))
+			return nil, internalErr()
+		}
 	}
 	// 密聊握手/已读状态事件（无 qts）：按未投递标记补回 OtherUpdates。
 	stateUpdates, statePeerUserIDs, stateEventIDs, encryptedStatePartial, err := r.encryptedStateUpdates(ctx, userID)
@@ -136,7 +184,7 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	}
 	// 账号 pts、设备 qts 和无序号状态事件任一被截断，都必须返回 differenceSlice。
 	st.Partial = st.Partial || encryptedPartial || encryptedStatePartial
-	if !st.Partial && len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(stateUpdates) == 0 {
+	if !st.Partial && len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(botUpdates) == 0 && len(stateUpdates) == 0 {
 		// differenceEmpty carries no pts/qts. Both audited clients retain their
 		// request cursor, so only that normalized cursor is proven delivered.
 		emptyCursor := domain.UpdateState{Pts: from.Pts, Qts: from.Qts, Date: st.State.Date, Seq: st.State.Seq}
@@ -145,7 +193,6 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 		r.stageUpdatesBaselineAfterDelivery(ctx, userID, &emptyCursor, domain.UpdateStateCommitDeliveredOnly, stateEventIDs, true)
 		return &tg.UpdatesDifferenceEmpty{Date: st.State.Date, Seq: st.State.Seq}, nil
 	}
-	peerCache := newViewerPeerCache(r)
 	st.Events, err = r.enrichUpdateEventsWithPeerCacheStrict(ctx, userID, st.Events, peerCache)
 	if err != nil {
 		r.log.Error("project durable account difference users",
@@ -154,7 +201,11 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 		return nil, internalErr()
 	}
 	diff := r.tgUpdatesDifference(ctx, userID, st)
-	diff = injectEncryptedMessages(diff, encMsgs, newQts)
+	if botQts {
+		diff = injectBotQtsDifference(diff, botUpdates, botUsers, botChats, newQts)
+	} else {
+		diff = injectEncryptedMessages(diff, encMsgs, newQts)
+	}
 	diff, err = r.injectEncryptedOtherUpdatesStrict(ctx, userID, diff, stateUpdates, statePeerUserIDs, peerCache)
 	if err != nil {
 		r.log.Error("project durable encrypted difference users",

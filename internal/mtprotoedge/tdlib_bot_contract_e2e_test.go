@@ -195,21 +195,26 @@ func startTDLibContractServer(t *testing.T) tdlibContractServer {
 	messageStore := memory.NewMessageStore(dialogStore)
 	botStore := memory.NewBotStore(userStore)
 	botsService := botsapp.NewService(userStore, botStore, messageStore, botsapp.WithLogger(zaptest.NewLogger(t).Named("bots")))
-	channelsService := channelsapp.NewService(memory.NewChannelStore(), channelsapp.WithBotProfileResolver(botsService))
+	// bot qts 序列（#145）：成员变动在 channel store 的同一临界区里写入。
+	botUpdates := memory.NewBotUpdateStore(userStore)
+	channelStore := memory.NewChannelStore()
+	channelStore.AttachBotUpdateStore(botUpdates)
+	channelsService := channelsapp.NewService(channelStore, channelsapp.WithBotProfileResolver(botsService))
 	sessions := NewSessionManager(zaptest.NewLogger(t).Named("sessions"))
 	files := &tdlibContractFiles{}
 	deps := rpc.Deps{
 		Auth: auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore,
 			memory.NewTempAuthKeyBindingStore(authKeyStore), "12345", auth.WithBotLogin(botStore)),
-		Help:     help.NewService(helpStore, helpStore),
-		Users:    users.NewService(userStore),
-		Updates:  updates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
-		Dialogs:  dialogs.NewService(dialogStore),
-		Messages: messageapp.NewService(messageStore, dialogStore, messageapp.WithBotResponder(botsService)),
-		Bots:     botsService,
-		Channels: channelsService,
-		Files:    files,
-		Sessions: sessions,
+		Help:       help.NewService(helpStore, helpStore),
+		Users:      users.NewService(userStore),
+		Updates:    updates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
+		Dialogs:    dialogs.NewService(dialogStore),
+		Messages:   messageapp.NewService(messageStore, dialogStore, messageapp.WithBotResponder(botsService)),
+		Bots:       botsService,
+		Channels:   channelsService,
+		BotUpdates: botUpdates,
+		Files:      files,
+		Sessions:   sessions,
 	}
 	router := rpc.New(rpc.Config{DC: dc, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}, deps, zaptest.NewLogger(t), clock.System)
 	botsService.SetRouterHooks(router)
@@ -473,5 +478,94 @@ func assertTDLibBotChannelDifference(t *testing.T, srv tdlibContractServer, bot 
 	second, ok := getDiff(first.Pts).(*tg.UpdatesChannelDifference)
 	if !ok || !second.Final || len(second.NewMessages) != sent-domain.MaxChannelDifferenceLimit || second.Pts != channel.Pts {
 		t.Fatalf("second page = %#v, want final page with %d messages at pts %d", second, sent-domain.MaxChannelDifferenceLimit, channel.Pts)
+	}
+}
+
+// TestTDLibBotContractQtsDifferenceAfterOffline：bot 离线期间自己在超级群里的成员变化，重连后
+// 由 updates.getDifference 按 qts 顺序补回。TDLib 把 updateChannelParticipant 当作 qts 类更新
+// （td/td/telegram/UpdatesManager.cpp:4254 is_qts_update），用登录时 updates.getState 拿到的 qts
+// 发 getDifference（UpdatesManager.cpp:200），并从 difference.state.qts 推进本地 qts
+// （UpdatesManager.cpp:1354 on_get_updates_state）。
+func TestTDLibBotContractQtsDifferenceAfterOffline(t *testing.T) {
+	t.Parallel()
+	srv := startTDLibContractServer(t)
+	ctx := context.Background()
+	owner, err := srv.users.Create(ctx, domain.User{AccessHash: 9002, Phone: "+15550143002", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	botUser, token, err := srv.bots.CreateBot(ctx, owner.ID, "TDLib Qts Bot", "tdlib_qts_bot")
+	if err != nil {
+		t.Fatalf("create bot: %v", err)
+	}
+	login := func() *tdlibBotConn {
+		t.Helper()
+		bot := dialTDLibBot(t, srv.addr, srv.dc, srv.pub)
+		bot.mustCall("invokeWithLayer(initConnection(help.getConfig))", tdlibInitConnection(&tg.HelpGetConfigRequest{}))
+		bot.mustCall("auth.importBotAuthorization", &tg.AuthImportBotAuthorizationRequest{
+			APIID: 94575, APIHash: "0123456789abcdef0123456789abcdef", BotAuthToken: token,
+		})
+		return bot
+	}
+
+	first := login()
+	state := decodeInto[tg.UpdatesState](t, "updates.getState", first.mustCall("updates.getState", &tg.UpdatesGetStateRequest{}))
+	first.conn.Close()
+
+	// 离线期间：bot 被拉进群，随后被设为管理员。
+	created, err := srv.channels.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{Title: "TDLib Qts Group", Megagroup: true, Date: int(time.Now().Unix())})
+	if err != nil {
+		t.Fatalf("create megagroup: %v", err)
+	}
+	if _, err := srv.channels.InviteToChannel(ctx, owner.ID, created.Channel.ID, []int64{botUser.ID}, int(time.Now().Unix())); err != nil {
+		t.Fatalf("invite bot: %v", err)
+	}
+	if _, err := srv.channels.EditAdmin(ctx, owner.ID, domain.EditChannelAdminRequest{
+		ChannelID: created.Channel.ID, MemberID: botUser.ID, AdminRights: domain.ChannelAdminRights{DeleteMessages: true},
+	}); err != nil {
+		t.Fatalf("promote bot: %v", err)
+	}
+
+	second := login()
+	raw := second.mustCall("updates.getDifference", &tg.UpdatesGetDifferenceRequest{Pts: state.Pts, Date: state.Date, Qts: state.Qts})
+	diffClass, err := tg.DecodeUpdatesDifference(raw)
+	if err != nil {
+		t.Fatalf("decode updates.Difference: %v", err)
+	}
+	diff, ok := diffClass.(*tg.UpdatesDifference)
+	if !ok {
+		t.Fatalf("updates.getDifference after offline = %T, want updates.difference", diffClass)
+	}
+	var participants []*tg.UpdateChannelParticipant
+	for _, update := range diff.OtherUpdates {
+		if p, ok := update.(*tg.UpdateChannelParticipant); ok {
+			participants = append(participants, p)
+		}
+	}
+	if len(participants) != 2 || participants[0].Qts != state.Qts+1 || participants[1].Qts != state.Qts+2 {
+		t.Fatalf("qts updates = %+v, want two updateChannelParticipant at qts %d,%d", participants, state.Qts+1, state.Qts+2)
+	}
+	for _, p := range participants {
+		if p.ChannelID != created.Channel.ID || p.UserID != botUser.ID || p.ActorID != owner.ID {
+			t.Fatalf("updateChannelParticipant %+v, want bot %d in channel %d by owner %d", p, botUser.ID, created.Channel.ID, owner.ID)
+		}
+	}
+	if newParticipant, _ := participants[1].GetNewParticipant(); newParticipant == nil {
+		t.Fatalf("promotion update carries no new participant: %+v", participants[1])
+	} else if _, ok := newParticipant.(*tg.ChannelParticipantAdmin); !ok {
+		t.Fatalf("promotion new participant = %T, want channelParticipantAdmin", newParticipant)
+	}
+	if diff.State.Qts != state.Qts+2 {
+		t.Fatalf("difference state.qts = %d, want %d", diff.State.Qts, state.Qts+2)
+	}
+	// updateChannelParticipant 引用的频道必须随差分下发，TDLib 才能解析 channel_id。
+	foundChannel := false
+	for _, chat := range diff.Chats {
+		if ch, ok := chat.(*tg.Channel); ok && ch.ID == created.Channel.ID {
+			foundChannel = true
+		}
+	}
+	if !foundChannel {
+		t.Fatalf("difference chats %+v lack channel %d", diff.Chats, created.Channel.ID)
 	}
 }

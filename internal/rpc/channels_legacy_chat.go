@@ -59,6 +59,7 @@ func (r *Router) onMessagesCreateChat(ctx context.Context, req *tg.MessagesCreat
 			return nil, channelInviteErr(err)
 		}
 		r.addOnlineChannelMemberships(inviteRes.Channel.ID, channelMemberUserIDs(inviteRes.Members)...)
+		r.pushBotUpdates(ctx, inviteRes.BotUpdates)
 		responseRes.Channel = inviteRes.Channel
 		responseRes.Members = mergeChannelMembers(createRes.Members, inviteRes.Members)
 		responseRes.Recipients = uniqueRecipientIDs(append(append([]int64{}, createRes.Recipients...), inviteRes.Recipients...))

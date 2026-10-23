@@ -1183,7 +1183,9 @@ type Deps struct {
 	Updates                      UpdatesService
 	BootstrapUpdates             store.BootstrapUpdateJobStore
 	BotAPIUpdates                store.BotAPIUpdateStore
-	BotCallbacks                 store.BotCallbackRegistryStore
+	// BotUpdates 是 bot qts 序列（#145）：bot 账号 getState/getDifference 的 qts 来源。
+	BotUpdates   BotUpdatesService
+	BotCallbacks store.BotCallbackRegistryStore
 	// PushDevices 保存 account.registerDevice 的设备推送登记（与 APNs 是否配置无关）。
 	// 为 nil 时 registerDevice/unregisterDevice 只回 true、不保存。
 	PushDevices             store.PushDeviceStore
