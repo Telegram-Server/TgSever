@@ -29,6 +29,9 @@ func (r *Router) botQtsAccount(ctx context.Context, userID int64) bool {
 // tgBotUpdate 把一条 bot qts 记录投影成 bot 看到的 update，并返回需要附带的 user id 与 chat。
 // view 是频道的当前投影（bot 看不到时为 nil），用不上时退回记录里的频道快照与变化后的参与者。
 func tgBotUpdate(update domain.BotUpdate, view *domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) {
+	if update.BotStopped != nil {
+		return tgBotStoppedUpdate(update)
+	}
 	p := update.ChannelParticipant
 	if p == nil {
 		return nil, nil, nil
@@ -72,10 +75,14 @@ func (r *Router) pushBotUpdates(ctx context.Context, updates []domain.BotUpdate)
 		if tgUpdate == nil {
 			continue
 		}
+		chats := []tg.ChatClass{}
+		if chat != nil {
+			chats = append(chats, chat)
+		}
 		r.pushUserUpdates(ctx, update.BotUserID, &tg.Updates{
 			Updates: []tg.UpdateClass{tgUpdate},
 			Users:   tgUsersForViewer(update.BotUserID, cache.usersForIDs(ctx, update.BotUserID, uniqueRecipientIDs(userIDs))),
-			Chats:   []tg.ChatClass{chat},
+			Chats:   chats,
 			Date:    int(r.clock.Now().Unix()),
 		})
 	}
@@ -173,7 +180,7 @@ func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts 
 		}
 		updates = append(updates, update)
 		userIDs = append(userIDs, ids...)
-		if channelID := botUpdateChannelID(row); chat != nil {
+		if channelID := botUpdateChannelID(row); chat != nil && channelID != 0 {
 			if _, ok := seenChats[channelID]; !ok {
 				seenChats[channelID] = struct{}{}
 				chats = append(chats, chat)

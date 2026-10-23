@@ -155,5 +155,8 @@ func (s *ContactStore) MutateBlocklist(_ context.Context, m store.BlocklistMutat
 		shared[id] = true
 	}
 	stories.blocked[m.OwnerUserID] = shared
+	if snapshot.BotUpdates, err = s.appendBlocklistBotUpdatesLocked(snapshot); err != nil {
+		return store.BlocklistMutationSnapshot{}, err
+	}
 	return store.CloneBlocklistSnapshot(snapshot)
 }

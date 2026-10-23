@@ -19,6 +19,7 @@ type ContactStore struct {
 	blocklistStories  *StoryStore
 	blocklistUsers    *UserStore
 	blocklistChannels *ChannelStore
+	botUpdates        *BotUpdateStore
 }
 
 func (s *ContactStore) AttachUpdateEventStore(events *UpdateEventStore) {

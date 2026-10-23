@@ -17,6 +17,8 @@ type BotUpdate struct {
 	ChannelParticipant *BotChannelParticipantUpdate `json:",omitempty"`
 	// ChatInviteRequester 是 updateBotChatInviteRequester：有用户提交了入群申请（#149）。
 	ChatInviteRequester *BotChatInviteRequesterUpdate `json:",omitempty"`
+	// BotStopped 是 updateBotStopped：用户拉黑或解除拉黑了 bot（#148）。
+	BotStopped *BotStoppedUpdate `json:",omitempty"`
 }
 
 // BotChannelParticipantUpdate 是一次超级群/频道成员状态变化的内容。
