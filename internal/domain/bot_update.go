@@ -33,6 +33,9 @@ type BotChannelParticipantUpdate struct {
 	// Previous 为零值（UserID == 0）表示变化前没有成员记录。
 	Previous ChannelMember
 	Current  ChannelMember
+	// Viewer 是接收记录的管理员 bot 自己当时的成员记录（#146，其他成员的变动）；bot 自己的
+	// 变化不填，此时 Current 就是它自己。
+	Viewer ChannelMember `json:",omitempty"`
 }
 
 // BotUpdatesState 是一个 bot 的 qts 序列状态。

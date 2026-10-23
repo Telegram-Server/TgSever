@@ -131,7 +131,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	}
 	var botUpdates []domain.BotUpdate
 	if update, ok := domain.BotChannelParticipantChange(channel, req.UserID, botPrevious, member, req.Date); ok {
-		if botUpdates, err = appendBotOnlyUpdatesTx(ctx, tx, []domain.BotUpdate{update}); err != nil {
+		if botUpdates, err = appendChannelBotUpdatesTx(ctx, tx, channel.ID, []domain.BotUpdate{update}); err != nil {
 			return domain.EditChannelAdminResult{}, err
 		}
 	}
@@ -462,7 +462,7 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	}
 	var botUpdates []domain.BotUpdate
 	if update, ok := domain.BotChannelParticipantChange(channel, req.UserID, previous, member, req.Date); ok {
-		if botUpdates, err = appendBotOnlyUpdatesTx(ctx, tx, []domain.BotUpdate{update}); err != nil {
+		if botUpdates, err = appendChannelBotUpdatesTx(ctx, tx, channel.ID, []domain.BotUpdate{update}); err != nil {
 			return domain.EditChannelBannedResult{}, err
 		}
 	}

@@ -134,3 +134,62 @@ func participantKind(p tg.ChannelParticipantClass) string {
 		return "other"
 	}
 }
+
+// 普通群入口上其他成员的变动（#146）：messages.addChatUser / editChatAdmin / deleteChatUser
+// 走超级群路径，群里的管理员 bot 每次收到一条带 qts 的 updateChannelParticipant（user_id 是
+// 变动的成员）；不是管理员的 bot 收不到任何 updateChannelParticipant。
+func TestAdminBotReceivesOtherMemberChangesViaLegacyChatEntrypoints(t *testing.T) {
+	fx := newAdminBotAudienceFixture(t)
+	owner, adminBot, plainBot, human := fx.newUser(t, 8301, false), fx.newUser(t, 8302, true), fx.newUser(t, 8303, true), fx.newUser(t, 8304, false)
+	ownerCtx := fx.userCtx(owner)
+	created, err := fx.router.onMessagesCreateChat(ownerCtx, &tg.MessagesCreateChatRequest{
+		Title: "legacy audience",
+		Users: []tg.InputUserClass{&tg.InputUser{UserID: adminBot.ID, AccessHash: adminBot.AccessHash}, &tg.InputUser{UserID: plainBot.ID, AccessHash: plainBot.AccessHash}},
+	})
+	if err != nil {
+		t.Fatalf("createChat: %v", err)
+	}
+	var chatID int64
+	for _, chat := range created.Updates.(*tg.Updates).Chats {
+		if ch, ok := chat.(*tg.Channel); ok {
+			chatID = ch.ID
+		}
+	}
+	if chatID == 0 {
+		t.Fatalf("createChat returned no chat: %+v", created)
+	}
+	inputHuman := &tg.InputUser{UserID: human.ID, AccessHash: human.AccessHash}
+	if _, err := fx.router.onMessagesEditChatAdmin(ownerCtx, &tg.MessagesEditChatAdminRequest{ChatID: chatID, UserID: &tg.InputUser{UserID: adminBot.ID, AccessHash: adminBot.AccessHash}, IsAdmin: true}); err != nil {
+		t.Fatalf("promote bot: %v", err)
+	}
+	before := len(fx.pushedParticipants(adminBot.ID))
+	plainBefore := len(fx.pushedParticipants(plainBot.ID))
+
+	if _, err := fx.router.onMessagesAddChatUser(ownerCtx, &tg.MessagesAddChatUserRequest{ChatID: chatID, UserID: inputHuman}); err != nil {
+		t.Fatalf("addChatUser: %v", err)
+	}
+	if _, err := fx.router.onMessagesEditChatAdmin(ownerCtx, &tg.MessagesEditChatAdminRequest{ChatID: chatID, UserID: inputHuman, IsAdmin: true}); err != nil {
+		t.Fatalf("editChatAdmin promote: %v", err)
+	}
+	if _, err := fx.router.onMessagesEditChatAdmin(ownerCtx, &tg.MessagesEditChatAdminRequest{ChatID: chatID, UserID: inputHuman, IsAdmin: false}); err != nil {
+		t.Fatalf("editChatAdmin demote: %v", err)
+	}
+	if _, err := fx.router.onMessagesDeleteChatUser(ownerCtx, &tg.MessagesDeleteChatUserRequest{ChatID: chatID, UserID: inputHuman}); err != nil {
+		t.Fatalf("deleteChatUser: %v", err)
+	}
+
+	got := fx.pushedParticipants(adminBot.ID)[before:]
+	wantNew := []string{"self", "admin", "self", "banned"}
+	if len(got) != len(wantNew) {
+		t.Fatalf("admin bot received %d updateChannelParticipant about the member, want %d: %+v", len(got), len(wantNew), got)
+	}
+	for i, p := range got {
+		np, _ := p.GetNewParticipant()
+		if p.UserID != human.ID || p.ChannelID != chatID || p.Qts == 0 || participantKind(np) != wantNew[i] {
+			t.Fatalf("push %d = %+v, want a qts update about the member with a %s participant", i, p, wantNew[i])
+		}
+	}
+	if extra := fx.pushedParticipants(plainBot.ID)[plainBefore:]; len(extra) != 0 {
+		t.Fatalf("non-admin bot received other members' changes: %+v", extra)
+	}
+}

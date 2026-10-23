@@ -121,7 +121,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		channel.ParticipantsCount += len(members)
 		channel.KickedCount = maxInt(channel.KickedCount-restoredKicked, 0)
 	}
-	botUpdates, err := appendBotOnlyUpdatesTx(ctx, tx, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous}, inviterUserID, date))
+	botUpdates, err := appendChannelBotUpdatesTx(ctx, tx, channel.ID, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: members, Previous: previous}, inviterUserID, date))
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}

@@ -60,6 +60,10 @@ func tgBotUpdate(update domain.BotUpdate, view *domain.ChannelView) (tg.UpdateCl
 		chat = tgChannelChat(bot, view.Channel, &self)
 	} else {
 		self := p.Current
+		if p.Viewer.UserID == bot {
+			// 其他成员的变动（#146）：按 bot 自己的成员身份投影。
+			self = p.Viewer
+		}
 		chat = tgChannelChat(bot, p.Channel, &self)
 	}
 	userIDs := []int64{out.ActorID, p.Current.UserID, p.Current.InviterUserID, p.Previous.InviterUserID}

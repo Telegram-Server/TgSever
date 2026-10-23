@@ -143,6 +143,7 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	// Layer 227：messages.importChatInvite 返回 messages.ChatInviteJoinResult；
 	// 正常加入即 chatInviteJoinResultOk 包裹本次操作的 updates。
 	return &tg.MessagesChatInviteJoinResultOk{Updates: updates}, nil

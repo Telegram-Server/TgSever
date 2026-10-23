@@ -819,14 +819,21 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 		Date:       date,
 		ApprovedBy: approvedBy,
 	}
-	return domain.CreateChannelResult{
+	res := domain.CreateChannelResult{
 		Channel:    channel,
 		Members:    []domain.ChannelMember{member},
 		Previous:   previous,
 		Message:    cloneChannelMessage(msg),
 		Event:      cloneChannelEvent(event),
 		Recipients: s.activeMemberIDsLocked(channelID, 0, 0),
-	}, nil
+	}
+	actorUserID := approvedBy
+	if actorUserID == 0 {
+		actorUserID = userID
+	}
+	var err error
+	res.BotUpdates, err = s.appendInviteImporterBotUpdatesLocked(res, actorUserID, date)
+	return res, err
 }
 
 func (s *ChannelStore) recordPendingInviteRequestLocked(invite domain.ChannelInvite, userID int64, date int) error {

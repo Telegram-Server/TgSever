@@ -140,6 +140,16 @@ func (s *ChannelStore) approveInviteImporterTx(ctx context.Context, tx pgx.Tx, c
 	if err := resetPrehistoryBoundaryTx(ctx, tx, channel, userID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	// 新成员本人（是 bot 时）与管理员 bot 的 qts 记录（#146）；邀请链接入群的发起者是本人，
+	// 入群申请被批准的发起者是批准的管理员。
+	botActor := approvedBy
+	if botActor == 0 {
+		botActor = userID
+	}
+	botUpdates, err := appendChannelBotUpdatesTx(ctx, tx, channelID, domain.BotChannelParticipantChanges(domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous}, botActor, date))
+	if err != nil {
+		return domain.CreateChannelResult{}, err
+	}
 	if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
 		ChannelID: channelID,
 		UserID:    userID,
@@ -180,7 +190,7 @@ SET invite_id = EXCLUDED.invite_id,
     updated_at = now()`, channelID, invite.InviteID, userID, date, approvedBy); err != nil {
 		return domain.CreateChannelResult{}, fmt.Errorf("upsert channel invite importer: %w", err)
 	}
-	channel, err := refreshChannelCountsTx(ctx, tx, channel)
+	channel, err = refreshChannelCountsTx(ctx, tx, channel)
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
@@ -219,7 +229,7 @@ WHERE channel_id = $1 AND user_id = $2`, channel.ID, userID, member.ReadInboxMax
 	if err := enqueueWelcomeMessageDeliveriesTx(ctx, tx, channel.ID, []domain.ChannelMember{member}); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous, Message: msg, Event: event}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Previous: previous, Message: msg, Event: event, BotUpdates: botUpdates}, nil
 }
 
 func (s *ChannelStore) recordPendingInviteImporterTx(ctx context.Context, tx pgx.Tx, invite domain.ChannelInvite, userID int64, date int) error {
