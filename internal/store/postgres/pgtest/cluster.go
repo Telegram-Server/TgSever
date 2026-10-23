@@ -75,6 +75,9 @@ func startPrivateCluster() (*privateCluster, string, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, "", err
 	}
+	if err := prepareRunRoot(root); err != nil {
+		return nil, "", err
+	}
 	sweepOrphans(dist, root)
 	snapshot, err := ensureSnapshot(home, dist, root)
 	if err != nil {

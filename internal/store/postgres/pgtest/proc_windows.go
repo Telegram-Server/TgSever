@@ -4,7 +4,9 @@ package pgtest
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
+	"os/user"
 	"syscall"
 )
 
@@ -21,6 +23,22 @@ func pgCommand(name string, args ...string) (*exec.Cmd, error) {
 }
 
 func handOver(string) error { return nil }
+
+// prepareRunRoot 给当前用户在运行根目录上加一条可继承的完全控制权限。以管理员身份运行时，
+// 本进程拷贝出的数据文件归 Administrators 组所有；pg_ctl 用受限令牌启动 postgres，正好去掉了
+// 这个组，postgres 就打不开自己的 global/pg_control。initdb 自己建的文件不受影响。用户 SID
+// 在受限令牌里仍然有效，之后在这里创建的文件都继承这条 ACE。
+func prepareRunRoot(dir string) error {
+	u, err := user.Current()
+	if err != nil {
+		return err
+	}
+	out, err := exec.Command("icacls", dir, "/grant", "*"+u.Uid+":(OI)(CI)F", "/Q").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("icacls %s: %v: %s", dir, err, out)
+	}
+	return nil
+}
 
 const (
 	processQueryLimitedInformation = 0x1000

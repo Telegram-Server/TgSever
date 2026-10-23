@@ -79,6 +79,9 @@ func runAsIDs() (uint32, uint32, error) {
 	return 0, 0, fmt.Errorf("PostgreSQL refuses to run as root and none of %v exists: set %s to a non-root user", names, EnvRunAs)
 }
 
+// prepareRunRoot 在 Unix 上无事可做：root 运行时由 handOver 逐目录交给 postgres 用户。
+func prepareRunRoot(string) error { return nil }
+
 func processAlive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
