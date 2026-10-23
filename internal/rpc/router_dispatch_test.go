@@ -963,11 +963,10 @@ func TestDispatchUnwrapsInvokeAfterWrappers(t *testing.T) {
 func TestDispatchUnknownReturnsError(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 
-	// help.getCdnConfig 第一阶段未注册，应走 fallback。
+	// 用不存在于任何 layer 的构造器 ID，而不是某个"暂未实现"的方法：后者迟早会被实现
+	// （help.getCdnConfig 就在 #143 里实现了），测试会跟着失效。
 	var b bin.Buffer
-	if err := (&tg.HelpGetCDNConfigRequest{}).Encode(&b); err != nil {
-		t.Fatalf("encode: %v", err)
-	}
+	b.PutID(0xdeadbeef)
 
 	_, err := r.Dispatch(context.Background(), [8]byte{}, 0, &b)
 	if err == nil {
