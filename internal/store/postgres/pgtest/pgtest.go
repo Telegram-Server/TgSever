@@ -62,6 +62,12 @@ import (
 // 测试数据写进由它克隆出来的库，不写进它本身。
 const EnvDSN = "TELESRV_TEST_POSTGRES_DSN"
 
+// EnvCloneStrategy 选择克隆库时 CREATE DATABASE 的 STRATEGY（WAL_LOG 或 FILE_COPY），
+// 未设置时用服务器默认的 WAL_LOG。FILE_COPY 直接拷贝模板目录，克隆约快一倍，但每次都触发
+// checkpoint：只在 fsync=off 的内存实例上划算（deploy/docker-compose.yml 的 postgres-test、
+// CI 的 tmpfs service），落盘实例上反而更慢。
+const EnvCloneStrategy = "PGTEST_CLONE_STRATEGY"
+
 // templateLockKey 串行化多个测试进程创建同一模板库（"pgtmpl" 的 ASCII）。
 const templateLockKey = int64(0x7067746d706c)
 
@@ -435,10 +441,26 @@ func createClone(name, tmpl string) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if _, err := conn.Exec(ctx, `CREATE DATABASE `+ident(name)+` TEMPLATE `+ident(tmpl)); err != nil {
+	strategy, err := cloneStrategy()
+	if err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx, `CREATE DATABASE `+ident(name)+` TEMPLATE `+ident(tmpl)+strategy); err != nil {
 		return fmt.Errorf("clone %s from %s: %w", name, tmpl, err)
 	}
 	return nil
+}
+
+// cloneStrategy 返回追加在 CREATE DATABASE 之后的 STRATEGY 子句；未设置 EnvCloneStrategy 时为空。
+func cloneStrategy() (string, error) {
+	switch v := strings.ToUpper(strings.TrimSpace(os.Getenv(EnvCloneStrategy))); v {
+	case "":
+		return "", nil
+	case "WAL_LOG", "FILE_COPY":
+		return " STRATEGY " + v, nil
+	default:
+		return "", fmt.Errorf("%s=%q: want WAL_LOG or FILE_COPY", EnvCloneStrategy, v)
+	}
 }
 
 func dropDatabase(name string) error {
