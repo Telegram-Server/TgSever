@@ -147,7 +147,7 @@ func TestClientReplyMustMatchTargetDevice(t *testing.T) {
 	request.Content.Message = "reply"
 	request.ReplyToEphemeralID = incoming.ID
 	reply, fresh, err := f.service.SendFromClient(context.Background(), request)
-	if err != nil || !fresh || reply.BotAPIReply == nil || reply.BotAPIReply.ID != incoming.ID {
+	if err != nil || !fresh || reply.ReplyToEphemeralID != incoming.ID {
 		t.Fatalf("reply=%+v fresh=%v err=%v", reply, fresh, err)
 	}
 	request.RandomID++
@@ -168,8 +168,7 @@ func TestBotReplyWindowAndAdminBroadcast(t *testing.T) {
 		BotUserID: testBotID, ReceiverUserID: testHumanID,
 		Peer: action.Peer, RandomID: 92, Content: domain.EphemeralContent{Message: "answer"}, ActionMessageID: action.ID,
 	})
-	if err != nil || !fresh || reply.OriginDevice.BusinessAuthKeyID != testDeviceKey || reply.ReplyToEphemeralID != action.ID ||
-		reply.BotAPIReply == nil || reply.BotAPIReply.ID != action.ID {
+	if err != nil || !fresh || reply.OriginDevice.BusinessAuthKeyID != testDeviceKey || reply.ReplyToEphemeralID != action.ID {
 		t.Fatalf("bot reply = %+v fresh=%v err=%v", reply, fresh, err)
 	}
 	f.now = f.now.Add(2 * time.Second)

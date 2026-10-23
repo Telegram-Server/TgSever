@@ -128,7 +128,7 @@ Binaries in `cmd/`: `telesrv` (server), `telesrv-admin` (admin dashboard), `tele
   - `redisstore/` — ephemeral state: rate limits, ephemeral keys, delivery.
 - **`internal/mtprotoedge/`** — protocol edge: transport, auth key lifecycle, session management, frame budgets. Concurrency/budget bugs (10k sessions, reconnects) are here.
 - **`internal/compat/{android,ios,tdesktop}/`** — per-client quirks. If a fix targets one specific client, check here first (e.g. `compat/tdesktop` for TDesktop wire behavior).
-- **`internal/botapi/`** — Telegram Bot API on port 8081; `botapi_*` Python scripts in `scripts/` selftest it.
+- **Bot API** — not served here. An external fork of telegram-bot-api (TDLib) logs in as the bot over MTProto; the server only has to get MTProto bot semantics right. Bot qts sequence (member changes etc.): `internal/rpc/bot_updates.go` + `store/*/bot_updates.go`, retention `TELESRV_BOT_UPDATE_RETENTION`. TDLib's expectations are pinned in `internal/mtprotoedge/tdlib_bot_contract_e2e_test.go`. `scripts/botapi_*.py`, `cmd/bots/*` and `cmd/walletminiapp` are manual smoke tools that must be pointed at telegram-bot-api. Built-in bots (`internal/app/bots`) run in-process. Guide: `docs/bot-api.en.md`.
 - **`internal/admin/`**, **`internal/adminapi/`** — admin panel state/ops + admin HTTP API (port 2599) with RBAC (`adminapi/rbac.go`, scoped tokens).
 - **`cmd/telesrv-admin/web/`** — the panel's React SPA. **`src/nav.ts` is the only place navigation is declared**: every sidebar section, the paths belonging to it, and the right each path enforces server-side. `Layout.tsx` renders the sidebar from it, `SectionTabs.tsx` reads each section's tab list from it, and `Routes.tsx` gates the whole surface from it through `routePermission(path)`. **Read this before adding a page** — the rules are below.
 - **`internal/web/`** — public-link web server, port 2401, `/healthz` returns `ok`.
@@ -152,7 +152,7 @@ Binaries in `cmd/`: `telesrv` (server), `telesrv-admin` (admin dashboard), `tele
   - `scripts/restart-local-server.ps1` — build `cmd/telesrv`, kill old process on port, restart, wait for listen; resolves the branch-implied Postgres DSN via `ensure-local-databases.ps1`.
   - `scripts/check-local-runtime.ps1` — read-only health check (listener, migrations, log readiness line/errors, adb).
   - `scripts/start-docker.ps1` — one-command Docker launch; generates `deploy/docker/.env` on first run.
-- Ports: MTProto **2398**, RTMP/livestream **2400**, public links **2401**, Bot API **8081** (host-facing side), admin API **2599**, admin UI **2600**, SFU UDP **12399**, TURN UDP **12400**, TURN relay 12500–12999 (bridge mode max 12563), Postgres host **15432** (dev compose: 5432), Redis host **16379** (dev compose: 6399).
+- Ports: MTProto **2398**, RTMP/livestream **2400**, public links **2401**, admin API **2599**, admin UI **2600**, SFU UDP **12399**, TURN UDP **12400**, TURN relay 12500–12999 (bridge mode max 12563), Postgres host **15432** (dev compose: 5432), Redis host **16379** (dev compose: 6399).
 
 ## Docker
 
