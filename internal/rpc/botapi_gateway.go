@@ -494,10 +494,7 @@ func (r *Router) BotAPISendEphemeral(ctx context.Context, input domain.BotAPIEph
 	if err != nil {
 		return domain.EphemeralMessage{}, ephemeralBotAPIError(err)
 	}
-	r.publishEphemeralPush(ctx, store.EphemeralPush{
-		Kind: store.EphemeralPushNew, TargetUserID: message.ReceiverUserID,
-		TargetBusinessAuthKey: message.OriginDevice.BusinessAuthKeyID, Message: message,
-	})
+	r.publishBotEphemeralPush(ctx, store.EphemeralPushNew, message)
 	return message, nil
 }
 
@@ -539,10 +536,7 @@ func (r *Router) BotAPIEditEphemeral(ctx context.Context, input domain.BotAPIEph
 	if err != nil {
 		return false, ephemeralBotAPIError(err)
 	}
-	r.publishEphemeralPush(ctx, store.EphemeralPush{
-		Kind: store.EphemeralPushEdit, TargetUserID: message.ReceiverUserID,
-		TargetBusinessAuthKey: message.OriginDevice.BusinessAuthKeyID, Message: message,
-	})
+	r.publishBotEphemeralPush(ctx, store.EphemeralPushEdit, message)
 	return true, nil
 }
 
@@ -556,10 +550,7 @@ func (r *Router) BotAPIDeleteEphemeral(ctx context.Context, botUserID, chatID, r
 		return false, ephemeralBotAPIError(err)
 	}
 	if deleted {
-		r.publishEphemeralPush(ctx, store.EphemeralPush{
-			Kind: store.EphemeralPushDelete, TargetUserID: receiverUserID,
-			TargetBusinessAuthKey: message.OriginDevice.BusinessAuthKeyID, Message: message,
-		})
+		r.publishBotEphemeralPush(ctx, store.EphemeralPushDelete, message)
 	}
 	return true, nil
 }

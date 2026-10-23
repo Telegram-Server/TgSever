@@ -28,7 +28,7 @@ func (r *Router) registerEphemeral(d *tlprofile.Dispatcher) {
 		return r.onEphemeralGetCallbackAnswer(ctx, request)
 	})
 	registerRPC[*tg.EphemeralEditMessageRequest](d, tlprofile.SemanticMethodEphemeralEditMessage, func(ctx context.Context, request *tg.EphemeralEditMessageRequest) (any, error) {
-		return r.onEphemeralEditWelcomeMessage(ctx, request)
+		return r.onEphemeralEditMessage(ctx, request)
 	})
 	registerRPC[*tg.EphemeralDeleteWelcomeMessageRequest](d, tlprofile.SemanticMethodEphemeralDeleteWelcomeMessage, func(ctx context.Context, request *tg.EphemeralDeleteWelcomeMessageRequest) (any, error) {
 		return r.onEphemeralDeleteWelcomeMessage(ctx, request)
@@ -62,6 +62,9 @@ func (r *Router) onEphemeralSendMessage(ctx context.Context, request *tg.Ephemer
 	if peer.Type != domain.PeerTypeChannel || peer.ID <= 0 {
 		return nil, peerIDInvalidErr()
 	}
+	if r.userIsBot(ctx, userID) {
+		return r.onEphemeralSendFromBot(ctx, userID, peer, request)
+	}
 	receiver, found, err := r.userFromInput(ctx, userID, request.ReceiverID)
 	if err != nil {
 		return nil, internalErr()
@@ -69,7 +72,7 @@ func (r *Router) onEphemeralSendMessage(ctx context.Context, request *tg.Ephemer
 	if !found || !receiver.Bot {
 		return nil, userBotInvalidErr()
 	}
-	content, err := r.domainEphemeralInputContent(ctx, userID, request)
+	content, err := r.domainEphemeralInputContent(ctx, userID, request, false)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +282,7 @@ func (r *Router) onEphemeralReportMessage(ctx context.Context, request *tg.Ephem
 	return result, nil
 }
 
-func (r *Router) domainEphemeralInputContent(ctx context.Context, userID int64, request *tg.EphemeralSendMessageRequest) (domain.EphemeralContent, error) {
+func (r *Router) domainEphemeralInputContent(ctx context.Context, userID int64, request *tg.EphemeralSendMessageRequest, senderIsBot bool) (domain.EphemeralContent, error) {
 	if !utf8.ValidString(request.Message) || utf8.RuneCountInString(request.Message) > domain.MaxMessageTextLength || len(request.Entities) > domain.MaxMessageEntityCount {
 		return domain.EphemeralContent{}, messageTooLongErr()
 	}
@@ -301,7 +304,7 @@ func (r *Router) domainEphemeralInputContent(ctx context.Context, userID int64, 
 	var markup *domain.MessageReplyMarkup
 	if request.ReplyMarkup != nil {
 		var err error
-		markup, err = domainReplyMarkupForSender(request.ReplyMarkup, false)
+		markup, err = domainReplyMarkupForSender(request.ReplyMarkup, senderIsBot)
 		if err != nil {
 			return domain.EphemeralContent{}, replyMarkupErr(err)
 		}

@@ -43,7 +43,7 @@ type botCallbackEnv struct {
 	newCliH func(*session.StorageMemory) *telegram.Client
 }
 
-func newBotCallbackEnv(t *testing.T, ctx context.Context) *botCallbackEnv {
+func newBotCallbackEnv(t *testing.T, ctx context.Context, configure ...func(*rpc.Deps)) *botCallbackEnv {
 	t.Helper()
 	const dc = 2
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -80,6 +80,9 @@ func newBotCallbackEnv(t *testing.T, ctx context.Context) *botCallbackEnv {
 		Bots:     botsService,
 		LangPack: langpack.NewService(langPackStore),
 		Sessions: activeSessions,
+	}
+	for _, apply := range configure {
+		apply(&deps)
 	}
 	router := rpc.New(rpc.Config{DC: dc, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}, deps, zaptest.NewLogger(t), clock.System)
 	botsService.SetRouterHooks(router)

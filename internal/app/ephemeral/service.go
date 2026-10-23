@@ -330,6 +330,9 @@ func (s *Service) editFieldsFromBot(ctx context.Context, botUserID, receiverUser
 	if err != nil {
 		return domain.EphemeralMessage{}, err
 	}
+	if mode == domain.EphemeralEditAny {
+		mode = anyEditMode(message.Content, fields)
+	}
 	switch mode {
 	case domain.EphemeralEditText:
 		if message.Content.Media != nil || !message.Content.RichMessage.IsZero() || !fields.SetMessage {
@@ -365,6 +368,23 @@ func (s *Service) editFieldsFromBot(ctx context.Context, botUserID, receiverUser
 		return domain.EphemeralMessage{}, domain.ErrEphemeralInvalid
 	}
 	return s.messages.EditEphemeralMessage(ctx, peer, id, message.Version, content, int(now.Unix()), now)
+}
+
+// anyEditMode 把按字段的编辑归到对应的分模式编辑，复用同一套形状规则。
+// 没有任何字段时返回空模式，由调用方按非法请求拒绝。
+func anyEditMode(stored domain.EphemeralContent, fields domain.EditEphemeralFields) domain.EphemeralEditMode {
+	switch {
+	case fields.SetMedia:
+		return domain.EphemeralEditMedia
+	case fields.SetMessage && stored.Media != nil:
+		return domain.EphemeralEditCaption
+	case fields.SetMessage:
+		return domain.EphemeralEditText
+	case fields.SetReplyMarkup:
+		return domain.EphemeralEditReplyMarkup
+	default:
+		return ""
+	}
 }
 
 func (s *Service) Delete(ctx context.Context, actorUserID, receiverUserID int64, peer domain.Peer, id int) (domain.EphemeralMessage, bool, error) {

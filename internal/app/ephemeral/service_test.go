@@ -309,6 +309,52 @@ func TestBotEditModesCannotCrossTextAndMediaShapes(t *testing.T) {
 	}
 }
 
+// EphemeralEditAny 是 MTProto ephemeral.editMessage 的语义：改哪些字段由 flags 决定，
+// 文本/说明按已存消息的形状解释，形状规则与 Bot API 的分模式编辑一致。
+func TestBotAnyFieldEditFollowsStoredShape(t *testing.T) {
+	f := newServiceFixture()
+	ctx := context.Background()
+	text := f.putIncoming(t, testDeviceKey, f.now)
+	edited, err := f.service.EditFieldsFromBot(ctx, testBotID, testHumanID, text.Peer, text.ID,
+		domain.EphemeralEditAny, domain.EditEphemeralFields{SetMessage: true, Message: "edited"})
+	if err != nil || edited.Content.Message != "edited" {
+		t.Fatalf("text edit = %+v err=%v", edited, err)
+	}
+	markup := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{{Type: domain.MarkupButtonCallback, Text: "Go", Data: []byte("go")}}}}
+	edited, err = f.service.EditFieldsFromBot(ctx, testBotID, testHumanID, text.Peer, text.ID,
+		domain.EphemeralEditAny, domain.EditEphemeralFields{SetReplyMarkup: true, ReplyMarkup: markup})
+	if err != nil || edited.Content.Message != "edited" || edited.Content.ReplyMarkup == nil || edited.Content.ReplyMarkup.Inline[0][0].Text != "Go" {
+		t.Fatalf("markup-only edit = %+v err=%v", edited, err)
+	}
+	photo := &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &domain.Photo{ID: 99}}
+	if _, err := f.service.EditFieldsFromBot(ctx, testBotID, testHumanID, text.Peer, text.ID,
+		domain.EphemeralEditAny, domain.EditEphemeralFields{SetMedia: true, Media: photo}); !errors.Is(err, domain.ErrEphemeralInvalid) {
+		t.Fatalf("adding media to a text message err=%v", err)
+	}
+	if _, err := f.service.EditFieldsFromBot(ctx, testBotID, testHumanID, text.Peer, text.ID,
+		domain.EphemeralEditAny, domain.EditEphemeralFields{}); !errors.Is(err, domain.ErrEphemeralInvalid) {
+		t.Fatalf("empty edit err=%v", err)
+	}
+
+	media := f.putIncoming(t, testDeviceKey, f.now)
+	media, err = f.store.EditEphemeralMessage(ctx, media.Peer, media.ID, media.Version,
+		domain.EphemeralContent{Message: "caption", Media: photo}, int(f.now.Unix()), f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited, err = f.service.EditFieldsFromBot(ctx, testBotID, testHumanID, media.Peer, media.ID,
+		domain.EphemeralEditAny, domain.EditEphemeralFields{SetMessage: true, Message: "new caption"})
+	if err != nil || edited.Content.Message != "new caption" || edited.Content.Media == nil {
+		t.Fatalf("caption edit = %+v err=%v", edited, err)
+	}
+	other := &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &domain.Photo{ID: 100}}
+	edited, err = f.service.EditFieldsFromBot(ctx, testBotID, testHumanID, media.Peer, media.ID,
+		domain.EphemeralEditAny, domain.EditEphemeralFields{SetMedia: true, Media: other})
+	if err != nil || edited.Content.Media == nil || edited.Content.Media.Photo.ID != 100 {
+		t.Fatalf("media edit = %+v err=%v", edited, err)
+	}
+}
+
 func TestBotLazyBuildersRunOnlyAfterAuthorization(t *testing.T) {
 	f := newServiceFixture()
 	builds := 0
