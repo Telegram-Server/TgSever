@@ -118,6 +118,11 @@ func (r *Router) botQtsState(ctx context.Context, botUserID int64) (domain.BotUp
 }
 
 // botQtsDifference 读出 qts > fromQts 的一页 bot 记录并投影；返回推进后的 qts 与是否还有下一页。
+//
+// fromQts 早于最旧的保留记录时不返回 differenceTooLong：TDLib 收到它只重置 pts，再用同一个
+// 旧 qts 请求 getDifference（td/td/telegram/UpdatesManager.cpp:2168-2176），会无限循环。改为从
+// 最旧的保留记录起照常补回，超出保留期的更新视为丢弃；一条保留记录都没有、而 fromQts 落后于
+// 已分配的 qts 时，qts 直接前进到当前值（调用方返回带 state 的空 updates.difference）。
 func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts int, cache *viewerPeerCache) (updates []tg.UpdateClass, users []tg.UserClass, chats []tg.ChatClass, newQts int, partial bool, err error) {
 	rows, err := r.deps.BotUpdates.ListBotUpdates(ctx, botUserID, fromQts, domain.MaxBotUpdatesDifference+1)
 	if err != nil {
@@ -125,6 +130,13 @@ func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts 
 	}
 	newQts = fromQts
 	if len(rows) == 0 {
+		st, err := r.botQtsState(ctx, botUserID)
+		if err != nil {
+			return nil, nil, nil, fromQts, false, err
+		}
+		if st.Qts > fromQts {
+			newQts = st.Qts
+		}
 		return nil, nil, nil, newQts, false, nil
 	}
 	partial = len(rows) > domain.MaxBotUpdatesDifference

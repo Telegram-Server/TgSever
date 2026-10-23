@@ -8,7 +8,7 @@ import (
 )
 
 // BotUpdateRetentionStore 回收 bot qts 序列（#145）里超过保留期的记录。已分配的 qts 不回退；
-// 请求更早 qts 的 bot 由 updates.getDifference 返回 differenceTooLong。
+// 请求更早 qts 的 bot 由 updates.getDifference 从最旧的保留记录补起，被回收的更新视为丢弃。
 type BotUpdateRetentionStore interface {
 	DeleteExpiredBotUpdates(ctx context.Context, before time.Time, limit int) (int, error)
 }

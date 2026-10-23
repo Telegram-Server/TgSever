@@ -627,7 +627,7 @@ type Config struct {
 	// 已确认的行另按固定短宽限提前回收（性能审计 H1）。
 	BotAPIUpdateRetention time.Duration
 	// BotUpdateRetention 是 bot qts 序列（bot_updates）的保留期，默认 24h；更早的 qts 由
-	// updates.getDifference 返回 differenceTooLong。
+	// updates.getDifference 从最旧的保留记录补起，被回收的更新视为丢弃。
 	BotUpdateRetention time.Duration
 	// OrphanAuthKeyRetention 是握手已创建、但没有 authorization/temp binding/活跃连接的
 	// auth key 最短保留期。过期后由有界 GC 回收；客户端收到 -404 会重建 key。

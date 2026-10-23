@@ -532,6 +532,12 @@ func TestTDLibBotContractQtsDifferenceAfterOffline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode updates.Difference: %v", err)
 	}
+	// qts 类补差永远不能是 differenceTooLong：TDLib 收到它只 set_pts，然后用同一个旧 qts 再次
+	// getDifference（td/td/telegram/UpdatesManager.cpp:2168-2176），qts 落后于保留期时会无限循环。
+	// 服务端因此从最旧的保留记录补起，differenceTooLong 只留给 pts 的 pts_total_limit 场景。
+	if _, tooLong := diffClass.(*tg.UpdatesDifferenceTooLong); tooLong {
+		t.Fatalf("updates.getDifference for bot qts returned differenceTooLong; TDLib would loop on the stale qts")
+	}
 	diff, ok := diffClass.(*tg.UpdatesDifference)
 	if !ok {
 		t.Fatalf("updates.getDifference after offline = %T, want updates.difference", diffClass)

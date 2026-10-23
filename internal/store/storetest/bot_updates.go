@@ -143,9 +143,6 @@ func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFi
 		if st != (domain.BotUpdatesState{Qts: 3, MinRetainedQts: 3}) {
 			t.Fatalf("state after retention = %+v, want qts 3 min 3", st)
 		}
-		if !st.DifferenceTooLong(1) || st.DifferenceTooLong(2) || st.DifferenceTooLong(3) {
-			t.Fatalf("too-long boundary wrong for %+v", st)
-		}
 		if got := qtsOf(list(t, f, bot, 0, 10)); !equalInts(got, []int{3}) {
 			t.Fatalf("retained = %v, want [3]", got)
 		}
@@ -153,8 +150,8 @@ func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFi
 			t.Fatalf("delete all: %v", err)
 		}
 		st = state(t, f, bot)
-		if st != (domain.BotUpdatesState{Qts: 3}) || !st.DifferenceTooLong(2) || st.DifferenceTooLong(3) {
-			t.Fatalf("state with nothing retained = %+v, want qts 3 and floor 3", st)
+		if st != (domain.BotUpdatesState{Qts: 3}) {
+			t.Fatalf("state with nothing retained = %+v, want qts 3 and nothing retained", st)
 		}
 		next, err := f.Updates.AppendBotUpdates(ctx, []domain.BotUpdate{record(bot, int64(now), 704)})
 		if err != nil || len(next) != 1 || next[0].Qts != 4 {

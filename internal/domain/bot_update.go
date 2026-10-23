@@ -36,16 +36,6 @@ type BotUpdatesState struct {
 	MinRetainedQts int
 }
 
-// DifferenceTooLong 报告从 fromQts 补差是否会跨过已被保留期回收的记录：被回收的 qts
-// 补不回来，客户端只能整体重新同步（updates.differenceTooLong）。
-func (s BotUpdatesState) DifferenceTooLong(fromQts int) bool {
-	floor := s.Qts
-	if s.MinRetainedQts > 0 {
-		floor = s.MinRetainedQts - 1
-	}
-	return fromQts < floor
-}
-
 // MaxBotUpdatesDifference 是一次 getDifference 读取的 bot qts 记录上限；更多时返回
 // differenceSlice 让客户端接着拉。
 const MaxBotUpdatesDifference = 100

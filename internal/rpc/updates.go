@@ -101,25 +101,6 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	// differenceTooLong{pts}，客户端据此整体重置会话列表而不是串行翻
 	// 上千页 slice。不传该参数的客户端（TDesktop）永远不会收到 tooLong。
 	botQts := r.botQtsAccount(ctx, userID)
-	if botQts {
-		// 请求的 qts 早于最旧的保留记录：被回收的 bot 更新补不回来，返回 differenceTooLong
-		// 让客户端整体重新同步，而不是给出缺了一段的差分。
-		botState, err := r.botQtsState(ctx, userID)
-		if err != nil {
-			r.log.Error("load bot qts state", zap.Int64("bot_user_id", userID), zap.Error(err))
-			return nil, internalErr()
-		}
-		if botState.DifferenceTooLong(req.Qts) {
-			current, err := r.deps.Updates.CurrentState(ctx, userID)
-			if err != nil {
-				return nil, internalErr()
-			}
-			returnedCursor := from
-			returnedCursor.Pts = current.Pts
-			r.stageUpdatesBaselineAfterDelivery(ctx, userID, &returnedCursor, domain.UpdateStateCommitDeliveredOnly, nil, false)
-			return &tg.UpdatesDifferenceTooLong{Pts: current.Pts}, nil
-		}
-	}
 	if limit, ok := req.GetPtsTotalLimit(); ok && limit > 0 && req.Pts > 0 {
 		current, err := r.deps.Updates.CurrentState(ctx, userID)
 		if err == nil && current.Pts-from.Pts > limit {
@@ -184,7 +165,7 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	}
 	// 账号 pts、设备 qts 和无序号状态事件任一被截断，都必须返回 differenceSlice。
 	st.Partial = st.Partial || encryptedPartial || encryptedStatePartial
-	if !st.Partial && len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(botUpdates) == 0 && len(stateUpdates) == 0 {
+	if !st.Partial && len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(botUpdates) == 0 && newQts == req.Qts && len(stateUpdates) == 0 {
 		// differenceEmpty carries no pts/qts. Both audited clients retain their
 		// request cursor, so only that normalized cursor is proven delivered.
 		emptyCursor := domain.UpdateState{Pts: from.Pts, Qts: from.Qts, Date: st.State.Date, Seq: st.State.Seq}

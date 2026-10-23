@@ -178,33 +178,63 @@ func TestBotQtsChannelParticipantPushAndDifference(t *testing.T) {
 	}
 }
 
-// 请求的 qts 早于最旧的保留记录：返回 differenceTooLong，而不是缺一段的差分。
-func TestBotQtsDifferenceTooLongPastRetention(t *testing.T) {
+// 请求的 qts 早于最旧的保留记录：不返回 differenceTooLong（TDLib 收到后只重置 pts、带着同一个
+// 旧 qts 再请求，会无限循环，见 UpdatesManager.cpp:2168-2176），而是从最旧的保留记录开始按
+// qts 补回，超出保留期的更新视为丢弃；全部记录都已回收时返回空差分并把 qts 前进到当前值。
+func TestBotQtsDifferenceSkipsPastRetention(t *testing.T) {
 	f := newBotQtsFixture(t)
 	old := int(time.Now().Add(-48 * time.Hour).Unix())
+	record := func(date int, status domain.ChannelMemberStatus) domain.BotUpdate {
+		return domain.BotUpdate{BotUserID: f.bot.ID, Date: date, ChannelParticipant: &domain.BotChannelParticipantUpdate{
+			Channel: f.channel,
+			Current: domain.ChannelMember{ChannelID: f.channel.ID, UserID: f.bot.ID, Status: status, Role: domain.ChannelRoleMember},
+		}}
+	}
 	if _, err := f.updates.AppendBotUpdates(f.ctx, []domain.BotUpdate{
-		{BotUserID: f.bot.ID, Date: old, ChannelParticipant: &domain.BotChannelParticipantUpdate{Channel: f.channel, Current: domain.ChannelMember{ChannelID: f.channel.ID, UserID: f.bot.ID, Status: domain.ChannelMemberActive, Role: domain.ChannelRoleMember}}},
-		{BotUserID: f.bot.ID, Date: int(time.Now().Unix()), ChannelParticipant: &domain.BotChannelParticipantUpdate{Channel: f.channel, Current: domain.ChannelMember{ChannelID: f.channel.ID, UserID: f.bot.ID, Status: domain.ChannelMemberLeft, Role: domain.ChannelRoleMember}}},
+		record(old, domain.ChannelMemberActive),
+		record(old, domain.ChannelMemberLeft),
+		record(int(time.Now().Unix()), domain.ChannelMemberActive),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.updates.DeleteExpiredBotUpdates(f.ctx, time.Now().Add(-24*time.Hour), 100); err != nil {
 		t.Fatal(err)
 	}
+	participantQts := func(diff *tg.UpdatesDifference) []int {
+		var out []int
+		for _, update := range diff.OtherUpdates {
+			if p, ok := update.(*tg.UpdateChannelParticipant); ok {
+				out = append(out, p.Qts)
+			}
+		}
+		return out
+	}
+
 	diff, err := f.router.onUpdatesGetDifference(f.botCtx(1), &tg.UpdatesGetDifferenceRequest{Qts: 0, Date: 1})
 	if err != nil {
 		t.Fatalf("getDifference: %v", err)
 	}
-	if _, ok := diff.(*tg.UpdatesDifferenceTooLong); !ok {
-		t.Fatalf("getDifference past retention = %T, want differenceTooLong", diff)
+	full, ok := diff.(*tg.UpdatesDifference)
+	if !ok {
+		t.Fatalf("getDifference past retention = %T, want updates.difference from the oldest retained record", diff)
+	}
+	if got := participantQts(full); len(got) != 1 || got[0] != 3 || full.State.Qts != 3 {
+		t.Fatalf("difference past retention qts = %v state %d, want [3] and state 3", got, full.State.Qts)
+	}
+
+	if _, err := f.updates.DeleteExpiredBotUpdates(f.ctx, time.Now().Add(time.Hour), 100); err != nil {
+		t.Fatal(err)
 	}
 	diff, err = f.router.onUpdatesGetDifference(f.botCtx(1), &tg.UpdatesGetDifferenceRequest{Qts: 1, Date: 1})
 	if err != nil {
-		t.Fatalf("getDifference from the retained floor: %v", err)
+		t.Fatalf("getDifference with nothing retained: %v", err)
 	}
-	full, ok := diff.(*tg.UpdatesDifference)
-	if !ok || full.State.Qts != 2 || len(full.OtherUpdates) != 1 {
-		t.Fatalf("getDifference from qts 1 = %#v, want the retained record at qts 2", diff)
+	empty, ok := diff.(*tg.UpdatesDifference)
+	if !ok {
+		t.Fatalf("getDifference with nothing retained = %T, want updates.difference carrying the current qts", diff)
+	}
+	if got := participantQts(empty); len(got) != 0 || empty.State.Qts != 3 {
+		t.Fatalf("difference with nothing retained qts = %v state %d, want none and state 3", got, empty.State.Qts)
 	}
 }
 
