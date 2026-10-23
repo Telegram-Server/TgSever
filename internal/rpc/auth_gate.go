@@ -50,6 +50,8 @@ func rpcAllowedWithoutAuthorization(id uint32) bool {
 		tg.AccountVerifyEmailRequestTypeID,
 		tg.HelpGetConfigRequestTypeID,
 		tg.HelpGetNearestDCRequestTypeID,
+		// TDLib 的 PublicRsaKeyWatchdog 不区分登录状态地拉 CDN 配置（PublicRsaKeyWatchdog.cpp:80）。
+		tg.HelpGetCDNConfigRequestTypeID,
 		tg.HelpGetInviteTextRequestTypeID,
 		tg.HelpSaveAppLogRequestTypeID,
 		tg.HelpGetAppConfigRequestTypeID,

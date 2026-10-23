@@ -3,7 +3,6 @@ package mtprotoedge
 import (
 	"context"
 	"net"
-	"sync"
 	"testing"
 	"time"
 
@@ -221,18 +220,13 @@ func startTDLibContractServer(t *testing.T) tdlibContractServer {
 	}
 }
 
-// tdlibContractFiles 只实现 upload.getFile 用到的 GetFile，记录收到的下载请求；
+// tdlibContractFiles 只实现 upload.getFile 用到的 GetFile，只认 doc:777001；
 // 其余 FilesService 方法未实现（被调用即 panic，说明契约路径超出预期）。
 type tdlibContractFiles struct {
 	rpc.FilesService
-	mu       sync.Mutex
-	requests []domain.FileDownloadRequest
 }
 
 func (f *tdlibContractFiles) GetFile(_ context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error) {
-	f.mu.Lock()
-	f.requests = append(f.requests, req)
-	f.mu.Unlock()
 	if req.LocationKey != "doc:777001" {
 		return domain.FileChunk{}, false, nil
 	}
@@ -338,6 +332,90 @@ func TestTDLibBotContract(t *testing.T) {
 	}
 
 	assertTDLibBotChannelDifference(t, srv, bot, owner.ID, botUser.ID)
+
+	// TDLib 作为 bot 从不刷新 file_reference（td/td/telegram/files/FileReferenceManager.cpp:127,156），
+	// 收到 FILE_REFERENCE_* 时下载直接失败。空的与过期的 file_reference 都必须能下载。
+	for _, ref := range [][]byte{{}, []byte("stale-file-reference")} {
+		raw := bot.mustCall("upload.getFile", &tg.UploadGetFileRequest{
+			Location: &tg.InputDocumentFileLocation{ID: 777001, AccessHash: 1, FileReference: ref},
+			Offset:   0,
+			Limit:    512 * 1024,
+		})
+		file, err := tg.DecodeUploadFile(raw)
+		if err != nil {
+			t.Fatalf("decode upload.File: %v", err)
+		}
+		got, ok := file.(*tg.UploadFile)
+		if !ok || string(got.Bytes) != "tdlib-bot-file" {
+			t.Fatalf("upload.getFile(file_reference=%q) = %#v, want file bytes", ref, file)
+		}
+	}
+
+	// help.getCdnConfig 周期性调用（td/td/telegram/net/PublicRsaKeyWatchdog.cpp:80、
+	// UpdatesManager.cpp:181）。本服务没有 CDN DC：返回空 cdnConfig，TDLib 就不会去连 CDN。
+	cdn := decodeInto[tg.CDNConfig](t, "help.getCdnConfig", bot.mustCall("help.getCdnConfig", &tg.HelpGetCDNConfigRequest{}))
+	if len(cdn.PublicKeys) != 0 {
+		t.Errorf("help.getCdnConfig public_keys = %+v, want empty", cdn.PublicKeys)
+	}
+	// help.setBotUpdatesStatus 由 telegram-bot-api 周期上报积压（td/td/telegram/BotQueries.cpp:81，
+	// telegram-bot-api/Client.cpp:17136,17148）；返回 boolTrue 即可，服务端不保存。
+	statusRaw := bot.mustCall("help.setBotUpdatesStatus", &tg.HelpSetBotUpdatesStatusRequest{PendingUpdatesCount: 3, Message: "webhook unreachable"})
+	if status, err := tg.DecodeBool(statusRaw); err != nil {
+		t.Fatalf("decode help.setBotUpdatesStatus: %v", err)
+	} else if _, ok := status.(*tg.BoolTrue); !ok {
+		t.Errorf("help.setBotUpdatesStatus = %T, want boolTrue", status)
+	}
+
+	assertTDLibBotPlaceholderMethods(t, bot, owner)
+}
+
+// assertTDLibBotPlaceholderMethods：TDLib 会调用、本服务尚未支持的方法必须给出类型正确的
+// 合法结果，否则 telegram-bot-api 会把错误回给 bot 或反复重试。
+func assertTDLibBotPlaceholderMethods(t *testing.T, bot *tdlibBotConn, owner domain.User) {
+	t.Helper()
+	ownerInput := &tg.InputUser{UserID: owner.ID, AccessHash: owner.AccessHash}
+	assertBoolTrue := func(name string, raw *bin.Buffer) {
+		t.Helper()
+		v, err := tg.DecodeBool(raw)
+		if err != nil {
+			t.Fatalf("decode %s: %v", name, err)
+		}
+		if _, ok := v.(*tg.BoolTrue); !ok {
+			t.Errorf("%s = %T, want boolTrue", name, v)
+		}
+	}
+
+	// bots.setJoinChatResults：bot 审核入群申请（td/td/telegram/DialogParticipantManager.cpp:178）。
+	assertBoolTrue("bots.setJoinChatResults", bot.mustCall("bots.setJoinChatResults", &tg.BotsSetJoinChatResultsRequest{
+		QueryID: 1, Result: &tg.JoinChatBotResultApproved{},
+	}))
+	// messages.setBotGuestChatResult：guest chat query 的应答（td/td/telegram/InlineQueriesManager.cpp:178）。
+	guestRaw := bot.mustCall("messages.setBotGuestChatResult", &tg.MessagesSetBotGuestChatResultRequest{
+		QueryID: 2,
+		Result: &tg.InputBotInlineResult{ID: "1", Type: "article",
+			SendMessage: &tg.InputBotInlineMessageText{Message: "guest"}},
+	})
+	if _, err := tg.DecodeInputBotInlineMessageID(guestRaw); err != nil {
+		t.Errorf("messages.setBotGuestChatResult result is not an InputBotInlineMessageID: %v", err)
+	}
+	// messages.getPersonalChannelHistory（td/td/telegram/MessageQueryManager.cpp:2055）。
+	historyRaw := bot.mustCall("messages.getPersonalChannelHistory", &tg.MessagesGetPersonalChannelHistoryRequest{
+		UserID: ownerInput, Limit: 10,
+	})
+	history, err := tg.DecodeMessagesMessages(historyRaw)
+	if err != nil {
+		t.Fatalf("decode messages.getPersonalChannelHistory: %v", err)
+	}
+	if m, ok := history.(*tg.MessagesMessages); !ok || len(m.Messages) != 0 {
+		t.Errorf("messages.getPersonalChannelHistory = %#v, want empty messages.messages", history)
+	}
+	// users.setSecureValueErrors：Passport 错误回报（td/td/telegram/SecureManager.cpp:149）。
+	assertBoolTrue("users.setSecureValueErrors", bot.mustCall("users.setSecureValueErrors", &tg.UsersSetSecureValueErrorsRequest{
+		ID: ownerInput,
+		Errors: []tg.SecureValueErrorClass{&tg.SecureValueError{
+			Type: &tg.SecureValueTypePassport{}, Hash: []byte{1}, Text: "blurry",
+		}},
+	}))
 }
 
 // assertTDLibBotChannelDifference：bot 的 updates.getChannelDifference 用

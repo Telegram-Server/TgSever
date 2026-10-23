@@ -26,6 +26,14 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 			NearestDC: r.cfg.DC,
 		}, nil
 	})
+	// TDLib 周期性拉 CDN 配置（PublicRsaKeyWatchdog.cpp:80）。本服务没有 CDN DC，
+	// 也从不下发 upload.fileCdnRedirect，空 cdnConfig 是完整的语义。
+	registerRPC[*tg.HelpGetCDNConfigRequest](d, tlprofile.SemanticMethodHelpGetCDNConfig, func(ctx context.Context, _ *tg.HelpGetCDNConfigRequest) (any, error) {
+		return &tg.CDNConfig{PublicKeys: []tg.CDNPublicKey{}}, nil
+	})
+	registerRPC[*tg.HelpSetBotUpdatesStatusRequest](d, tlprofile.SemanticMethodHelpSetBotUpdatesStatus, func(ctx context.Context, _ *tg.HelpSetBotUpdatesStatusRequest) (any, error) {
+		return r.onHelpSetBotUpdatesStatus(ctx)
+	})
 	registerRPC[*tg.HelpGetInviteTextRequest](d, tlprofile.SemanticMethodHelpGetInviteText, func(ctx context.Context, layerRequest *tg.HelpGetInviteTextRequest) (any, error) {
 		return &tg.HelpInviteText{Message: "Join me on " + branding.ProductName() + "."}, nil
 	})
@@ -114,6 +122,15 @@ func (r *Router) onHelpSaveAppLog(ctx context.Context) (bool, error) {
 	}
 	if authorized && r.userIsBot(ctx, userID) {
 		return false, botMethodInvalidErr()
+	}
+	return true, nil
+}
+
+// onHelpSetBotUpdatesStatus 接收 telegram-bot-api 周期上报的待投递积压（BotQueries.cpp:81）。
+// 官方只用它做 BotFather 侧的 webhook 告警；本服务不展示，故不保存，只对 bot 返回 true。
+func (r *Router) onHelpSetBotUpdatesStatus(ctx context.Context) (bool, error) {
+	if err := r.requireBotCaller(ctx); err != nil {
+		return false, err
 	}
 	return true, nil
 }

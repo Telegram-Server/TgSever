@@ -339,6 +339,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	d.OnWrappers(r.consumeLayerRPCWrappers)
 
 	r.registerHelp(d)
+	r.registerTDLibBotPlaceholders(d)
 	r.registerAuth(d)
 	r.registerTelesrv(d)
 	r.registerUsers(d)
