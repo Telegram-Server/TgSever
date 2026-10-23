@@ -93,13 +93,24 @@ func (r *Router) deliverEphemeralPushLocal(ctx context.Context, event store.Ephe
 		if callback == nil || callback.BotUserID != event.TargetUserID || callback.MessageID != event.Message.ID || callback.Peer != event.Message.Peer {
 			return
 		}
-		update := &tg.UpdateBotCallbackQuery{
-			QueryID: callback.ID, UserID: callback.UserID, Peer: tgPeer(callback.Peer),
-			MsgID: callback.MessageID, ChatInstance: callback.ChatInstance,
+		// msg_id 是临时消息 id，不在频道消息序列里；官方用 updateEphemeralBotCallbackQuery
+		// 携带整条临时消息，TDLib 据此构造 callback query，不能复用 updateBotCallbackQuery。
+		update := &tg.UpdateEphemeralBotCallbackQuery{
+			QueryID: callback.ID, UserID: callback.UserID, MsgID: callback.MessageID,
+			Data:    append([]byte(nil), callback.Data...),
+			Message: tgEphemeralMessage(event.TargetUserID, event.Message),
 		}
-		update.SetData(callback.Data)
-		updates = &tg.Updates{Updates: []tg.UpdateClass{update}, Date: event.Date}
-		semantic = tlprofile.SemanticTypeUpdateBotCallbackQuery
+		update.SetPeer(tgPeer(callback.Peer))
+		update.SetChatInstance(callback.ChatInstance)
+		// 复用临时消息的 users/chats 投影：消息两端就是 bot 与点按钮的用户。
+		built, err := r.ephemeralMessageUpdates(ctx, event.TargetUserID, event.Message, false)
+		if err != nil {
+			return
+		}
+		built.Updates = []tg.UpdateClass{update}
+		built.Date = event.Date
+		updates = built
+		semantic = tlprofile.SemanticTypeUpdateEphemeralBotCallbackQuery
 	default:
 		return
 	}
