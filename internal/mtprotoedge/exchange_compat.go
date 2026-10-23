@@ -544,8 +544,13 @@ type compatServerRNG struct {
 	rand io.Reader
 }
 
+// handshakePQ 是 resPQ 下发给客户端分解的 pq，生产固定用 Telegram 文档里的 63 位示例值。
+// 客户端每次握手都要分解它（td 的 Pollard rho 约 0.3 秒），本包测试在 TestMain 里换成
+// 两个小素数的乘积；服务端只校验 p*q == pq，不受影响。
+var handshakePQ = big.NewInt(0x17ED48941A08F981)
+
 func (s compatServerRNG) PQ() (*big.Int, error) {
-	return big.NewInt(0x17ED48941A08F981), nil
+	return new(big.Int).Set(handshakePQ), nil
 }
 
 func (s compatServerRNG) GA(g int, dhPrime *big.Int) (a, ga *big.Int, err error) {
