@@ -36,7 +36,11 @@ jobs:
           POSTGRES_DB: gift_inventory_test
         ports:
           - 5432:5432
+        # Every Postgres test clones and drops a database; on disk each
+        # CREATE/DROP DATABASE writes WAL and forces a checkpoint. Keep the
+        # throwaway cluster in memory (fsync is switched off before the tests).
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready -U inventory -d gift_inventory_test"
           --health-interval 5s --health-timeout 5s --health-retries 12
 
@@ -62,28 +66,34 @@ jobs:
           go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
           "$(go env GOPATH)/bin/sqlc" diff
 
+      - name: Tune PostgreSQL for throwaway test data
+        env:
+          PGPASSWORD: inventory-test
+        run: |
+          psql -h 127.0.0.1 -U inventory -d gift_inventory_test -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
+
+      # TELESRV_TEST_POSTGRES_DSN is only the entry point: pgtest builds a
+      # template database (telesrv_tmpl_<migrations hash>_test) from it and every
+      # test package runs in its own clone, dropped when the package finishes.
+      # That needs CREATEDB; the service's POSTGRES_USER is a superuser, so it
+      # has it. Without the DSN every Postgres integration test skips, and they
+      # once drifted out of date for weeks because nothing ran them.
       - name: Test
+        env:
+          TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
+          # The cluster is on tmpfs with fsync off, where copying the template
+          # directory beats WAL-logging it (see pgtest.EnvCloneStrategy).
+          PGTEST_CLONE_STRATEGY: FILE_COPY
         run: go test ./... -count=1
 
       - name: Verify legacy Compose credentials and volume upgrade
         env:
           TELESRV_RUN_COMPOSE_INTEGRATION: '1'
         run: go test ./deploy -run '^TestLegacyComposeCredentialsIntegration$' -count=1 -timeout=5m
-
-      # TELESRV_TEST_POSTGRES_DSN is only the entry point: pgtest builds a
-      # template database (telesrv_tmpl_<migrations hash>_test) from it and every
-      # test package runs in its own clone, dropped when the package finishes.
-      # That needs CREATEDB; the service's POSTGRES_USER is a superuser, so it
-      # has it. The second step reuses the template the first one built.
-      - name: Verify gift inventory and Stars ledger against PostgreSQL
-        env:
-          TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
-        run: go test ./internal/store/postgres -run '^(TestOfficialStarGiftInventoryPostgres|TestOfficialStarGiftBundleIsAtomicPostgres|TestStarGiftStorePostgres|TestStarsLedgerPostgres|TestBotGiftPurchaseIsNotConvertibleToStarsPostgres)$' -count=1 -timeout=3m
-
-      - name: Verify admin operator and audit command flow against PostgreSQL
-        env:
-          TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
-        run: go test ./cmd/telesrv-admin -run '^(TestOperatorCommand|TestOperatorCreateRoute|TestOperatorUniqueness|TestNamedOperator|TestDemotion|TestAuditTrail)' -count=1 -timeout=5m
 
   admin-web:
     name: Admin web build
