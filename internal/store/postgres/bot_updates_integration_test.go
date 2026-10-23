@@ -35,14 +35,22 @@ RETURNING id`, time.Now().UnixNano(), phone, fmt.Sprintf("qts-%d", seq), bot).Sc
 }
 
 func TestBotUpdatesContractPostgres(t *testing.T) {
+	storetest.BotUpdatesContract(t, botUpdatesFixturePostgres(t))
+}
+
+func TestBotUpdateAudienceContractPostgres(t *testing.T) {
+	storetest.BotUpdateAudienceContract(t, botUpdatesFixturePostgres(t))
+}
+
+func botUpdatesFixturePostgres(t *testing.T) func(*testing.T) storetest.BotUpdatesFixture {
 	pool := testPool(t)
-	storetest.BotUpdatesContract(t, func(t *testing.T) storetest.BotUpdatesFixture {
+	return func(*testing.T) storetest.BotUpdatesFixture {
 		return storetest.BotUpdatesFixture{
 			Updates:  NewBotUpdateStore(pool),
 			Channels: NewChannelStore(pool),
 			NewUser:  func(t *testing.T, bot bool) int64 { return createBotUpdateTestUser(t, pool, bot) },
 		}
-	})
+	}
 }
 
 // 源事件与 qts 记录同事务：成员变动在写入 qts 记录之后失败回滚时，既不留下记录，

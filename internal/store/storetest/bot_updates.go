@@ -9,8 +9,8 @@ import (
 	"telesrv/internal/store"
 )
 
-// BotUpdatesChannelStore 是契约用到的频道写入口：成员变动在写入成员记录的同一事务里
-// 写 bot qts 记录。
+// BotUpdatesChannelStore 是契约用到的频道写入口：成员变动、入群申请、消息反应在源事件的
+// 同一事务里写 bot qts 记录。
 type BotUpdatesChannelStore interface {
 	CreateChannel(ctx context.Context, req domain.CreateChannelRequest) (domain.CreateChannelResult, error)
 	InviteToChannel(ctx context.Context, channelID, inviterUserID int64, userIDs []int64, date int) (domain.CreateChannelResult, error)
@@ -18,6 +18,10 @@ type BotUpdatesChannelStore interface {
 	EditChannelAdmin(ctx context.Context, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error)
 	EditChannelBanned(ctx context.Context, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error)
 	EditChannelMemberRank(ctx context.Context, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error)
+	ExportInvite(ctx context.Context, req domain.ExportChannelInviteRequest) (domain.ExportChannelInviteResult, error)
+	ImportInvite(ctx context.Context, req domain.ImportChannelInviteRequest) (domain.CreateChannelResult, error)
+	SendChannelMessage(ctx context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error)
+	SetChannelMessageReactions(ctx context.Context, req domain.SetChannelMessageReactionsRequest) (domain.ChannelMessageReactionsResult, error)
 }
 
 // BotUpdatesFixture 是同一份底层数据上的 bot qts 序列 store 与频道 store。NewUser 每次

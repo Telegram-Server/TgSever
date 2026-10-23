@@ -371,62 +371,29 @@ func TestTDLibBotContract(t *testing.T) {
 		t.Errorf("help.setBotUpdatesStatus = %T, want boolTrue", status)
 	}
 
-	assertTDLibBotPlaceholderMethods(t, bot, owner)
+	assertTDLibBotPlaceholderMethods(t, bot)
 }
 
-// assertTDLibBotPlaceholderMethods：TDLib 会调用、本服务尚未支持的方法必须给出类型正确的
-// 合法结果，否则 telegram-bot-api 会把错误回给 bot 或反复重试。
-func assertTDLibBotPlaceholderMethods(t *testing.T, bot *tdlibBotConn, owner domain.User) {
+// assertTDLibBotPlaceholderMethods：TDLib 会调用、本服务尚未支持的方法（#143）接在 Router 上。
+// 各方法的返回形态由 rpc 层的 tdlib_bot_placeholders_test.go 覆盖，这里只证明经线上协议可达。
+func assertTDLibBotPlaceholderMethods(t *testing.T, bot *tdlibBotConn) {
 	t.Helper()
-	ownerInput := &tg.InputUser{UserID: owner.ID, AccessHash: owner.AccessHash}
-	assertBoolTrue := func(name string, raw *bin.Buffer) {
-		t.Helper()
-		v, err := tg.DecodeBool(raw)
-		if err != nil {
-			t.Fatalf("decode %s: %v", name, err)
-		}
-		if _, ok := v.(*tg.BoolTrue); !ok {
-			t.Errorf("%s = %T, want boolTrue", name, v)
-		}
-	}
-
 	// bots.setJoinChatResults：bot 审核入群申请（td/td/telegram/DialogParticipantManager.cpp:178）。
-	assertBoolTrue("bots.setJoinChatResults", bot.mustCall("bots.setJoinChatResults", &tg.BotsSetJoinChatResultsRequest{
+	raw := bot.mustCall("bots.setJoinChatResults", &tg.BotsSetJoinChatResultsRequest{
 		QueryID: 1, Result: &tg.JoinChatBotResultApproved{},
-	}))
-	// messages.setBotGuestChatResult：guest chat query 的应答（td/td/telegram/InlineQueriesManager.cpp:178）。
-	guestRaw := bot.mustCall("messages.setBotGuestChatResult", &tg.MessagesSetBotGuestChatResultRequest{
-		QueryID: 2,
-		Result: &tg.InputBotInlineResult{ID: "1", Type: "article",
-			SendMessage: &tg.InputBotInlineMessageText{Message: "guest"}},
 	})
-	if _, err := tg.DecodeInputBotInlineMessageID(guestRaw); err != nil {
-		t.Errorf("messages.setBotGuestChatResult result is not an InputBotInlineMessageID: %v", err)
+	if v, err := tg.DecodeBool(raw); err != nil {
+		t.Fatalf("decode bots.setJoinChatResults: %v", err)
+	} else if _, ok := v.(*tg.BoolTrue); !ok {
+		t.Errorf("bots.setJoinChatResults = %T, want boolTrue", v)
 	}
-	// messages.getPersonalChannelHistory（td/td/telegram/MessageQueryManager.cpp:2055）。
-	historyRaw := bot.mustCall("messages.getPersonalChannelHistory", &tg.MessagesGetPersonalChannelHistoryRequest{
-		UserID: ownerInput, Limit: 10,
-	})
-	history, err := tg.DecodeMessagesMessages(historyRaw)
-	if err != nil {
-		t.Fatalf("decode messages.getPersonalChannelHistory: %v", err)
-	}
-	if m, ok := history.(*tg.MessagesMessages); !ok || len(m.Messages) != 0 {
-		t.Errorf("messages.getPersonalChannelHistory = %#v, want empty messages.messages", history)
-	}
-	// users.setSecureValueErrors：Passport 错误回报（td/td/telegram/SecureManager.cpp:149）。
-	assertBoolTrue("users.setSecureValueErrors", bot.mustCall("users.setSecureValueErrors", &tg.UsersSetSecureValueErrorsRequest{
-		ID: ownerInput,
-		Errors: []tg.SecureValueErrorClass{&tg.SecureValueError{
-			Type: &tg.SecureValueTypePassport{}, Hash: []byte{1}, Text: "blurry",
-		}},
-	}))
 }
 
 // assertTDLibBotChannelDifference：bot 的 updates.getChannelDifference 用
 // channelMessagesFilterEmpty 和 limit=100000（td/td/telegram/MessagesManager.h:1676-1678、
-// MessagesManager.cpp:2253,34893）。服务端截断到自己的单页上限，并以 final=false 让
-// TDLib 接着拉，而不是因为差距大于服务端单页就返回 channelDifferenceTooLong。
+// MessagesManager.cpp:2253,34893）。线上协议接受这个 limit，差距大于服务端单页时返回
+// final=false 的 channelDifference 让 TDLib 接着拉，而不是 channelDifferenceTooLong。
+// 分页本身（每页条数、pts 推进、末页 final）由 store 测试覆盖。
 func assertTDLibBotChannelDifference(t *testing.T, srv tdlibContractServer, bot *tdlibBotConn, ownerID, botID int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -466,18 +433,9 @@ func assertTDLibBotChannelDifference(t *testing.T, srv tdlibContractServer, bot 
 	}
 
 	firstRaw := getDiff(startPts)
-	first, ok := firstRaw.(*tg.UpdatesChannelDifference)
-	if !ok {
-		t.Fatalf("first getChannelDifference(limit=100000) = %T, want updates.channelDifference page", firstRaw)
-	}
 	// final=false 时 TDLib 立即再次请求（MessagesManager.cpp 中 on_get_channel_difference 对 !is_final 的处理）。
-	if first.Final || len(first.NewMessages) != domain.MaxChannelDifferenceLimit || first.Pts != startPts+domain.MaxChannelDifferenceLimit {
-		t.Fatalf("first page final=%v messages=%d pts=%d, want final=false %d messages pts %d",
-			first.Final, len(first.NewMessages), first.Pts, domain.MaxChannelDifferenceLimit, startPts+domain.MaxChannelDifferenceLimit)
-	}
-	second, ok := getDiff(first.Pts).(*tg.UpdatesChannelDifference)
-	if !ok || !second.Final || len(second.NewMessages) != sent-domain.MaxChannelDifferenceLimit || second.Pts != channel.Pts {
-		t.Fatalf("second page = %#v, want final page with %d messages at pts %d", second, sent-domain.MaxChannelDifferenceLimit, channel.Pts)
+	if first, ok := firstRaw.(*tg.UpdatesChannelDifference); !ok || first.Final {
+		t.Fatalf("getChannelDifference(limit=100000) = %#v, want an updates.channelDifference page with final=false", firstRaw)
 	}
 }
 
