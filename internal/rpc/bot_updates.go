@@ -26,19 +26,55 @@ func (r *Router) botQtsAccount(ctx context.Context, userID int64) bool {
 	return err == nil && self.Bot
 }
 
-// tgBotUpdate 把一条 bot qts 记录投影成 bot 看到的 update，并返回需要附带的 user id 与 chat。
-// view 是频道的当前投影（bot 看不到时为 nil），用不上时退回记录里的频道快照与变化后的参与者。
-func tgBotUpdate(update domain.BotUpdate, view *domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) {
-	if update.BotStopped != nil {
-		return tgBotStoppedUpdate(update)
+// botUpdateProjection 是一条 bot qts 记录的投影：channelID 是记录所属的频道（不属于频道时为 0，
+// getDifference 按它批量读取频道当前投影），project 按该投影（bot 看不到时为 nil）生成 bot 看到
+// 的 update，并返回需要附带的 user id 与 chat。
+type botUpdateProjection struct {
+	channelID int64
+	project   func(view *domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass)
+}
+
+// botUpdateProjectionFor 是 bot qts 记录按类型分发的唯一位置；新的记录类型只在这里接入。
+func (r *Router) botUpdateProjectionFor(update domain.BotUpdate) botUpdateProjection {
+	switch {
+	case update.ChannelParticipant != nil:
+		return botUpdateProjection{channelID: update.ChannelParticipant.Channel.ID, project: func(view *domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) {
+			return tgBotChannelParticipantUpdate(update, view)
+		}}
+	case update.ChatInviteRequester != nil:
+		return botUpdateProjection{channelID: update.ChatInviteRequester.Channel.ID, project: func(view *domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) {
+			return tgBotChatInviteRequester(update, view, r.cfg.PublicBaseURL)
+		}}
+	case update.MessageReaction != nil:
+		return botUpdateProjection{channelID: update.MessageReaction.Channel.ID, project: func(*domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) {
+			return tgBotMessageReactionUpdate(update)
+		}}
+	case update.MessageReactions != nil:
+		return botUpdateProjection{channelID: update.MessageReactions.Channel.ID, project: func(*domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) {
+			return tgBotMessageReactionsUpdate(update)
+		}}
+	case update.BotStopped != nil:
+		return botUpdateProjection{project: func(*domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) {
+			return tgBotStoppedUpdate(update)
+		}}
 	}
-	if update.MessageReaction != nil || update.MessageReactions != nil {
-		return tgBotMessageReactionUpdate(update)
+	return botUpdateProjection{project: func(*domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) { return nil, nil, nil }}
+}
+
+// botChannelChat 投影 bot 看到的频道：view 是频道的当前投影，bot 看得到时用它；否则（bot 已
+// 不在私有频道里等）用记录里的频道快照与 bot 当时的成员身份 self。
+func botChannelChat(botUserID int64, view *domain.ChannelView, snapshot domain.Channel, self domain.ChannelMember) tg.ChatClass {
+	if view != nil && !view.Forbidden && view.Channel.ID == snapshot.ID {
+		current := view.Self
+		return tgChannelChat(botUserID, view.Channel, &current)
 	}
+	return tgChannelChat(botUserID, snapshot, &self)
+}
+
+// tgBotChannelParticipantUpdate 把成员变动记录投影成 updateChannelParticipant。chat 按 bot
+// 自己的成员身份投影：bot 自己的变化用变化后的参与者，其他成员的变动（#146）用 Viewer。
+func tgBotChannelParticipantUpdate(update domain.BotUpdate, view *domain.ChannelView) (tg.UpdateClass, []int64, tg.ChatClass) {
 	p := update.ChannelParticipant
-	if p == nil {
-		return nil, nil, nil
-	}
 	bot := update.BotUserID
 	out := &tg.UpdateChannelParticipant{
 		ChannelID: p.Channel.ID,
@@ -54,20 +90,12 @@ func tgBotUpdate(update domain.BotUpdate, view *domain.ChannelView) (tg.UpdateCl
 		out.SetPrevParticipant(tgChannelParticipantForUpdate(bot, p.Previous))
 	}
 	out.SetNewParticipant(tgChannelParticipantForUpdate(bot, p.Current))
-	var chat tg.ChatClass
-	if view != nil && !view.Forbidden && view.Channel.ID == p.Channel.ID {
-		self := view.Self
-		chat = tgChannelChat(bot, view.Channel, &self)
-	} else {
-		self := p.Current
-		if p.Viewer.UserID == bot {
-			// 其他成员的变动（#146）：按 bot 自己的成员身份投影。
-			self = p.Viewer
-		}
-		chat = tgChannelChat(bot, p.Channel, &self)
+	self := p.Current
+	if p.Viewer.UserID == bot {
+		self = p.Viewer
 	}
 	userIDs := []int64{out.ActorID, p.Current.UserID, p.Current.InviterUserID, p.Previous.InviterUserID}
-	return out, userIDs, chat
+	return out, userIDs, botChannelChat(bot, view, p.Channel, self)
 }
 
 // pushBotUpdates 在源事件提交后把 qts 记录在线推送给 bot 当前的全部会话；离线的会话
@@ -78,7 +106,7 @@ func (r *Router) pushBotUpdates(ctx context.Context, updates []domain.BotUpdate)
 	}
 	cache := newViewerPeerCache(r)
 	for _, update := range updates {
-		tgUpdate, userIDs, chat := r.projectBotUpdate(update, nil)
+		tgUpdate, userIDs, chat := r.botUpdateProjectionFor(update).project(nil)
 		if tgUpdate == nil {
 			continue
 		}
@@ -126,11 +154,6 @@ func withoutChannelParticipantUpdates(updates *tg.Updates) *tg.Updates {
 	return &out
 }
 
-// botQtsState 返回 bot 当前已分配的最大 qts（getState 用）。
-func (r *Router) botQtsState(ctx context.Context, botUserID int64) (domain.BotUpdatesState, error) {
-	return r.deps.BotUpdates.BotUpdatesState(ctx, botUserID)
-}
-
 // botQtsDifference 读出 qts > fromQts 的一页 bot 记录并投影；返回推进后的 qts 与是否还有下一页。
 //
 // fromQts 早于最旧的保留记录时不返回 differenceTooLong：TDLib 收到它只重置 pts，再用同一个
@@ -144,7 +167,7 @@ func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts 
 	}
 	newQts = fromQts
 	if len(rows) == 0 {
-		st, err := r.botQtsState(ctx, botUserID)
+		st, err := r.deps.BotUpdates.BotUpdatesState(ctx, botUserID)
 		if err != nil {
 			return nil, nil, nil, fromQts, false, err
 		}
@@ -157,9 +180,11 @@ func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts 
 	if partial {
 		rows = rows[:domain.MaxBotUpdatesDifference]
 	}
+	projections := make([]botUpdateProjection, len(rows))
 	channelIDs := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		if channelID := botUpdateChannelID(row); channelID != 0 {
+	for i, row := range rows {
+		projections[i] = r.botUpdateProjectionFor(row)
+		if channelID := projections[i].channelID; channelID != 0 {
 			channelIDs = append(channelIDs, channelID)
 		}
 	}
@@ -175,19 +200,20 @@ func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts 
 	}
 	userIDs := make([]int64, 0, len(rows)*4)
 	seenChats := make(map[int64]struct{}, len(channelIDs))
-	for _, row := range rows {
+	for i, row := range rows {
+		channelID := projections[i].channelID
 		var view *domain.ChannelView
-		if v, ok := views[botUpdateChannelID(row)]; ok {
+		if v, ok := views[channelID]; ok {
 			view = &v
 		}
-		update, ids, chat := r.projectBotUpdate(row, view)
+		update, ids, chat := projections[i].project(view)
 		newQts = row.Qts
 		if update == nil {
 			continue
 		}
 		updates = append(updates, update)
 		userIDs = append(userIDs, ids...)
-		if channelID := botUpdateChannelID(row); chat != nil && channelID != 0 {
+		if chat != nil && channelID != 0 {
 			if _, ok := seenChats[channelID]; !ok {
 				seenChats[channelID] = struct{}{}
 				chats = append(chats, chat)

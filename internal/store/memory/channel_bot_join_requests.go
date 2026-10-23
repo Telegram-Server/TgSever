@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"sort"
 
 	"telesrv/internal/domain"
 )
@@ -14,16 +13,10 @@ func (s *ChannelStore) appendBotJoinRequestUpdatesLocked(channel domain.Channel,
 	if s.botUpdates == nil {
 		return nil, nil
 	}
-	admins := make([]domain.ChannelMember, 0)
-	for _, member := range s.members[channel.ID] {
-		if domain.CanReceiveBotJoinRequests(member) {
-			admins = append(admins, member)
-		}
-	}
+	admins := s.adminBotMembersLocked(channel.ID)
 	if len(admins) == 0 {
 		return nil, nil
 	}
-	sort.Slice(admins, func(i, j int) bool { return admins[i].UserID < admins[j].UserID })
 	about := ""
 	if s.botUpdates.users != nil {
 		if u, ok, _ := s.botUpdates.users.ByID(context.Background(), requesterUserID); ok {

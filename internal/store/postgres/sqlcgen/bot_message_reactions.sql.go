@@ -48,50 +48,6 @@ func (q *Queries) CountChannelMessageReactions(ctx context.Context, arg CountCha
 	return items, nil
 }
 
-const listChannelAdminBotMembers = `-- name: ListChannelAdminBotMembers :many
-SELECT m.user_id, m.role, m.status, m.available_min_id
-FROM channel_members m
-JOIN users u ON u.id = m.user_id
-WHERE m.channel_id = $1
-  AND m.status = 'active'
-  AND m.role IN ('creator', 'admin')
-  AND u.is_bot
-ORDER BY m.user_id
-`
-
-type ListChannelAdminBotMembersRow struct {
-	UserID         int64
-	Role           string
-	Status         string
-	AvailableMinID int32
-}
-
-// 频道里身为创建者/管理员且仍在群里的 bot 账号。
-func (q *Queries) ListChannelAdminBotMembers(ctx context.Context, channelID int64) ([]ListChannelAdminBotMembersRow, error) {
-	rows, err := q.db.Query(ctx, listChannelAdminBotMembers, channelID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListChannelAdminBotMembersRow
-	for rows.Next() {
-		var i ListChannelAdminBotMembersRow
-		if err := rows.Scan(
-			&i.UserID,
-			&i.Role,
-			&i.Status,
-			&i.AvailableMinID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listUserChannelMessageReactions = `-- name: ListUserChannelMessageReactions :many
 
 SELECT reaction_type, reaction_value

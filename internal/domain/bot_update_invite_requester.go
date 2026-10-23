@@ -16,10 +16,7 @@ type BotChatInviteRequesterUpdate struct {
 
 // CanReceiveBotJoinRequests 报告成员是否会收到入群申请：在群的群主，或带邀请用户权限的管理员。
 func CanReceiveBotJoinRequests(member ChannelMember) bool {
-	if member.Status != ChannelMemberActive {
-		return false
-	}
-	return member.Role == ChannelRoleCreator || (member.Role == ChannelRoleAdmin && member.AdminRights.InviteUsers)
+	return IsChannelAdminBotAudience(member) && (member.Role == ChannelRoleCreator || member.AdminRights.InviteUsers)
 }
 
 // BotChatInviteRequesterUpdates 为一次新的入群申请生成 qts 记录候选：admins 中每个能收到入群

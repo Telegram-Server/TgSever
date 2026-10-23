@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"sort"
 
 	"telesrv/internal/domain"
 )
@@ -23,18 +22,12 @@ func (s *ChannelStore) SetChannelMessageReactions(ctx context.Context, req domai
 		return res, err
 	}
 	var current []domain.MessageReaction
-	var botMembers []domain.ChannelMember
 	s.mu.RLock()
 	for _, row := range s.reactions[req.ChannelID][req.MessageID][req.UserID] {
 		current = append(current, row.Reaction)
 	}
-	for _, member := range s.members[req.ChannelID] {
-		if s.botUpdates.isBot(member.UserID) {
-			botMembers = append(botMembers, member)
-		}
-	}
+	botMembers := s.adminBotMembersLocked(req.ChannelID)
 	s.mu.RUnlock()
-	sort.Slice(botMembers, func(i, j int) bool { return botMembers[i].UserID < botMembers[j].UserID })
 	date := botUpdateDate(req.Date)
 	updates := domain.BotChannelMessageReactionChanges(res.Channel, req.MessageID, req.UserID, s.botUpdates.isBot(req.UserID), old, current, res.Reactions.Results, botMembers, date)
 	res.BotUpdates, err = s.botUpdates.appendBotOnly(updates)

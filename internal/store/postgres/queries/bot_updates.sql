@@ -34,6 +34,18 @@ WHERE (bot_user_id, qts) IN (
     LIMIT $2
 );
 
+-- name: ListChannelAdminBotIDs :many
+-- 源事件的事务里列出群里的管理员 bot（在群的群主与管理员，domain.IsChannelAdminBotAudience）：
+-- 成员变动（#146）、入群申请（#149）、消息反应（#150）的收件人候选，各自的领域规则再细分。
+SELECT m.user_id
+FROM channel_members m
+JOIN users u ON u.id = m.user_id
+WHERE m.channel_id = $1
+  AND m.status = 'active'
+  AND m.role IN ('creator', 'admin')
+  AND u.is_bot
+ORDER BY m.user_id;
+
 -- name: FilterBotUserIDs :many
 -- 成员变动的事务里判定哪些主体是 bot 账号。
 SELECT id

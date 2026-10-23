@@ -86,10 +86,7 @@ func BotChannelMessageReactionChanges(channel Channel, messageID int, actorUserI
 }
 
 func botReceivesChannelReactions(member ChannelMember, messageID int) bool {
-	return member.UserID != 0 &&
-		member.Status == ChannelMemberActive &&
-		(member.Role == ChannelRoleCreator || member.Role == ChannelRoleAdmin) &&
-		messageID > member.AvailableMinID
+	return IsChannelAdminBotAudience(member) && messageID > member.AvailableMinID
 }
 
 // SameMessageReactions 报告两组反应是否相同（按顺序比较，与 TDLib 的判定一致）。

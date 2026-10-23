@@ -1,7 +1,8 @@
 package domain
 
 // IsChannelAdminBotAudience 报告成员记录是否让这个 bot 收到群里其他成员的变动（#146）：
-// 仍在群里的管理员或群主。是否为 bot 由调用方判定。
+// 仍在群里的管理员或群主。入群申请（#149）与消息反应（#150）的收件规则在它之上细分。
+// 是否为 bot 由调用方判定。
 func IsChannelAdminBotAudience(member ChannelMember) bool {
 	return member.UserID != 0 && member.Status == ChannelMemberActive &&
 		(member.Role == ChannelRoleAdmin || member.Role == ChannelRoleCreator)

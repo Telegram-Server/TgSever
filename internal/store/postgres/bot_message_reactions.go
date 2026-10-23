@@ -17,21 +17,28 @@ func channelUserReactionsTx(ctx context.Context, tx sqlcgen.DBTX, channelID int6
 	if err != nil {
 		return nil, fmt.Errorf("list user channel reactions: %w", err)
 	}
+	return reactionsFromRows(rows, func(row sqlcgen.ListUserChannelMessageReactionsRow) (string, string) {
+		return row.ReactionType, row.ReactionValue
+	}), nil
+}
+
+// reactionsFromRows 把 (reaction_type, reaction_value) 行转成反应，跳过无法识别的值。
+func reactionsFromRows[Row any](rows []Row, value func(Row) (string, string)) []domain.MessageReaction {
 	out := make([]domain.MessageReaction, 0, len(rows))
 	for _, row := range rows {
-		if reaction, ok := domain.MessageReactionFromValue(domain.MessageReactionType(row.ReactionType), row.ReactionValue); ok {
+		kind, v := value(row)
+		if reaction, ok := domain.MessageReactionFromValue(domain.MessageReactionType(kind), v); ok {
 			out = append(out, reaction)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // appendChannelReactionBotUpdatesTx 在反应写入之后、提交之前为管理员 bot 写 qts 记录。
 func appendChannelReactionBotUpdatesTx(ctx context.Context, tx sqlcgen.DBTX, channel domain.Channel, req domain.SetChannelMessageReactionsRequest, old []domain.MessageReaction) ([]domain.BotUpdate, error) {
-	q := sqlcgen.New(tx)
-	admins, err := q.ListChannelAdminBotMembers(ctx, channel.ID)
+	admins, err := channelAdminBotMembersTx(ctx, tx, channel.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list channel admin bots: %w", err)
+		return nil, err
 	}
 	if len(admins) == 0 {
 		return nil, nil
@@ -43,6 +50,7 @@ func appendChannelReactionBotUpdatesTx(ctx context.Context, tx sqlcgen.DBTX, cha
 	if domain.SameMessageReactions(old, current) {
 		return nil, nil
 	}
+	q := sqlcgen.New(tx)
 	actorBot, err := q.FilterBotUserIDs(ctx, []int64{req.UserID})
 	if err != nil {
 		return nil, fmt.Errorf("filter reaction actor bot: %w", err)
@@ -59,17 +67,7 @@ func appendChannelReactionBotUpdatesTx(ctx context.Context, tx sqlcgen.DBTX, cha
 			}
 		}
 	}
-	members := make([]domain.ChannelMember, 0, len(admins))
-	for _, row := range admins {
-		members = append(members, domain.ChannelMember{
-			ChannelID:      channel.ID,
-			UserID:         row.UserID,
-			Role:           domain.ChannelMemberRole(row.Role),
-			Status:         domain.ChannelMemberStatus(row.Status),
-			AvailableMinID: int(row.AvailableMinID),
-		})
-	}
-	updates := domain.BotChannelMessageReactionChanges(channel, req.MessageID, req.UserID, len(actorBot) > 0, old, current, counts, members, req.Date)
+	updates := domain.BotChannelMessageReactionChanges(channel, req.MessageID, req.UserID, len(actorBot) > 0, old, current, counts, admins, req.Date)
 	return appendBotUpdatesTx(ctx, tx, updates)
 }
 
@@ -79,13 +77,9 @@ func privateUserReactionsTx(ctx context.Context, tx sqlcgen.DBTX, messageSenderI
 	if err != nil {
 		return nil, fmt.Errorf("list user private reactions: %w", err)
 	}
-	out := make([]domain.MessageReaction, 0, len(rows))
-	for _, row := range rows {
-		if reaction, ok := domain.MessageReactionFromValue(domain.MessageReactionType(row.ReactionType), row.ReactionValue); ok {
-			out = append(out, reaction)
-		}
-	}
-	return out, nil
+	return reactionsFromRows(rows, func(row sqlcgen.ListUserPrivateMessageReactionsRow) (string, string) {
+		return row.ReactionType, row.ReactionValue
+	}), nil
 }
 
 // appendPrivateReactionBotUpdatesTx 在私聊反应写入之后、提交之前：对话另一方是 bot 时为它写

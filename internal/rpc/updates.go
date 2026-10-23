@@ -55,7 +55,7 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 	// 密聊 qts 是设备级、独立于账号级 pts 引擎：注入当前设备已分配的 qts（无密聊设备为 0）。
 	// bot 不能用密聊，它的 qts 来自账号级的 bot qts 序列，所有会话看到同一条序列。
 	if r.botQtsAccount(ctx, userID) {
-		botState, err := r.botQtsState(ctx, userID)
+		botState, err := r.deps.BotUpdates.BotUpdatesState(ctx, userID)
 		if err != nil {
 			r.log.Error("load bot qts state", zap.Int64("bot_user_id", userID), zap.Error(err))
 			return nil, internalErr()

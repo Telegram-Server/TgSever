@@ -18,7 +18,8 @@ func (s *ChannelStore) withAdminBotAudience(channelID int64, changes []domain.Bo
 	return domain.WithChannelAdminBotAudience(changes, admins)
 }
 
-// adminBotMembersLocked 返回群里的管理员 bot 成员记录（按 user id 排序）；调用方持有 s.mu。
+// adminBotMembersLocked 返回群里的管理员 bot（domain.IsChannelAdminBotAudience 且是 bot 账号）
+// 的成员记录，按 user id 排序；成员变动、入群申请、消息反应的收件人都从这里取。调用方持有 s.mu。
 func (s *ChannelStore) adminBotMembersLocked(channelID int64) []domain.ChannelMember {
 	var out []domain.ChannelMember
 	for _, member := range s.members[channelID] {
