@@ -1,8 +1,9 @@
 # Telegram Premium paid with Stars
 
-This implementation provides a Layer 228 Premium storefront, direct Premium
-gifts, and the HTTP Bot API `giftPremiumSubscription` method on top of the
-existing users, messages, updates, and Stars ledger.
+This implementation provides a Layer 228 Premium storefront and direct Premium
+gifts on top of the existing users, messages, updates, and Stars ledger. The
+former HTTP Bot API `giftPremiumSubscription` extension was removed together
+with the gateway (see [bot-api.en.md](./bot-api.en.md)).
 
 ## Supported entry points
 
@@ -32,17 +33,6 @@ existing users, messages, updates, and Stars ledger.
   rejected instead of minting Premium locally.
 - `payments.sendStarsForm` settles a form and returns the existing
   `payments.paymentResult` update container.
-- The local HTTP Bot API exposes `giftPremiumSubscription` with `user_id`,
-  `month_count`, `star_count`, optional `text`, `text_parse_mode`, and
-  `text_entities`. It validates `month_count` and `star_count` against the same
-  catalog used by MTProto.
-
-Bot API callers can supply an `Idempotency-Key` HTTP header or the local
-`request_id` extension. Reusing the same key with the same request returns the
-stored successful result; reusing it with different recipient, plan, price, or
-text is rejected. Calls without either field remain compatible with the
-official method but receive a new server-generated request key, so an
-application that retries requests should always send `Idempotency-Key`.
 
 ## Layer 228 wire contract
 
@@ -247,6 +237,3 @@ Protocol references:
 [`payments.getPaymentForm`](https://core.telegram.org/method/payments.getPaymentForm),
 [`payments.sendStarsForm`](https://core.telegram.org/method/payments.sendStarsForm), and
 [`messageActionGiftPremium`](https://core.telegram.org/constructor/messageActionGiftPremium).
-The HTTP surface follows the official
-[`giftPremiumSubscription`](https://core.telegram.org/bots/api#giftpremiumsubscription)
-parameter set and adds only the optional local idempotency key described above.

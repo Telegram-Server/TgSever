@@ -200,7 +200,6 @@ func cloneChannelTopMessage(msg domain.ChannelMessage) domain.ChannelMessage {
 		rich.Blocks = append([]byte(nil), msg.RichMessage.Blocks...)
 		rich.Photos = append([]domain.Photo(nil), msg.RichMessage.Photos...)
 		rich.Documents = append([]domain.Document(nil), msg.RichMessage.Documents...)
-		rich.BotAPIProjection = append([]byte(nil), msg.RichMessage.BotAPIProjection...)
 		msg.RichMessage = &rich
 	}
 	if msg.ReplyMarkup != nil {

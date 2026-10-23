@@ -63,16 +63,3 @@ func tgReactionList(in []domain.MessageReaction) []tg.ReactionClass {
 	}
 	return out
 }
-
-// botUpdateChannelID 是 qts 记录涉及的频道（getDifference 去重附带的 chats 用）；不涉及频道为 0。
-func botUpdateChannelID(update domain.BotUpdate) int64 {
-	switch {
-	case update.ChannelParticipant != nil:
-		return update.ChannelParticipant.Channel.ID
-	case update.MessageReaction != nil:
-		return update.MessageReaction.Channel.ID
-	case update.MessageReactions != nil:
-		return update.MessageReactions.Channel.ID
-	}
-	return 0
-}

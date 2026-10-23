@@ -18,6 +18,8 @@ type BotUpdate struct {
 	// MessageReaction / MessageReactions 是消息反应变化（#150），见 bot_message_reaction.go。
 	MessageReaction  *BotMessageReactionUpdate  `json:",omitempty"`
 	MessageReactions *BotMessageReactionsUpdate `json:",omitempty"`
+	// ChatInviteRequester 是 updateBotChatInviteRequester：有用户提交了入群申请（#149）。
+	ChatInviteRequester *BotChatInviteRequesterUpdate `json:",omitempty"`
 	// BotStopped 是 updateBotStopped：用户拉黑或解除拉黑了 bot（#148）。
 	BotStopped *BotStoppedUpdate `json:",omitempty"`
 }

@@ -194,7 +194,6 @@ func (s *EphemeralMessageStore) CreateEphemeralMessage(_ context.Context, messag
 		delete(shard.messages, messageKey)
 	}
 	stored := cloneEphemeralMessage(message)
-	stored.BotAPIReply = nil
 	shard.nextGeneration++
 	entry := ephemeralEntry{message: stored, generation: shard.nextGeneration}
 	shard.messages[messageKey] = entry
@@ -362,12 +361,6 @@ func ephemeralRandom(message domain.EphemeralMessage) ephemeralRandomKey {
 
 func cloneEphemeralMessage(message domain.EphemeralMessage) domain.EphemeralMessage {
 	message.Content = cloneEphemeralContent(message.Content)
-	if message.BotAPIReply != nil {
-		reply := *message.BotAPIReply
-		reply.Content = cloneEphemeralContent(reply.Content)
-		reply.BotAPIReply = nil
-		message.BotAPIReply = &reply
-	}
 	return message
 }
 

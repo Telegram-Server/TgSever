@@ -11,7 +11,7 @@
 ## 1. 加载方式、语法与优先级
 
 - `TELESRV_CONFIG` 是选择 env 风格配置文件的**进程环境变量**。默认读取进程工作目录下的 `.env`；显式设为空可关闭文件加载。把它写在配置文件内部不会改变已选定的文件。
-- 优先级为：非空进程环境变量 → 非空文件值 → 代码默认值。四个可空监听项 `TELESRV_DEBUG_ADDR`、`TELESRV_BOT_API_ADDR`、`TELESRV_ADMIN_API_ADDR`、`TELESRV_PUBLIC_LINK_WEB_ADDR` 允许用显式空的进程环境变量覆盖文件中的非空值，从而关闭监听。
+- 优先级为：非空进程环境变量 → 非空文件值 → 代码默认值。三个可空监听项 `TELESRV_DEBUG_ADDR`、`TELESRV_ADMIN_API_ADDR`、`TELESRV_PUBLIC_LINK_WEB_ADDR` 允许用显式空的进程环境变量覆盖文件中的非空值，从而关闭监听。
 - 文件支持空行、整行 `#` 注释、可选的 `export ` 前缀和 `KEY=VALUE`；支持单引号、双引号。行尾 `#` 不会被当作内联注释剥离。
 - 文件中的键必须以 `TELESRV_` 开头，且只能包含大写 ASCII 字母、数字和下划线。语法合法但当前二进制未知的 `TELESRV_*` 键会被接受但忽略。
 - bool 接受 `1/true/TRUE/True/yes/on` 和 `0/false/FALSE/False/no/off`；列表使用逗号分隔；时长使用 Go 格式，例如 `200ms`、`30s`、`5m`、`168h`。
@@ -60,7 +60,6 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
 | `TELESRV_DEBUG_ADDR` | nullable address / `127.0.0.1:6060` | pprof/debug 监听；空值关闭。生产必须保持 loopback，通过 SSH 隧道抓取。 |
-| `TELESRV_BOT_API_ADDR` | nullable address / 空 | 最小 HTTP Bot API 监听；空值关闭，与 MTProto 共用 app/store 事实。`setWebhook` 接受任意合法 `http://` 或 `https://` 主机/IP 与 `1..65535` 端口。 |
 | `TELESRV_ADMIN_API_ADDR` | nullable address / 空 | 进程内 Admin 写 API；空值关闭，生产应只监听 loopback。 |
 | `TELESRV_ADMIN_API_TOKEN` | secret string / 空 | Admin API bearer token；启用 Admin API 时必须显式配置，并与 Admin UI 使用的 token 一致。 |
 | `TELESRV_ADMIN_UI_ADDR` | address / `127.0.0.1:2600` | 独立 `cmd/telesrv-admin` 监听地址。 |
@@ -121,115 +120,12 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | `TELESRV_TELEGRAM_LOGIN_SWEEP_INTERVAL` | duration / `5m` | retention worker 周期，限定 `10s..1h`。 |
 | `TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH` | int / `500` | 每轮最大清理行数，限定 `1..1000`。 |
 
-### 3.1 Bot API webhook 故障排查
+### 3.1 Bot API
 
-先区分三个地址，禁止把 webhook 接收域名当成 Bot API 地址：
-
-| 名称 | 配置/来源 | 方向与用途 |
-|---|---|---|
-| Bot API listener | telesrv 的 `TELESRV_BOT_API_ADDR` | telesrv 的监听地址；空值表示关闭。`0.0.0.0` 只能用于 bind，不能作为客户端请求目标。 |
-| Bot API base URL | bot 应用的 `TELEGRAM_API_URL` 等配置 | bot 应用访问 telesrv 的可达地址，例如 `http://172.17.0.1:8088`。方法地址为 `<base>/bot<TOKEN>/<method>`，文件地址为 `<base>/file/bot<TOKEN>/<file_path>`。 |
-| Webhook receiver URL | bot 应用的 `WEBHOOK_URL + WEBHOOK_PATH`，经 `setWebhook` 登记 | telesrv 主动 POST update 的目标，例如 `https://bot.example.com/webhook`。它不是 Bot API base URL。 |
-
-网络方向也不同：polling 是 `bot 应用 -> telesrv Bot API`，webhook 是
-`telesrv -> bot 应用 webhook receiver`。因此 polling 正常只能证明前一条路径可达，
-不能证明 webhook 的 DNS、出站 TCP、TLS、反向代理或 Docker hairpin 路径正常。
-
-#### 1. 从 Bot API 查询真实 webhook 状态
-
-应在 bot 应用容器中使用它实际配置的 Bot API base URL；不要把 token 展开后粘贴到
-聊天、工单或截图：
-
-```sh
-curl -sS -X POST \
-  "${TELEGRAM_API_URL%/}/bot${BOT_TOKEN}/getWebhookInfo" | jq
-```
-
-若没有 `TELEGRAM_API_URL` 这个变量，就把它替换成与
-`TELESRV_BOT_API_ADDR` 对应的**客户端可达地址**。例如 telesrv 监听
-`0.0.0.0:8088`，同宿主 Docker 容器可能使用 `http://172.17.0.1:8088`；不要请求
-`http://0.0.0.0:8088`。
-
-按下表判读响应：
-
-| 结果 | 结论与下一步 |
-|---|---|
-| `url` 为空 | webhook 没有登记到这台 telesrv；检查 bot 应用是否确实使用该 Bot API base URL，以及启动时 `setWebhook` 是否成功。 |
-| `pending_update_count` 增长 | update 已进入 telesrv durable queue，但没有成功交付；继续看 `last_error_message`。 |
-| `last_error_message` 为 HTTP `401`/`403` | 接收端已可达，但 webhook secret 不一致或请求被认证层拒绝。 |
-| `dial tcp ... i/o timeout` | telesrv 到目标 IP/端口的连接超时；检查出站防火墙、Docker 网络、回环 NAT/hairpin 和安全组。 |
-| `connection refused` | 目标地址可达，但相应端口没有监听或端口映射/反代 upstream 错误。 |
-| DNS/`no such host` | telesrv 所在运行环境无法解析 webhook hostname。 |
-| TLS/`x509` 错误 | 证书链、hostname、SNI 或容器 CA trust 有问题。HTTPS 使用系统信任链。 |
-| `allowed_updates` 不含目标类型 | 新产生的该类型 update 不会入队；普通 `/start` 至少需要 `message`。 |
-| pending 归零但应用无响应 | telesrv 已收到 2xx；转查接收应用内部 queue、worker、dispatcher 和 handler 日志。 |
-
-`getWebhookInfo` 查询的是 telesrv 持久化的交付事实；应用自己的 `/health` 只能证明
-接收路由和 worker 已启动，不能代替这一步。
-
-#### 2. 用正确请求头验证接收端
-
-Telegram webhook secret 与 Bot token、OIDC Client Secret、API key 都是不同凭据。
-接收端校验的标准请求头是 `X-Telegram-Bot-Api-Secret-Token`，不是
-`Authorization: Bearer`：
-
-```sh
-curl -i -X POST "${WEBHOOK_URL%/}${WEBHOOK_PATH}" \
-  -H 'Content-Type: application/json' \
-  -H "X-Telegram-Bot-Api-Secret-Token: ${WEBHOOK_SECRET_TOKEN}" \
-  -d '{"update_id":2147483000}'
-```
-
-预期为 HTTP 2xx。`401 invalid_secret_token` 表示请求已经到达应用，但 header 缺失或
-值不匹配。编辑 `.env` 后必须重建/重启读取该配置的应用；只修改磁盘文件不会更新
-已经登记到 telesrv 的 secret，也不会更新接收进程启动时捕获的 secret。
-
-#### 3. 从 telesrv 的实际网络命名空间测试
-
-浏览器或官方 Telegram 能访问公网 webhook，只能证明公网入站正常。必须从实际运行
-telesrv 的宿主机、容器或 network namespace 再测一次：
-
-```sh
-docker exec <telesrv-container> sh -lc \
-  'getent hosts bot.example.com; curl -vk --connect-timeout 10 https://bot.example.com/health/unified'
-```
-
-如果公网客户端正常而这里 `dial tcp ...:443: i/o timeout`，常见原因是同机公网 IP
-回环失败。优先使用 split DNS 或容器 host mapping，让公网 hostname 在 telesrv 容器
-内解析到反向代理的内部入口，同时保留原 hostname、HTTPS SNI 和证书校验。例如反代
-的 443 已发布到 Docker 宿主机时，可先验证：
-
-```sh
-curl -vk --resolve bot.example.com:443:172.17.0.1 \
-  https://bot.example.com/health/unified
-```
-
-验证通过后，可在 telesrv Compose 中使用与实际网络匹配的配置：
-
-```yaml
-extra_hosts:
-  - "bot.example.com:host-gateway"
-```
-
-其它可选修复包括：把 telesrv 接入反向代理所在 Docker network、为 Docker subnet
-放行宿主机 443，或修正云安全组/NAT hairpin。telesrv 允许登记内部 HTTP receiver，
-但只有在两端共享受控内网且调用方的 `WEBHOOK_URL` 不同时承担 OIDC、支付或公开媒体
-回调时才应使用；不要为绕过网络问题盲目把应用的全局公开 URL 改成内部地址。
-
-#### 4. 修复后的闭环验证
-
-1. 重新启动 bot 应用，让它用当前 URL、secret 和 `allowed_updates` 再次调用
-   `setWebhook`。
-2. 发送一条新的 `/start` 或点击 callback 按钮。
-3. 再次调用 `getWebhookInfo`；`pending_update_count` 应下降到 `0`，且不再出现新的
-   `last_error_date`。
-4. 检查 telesrv Warning 日志中的 `bot api webhook delivery failed`。日志包含
-   `bot_user_id`、`retry_in` 和失败原因，但不得记录 webhook URL、Bot token 或 secret。
-5. 检查接收应用是否记录并处理该 `update_id`。webhook 是 at-least-once，应用必须能
-   安全处理失败重试带来的重复 update。
-
-若凭据曾出现在命令历史、聊天或截图中，立即轮换 Bot token、webhook secret、OIDC
-Client Secret 及同屏暴露的其它 API key/数据库密码；排查资料只保留脱敏结果。
+telesrv 没有 HTTP Bot API 监听。Bot API 由外部的 telegram-bot-api（TDLib）提供，它以 bot 身份
+通过 MTProto 登录 telesrv；bot 应用、`cmd/walletminiapp` 和 `cmd/bots/` 下的示例都把 Bot API
+地址指向 telegram-bot-api，webhook 的登记和投递也在那里完成，见 [bot-api.en.md](./bot-api.en.md)。
+telesrv 侧唯一相关的配置是 bot qts 保留期 `TELESRV_BOT_UPDATE_RETENTION`（见第 9 节）。
 
 ### 3.2 Telegram Login / OIDC 完整启用流程
 
@@ -396,7 +292,8 @@ python -m venv "$env:TEMP\telesrv-bedolaga-demo-venv"
   -r .\cmd\bots\bedolagaformat\requirements.txt
 ```
 
-将第 3 步得到的 Client ID/Secret 和同一个 Bot API token 仅放入进程环境：
+将第 3 步得到的 Client ID/Secret 和同一个 Bot API token 仅放入进程环境。
+`TELESRV_BOT_API_SERVER` 是连到本 telesrv 的 telegram-bot-api 的地址：
 
 ```powershell
 $env:TELESRV_BOT_TOKEN = "<bot_id>:<bot_api_secret>"
@@ -618,7 +515,6 @@ telesrv 扩展协议（不是官方 Telegram 功能）：客户端不经验证�
 | `TELESRV_CATCHUP_RATE_WINDOW` | duration / `1m` | catch-up 限流窗口。 |
 | `TELESRV_CHANNEL_NUDGE_MAX_TARGETS` | int / `0` | 单次 channel fan-out nudge 目标上限；`<=0` 使用内置默认值。 |
 | `TELESRV_UPDATE_EVENT_RETENTION` | duration / `168h` | durable update log 保留期；只删除已被协议安全水位/状态覆盖的事件。 |
-| `TELESRV_BOT_API_UPDATE_RETENTION` | duration / `24h` | Bot API update 队列最长保留期；已确认行另有固定短宽限。 |
 | `TELESRV_BOT_UPDATE_RETENTION` | duration / `24h` | MTProto bot qts 序列（`bot_updates`）的保留期；bot 请求更早的 qts 时从最旧的保留记录补起，被回收的更新视为丢弃。 |
 | `TELESRV_ORPHAN_AUTH_KEY_RETENTION` | duration / `24h` | 没有 authorization/temp binding/活跃连接的握手 auth key 最短保留期。 |
 | `TELESRV_RETENTION_INTERVAL` | duration / `1h` | 通用 retention worker 周期。 |
