@@ -68,12 +68,6 @@ func (s *MessageStore) PayBotInvoice(ctx context.Context, invoiceID, payerID int
 			_, err = tx.Exec(ctx, `UPDATE bot_invoices SET paid=true,charge_id=$2,payer_user_id=$3,paid_at=$4 WHERE id=$1`, invoiceID, chargeID, payerID, date)
 			return err
 		},
-		after: func(ctx context.Context, tx pgx.Tx, sent domain.SendPrivateTextResult) error {
-			_, _, err := NewBotAPIUpdateStore(tx).EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
-				BotUserID: invoice.BotUserID, Kind: domain.BotAPIUpdateMessage, Peer: sent.RecipientMessage.Peer, MessageID: sent.RecipientMessage.ID, SourcePts: sent.RecipientEvent.Pts, Date: date,
-			})
-			return err
-		},
 	})
 }
 

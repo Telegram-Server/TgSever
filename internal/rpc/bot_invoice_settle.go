@@ -67,7 +67,10 @@ func (r *Router) botInvoiceSettle(ctx context.Context, userID int64, req *tg.Pay
 	if err != nil {
 		return nil, true, starsErr(err)
 	}
-	r.notifyBotAPIUpdate(invoice.BotUserID)
+	// 支付结果是 bot 私聊里一条带 pts 的服务消息（messageActionPaymentSentMe），MTProto
+	// bot 靠 pts 就能收到。Bot API 队列只是网关的投递副本，与普通私聊消息一样在提交后
+	// 入队，不属于支付事务。
+	r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, sent)
 	return &tg.PaymentsPaymentResult{Updates: tgPrivateSendResultUpdates(sent, 0, false, nil, nil)}, true, nil
 }
 

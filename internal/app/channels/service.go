@@ -1527,7 +1527,7 @@ func (s *Service) EditMessage(ctx context.Context, userID int64, req domain.Edit
 			return domain.EditChannelMessageResult{}, err
 		}
 	}
-	return s.channels.EditChannelMessage(ctx, req)
+	return s.editChannelMessage(ctx, req)
 }
 
 // GetInlineBotMessage returns one live channel message addressed by a signed inline id.
@@ -1549,7 +1549,16 @@ func (s *Service) EditInlineBotMessage(ctx context.Context, botID int64, req dom
 		}
 	}
 	req.ViaBotEditBotID = botID
-	return s.channels.EditChannelMessage(ctx, req)
+	return s.editChannelMessage(ctx, req)
+}
+
+// editChannelMessage 落库编辑并按 privacy bot 规则标出不该收到在线编辑推送的成员。
+func (s *Service) editChannelMessage(ctx context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
+	res, err := s.channels.EditChannelMessage(ctx, req)
+	if err != nil {
+		return res, err
+	}
+	return s.applyEditPrivacyBotSkip(ctx, req.UserID, req.MentionUserIDs, res)
 }
 
 // DeleteMessages deletes a bounded set of channel/supergroup messages.
