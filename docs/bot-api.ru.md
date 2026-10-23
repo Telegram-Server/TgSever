@@ -150,6 +150,10 @@ Id чатов следуют официальной нумерации: поло
 | `USER_ADMIN_INVALID`, `USER_NOT_ADMIN`, `RIGHT_FORBIDDEN`, `USER_CREATOR`, `ADMINS_TOO_MUCH`, `ADMIN_RANK_INVALID` | 400 | проблемы назначения админа / custom title |
 | `CHAT_NOT_MODIFIED`, `CHAT_TITLE_EMPTY`, `TITLE_INVALID`, `CHAT_ABOUT_TOO_LONG`, `CHAT_ABOUT_NOT_MODIFIED` | 400 | проблемы названия / описания / прав чата |
 | `CHANNEL_INVALID`, `CHANNEL_PRIVATE`, `USER_BANNED_IN_CHANNEL`, `MEGAGROUP_ID_INVALID`, `FROZEN_METHOD_INVALID` | 400 | этот бот не может управлять чатом |
+| `INVITE_HASH_EMPTY`, `INVITE_HASH_INVALID` | 400 | `invite_link` пуст, не является ссылкой этого чата или неизвестен |
+| `INVITE_HASH_EXPIRED` | 400 | срок действия ссылки-приглашения истёк |
+| `INVITE_REVOKED_MISSING` | 400 | изменение или отзыв уже отозванной ссылки-приглашения |
+| `CHAT_INVITE_PERMANENT` | 400 | `expire_date`, `member_limit` или `creates_join_request` для основной ссылки-приглашения |
 | `OFFSET_INVALID` | 400 | offset в `getUpdates` меньше `-10000` |
 | `ALLOWED_UPDATES_INVALID` | 400 | не JSON-массив из не более 100 строк |
 | `ALLOWED_UPDATES_UNSUPPORTED` | 501 | шлюз без сервиса управления обновлениями |
@@ -167,6 +171,9 @@ Id чатов следуют официальной нумерации: поло
 | `GIFT_ID_INVALID`, `GIFT_NOT_AVAILABLE`, `GIFT_UPGRADE_UNAVAILABLE` | 400 | проблемы `sendGift` |
 | `STAR_GIFT_UNAVAILABLE` | 500 | недоступна сама подсистема подарков |
 | `CURRENCY_INVALID`, `INVOICE_AMOUNT_INVALID`, `INVOICE_INVALID`, `INVOICE_ALREADY_PAID`, `INVOICE_REFUNDED` | 400 | проблемы `sendInvoice` / `refundStarPayment` |
+| `AMOUNT_INVALID`, `DESCRIPTION_INVALID`, `PAYLOAD_INVALID` | 400 | `sendInvoice`: неположительная сумма или `description` / `payload` длиннее лимита |
+| `INVOICE_ALREADY_EXISTS` | 400 | счёт уже оплачен |
+| `CHARGE_ID_INVALID`, `CHARGE_ID_NOT_FOUND` | 400 | `refundStarPayment`: пустой `telegram_payment_charge_id` или у этого бота нет платежа с таким id |
 | `IDEMPOTENCY_KEY_INVALID` | 400 | конфликт `request_id`/`Idempotency-Key` либо плохой charset/длина |
 | `PAYMENT_FORM_INVALID` | 400 | платёжная форма отклонена |
 | `CHAT_WRITE_FORBIDDEN`, `CHAT_ADMIN_REQUIRED` | 400 | не хватает прав |
@@ -287,7 +294,8 @@ Ephemeral-сообщения (Bot API 10.2) приходят как обычны
 и только ботам, которые в этот момент владелец или администратор с
 `can_invite_users`. Входит в набор по умолчанию. `invite_link` — состояние
 ссылки на момент заявки, поэтому `pending_join_request_count` учитывает и эту
-заявку.
+заявку. Как и в методах ссылок-приглашений, у ссылки, созданной другим
+администратором, вторая половина хеша заменена на `…`.
 
 Время жизни очереди задаёт `TELESRV_BOT_API_UPDATE_RETENTION` (по умолчанию
 `24h`); подтверждённые обновления удаляются раньше.
@@ -383,9 +391,10 @@ MTProto), поэтому другие клиенты видят изменени
 as a new file using attach://`. `main_frame_timestamp`, который не является
 числом, даёт `Bad Request: field "main_frame_timestamp" must be a valid
 Number`; отрицательный — `Bad Request: wrong main frame timestamp specified`.
-Файл, который не декодируется как изображение,
-даёт `Bad Request: IMAGE_PROCESS_FAILED`; файл больше 10 МБ —
-`Bad Request: file is too big`.
+Статический файл, который не декодируется как изображение, или анимированный
+файл, который не является MP4 (должен начинаться с бокса ISO BMFF `ftyp`),
+даёт `Bad Request: IMAGE_PROCESS_FAILED`, и ничего не сохраняется; файл больше
+10 МБ — `Bad Request: file is too big`.
 
 ### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
 
@@ -722,8 +731,14 @@ inline-сообщения.
 
 ### `deleteMessage`
 
-`chat_id` + `message_id`. Возвращает `true`. Удаление уже удалённого или
-чужого сообщения возвращает `false` либо ошибку, как и на официальном шлюзе.
+`chat_id` + `message_id`. Возвращает `true`. В личном чате удаляется только
+сообщение диалога с этим `chat_id` (у обеих сторон); в супергруппе или канале
+бот удаляет свои сообщения без прав администратора, а чужие — только с правом
+на удаление сообщений, и удаление записывается на бота. Отсутствующее или уже
+удалённое сообщение даёт `Bad Request: message to delete not found`;
+сообщение, которое боту удалять нельзя, — `Bad Request: message can't be
+deleted`. `chat_id` группы, в которой бота больше нет (вышел, исключён или
+заблокирован), — `CHAT_ID_INVALID`.
 
 ### `deleteMessages`
 
@@ -735,7 +750,9 @@ inline-сообщения.
 и недоступные для удаления сообщения пропускаются, остальные удаляются одним
 пакетом (участники получают одно обновление об удалении); результат — `true`.
 Если удалить нельзя ни одного, возвращается `Bad Request: message can't be
-deleted` или `Bad Request: message to delete not found`. Пустой список,
+deleted`, когда хотя бы одно из них существует, но удалять его нельзя (в том
+числе служебное сообщение о создании группы с id 1, которое не удаляется
+никогда), и `Bad Request: message to delete not found` в остальных случаях. Пустой список,
 больше 100 id или неположительный id — ошибка параметров (`Bad Request:
 message identifiers are not specified` / `too many message identifiers
 specified` / `invalid message identifier specified`).
@@ -911,7 +928,15 @@ restrict/unrestrict chat member`.
 
 Проверка параметров (`Bad Request: ...`, до каких-либо изменений): `name` — не
 длиннее 32 символов, `member_limit` — 1–99999, `member_limit` нельзя сочетать с
-`creates_join_request=true`; `invite_link` обязателен для изменения и отзыва.
+`creates_join_request=true` (`Bad Request: member limit can't be specified for
+links requiring administrator approval`); `invite_link` обязателен для
+изменения и отзыва. Это сочетание отклоняется и тогда, когда
+`editChatInviteLink` передаёт только один из двух параметров, а второй у ссылки
+уже задан.
+
+`invite_link` содержит полную ссылку только для ссылок, созданных самим ботом.
+У ссылки, созданной другим администратором, вторая половина хеша заменена на
+`…`, как и официально, чтобы бот не мог раздать ссылку, которую ему не давали.
 
 `ChatInviteLink` содержит `invite_link`, `creator`, `creates_join_request`,
 `is_primary`, `is_revoked` и, если заданы, `name`, `expire_date`,
@@ -920,9 +945,11 @@ restrict/unrestrict chat member`.
 Отличия от официального шлюза:
 
 - `editChatInviteLink` меняет только переданные параметры; официально
-  непереданный параметр сбрасывается;
-- ссылка, созданная без параметров, считается основной ссылкой бота
-  (`is_primary=true`), и `exportChatInviteLink` отзывает и её.
+  непереданный параметр сбрасывается.
+
+`createChatInviteLink` никогда не создаёт основную ссылку: даже без параметров
+ссылка дополнительная (`is_primary=false`), и `exportChatInviteLink` её не
+отзывает. Очистка `name` тоже не делает ссылку основной.
 
 ## Методы: файлы
 

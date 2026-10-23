@@ -151,6 +151,10 @@ Markers the gateway can return directly:
 | `USER_ADMIN_INVALID`, `USER_NOT_ADMIN`, `RIGHT_FORBIDDEN`, `USER_CREATOR`, `ADMINS_TOO_MUCH`, `ADMIN_RANK_INVALID` | 400 | promotion / custom title problems |
 | `CHAT_NOT_MODIFIED`, `CHAT_TITLE_EMPTY`, `TITLE_INVALID`, `CHAT_ABOUT_TOO_LONG`, `CHAT_ABOUT_NOT_MODIFIED` | 400 | chat title / description / permissions problems |
 | `CHANNEL_INVALID`, `CHANNEL_PRIVATE`, `USER_BANNED_IN_CHANNEL`, `MEGAGROUP_ID_INVALID`, `FROZEN_METHOD_INVALID` | 400 | the chat cannot be managed by this bot |
+| `INVITE_HASH_EMPTY`, `INVITE_HASH_INVALID` | 400 | `invite_link` is empty, not a link of this chat, or unknown |
+| `INVITE_HASH_EXPIRED` | 400 | the invite link has expired |
+| `INVITE_REVOKED_MISSING` | 400 | editing or revoking an invite link that is already revoked |
+| `CHAT_INVITE_PERMANENT` | 400 | setting `expire_date`, `member_limit` or `creates_join_request` on a primary invite link |
 | `OFFSET_INVALID` | 400 | `getUpdates` offset below `-10000` |
 | `ALLOWED_UPDATES_INVALID` | 400 | not a JSON array of up to 100 strings |
 | `ALLOWED_UPDATES_UNSUPPORTED` | 501 | gateway without the update-control service |
@@ -168,6 +172,9 @@ Markers the gateway can return directly:
 | `GIFT_ID_INVALID`, `GIFT_NOT_AVAILABLE`, `GIFT_UPGRADE_UNAVAILABLE` | 400 | `sendGift` problems |
 | `STAR_GIFT_UNAVAILABLE` | 500 | the gift subsystem itself is unavailable |
 | `CURRENCY_INVALID`, `INVOICE_AMOUNT_INVALID`, `INVOICE_INVALID`, `INVOICE_ALREADY_PAID`, `INVOICE_REFUNDED` | 400 | `sendInvoice` / `refundStarPayment` problems |
+| `AMOUNT_INVALID`, `DESCRIPTION_INVALID`, `PAYLOAD_INVALID` | 400 | `sendInvoice`: non-positive amount, or `description` / `payload` over its limit |
+| `INVOICE_ALREADY_EXISTS` | 400 | the invoice has already been settled |
+| `CHARGE_ID_INVALID`, `CHARGE_ID_NOT_FOUND` | 400 | `refundStarPayment`: empty `telegram_payment_charge_id`, or no charge of this bot with that id |
 | `IDEMPOTENCY_KEY_INVALID` | 400 | conflicting `request_id`/`Idempotency-Key`, or bad charset/length |
 | `PAYMENT_FORM_INVALID` | 400 | payment form rejected |
 | `CHAT_WRITE_FORBIDDEN`, `CHAT_ADMIN_REQUIRED` | 400 | rights missing |
@@ -288,7 +295,9 @@ approval — either through an invite link with `creates_join_request`, or by
 joining a public chat that has join requests enabled — and only for bots that
 are the creator or an administrator with `can_invite_users` at that moment.
 It belongs to the default set. `invite_link` is the link as it was when the
-request was made, so `pending_join_request_count` counts this request too.
+request was made, so `pending_join_request_count` counts this request too. As
+with the invite-link methods, a link created by another administrator has the
+second half of its hash replaced with `…`.
 
 Queue retention is controlled by `TELESRV_BOT_API_UPDATE_RETENTION`
 (default `24h`); acknowledged updates are dropped earlier.
@@ -382,9 +391,10 @@ is required`, `Bad Request: can't parse InputProfilePhoto JSON object` or
 point to an uploaded file gives `Bad Request: profile photo must be uploaded as
 a new file using attach://`. A `main_frame_timestamp` that is not a number gives
 `Bad Request: field "main_frame_timestamp" must be a valid Number`; a negative
-one gives `Bad Request: wrong main frame timestamp specified`. A file that is not a decodable image gives
-`Bad Request: IMAGE_PROCESS_FAILED`; a file over 10 MB gives
-`Bad Request: file is too big`.
+one gives `Bad Request: wrong main frame timestamp specified`. A static file that is not a decodable image, or an animated file that is not
+an MP4 (it must start with an ISO BMFF `ftyp` box), gives
+`Bad Request: IMAGE_PROCESS_FAILED` and nothing is stored; a file over 10 MB
+gives `Bad Request: file is too big`.
 
 ### `setMyDefaultAdministratorRights`, `getMyDefaultAdministratorRights`
 
@@ -722,8 +732,14 @@ already closed is `MESSAGE_POLL_CLOSED`; a message without a poll is
 
 ### `deleteMessage`
 
-`chat_id` + `message_id`. Returns `true`. Deleting an already-deleted or
-foreign message returns `false` or an error, as with the official gateway.
+`chat_id` + `message_id`. Returns `true`. In a private chat only a message of
+that `chat_id` dialog is deleted (revoked for both sides); in a supergroup or
+channel the bot deletes its own messages without any admin right and other
+people's only with the delete-messages right, and the deletion is attributed to
+the bot. A missing or already-deleted message gives `Bad Request: message to
+delete not found`; one the bot may not delete gives `Bad Request: message can't
+be deleted`. A `chat_id` of a group the bot is no longer in (left, kicked or
+banned) is `CHAT_ID_INVALID`.
 
 ### `deleteMessages`
 
@@ -735,7 +751,9 @@ people's only with the delete-messages admin right. Messages that are missing
 or that the bot may not delete are skipped and the rest are deleted in one
 batch (members receive a single deletion update); the result is `true`. When
 none of them can be deleted the error is `Bad Request: message can't be
-deleted` or `Bad Request: message to delete not found`. An empty list, more
+deleted` if at least one of them exists but may not be deleted (including the
+group's creation service message, id 1, which can never be deleted), and
+`Bad Request: message to delete not found` otherwise. An empty list, more
 than 100 ids or a non-positive id is a parameter error (`Bad Request: message
 identifiers are not specified` / `too many message identifiers specified` /
 `invalid message identifier specified`).
@@ -911,8 +929,15 @@ created by the bot. Supergroups and channels only.
 
 Parameter checks (`Bad Request: ...`, before anything is changed): `name` is at
 most 32 characters, `member_limit` is 1–99999, and `member_limit` cannot be
-combined with `creates_join_request=true`; `invite_link` is required for edit
-and revoke.
+combined with `creates_join_request=true`
+(`Bad Request: member limit can't be specified for links requiring
+administrator approval`); `invite_link` is required for edit and revoke. The
+combination is also rejected when `editChatInviteLink` passes only one of the
+two and the link already has the other.
+
+`invite_link` is the full link only for links the bot created itself. For a
+link created by another administrator the second half of the hash is replaced
+with `…`, as officially, so the bot cannot hand out a link it was not given.
 
 `ChatInviteLink` carries `invite_link`, `creator`, `creates_join_request`,
 `is_primary`, `is_revoked`, and, when set, `name`, `expire_date`,
@@ -921,9 +946,11 @@ and revoke.
 Differences from the official gateway:
 
 - `editChatInviteLink` changes only the parameters that are passed; officially
-  an omitted parameter is reset;
-- a link created without any parameter counts as a primary link of the bot
-  (`is_primary=true`), and `exportChatInviteLink` revokes it as well.
+  an omitted parameter is reset.
+
+`createChatInviteLink` never creates a primary link: even without any parameter
+the link is an additional one (`is_primary=false`), and `exportChatInviteLink`
+does not revoke it. Clearing a link's `name` does not make it primary either.
 
 ## Methods: files
 
