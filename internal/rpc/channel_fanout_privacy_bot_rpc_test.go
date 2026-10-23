@@ -82,3 +82,69 @@ func TestChannelMessageFanoutSkipsPrivacyBotOnlinePush(t *testing.T) {
 		t.Fatalf("fanout pushed = %v, online privacy bot 1003 must NOT receive plain-message push (privacy leak)", pushed)
 	}
 }
+
+// privacyBotEditFanoutPushed 在含 privacy bot 1003 的超级群里由 1001 发出 original，再编辑成 edited，
+// 两成员在线，返回编辑在线 fanout 实际推送到的用户。
+func privacyBotEditFanoutPushed(t *testing.T, original, edited string) []int64 {
+	t.Helper()
+	ctx := context.Background()
+	channelStore := memory.NewChannelStore()
+	bots := privacyBotResolver{1003: true}
+	channelService := appchannels.NewService(channelStore, appchannels.WithBotProfileResolver(bots))
+	created, err := channelService.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Privacy",
+		MemberUserIDs: []int64{1002, 1003},
+		Date:          10,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	sent, err := channelService.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  2001,
+		Message:   original,
+		Date:      11,
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	res, err := channelService.EditMessage(ctx, 1001, domain.EditChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		ID:        sent.Message.ID,
+		Message:   edited,
+		EditDate:  12,
+	})
+	if err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+
+	sessions := &captureSessions{
+		channelMembers: map[int64][]int64{created.Channel.ID: {1002, 1003}},
+	}
+	users := &prefetchRecordingUsersService{mapUsersService: mapUsersService{users: map[int64]domain.User{
+		1001: {ID: 1001, FirstName: "sender"},
+	}}}
+	r := New(Config{}, Deps{Channels: channelService, Sessions: sessions, Users: users}, zaptest.NewLogger(t), clock.System)
+	r.enqueueChannelEditMessageFanout(ctx, 1001, res)
+	return sessions.pushedUserIDs()
+}
+
+// TestChannelEditMessageFanoutSkipsPrivacyBotOnlinePush 回归 #152：在线 privacy bot 不得经编辑 fanout
+// 收到它看不见的群消息的 updateEditChannelMessage（新消息推送已跳过，编辑推送曾漏掉）。
+func TestChannelEditMessageFanoutSkipsPrivacyBotOnlinePush(t *testing.T) {
+	pushed := privacyBotEditFanoutPushed(t, "plain group chatter", "plain group chatter, edited")
+	if !fanoutHasID(pushed, 1002) {
+		t.Fatalf("edit fanout pushed = %v, want human member 1002 to receive online push", pushed)
+	}
+	if fanoutHasID(pushed, 1003) {
+		t.Fatalf("edit fanout pushed = %v, online privacy bot 1003 must NOT receive edit of invisible message (privacy leak)", pushed)
+	}
+}
+
+// TestChannelEditMessageFanoutPushesVisibleMessageToPrivacyBot：bot 能看见的消息（命令）的编辑照常推送。
+func TestChannelEditMessageFanoutPushesVisibleMessageToPrivacyBot(t *testing.T) {
+	pushed := privacyBotEditFanoutPushed(t, "/start", "/start now")
+	if !fanoutHasID(pushed, 1003) {
+		t.Fatalf("edit fanout pushed = %v, privacy bot 1003 must receive edit of a command it can see", pushed)
+	}
+}
