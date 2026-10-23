@@ -12,7 +12,7 @@ import (
 
 // 超级群/频道里其他成员的变动发给群里每个是管理员的 bot（#146，TDLib 转成 chat_member）：
 // 加入、拉入、离开、通过邀请链接入群、入群申请被批准、限制、封禁、解封、设为或撤销管理员
-// 各一条，按发生顺序取连续 qts；不是管理员的 bot 收不到其他成员的变动。
+// 各一条，qts 按发生顺序递增；不是管理员的 bot 收不到其他成员的变动。
 func TestOtherMemberChangesGoToEveryAdminBot(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
@@ -105,15 +105,24 @@ func TestOtherMemberChangesGoToEveryAdminBot(t *testing.T) {
 			{"demoted", linkJoiner, owner, true, domain.ChannelMemberActive, domain.ChannelRoleMember, false},
 		}
 		for _, bot := range []int64{adminA, adminB} {
-			rows, err := updates.ListBotUpdates(ctx, bot, before[bot], 100)
+			all, err := updates.ListBotUpdates(ctx, bot, before[bot], 100)
 			mustOK("list", err)
+			// 入群申请本身另有 updateBotChatInviteRequester（#149），这里只看成员变动；qts 仍
+			// 单调递增，按出现顺序核对。
+			var rows []domain.BotUpdate
+			for _, row := range all {
+				if row.ChannelParticipant != nil {
+					rows = append(rows, row)
+				}
+			}
 			if len(rows) != len(want) {
 				t.Fatalf("broadcast=%v bot %d: %d qts records, want %d: %+v", broadcast, bot, len(rows), len(want), rows)
 			}
+			lastQts := before[bot]
 			for i, w := range want {
 				row := rows[i]
 				p := row.ChannelParticipant
-				if row.BotUserID != bot || row.Qts != before[bot]+i+1 || p == nil || p.Channel.ID != channelID || p.ActorUserID != w.actor {
+				if row.BotUserID != bot || row.Qts <= lastQts || p == nil || p.Channel.ID != channelID || p.ActorUserID != w.actor {
 					t.Fatalf("broadcast=%v bot %d %s: record %+v (payload %+v)", broadcast, bot, w.name, row, p)
 				}
 				if (p.Previous.UserID != 0) != w.hadPrevious {
@@ -122,6 +131,7 @@ func TestOtherMemberChangesGoToEveryAdminBot(t *testing.T) {
 				if p.Current.UserID != w.member || p.Current.Status != w.status || p.Current.Role != w.role || p.Current.BannedRights.SendMessages != w.restricted {
 					t.Fatalf("broadcast=%v bot %d %s: current %+v, want member %d %s/%s restricted=%v", broadcast, bot, w.name, p.Current, w.member, w.status, w.role, w.restricted)
 				}
+				lastQts = row.Qts
 				// 接收者自己在群里的身份随记录保存，在线推送时用它投影 chat。
 				if p.Viewer.UserID != bot || p.Viewer.Role != domain.ChannelRoleAdmin {
 					t.Fatalf("broadcast=%v bot %d %s: viewer %+v, want the admin bot itself", broadcast, bot, w.name, p.Viewer)

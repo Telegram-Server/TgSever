@@ -185,3 +185,40 @@ func TestAdminBotReceivesOtherMemberChangesOnline(t *testing.T) {
 		t.Fatalf("ban new participant = %T, want channelParticipantBanned", next)
 	}
 }
+
+// bot 自己经普通邀请链接入群（#146）：提交后 bot 自己收到一条带 qts 的 updateChannelParticipant
+// （my_chat_member），群里的管理员 bot 也收到一条（chat_member），各只推一次。
+func TestBotJoiningByLinkPushesEveryQtsRecordOnce(t *testing.T) {
+	ctx := context.Background()
+	fx := newAdminBotAudienceFixture(t)
+	owner, adminBot, joiner := fx.newUser(t, 8401, false), fx.newUser(t, 8402, true), fx.newUser(t, 8403, true)
+	now := int(time.Now().Unix())
+	created, err := fx.channels.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{Title: "link", Megagroup: true, Date: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.channels.EditAdmin(ctx, owner.ID, domain.EditChannelAdminRequest{ChannelID: created.Channel.ID, MemberID: adminBot.ID, AdminRights: domain.ChannelAdminRights{BanUsers: true}, Date: now}); err != nil {
+		t.Fatal(err)
+	}
+	link, err := fx.channels.ExportInvite(ctx, owner.ID, domain.ExportChannelInviteRequest{UserID: owner.ID, ChannelID: created.Channel.ID, Date: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminBefore := len(fx.pushedParticipants(adminBot.ID))
+	if _, err := fx.router.onMessagesImportChatInvite(fx.userCtx(joiner), link.Invite.Hash); err != nil {
+		t.Fatalf("bot joins by link: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		bot    int64
+		pushed []*tg.UpdateChannelParticipant
+	}{
+		{"joining bot", joiner.ID, fx.pushedParticipants(joiner.ID)},
+		{"admin bot", adminBot.ID, fx.pushedParticipants(adminBot.ID)[adminBefore:]},
+	} {
+		st, _ := fx.botUpdates.BotUpdatesState(ctx, tc.bot)
+		if len(tc.pushed) != 1 || tc.pushed[0].UserID != joiner.ID || tc.pushed[0].Qts != st.Qts || st.Qts == 0 {
+			t.Fatalf("%s pushes = %+v (state %+v), want one qts update about the joining bot", tc.name, tc.pushed, st)
+		}
+	}
+}
