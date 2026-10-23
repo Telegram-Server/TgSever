@@ -18,15 +18,17 @@ func TestBotInvoiceAtomicFailureAndConcurrentReplay(t *testing.T) {
 	payments := c.router.deps.Bots.(store.BotInvoicePayments)
 	now := int(time.Now().Unix())
 	// Failure at the last write must roll back both ledgers, invoice state, message
-	// boxes and their PTS, not merely return an error to the RPC caller.
+	// boxes and their PTS, not merely return an error to the RPC caller. The bot's
+	// pts event is the last write of the payment transaction: by then the payer's
+	// box and pts have already been allocated.
 	name := fmt.Sprintf("invoice_failure_%d", c.botID)
-	sql := fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.bot_user_id=%d THEN RAISE EXCEPTION 'injected delivery write failure'; END IF; RETURN NEW; END $$;
- CREATE TRIGGER %s BEFORE INSERT ON bot_api_updates FOR EACH ROW EXECUTE FUNCTION %s()`, name, c.botID, name, name)
+	sql := fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.user_id=%d THEN RAISE EXCEPTION 'injected delivery write failure'; END IF; RETURN NEW; END $$;
+ CREATE TRIGGER %s BEFORE INSERT ON user_update_events FOR EACH ROW EXECUTE FUNCTION %s()`, name, c.botID, name, name)
 	if _, err := c.pool.Exec(ctx, sql); err != nil {
 		t.Fatal(err)
 	}
 	cleanup := func() {
-		if _, err := c.pool.Exec(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON bot_api_updates; DROP FUNCTION IF EXISTS %s()", name, name)); err != nil {
+		if _, err := c.pool.Exec(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON user_update_events; DROP FUNCTION IF EXISTS %s()", name, name)); err != nil {
 			t.Error(err)
 		}
 	}
