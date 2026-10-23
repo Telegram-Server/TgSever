@@ -524,7 +524,7 @@ func (s *ChannelStore) TransferChannelOwnership(_ context.Context, req domain.Tr
 	}, nil
 }
 
-func (s *ChannelStore) EditChannelMemberRank(_ context.Context, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error) {
+func (s *ChannelStore) editChannelMemberRank(req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 || req.MemberID == 0 {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}

@@ -560,16 +560,8 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 	} else {
 		r.removeOnlineChannelMemberships(res.Channel.ID, res.Participant.UserID)
 	}
-	cache := newViewerPeerCache(r)
-	qtsBots := botQtsRecipients(res.BotUpdates)
-	build := func(viewerUserID int64) *tg.Updates {
-		updates := r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-		if r.plainParticipantUpdateSkipped(ctx, cache, viewerUserID, qtsBots) {
-			// bot 自己的成员变化只经 qts 序列送达（下面的 pushBotUpdates）。
-			return withoutChannelParticipantUpdates(updates)
-		}
-		return updates
-	}
+	// bot 的成员变化只经 qts 序列送达（下面的 pushBotUpdates）。
+	build := r.channelParticipantBuilder(ctx, userID, res.Channel, res.Previous, res.Participant, res.Date, res.BotUpdates)
 	updates := build(userID)
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
 	r.pushBotUpdates(ctx, res.BotUpdates)
@@ -614,14 +606,10 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	if res.Participant.Status == domain.ChannelMemberKicked && res.Previous.Status == domain.ChannelMemberActive {
 		r.recordChannelStateForUser(ctx, res.Participant.UserID, res.Channel.ID, false)
 	}
-	cache := newViewerPeerCache(r)
-	qtsBots := botQtsRecipients(res.BotUpdates)
+	// bot 的成员变化只经 qts 序列送达（下面的 pushBotUpdates）。
+	participantUpdates := r.channelParticipantBuilder(ctx, userID, res.Channel, res.Previous, res.Participant, res.Date, res.BotUpdates)
 	build := func(viewerUserID int64) *tg.Updates {
-		updates := r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-		if r.plainParticipantUpdateSkipped(ctx, cache, viewerUserID, qtsBots) {
-			// bot 自己的成员变化只经 qts 序列送达（下面的 pushBotUpdates）。
-			updates = withoutChannelParticipantUpdates(updates)
-		}
+		updates := participantUpdates(viewerUserID)
 		if updates != nil && res.ServiceEvent.Pts != 0 {
 			// megagroup 踢人服务消息占 channel pts，必须先于 participant
 			// update 应用，让成员面板/人数与消息流一起收敛。

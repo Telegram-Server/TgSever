@@ -375,10 +375,12 @@ func (r *Router) onMessagesEditChatCreator(ctx context.Context, req *tg.Messages
 	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
 	r.addOnlineChannelMemberships(res.Channel.ID, res.OldOwner.UserID, res.NewOwner.UserID)
 	cache := newViewerPeerCache(r)
-	updates := r.channelOwnershipTransferUpdatesWithPeerCache(ctx, userID, userID, res, cache)
-	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
+	// 群主转让不生成 bot qts 记录，bot 也不收无 qts 的 updateChannelParticipant。
+	build := r.withoutPlainParticipantUpdatesForBots(ctx, cache, nil, func(viewerUserID int64) *tg.Updates {
 		return r.channelOwnershipTransferUpdatesWithPeerCache(ctx, viewerUserID, userID, res, cache)
 	})
+	updates := build(userID)
+	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
 	return updates, nil
 }
 
@@ -447,11 +449,11 @@ func (r *Router) onMessagesEditChatParticipantRank(ctx context.Context, req *tg.
 	if err != nil {
 		return nil, channelAdminErr(err)
 	}
-	cache := newViewerPeerCache(r)
-	updates := r.channelParticipantUpdatesWithPeerCache(ctx, userID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
-		return r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
-	})
+	// 成员 tag 是权限变更（#146）：bot 自己与管理员 bot 经 qts 序列收到（pushBotUpdates）。
+	build := r.channelParticipantBuilder(ctx, userID, res.Channel, res.Previous, res.Participant, res.Date, res.BotUpdates)
+	updates := build(userID)
+	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, build)
+	r.pushBotUpdates(ctx, res.BotUpdates)
 	return updates, nil
 }
 

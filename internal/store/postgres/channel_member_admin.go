@@ -373,6 +373,13 @@ func (s *ChannelStore) EditChannelMemberRank(ctx context.Context, req domain.Edi
 	}); err != nil {
 		return domain.EditChannelAdminResult{}, err
 	}
+	// 成员 tag 是参与者看得见的权限状态（#146）：被改的 bot 与管理员 bot 写 qts 记录。
+	var botUpdates []domain.BotUpdate
+	if update, ok := domain.BotChannelParticipantChange(channel, req.UserID, previous, member, req.Date); ok {
+		if botUpdates, err = appendChannelBotUpdatesTx(ctx, tx, channel.ID, []domain.BotUpdate{update}); err != nil {
+			return domain.EditChannelAdminResult{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.EditChannelAdminResult{}, fmt.Errorf("commit edit channel member rank: %w", err)
 	}
@@ -380,7 +387,7 @@ func (s *ChannelStore) EditChannelMemberRank(ctx context.Context, req domain.Edi
 	event := transientChannelParticipantEvent(channel.ID, req.UserID, previous, member, req.Date)
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 	recipients = append(recipients, req.MemberID)
-	return domain.EditChannelAdminResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date}, nil
+	return domain.EditChannelAdminResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date, BotUpdates: botUpdates}, nil
 }
 
 func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error) {

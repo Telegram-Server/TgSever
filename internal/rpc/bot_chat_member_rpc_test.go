@@ -27,6 +27,7 @@ type adminBotAudienceFixture struct {
 	users      *memory.UserStore
 	botUpdates *memory.BotUpdateStore
 	channels   *channelsapp.Service
+	store      *memory.ChannelStore
 	sessions   *phoneCaptureSessions
 }
 
@@ -46,7 +47,7 @@ func newAdminBotAudienceFixture(t *testing.T) *adminBotAudienceFixture {
 		Files:      &fakeFiles{},
 		Sessions:   sessions,
 	}, zaptest.NewLogger(t), clock.System)
-	return &adminBotAudienceFixture{router: router, users: users, botUpdates: botUpdates, channels: channels, sessions: sessions}
+	return &adminBotAudienceFixture{router: router, users: users, botUpdates: botUpdates, channels: channels, store: channelStore, sessions: sessions}
 }
 
 func (f *adminBotAudienceFixture) newUser(t *testing.T, hash int64, bot bool) domain.User {

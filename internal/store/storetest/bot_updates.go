@@ -17,6 +17,7 @@ type BotUpdatesChannelStore interface {
 	LeaveChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error)
 	EditChannelAdmin(ctx context.Context, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error)
 	EditChannelBanned(ctx context.Context, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error)
+	EditChannelMemberRank(ctx context.Context, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error)
 }
 
 // BotUpdatesFixture 是同一份底层数据上的 bot qts 序列 store 与频道 store。NewUser 每次
@@ -182,21 +183,29 @@ func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFi
 		if len(promoted.BotUpdates) != 1 || promoted.BotUpdates[0].Qts != 3 {
 			t.Fatalf("promote result bot updates = %+v, want qts 3", promoted.BotUpdates)
 		}
+		// 成员 tag（rank）是参与者看得见的权限状态：改 tag 同样写 qts 记录。
+		tagged, err := f.Channels.EditChannelMemberRank(ctx, domain.EditChannelMemberRankRequest{UserID: owner, ChannelID: channelID, MemberID: bot, Rank: "helper", Date: now})
+		if err != nil {
+			t.Fatalf("edit rank: %v", err)
+		}
+		if len(tagged.BotUpdates) != 1 || tagged.BotUpdates[0].Qts != 4 || tagged.BotUpdates[0].ChannelParticipant.Current.Rank != "helper" {
+			t.Fatalf("edit rank result bot updates = %+v, want qts 4 carrying the tag", tagged.BotUpdates)
+		}
 		kicked, err := f.Channels.EditChannelBanned(ctx, domain.EditChannelBannedRequest{UserID: owner, ChannelID: channelID, Participant: domain.Peer{Type: domain.PeerTypeUser, ID: bot}, BannedRights: domain.ChannelBannedRights{ViewMessages: true}, Date: now})
 		if err != nil {
 			t.Fatalf("kick: %v", err)
 		}
-		if len(kicked.BotUpdates) != 1 || kicked.BotUpdates[0].Qts != 4 {
-			t.Fatalf("kick result bot updates = %+v, want qts 4", kicked.BotUpdates)
+		if len(kicked.BotUpdates) != 1 || kicked.BotUpdates[0].Qts != 5 {
+			t.Fatalf("kick result bot updates = %+v, want qts 5", kicked.BotUpdates)
 		}
 		if _, err := f.Channels.LeaveChannel(ctx, channelID, human, now); err != nil {
 			t.Fatalf("human leave: %v", err)
 		}
 		rows := list(t, f, bot, 0, 10)
-		if !equalInts(qtsOf(rows), []int{2, 3, 4}) {
-			t.Fatalf("bot qts = %v, want [2 3 4]", qtsOf(rows))
+		if !equalInts(qtsOf(rows), []int{2, 3, 4, 5}) {
+			t.Fatalf("bot qts = %v, want [2 3 4 5]", qtsOf(rows))
 		}
-		last := rows[2].ChannelParticipant
+		last := rows[3].ChannelParticipant
 		if last == nil || last.Channel.ID != channelID || last.ActorUserID != owner ||
 			last.Previous.Role != domain.ChannelRoleAdmin || last.Current.Status != domain.ChannelMemberKicked {
 			t.Fatalf("kick record = %+v, want admin -> kicked by owner", last)

@@ -80,6 +80,21 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 	return res, err
 }
 
+// EditChannelMemberRank edits a member tag and records the qts updates of the
+// member (when it is a bot) and of the admin bots: the tag is a visible permission state (#146).
+func (s *ChannelStore) EditChannelMemberRank(_ context.Context, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error) {
+	s.botUpdateMu.Lock()
+	defer s.botUpdateMu.Unlock()
+	res, err := s.editChannelMemberRank(req)
+	if err != nil {
+		return res, err
+	}
+	if update, ok := domain.BotChannelParticipantChange(res.Channel, req.UserID, res.Previous, res.Participant, botUpdateDate(res.Date)); ok {
+		res.BotUpdates, err = s.botUpdates.appendBotOnly(s.withAdminBotAudience(res.Channel.ID, []domain.BotUpdate{update}))
+	}
+	return res, err
+}
+
 // EditChannelBanned edits banned rights and records the qts update when the member is a bot.
 func (s *ChannelStore) EditChannelBanned(_ context.Context, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error) {
 	s.botUpdateMu.Lock()

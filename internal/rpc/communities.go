@@ -444,9 +444,10 @@ func (r *Router) onCommunitiesToggleParticipantBanned(ctx context.Context, req *
 		r.invalidateChannelFullBotInfoCacheForChannel(ban.Channel.ID)
 		r.removeOnlineChannelMemberships(ban.Channel.ID, peer.ID)
 		r.recordChannelStateForUser(ctx, peer.ID, ban.Channel.ID, false)
-		cache := newViewerPeerCache(r)
+		// 社区封禁不生成 bot qts 记录，bot 也不收无 qts 的 updateChannelParticipant。
+		participantUpdates := r.channelParticipantBuilder(ctx, userID, ban.Channel, ban.Previous, ban.Participant, ban.Date, nil)
 		build := func(viewerUserID int64) *tg.Updates {
-			updates := r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, ban.Channel, ban.Previous, ban.Participant, ban.Date, cache)
+			updates := participantUpdates(viewerUserID)
 			if updates != nil && ban.ServiceEvent.Pts != 0 {
 				if update := tgChannelUpdate(viewerUserID, ban.ServiceEvent); update != nil {
 					updates.Updates = append([]tg.UpdateClass{update}, updates.Updates...)
