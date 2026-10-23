@@ -2476,13 +2476,31 @@ type ChannelDiscussionMessage struct {
 	UnreadCount       int
 }
 
-// ChannelDifferenceRequest describes a channel difference query.
+// ChannelDifferenceRequest describes a channel difference query. Limit is the
+// client's own limit, uncapped; stores split it with ChannelDifferencePage.
 type ChannelDifferenceRequest struct {
 	UserID    int64
 	ChannelID int64
 	Pts       int
 	Limit     int
 	Force     bool
+}
+
+// ChannelDifferencePage 把客户端的 getChannelDifference limit 拆成单页事件数 page 和
+// tooLong 判定窗口 window。
+//
+// 客户端 limit 不超过 MaxChannelDifferenceLimit 时二者相同：pts 差距超过 limit 即返回
+// channelDifferenceTooLong（TDesktop / Android 用 100，行为不变）。客户端要的比服务端单页
+// 上限还多时（TDLib 给 bot 固定用 100000，td/td/telegram/MessagesManager.h:1676-1678），
+// 按单页上限分页并以 final=false 让客户端继续拉，只有差距超过客户端自己的 limit 才 tooLong。
+func ChannelDifferencePage(limit int) (page, window int) {
+	if limit <= 0 {
+		return MaxChannelDifferenceLimit, MaxChannelDifferenceLimit
+	}
+	if limit > MaxChannelDifferenceLimit {
+		return MaxChannelDifferenceLimit, limit
+	}
+	return limit, limit
 }
 
 // ReadChannelHistoryRequest advances the current user's channel read watermark.

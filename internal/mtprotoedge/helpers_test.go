@@ -105,6 +105,17 @@ func exactTestRPCResult(result bin.Encoder) bin.Encoder {
 // 通过 t.Cleanup 自动取消并校验优雅退出。opts 的 RSAKey/Logger/DC 会被补默认。
 func startTestServer(t *testing.T, opts Options) (addr string, pub exchange.PublicKey, srv *Server) {
 	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	return startTestServerOnListener(t, ln, opts)
+}
+
+// startTestServerOnListener 与 startTestServer 相同，但使用调用方已打开的监听：
+// 需要先知道监听地址（例如写进 rpc.Config 的 DC 地址）再构造 Router 时使用。
+func startTestServerOnListener(t *testing.T, ln net.Listener, opts Options) (addr string, pub exchange.PublicKey, srv *Server) {
+	t.Helper()
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("gen rsa: %v", err)
@@ -115,11 +126,6 @@ func startTestServer(t *testing.T, opts Options) (addr string, pub exchange.Publ
 	}
 	if opts.DC == 0 {
 		opts.DC = 2
-	}
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
 	}
 
 	srv = New(opts)

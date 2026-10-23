@@ -1,0 +1,399 @@
+package mtprotoedge
+
+import (
+	"context"
+	"net"
+	"sync"
+	"testing"
+	"time"
+
+	"go.uber.org/zap/zaptest"
+
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/transport"
+
+	"telesrv/internal/app/auth"
+	botsapp "telesrv/internal/app/bots"
+	channelsapp "telesrv/internal/app/channels"
+	"telesrv/internal/app/dialogs"
+	"telesrv/internal/app/help"
+	messageapp "telesrv/internal/app/messages"
+	"telesrv/internal/app/updates"
+	"telesrv/internal/app/users"
+	"telesrv/internal/domain"
+	"telesrv/internal/rpc"
+	"telesrv/internal/store/memory"
+)
+
+// 本文件是 TDLib 作为 bot 接入本服务的契约测试（#143）。
+//
+// telegram-bot-api 以 bot 身份经 TDLib 连 MTProto。测试不运行 TDLib，而是在真实 TCP
+// 监听上用原始 MTProto 帧逐条模仿 TDLib 的请求方式（Layer、包装、参数），并断言 TDLib
+// 会检查的字段。每条断言注明 TDLib 源码位置，路径相对 tdlib/telegram-bot-api 10.3
+// （TDLib 在其 td 子模块）；TDLib 升级时按这些位置逐条核对。
+
+// tdlibMTProtoLayer 是 TDLib 发送的 Layer：td/td/telegram/Version.h:13 MTPROTO_LAYER。
+const tdlibMTProtoLayer = 229
+
+// tdlibBotConn 是模仿 TDLib 的原始 MTProto 连接：首个请求带
+// invokeWithLayer+initConnection 头，之后的请求不再包装
+// （td/td/telegram/net/MtprotoHeader.cpp:31-34，头只随会话首个请求发送）。
+type tdlibBotConn struct {
+	t      *testing.T
+	conn   transport.Conn
+	auth   exchange.ClientExchangeResult
+	cipher crypto.Cipher
+	ids    *proto.MessageIDGen
+	seq    int32
+}
+
+func dialTDLibBot(t *testing.T, addr string, dc int, pub exchange.PublicKey) *tdlibBotConn {
+	t.Helper()
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+	return &tdlibBotConn{t: t, conn: conn, auth: auth, cipher: cipher, ids: proto.NewMessageIDGen(time.Now)}
+}
+
+// tdlibInitConnection 按 telegram-bot-api 的 setTdlibParameters（telegram-bot-api/Client.cpp:9411-9422：
+// device_model="server"、system_language_code="en"）与 MtprotoHeader.cpp 的 initConnection
+// 编码（flags.1 带 params）包装 query。
+func tdlibInitConnection(query bin.Object) *tg.InvokeWithLayerRequest {
+	init := &tg.InitConnectionRequest{
+		APIID:          94575, // 任意 api_id：bot 登录不校验应用凭据。
+		DeviceModel:    "server",
+		SystemVersion:  "Linux",
+		AppVersion:     "10.3",
+		SystemLangCode: "en",
+		LangPack:       "",
+		LangCode:       "en",
+		Query:          query,
+	}
+	init.SetParams(&tg.JSONObject{Value: []tg.JSONObjectValue{{Key: "tz_offset", Value: &tg.JSONNumber{Value: 0}}}})
+	return &tg.InvokeWithLayerRequest{Layer: tdlibMTProtoLayer, Query: init}
+}
+
+// call 发送一个内容消息并等待对应 rpc_result；返回结果 buffer 或 RPC 错误。
+func (c *tdlibBotConn) call(req bin.Encoder) (*bin.Buffer, *mt.RPCError) {
+	c.t.Helper()
+	msgID := c.ids.New(proto.MessageFromClient)
+	seq := c.seq*2 + 1
+	c.seq++
+	sendEncryptedWithSeq(c.t, c.conn, c.cipher, c.auth, msgID, seq, req)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for i := 0; i < 64; i++ {
+		_, _, plain := readServerMessageContext(c.t, ctx, c.conn, c.cipher, c.auth.AuthKey)
+		if out, rpcErr, ok := c.matchResult(plain, msgID); ok {
+			return out, rpcErr
+		}
+	}
+	c.t.Fatalf("no rpc_result for msg %d", msgID)
+	return nil, nil
+}
+
+func (c *tdlibBotConn) matchResult(plain *bin.Buffer, msgID int64) (*bin.Buffer, *mt.RPCError, bool) {
+	c.t.Helper()
+	id, err := plain.PeekID()
+	if err != nil {
+		c.t.Fatalf("peek server message: %v", err)
+	}
+	switch id {
+	case proto.MessageContainerTypeID:
+		var container proto.MessageContainer
+		if err := container.Decode(plain); err != nil {
+			c.t.Fatalf("decode container: %v", err)
+		}
+		for _, msg := range container.Messages {
+			if out, rpcErr, ok := c.matchResult(&bin.Buffer{Buf: msg.Body}, msgID); ok {
+				return out, rpcErr, true
+			}
+		}
+		return nil, nil, false
+	case proto.ResultTypeID:
+		var result proto.Result
+		if err := result.Decode(plain); err != nil {
+			c.t.Fatalf("decode rpc_result: %v", err)
+		}
+		if result.RequestMessageID != msgID {
+			return nil, nil, false
+		}
+		inner := &bin.Buffer{Buf: result.Result}
+		if innerID, _ := inner.PeekID(); innerID == proto.GZIPTypeID {
+			var packed proto.GZIP
+			if err := packed.Decode(inner); err != nil {
+				c.t.Fatalf("decode gzip_packed: %v", err)
+			}
+			inner = &bin.Buffer{Buf: packed.Data}
+		}
+		if innerID, _ := inner.PeekID(); innerID == mt.RPCErrorTypeID {
+			var rpcErr mt.RPCError
+			if err := rpcErr.Decode(inner); err != nil {
+				c.t.Fatalf("decode rpc_error: %v", err)
+			}
+			return nil, &rpcErr, true
+		}
+		return inner, nil, true
+	default:
+		return nil, nil, false
+	}
+}
+
+// mustCall 断言请求成功并返回结果 buffer。
+func (c *tdlibBotConn) mustCall(name string, req bin.Encoder) *bin.Buffer {
+	c.t.Helper()
+	out, rpcErr := c.call(req)
+	if rpcErr != nil {
+		c.t.Fatalf("%s: rpc error %d %s", name, rpcErr.ErrorCode, rpcErr.ErrorMessage)
+	}
+	return out
+}
+
+func decodeInto[T any, P interface {
+	*T
+	bin.Decoder
+}](t *testing.T, name string, b *bin.Buffer) *T {
+	t.Helper()
+	var v T
+	if err := P(&v).Decode(b); err != nil {
+		t.Fatalf("decode %s: %v", name, err)
+	}
+	return &v
+}
+
+type tdlibContractServer struct {
+	addr string
+	pub  exchange.PublicKey
+	dc   int
+	ip   string
+	port int
+
+	users    *memory.UserStore
+	bots     *botsapp.Service
+	channels *channelsapp.Service
+	files    *tdlibContractFiles
+}
+
+func startTDLibContractServer(t *testing.T) tdlibContractServer {
+	t.Helper()
+	const dc = 2
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	tcpAddr := ln.Addr().(*net.TCPAddr)
+
+	userStore := memory.NewUserStore()
+	authzStore := memory.NewAuthorizationStore()
+	authKeyStore := memory.NewAuthKeyStore()
+	helpStore := memory.NewHelpStore()
+	dialogStore := memory.NewDialogStore()
+	messageStore := memory.NewMessageStore(dialogStore)
+	botStore := memory.NewBotStore(userStore)
+	botsService := botsapp.NewService(userStore, botStore, messageStore, botsapp.WithLogger(zaptest.NewLogger(t).Named("bots")))
+	channelsService := channelsapp.NewService(memory.NewChannelStore(), channelsapp.WithBotProfileResolver(botsService))
+	sessions := NewSessionManager(zaptest.NewLogger(t).Named("sessions"))
+	files := &tdlibContractFiles{}
+	deps := rpc.Deps{
+		Auth: auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore,
+			memory.NewTempAuthKeyBindingStore(authKeyStore), "12345", auth.WithBotLogin(botStore)),
+		Help:     help.NewService(helpStore, helpStore),
+		Users:    users.NewService(userStore),
+		Updates:  updates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
+		Dialogs:  dialogs.NewService(dialogStore),
+		Messages: messageapp.NewService(messageStore, dialogStore, messageapp.WithBotResponder(botsService)),
+		Bots:     botsService,
+		Channels: channelsService,
+		Files:    files,
+		Sessions: sessions,
+	}
+	router := rpc.New(rpc.Config{DC: dc, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}, deps, zaptest.NewLogger(t), clock.System)
+	botsService.SetRouterHooks(router)
+	addr, pub, _ := startTestServerOnListener(t, ln, Options{DC: dc, AuthKeys: authKeyStore, LayerRPC: router, ActiveSessions: sessions})
+	return tdlibContractServer{
+		addr: addr, pub: pub, dc: dc, ip: tcpAddr.IP.String(), port: tcpAddr.Port,
+		users: userStore, bots: botsService, channels: channelsService, files: files,
+	}
+}
+
+// tdlibContractFiles 只实现 upload.getFile 用到的 GetFile，记录收到的下载请求；
+// 其余 FilesService 方法未实现（被调用即 panic，说明契约路径超出预期）。
+type tdlibContractFiles struct {
+	rpc.FilesService
+	mu       sync.Mutex
+	requests []domain.FileDownloadRequest
+}
+
+func (f *tdlibContractFiles) GetFile(_ context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error) {
+	f.mu.Lock()
+	f.requests = append(f.requests, req)
+	f.mu.Unlock()
+	if req.LocationKey != "doc:777001" {
+		return domain.FileChunk{}, false, nil
+	}
+	return domain.FileChunk{MimeType: "application/octet-stream", Bytes: []byte("tdlib-bot-file")}, true, nil
+}
+
+func TestTDLibBotContract(t *testing.T) {
+	t.Parallel()
+	srv := startTDLibContractServer(t)
+	bot := dialTDLibBot(t, srv.addr, srv.dc, srv.pub)
+
+	// 首个请求：invokeWithLayer(229, initConnection{help.getConfig})，未授权发送
+	// （td/td/telegram/ConfigManager.cpp:1025）。
+	cfg := decodeInto[tg.Config](t, "help.getConfig", bot.mustCall("invokeWithLayer(initConnection(help.getConfig))", tdlibInitConnection(&tg.HelpGetConfigRequest{})))
+	// this_dc 必须等于主 DC，否则 TDLib 视为外部配置并立即重拉（ConfigManager.cpp:1173-1318）。
+	if cfg.ThisDC != srv.dc {
+		t.Errorf("config.this_dc = %d, want main dc %d", cfg.ThisDC, srv.dc)
+	}
+	// test_mode 与客户端 is_test 不一致会报错（ConfigManager.cpp:1185）。本服务只有生产模式，
+	// telegram-bot-api 以 use_test_dc=false 启动（Client.cpp:9412）。
+	if cfg.TestMode {
+		t.Errorf("config.test_mode = true, want false")
+	}
+	// tmp_sessions > 1 会让 TDLib 启用 PFS 并发 auth.bindTempAuthKey
+	// （NetQueryDispatcher.cpp:368、ConfigManager.cpp:1218、Session.cpp:1383）。
+	if n, ok := cfg.GetTmpSessions(); ok && n > 1 {
+		t.Errorf("config.tmp_sessions = %d, want <= 1", n)
+	}
+	// dc_options 接管 TDLib 的默认 DC 表（ConfigManager.cpp:1189-1191），必须指回本服务。
+	if len(cfg.DCOptions) == 0 {
+		t.Errorf("config.dc_options empty")
+	}
+	for _, option := range cfg.DCOptions {
+		if option.ID != srv.dc || option.IPAddress != srv.ip || option.Port != srv.port {
+			t.Errorf("config.dc_options entry %+v, want dc %d at %s:%d", option, srv.dc, srv.ip, srv.port)
+		}
+	}
+	// help.getNearestDc 用来校验主 auth key（td/td/telegram/net/Session.cpp:459）。
+	nearest := decodeInto[tg.NearestDC](t, "help.getNearestDc", bot.mustCall("help.getNearestDc", &tg.HelpGetNearestDCRequest{}))
+	if nearest.ThisDC != srv.dc {
+		t.Errorf("nearestDc.this_dc = %d, want %d", nearest.ThisDC, srv.dc)
+	}
+
+	ctx := context.Background()
+	owner, err := srv.users.Create(ctx, domain.User{AccessHash: 9001, Phone: "+15550143001", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	botUser, token, err := srv.bots.CreateBot(ctx, owner.ID, "TDLib Bot", "tdlib_contract_bot")
+	if err != nil {
+		t.Fatalf("create bot: %v", err)
+	}
+
+	// auth.importBotAuthorization(flags=0, api_id, api_hash, bot_token)（td/td/telegram/AuthManager.cpp:480）。
+	// telegram-bot-api 用运维随意填写的 api_id / api_hash，服务端不得校验应用凭据。
+	authRaw := bot.mustCall("auth.importBotAuthorization", &tg.AuthImportBotAuthorizationRequest{
+		APIID: 94575, APIHash: "0123456789abcdef0123456789abcdef", BotAuthToken: token,
+	})
+	authClass, err := tg.DecodeAuthAuthorization(authRaw)
+	if err != nil {
+		t.Fatalf("decode auth.authorization: %v", err)
+	}
+	authorization, ok := authClass.(*tg.AuthAuthorization)
+	if !ok {
+		t.Fatalf("auth.importBotAuthorization = %T, want auth.authorization", authClass)
+	}
+	// user 必须带 self 标记，否则 TDLib 报错并登出（AuthManager.cpp:1514-1530）。
+	self, ok := authorization.User.(*tg.User)
+	if !ok || !self.Self || !self.Bot || self.ID != botUser.ID {
+		t.Fatalf("auth.authorization.user = %#v, want self bot %d", authorization.User, botUser.ID)
+	}
+	// TDLib 读取 tmp_sessions（AuthManager.cpp:1532），同样不能 > 1。
+	if n, ok := authorization.GetTmpSessions(); ok && n > 1 {
+		t.Errorf("auth.authorization.tmp_sessions = %d, want <= 1", n)
+	}
+
+	// 登录后 updates.getState → updates.getDifference(pts, date, qts)，不带 pts_limit / qts_limit
+	// （td/td/telegram/UpdatesManager.cpp:135,200,496-528）。
+	state := decodeInto[tg.UpdatesState](t, "updates.getState", bot.mustCall("updates.getState", &tg.UpdatesGetStateRequest{}))
+	diffRaw := bot.mustCall("updates.getDifference", &tg.UpdatesGetDifferenceRequest{Pts: state.Pts, Date: state.Date, Qts: state.Qts})
+	diff, err := tg.DecodeUpdatesDifference(diffRaw)
+	if err != nil {
+		t.Fatalf("decode updates.Difference: %v", err)
+	}
+	switch d := diff.(type) {
+	case *tg.UpdatesDifferenceEmpty:
+		// 从刚取得的 state 出发，无差异是正确结果。
+	case *tg.UpdatesDifference:
+		if d.State.Pts < state.Pts || d.State.Qts < state.Qts {
+			t.Errorf("updates.difference state %+v regresses from %+v", d.State, state)
+		}
+	default:
+		t.Errorf("updates.getDifference from fresh state = %T, want differenceEmpty or difference", diff)
+	}
+	// Bot API 的 getMe → users.getUsers([inputUserSelf])（telegram-bot-api/Client.cpp:9436）。
+	usersRaw := bot.mustCall("users.getUsers", &tg.UsersGetUsersRequest{ID: []tg.InputUserClass{&tg.InputUserSelf{}}})
+	gotUsers := decodeInto[tg.UserClassVector](t, "users.getUsers", usersRaw)
+	if len(gotUsers.Elems) != 1 {
+		t.Fatalf("users.getUsers(self) = %d users, want 1", len(gotUsers.Elems))
+	}
+	if me, ok := gotUsers.Elems[0].(*tg.User); !ok || !me.Self || me.ID != botUser.ID {
+		t.Fatalf("users.getUsers(self) = %#v, want self bot %d", gotUsers.Elems[0], botUser.ID)
+	}
+
+	assertTDLibBotChannelDifference(t, srv, bot, owner.ID, botUser.ID)
+}
+
+// assertTDLibBotChannelDifference：bot 的 updates.getChannelDifference 用
+// channelMessagesFilterEmpty 和 limit=100000（td/td/telegram/MessagesManager.h:1676-1678、
+// MessagesManager.cpp:2253,34893）。服务端截断到自己的单页上限，并以 final=false 让
+// TDLib 接着拉，而不是因为差距大于服务端单页就返回 channelDifferenceTooLong。
+func assertTDLibBotChannelDifference(t *testing.T, srv tdlibContractServer, bot *tdlibBotConn, ownerID, botID int64) {
+	t.Helper()
+	ctx := context.Background()
+	created, err := srv.channels.CreateMegagroupFromCreateChat(ctx, ownerID, domain.CreateChannelRequest{
+		Title: "TDLib Contract Group", MemberUserIDs: []int64{botID}, Date: int(time.Now().Unix()),
+	})
+	if err != nil {
+		t.Fatalf("create megagroup: %v", err)
+	}
+	channel := created.Channel
+	startPts := channel.Pts
+	const sent = domain.MaxChannelDifferenceLimit + 20
+	for i := 0; i < sent; i++ {
+		res, err := srv.channels.SendMessage(ctx, ownerID, domain.SendChannelMessageRequest{
+			UserID: ownerID, ChannelID: channel.ID, RandomID: int64(1000 + i),
+			Message: "/ping", Date: int(time.Now().Unix()),
+		})
+		if err != nil {
+			t.Fatalf("send channel message %d: %v", i, err)
+		}
+		channel = res.Channel
+	}
+	if channel.Pts-startPts != sent {
+		t.Fatalf("channel pts advanced %d, want %d", channel.Pts-startPts, sent)
+	}
+	input := &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
+	getDiff := func(pts int) tg.UpdatesChannelDifferenceClass {
+		t.Helper()
+		raw := bot.mustCall("updates.getChannelDifference", &tg.UpdatesGetChannelDifferenceRequest{
+			Channel: input, Filter: &tg.ChannelMessagesFilterEmpty{}, Pts: pts, Limit: 100000,
+		})
+		out, err := tg.DecodeUpdatesChannelDifference(raw)
+		if err != nil {
+			t.Fatalf("decode updates.ChannelDifference: %v", err)
+		}
+		return out
+	}
+
+	firstRaw := getDiff(startPts)
+	first, ok := firstRaw.(*tg.UpdatesChannelDifference)
+	if !ok {
+		t.Fatalf("first getChannelDifference(limit=100000) = %T, want updates.channelDifference page", firstRaw)
+	}
+	// final=false 时 TDLib 立即再次请求（MessagesManager.cpp 中 on_get_channel_difference 对 !is_final 的处理）。
+	if first.Final || len(first.NewMessages) != domain.MaxChannelDifferenceLimit || first.Pts != startPts+domain.MaxChannelDifferenceLimit {
+		t.Fatalf("first page final=%v messages=%d pts=%d, want final=false %d messages pts %d",
+			first.Final, len(first.NewMessages), first.Pts, domain.MaxChannelDifferenceLimit, startPts+domain.MaxChannelDifferenceLimit)
+	}
+	second, ok := getDiff(first.Pts).(*tg.UpdatesChannelDifference)
+	if !ok || !second.Final || len(second.NewMessages) != sent-domain.MaxChannelDifferenceLimit || second.Pts != channel.Pts {
+		t.Fatalf("second page = %#v, want final page with %d messages at pts %d", second, sent-domain.MaxChannelDifferenceLimit, channel.Pts)
+	}
+}

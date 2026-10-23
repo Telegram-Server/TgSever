@@ -2416,7 +2416,8 @@ func (s *Service) GetDifference(ctx context.Context, userID int64, req domain.Ch
 	if req.UserID != userID {
 		return domain.ChannelDifference{}, domain.ErrChannelInvalid
 	}
-	req.Limit = capLimit(req.Limit, domain.MaxChannelDifferenceLimit)
+	// Limit 原样下传：store 用 domain.ChannelDifferencePage 把它拆成单页上限和
+	// tooLong 窗口，超过单页上限的 limit（TDLib bot 的 100000）分页返回 final=false。
 	diff, err := s.channels.ListChannelDifference(ctx, req)
 	if err != nil {
 		return domain.ChannelDifference{}, err

@@ -58,10 +58,9 @@ func (s *ChannelStore) listChannelDifferenceAttempt(ctx context.Context, req dom
 	if !preview && member.AvailableMinPts > req.Pts {
 		req.Pts = minInt(member.AvailableMinPts, channel.Pts)
 	}
-	limit := req.Limit
-	if limit <= 0 || limit > domain.MaxChannelDifferenceLimit {
-		limit = domain.MaxChannelDifferenceLimit
-	}
+	// window decides tooLong and keys the shared base; the page size is derived
+	// from it again in loadChannelDifferenceBase.
+	_, window := domain.ChannelDifferencePage(req.Limit)
 	// A current-PTS request has no retention range to prove. Access, membership,
 	// available_min_pts and future/stale bounds were already checked above; do
 	// not spend two pool acquisitions reading a checkpoint and an empty event
@@ -90,11 +89,11 @@ func (s *ChannelStore) listChannelDifferenceAttempt(ctx context.Context, req dom
 		requestPts:    req.Pts,
 		capturedPts:   channel.Pts,
 		capturedTopID: channel.TopMessageID,
-		limit:         limit,
+		limit:         window,
 	}
 	sharedBase := !channel.Monoforum && s.differenceCache != nil
 	load := func() (channelDifferenceBase, error) {
-		return s.loadChannelDifferenceBase(ctx, channel, member, req.UserID, req.Pts, limit, sharedBase)
+		return s.loadChannelDifferenceBase(ctx, channel, member, req.UserID, req.Pts, req.Limit, sharedBase)
 	}
 	var base channelDifferenceBase
 	if channel.Monoforum || s.differenceCache == nil {
@@ -221,9 +220,10 @@ func (s *ChannelStore) loadChannelDifferenceBase(
 	member domain.ChannelMember,
 	viewerUserID int64,
 	requestPts int,
-	limit int,
+	requestLimit int,
 	loadMentionCandidates bool,
 ) (channelDifferenceBase, error) {
+	limit, window := domain.ChannelDifferencePage(requestLimit)
 	checkpoint, err := getChannelUpdateCheckpoint(ctx, s.db, channel.ID)
 	if err != nil {
 		return channelDifferenceBase{}, err
@@ -232,7 +232,7 @@ func (s *ChannelStore) loadChannelDifferenceBase(
 		retainedThroughPts: checkpoint.RetainedThroughPts,
 		lastPts:            requestPts,
 	}
-	if requestPts < checkpoint.RetainedThroughPts || channel.Pts-requestPts > limit {
+	if requestPts < checkpoint.RetainedThroughPts || channel.Pts-requestPts > window {
 		base.tooLong = true
 		args := []any{channel.ID, channel.TopMessageID}
 		where := "channel_id = $1 AND id <= $2 AND NOT deleted"

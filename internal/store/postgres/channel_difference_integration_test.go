@@ -681,3 +681,70 @@ func TestChannelStoreDifferenceTooLongSnapshot(t *testing.T) {
 		t.Fatalf("tooLong dialog = %+v, want current dialog state", diff.Dialog)
 	}
 }
+
+// 客户端 limit 超过服务端单页上限时分页返回 final=false；只有 pts 差距超过客户端自己的
+// limit 才 tooLong（TDLib bot 用 limit=100000，td/td/telegram/MessagesManager.h:1676-1678）。
+func TestChannelStoreDifferenceLargeClientLimitPagesInsteadOfTooLong(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+
+	owner, err := NewUserStore(pool).Create(ctx, domain.User{
+		AccessHash: 451,
+		Phone:      "+1778" + suffix + "51",
+		FirstName:  "PageOwner",
+	})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	channels := NewChannelStore(pool)
+	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: owner.ID,
+		Title:         "Difference Pages " + suffix,
+		Megagroup:     true,
+		Date:          1700000450,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	channelID := created.Channel.ID
+	startPts := created.Channel.Pts
+	const sent = domain.MaxChannelDifferenceLimit + 20
+	channelPts := startPts
+	for i := 0; i < sent; i++ {
+		res, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+			UserID: owner.ID, ChannelID: channelID, RandomID: int64(1700000451 + i), Message: "page", Date: 1700000451 + i,
+		})
+		if err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+		channelPts = res.Channel.Pts
+	}
+	diff := func(pts, limit int) domain.ChannelDifference {
+		t.Helper()
+		out, err := channels.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
+			UserID: owner.ID, ChannelID: channelID, Pts: pts, Limit: limit,
+		})
+		if err != nil {
+			t.Fatalf("difference pts=%d limit=%d: %v", pts, limit, err)
+		}
+		return out
+	}
+
+	if got := diff(startPts, domain.MaxChannelDifferenceLimit); !got.TooLong {
+		t.Fatalf("limit=%d over a %d-pts gap = final=%v events=%d, want tooLong (unchanged for TDesktop/Android)", domain.MaxChannelDifferenceLimit, sent, got.Final, len(got.Events))
+	}
+	if got := diff(startPts, sent-1); !got.TooLong {
+		t.Fatalf("limit=%d over a %d-pts gap = final=%v events=%d, want tooLong", sent-1, sent, got.Final, len(got.Events))
+	}
+	first := diff(startPts, 100000)
+	if first.TooLong || first.Final || len(first.Events) != domain.MaxChannelDifferenceLimit || first.Pts != startPts+domain.MaxChannelDifferenceLimit {
+		t.Fatalf("limit=100000 first page = tooLong=%v final=%v events=%d pts=%d, want final=false page of %d to pts %d",
+			first.TooLong, first.Final, len(first.Events), first.Pts, domain.MaxChannelDifferenceLimit, startPts+domain.MaxChannelDifferenceLimit)
+	}
+	second := diff(first.Pts, 100000)
+	if second.TooLong || !second.Final || len(second.Events) != sent-domain.MaxChannelDifferenceLimit || second.Pts != channelPts {
+		t.Fatalf("limit=100000 second page = tooLong=%v final=%v events=%d pts=%d, want final page of %d to pts %d",
+			second.TooLong, second.Final, len(second.Events), second.Pts, sent-domain.MaxChannelDifferenceLimit, channelPts)
+	}
+}

@@ -23,16 +23,13 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 	if !preview && member.AvailableMinPts > req.Pts {
 		req.Pts = minInt(member.AvailableMinPts, channel.Pts)
 	}
-	limit := req.Limit
-	if limit <= 0 || limit > domain.MaxChannelDifferenceLimit {
-		limit = domain.MaxChannelDifferenceLimit
-	}
+	limit, window := domain.ChannelDifferencePage(req.Limit)
 	dialog := s.dialogForUserLocked(req.UserID, channel)
 	if preview {
 		dialog = previewChannelDialog(req.UserID, channel, member)
 	}
 	checkpoint := s.channelUpdateCheckpointLocked(req.ChannelID, channel)
-	if req.Pts < checkpoint.RetainedThroughPts || channel.Pts-req.Pts > limit {
+	if req.Pts < checkpoint.RetainedThroughPts || channel.Pts-req.Pts > window {
 		messages := make([]domain.ChannelMessage, 0, domain.MaxChannelDifferenceTooLongMessages)
 		for i := len(s.messages[req.ChannelID]) - 1; i >= 0 && len(messages) < domain.MaxChannelDifferenceTooLongMessages; i-- {
 			msg := s.messages[req.ChannelID][i]
