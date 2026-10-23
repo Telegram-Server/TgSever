@@ -12,7 +12,6 @@ import (
 	"telesrv/internal/domain"
 )
 
-var tdesktopStringRE = regexp.MustCompile(`(?s)"((?:\\.|[^"\\])*)"\s*=\s*"((?:\\.|[^"\\])*)";`)
 var langPackNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 var langCodeRE = regexp.MustCompile(`^[a-z0-9]{1,16}(?:-[a-z0-9]{1,16})*$`)
 
@@ -30,9 +29,9 @@ func ParseTDesktopFile(path string) (domain.LangPack, error) {
 	plain := make([]domain.LangPackString, 0)
 	plurals := make(map[string]*domain.LangPackString)
 	pluralOrder := make([]string, 0)
-	for _, match := range tdesktopStringRE.FindAllStringSubmatch(string(data), -1) {
-		key := unquoteTDesktop(match[1])
-		value := unquoteTDesktop(match[2])
+	for _, match := range scanTDesktopStrings(string(data)) {
+		key := unquoteTDesktop(match[0])
+		value := unquoteTDesktop(match[1])
 		base, plural := splitPluralKey(key)
 		if plural == "" {
 			plain = append(plain, domain.LangPackString{Key: key, Value: value})
@@ -53,6 +52,78 @@ func ParseTDesktopFile(path string) (domain.LangPack, error) {
 		pack.Strings = append(pack.Strings, *plurals[key])
 	}
 	return pack, nil
+}
+
+// scanTDesktopStrings 找出所有 "key" = "value"; 条目，返回未反转义的 key/value 原文。
+//
+// 语义与正则 (?s)"((?:\\.|[^"\\])*)"\s*=\s*"((?:\\.|[^"\\])*)"; 的 FindAll 完全一致：
+// 在每个 " 处尝试匹配，失败就从下一个字节继续找，成功则从匹配结尾继续。手写是因为 Go 的
+// regexp 扫一遍内置语言包（113 MB）要十几秒，种子流程和测试都卡在这里。
+func scanTDesktopStrings(data string) [][2]string {
+	var out [][2]string
+	for i := 0; i < len(data); {
+		j := strings.IndexByte(data[i:], '"')
+		if j < 0 {
+			break
+		}
+		start := i + j
+		key, value, end, ok := matchTDesktopString(data, start)
+		if !ok {
+			i = start + 1
+			continue
+		}
+		out = append(out, [2]string{key, value})
+		i = end
+	}
+	return out
+}
+
+// matchTDesktopString 尝试在 data[start]（一个 "）处匹配一条完整条目。
+func matchTDesktopString(data string, start int) (key, value string, end int, ok bool) {
+	keyEnd, ok := scanTDesktopQuoted(data, start)
+	if !ok {
+		return "", "", 0, false
+	}
+	pos := skipTDesktopSpace(data, keyEnd)
+	if pos >= len(data) || data[pos] != '=' {
+		return "", "", 0, false
+	}
+	pos = skipTDesktopSpace(data, pos+1)
+	if pos >= len(data) || data[pos] != '"' {
+		return "", "", 0, false
+	}
+	valueEnd, ok := scanTDesktopQuoted(data, pos)
+	if !ok || valueEnd >= len(data) || data[valueEnd] != ';' {
+		return "", "", 0, false
+	}
+	return data[start+1 : keyEnd-1], data[pos+1 : valueEnd-1], valueEnd + 1, true
+}
+
+// scanTDesktopQuoted 从 data[start] 的 " 开始，返回闭合 " 之后的位置。反斜杠吞掉紧随的一个
+// 字节即可：多字节字符的后续字节既不是 " 也不是 \，照常按普通字符走。
+func scanTDesktopQuoted(data string, start int) (int, bool) {
+	for i := start + 1; i < len(data); i++ {
+		switch data[i] {
+		case '\\':
+			i++
+		case '"':
+			return i + 1, true
+		}
+	}
+	return 0, false
+}
+
+// skipTDesktopSpace 跳过 RE2 \s 的字符集 [\t\n\f\r ]。
+func skipTDesktopSpace(data string, i int) int {
+	for i < len(data) {
+		switch data[i] {
+		case '\t', '\n', '\f', '\r', ' ':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
 }
 
 func packFromFilename(path string) (domain.LangPack, error) {
