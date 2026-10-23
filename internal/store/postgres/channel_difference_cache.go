@@ -165,7 +165,7 @@ func channelDifferenceMessageWeight(message domain.ChannelMessage) int64 {
 	}
 	weight := int64(len(message.Body) + len(message.PostAuthor) + len(message.Entities)*48)
 	if message.RichMessage != nil {
-		weight += int64(len(message.RichMessage.Blocks) + len(message.RichMessage.BotAPIProjection))
+		weight += int64(len(message.RichMessage.Blocks))
 	}
 	if message.Action != nil {
 		weight += int64(len(message.Action.Title) + len(message.Action.UserIDs)*8 + len(message.Action.TodoItems)*64)

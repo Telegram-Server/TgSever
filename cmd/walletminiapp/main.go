@@ -1,8 +1,10 @@
 // Command walletminiapp is a runnable Mini App demo for telesrv bot developers.
 //
 // It intentionally behaves like an external bot program: it serves the Mini App
-// over HTTP and configures telesrv through the Bot API gateway. It does not write
-// directly to telesrv stores, so the demo remains close to a real integration.
+// over HTTP and calls only official Bot API methods. telesrv has no Bot API of
+// its own: -bot-api / TELESRV_BOT_API_URL must point at the telegram-bot-api
+// instance logged in to telesrv over MTProto. It does not write directly to
+// telesrv stores, so the demo remains close to a real integration.
 package main
 
 import (
@@ -56,7 +58,7 @@ func main() {
 	cfg := config{}
 	flag.StringVar(&cfg.listen, "listen", envOr("TELESRV_WALLET_LISTEN", "127.0.0.1:8091"), "wallet mini app HTTP listen address")
 	flag.StringVar(&cfg.publicURL, "public-url", os.Getenv("TELESRV_WALLET_PUBLIC_URL"), "public HTTPS URL used in the Telesrv menu button")
-	flag.StringVar(&cfg.botAPI, "bot-api", envOr("TELESRV_BOT_API_URL", "http://127.0.0.1:8081"), "telesrv Bot API base URL")
+	flag.StringVar(&cfg.botAPI, "bot-api", envOr("TELESRV_BOT_API_URL", "http://127.0.0.1:8081"), "Bot API base URL of the telegram-bot-api instance connected to telesrv")
 	flag.StringVar(&cfg.token, "token", os.Getenv("TELESRV_BOT_TOKEN"), "bot token <bot_id>:<secret>")
 	flag.StringVar(&cfg.menuText, "menu-text", envOr("TELESRV_WALLET_MENU_TEXT", "Wallet"), "menu button label")
 	flag.BoolVar(&cfg.register, "register", true, "call Bot API setChatMenuButton on startup when token and public-url are set")

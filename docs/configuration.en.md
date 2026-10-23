@@ -11,7 +11,7 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 ## 1. Loading, syntax, and precedence
 
 - `TELESRV_CONFIG` is a **process environment variable** selecting the env-style configuration file. Default: `.env` in the process working directory. An explicit empty value disables file loading. Setting it inside the file has no effect because the file has already been selected.
-- Precedence is: non-empty process environment value → non-empty file value → code default. The nullable listener settings (`TELESRV_DEBUG_ADDR`, `TELESRV_BOT_API_ADDR`, `TELESRV_ADMIN_API_ADDR`, and `TELESRV_PUBLIC_LINK_WEB_ADDR`) additionally allow an explicitly empty process value to disable a non-empty file value.
+- Precedence is: non-empty process environment value → non-empty file value → code default. The nullable listener settings (`TELESRV_DEBUG_ADDR`, `TELESRV_ADMIN_API_ADDR`, and `TELESRV_PUBLIC_LINK_WEB_ADDR`) additionally allow an explicitly empty process value to disable a non-empty file value.
 - The file accepts blank lines, full-line `#` comments, optional `export `, and `KEY=VALUE`. Single- and double-quoted values are supported. Inline comments are not stripped.
 - File keys must start with `TELESRV_` and contain only uppercase ASCII letters, digits, and underscores. Unknown `TELESRV_*` keys are syntactically accepted but ignored by the current binary.
 - Booleans accept `1/true/TRUE/True/yes/on` and `0/false/FALSE/False/no/off`. Lists are comma-separated. Durations use Go duration syntax such as `200ms`, `30s`, `5m`, or `168h`.
@@ -61,7 +61,6 @@ Retained typed graphs remain charged to the RPC scheduler budget above.
 | Setting | Type / code default | Description and constraints |
 |---|---|---|
 | `TELESRV_DEBUG_ADDR` | nullable address / `127.0.0.1:6060` | pprof/debug listener. Empty disables it. Keep loopback-only; use an SSH tunnel for production profiling. |
-| `TELESRV_BOT_API_ADDR` | nullable address / empty | Minimal HTTP Bot API listener. Empty disables it. It shares MTProto app/store facts. `setWebhook` accepts any valid `http://` or `https://` host/IP and port in `1..65535`. |
 | `TELESRV_ADMIN_API_ADDR` | nullable address / empty | In-process Admin write API listener. Empty disables it; production should bind loopback. |
 | `TELESRV_ADMIN_API_TOKEN` | secret string / empty | Admin API bearer token. Required when the Admin API is enabled and must match the Admin UI token configuration. |
 | `TELESRV_ADMIN_UI_ADDR` | address / `127.0.0.1:2600` | Standalone `cmd/telesrv-admin` listen address. |
@@ -122,122 +121,13 @@ Retained typed graphs remain charged to the RPC scheduler budget above.
 | `TELESRV_TELEGRAM_LOGIN_SWEEP_INTERVAL` | duration / `5m` | Retention worker interval; bounded to `10s..1h`. |
 | `TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH` | int / `500` | Maximum rows per retention pass; bounded to `1..1000`. |
 
-### 3.1 Bot API webhook troubleshooting
+### 3.1 Bot API
 
-Start by separating the three addresses below. Never use the webhook receiver domain as the Bot
-API endpoint unless an explicit reverse-proxy route maps that domain to telesrv:
-
-| Name | Setting/source | Direction and purpose |
-|---|---|---|
-| Bot API listener | telesrv `TELESRV_BOT_API_ADDR` | The telesrv bind address; empty disables the gateway. `0.0.0.0` is valid only for binding and is not a client request target. |
-| Bot API base URL | the bot application's `TELEGRAM_API_URL` or equivalent | A client-reachable address for telesrv, for example `http://172.17.0.1:8088`. Method URLs are `<base>/bot<TOKEN>/<method>` and file URLs are `<base>/file/bot<TOKEN>/<file_path>`. |
-| Webhook receiver URL | the bot application's `WEBHOOK_URL + WEBHOOK_PATH`, registered by `setWebhook` | The target to which telesrv actively POSTs updates, for example `https://bot.example.com/webhook`. It is not the Bot API base URL. |
-
-The network direction is different too: polling is `bot application -> telesrv Bot API`, while
-webhook delivery is `telesrv -> bot application webhook receiver`. Working polling proves only the
-first path. It does not prove webhook DNS, outbound TCP, TLS, reverse proxy, or Docker hairpin
-connectivity.
-
-#### 1. Query the authoritative webhook state from the Bot API
-
-Run this inside the bot application container with its actual Bot API base URL. Do not expand and
-paste the token into chat, tickets, or screenshots:
-
-```sh
-curl -sS -X POST \
-  "${TELEGRAM_API_URL%/}/bot${BOT_TOKEN}/getWebhookInfo" | jq
-```
-
-If the application uses a differently named variable, replace `TELEGRAM_API_URL` with the
-**client-reachable address** corresponding to `TELESRV_BOT_API_ADDR`. For example, if telesrv binds
-`0.0.0.0:8088`, a container on the same host might use `http://172.17.0.1:8088`; it must not request
-`http://0.0.0.0:8088`.
-
-Interpret the result as follows:
-
-| Result | Conclusion and next step |
-|---|---|
-| Empty `url` | No webhook is registered on this telesrv instance. Verify that the application uses this Bot API base URL and that startup `setWebhook` succeeded. |
-| Increasing `pending_update_count` | Updates reached the telesrv durable queue but are not being delivered successfully. Inspect `last_error_message`. |
-| HTTP `401`/`403` in `last_error_message` | The receiver is reachable, but its webhook secret differs or an authentication layer rejected the request. |
-| `dial tcp ... i/o timeout` | telesrv cannot connect to the target IP/port. Check outbound firewall rules, Docker networking, loopback/hairpin NAT, and security groups. |
-| `connection refused` | The address is reachable, but nothing listens on that port or the port mapping/reverse-proxy upstream is wrong. |
-| DNS/`no such host` | The webhook hostname cannot be resolved from the telesrv runtime environment. |
-| TLS/`x509` error | The certificate chain, hostname, SNI, or container CA trust is wrong. HTTPS uses the system trust store. |
-| Target type absent from `allowed_updates` | Newly produced updates of that type are not queued. A normal `/start` requires at least `message`. |
-| Pending reaches zero but the app does not react | telesrv received a 2xx response. Inspect the receiver's internal queue, workers, dispatcher, and handlers. |
-
-`getWebhookInfo` reports telesrv's persisted delivery facts. An application `/health` endpoint only
-proves that its receiver route and workers started; it cannot replace this check.
-
-#### 2. Validate the receiver with the correct header
-
-The Telegram webhook secret is distinct from the Bot token, OIDC Client Secret, and other API
-keys. The receiver validates `X-Telegram-Bot-Api-Secret-Token`, not `Authorization: Bearer`:
-
-```sh
-curl -i -X POST "${WEBHOOK_URL%/}${WEBHOOK_PATH}" \
-  -H 'Content-Type: application/json' \
-  -H "X-Telegram-Bot-Api-Secret-Token: ${WEBHOOK_SECRET_TOKEN}" \
-  -d '{"update_id":2147483000}'
-```
-
-Expect an HTTP 2xx response. `401 invalid_secret_token` proves that the request reached the
-application but the header was absent or did not match. Recreate/restart the application after
-editing `.env`; changing the file alone neither updates the secret already registered in telesrv
-nor the receiver process's startup-time secret.
-
-#### 3. Test from the actual telesrv network namespace
-
-A browser or official Telegram reaching the public webhook proves only public inbound
-connectivity. Repeat the test from the host, container, or network namespace that actually runs
-telesrv:
-
-```sh
-docker exec <telesrv-container> sh -lc \
-  'getent hosts bot.example.com; curl -vk --connect-timeout 10 https://bot.example.com/health/unified'
-```
-
-If public clients work but this returns `dial tcp ...:443: i/o timeout`, a same-host public-IP
-hairpin failure is a common cause. Prefer split DNS or a container host mapping so the public
-hostname resolves to the reverse proxy's internal entry point inside the telesrv container while
-preserving the hostname, HTTPS SNI, and certificate validation. If the reverse proxy publishes
-443 on the Docker host, test first with:
-
-```sh
-curl -vk --resolve bot.example.com:443:172.17.0.1 \
-  https://bot.example.com/health/unified
-```
-
-After that succeeds, a deployment may use a network-appropriate Compose entry such as:
-
-```yaml
-extra_hosts:
-  - "bot.example.com:host-gateway"
-```
-
-Other fixes include attaching telesrv to the reverse proxy's Docker network, allowing the Docker
-subnet to reach host port 443, or correcting cloud security-group/NAT hairpin rules. telesrv allows
-an internal HTTP receiver, but use one only on a controlled shared network and only when the
-application's `WEBHOOK_URL` is not also its public OIDC, payment, or media callback base. Do not
-blindly replace a global public URL with an internal address to mask a routing problem.
-
-#### 4. Close the loop after the fix
-
-1. Restart the bot application so it calls `setWebhook` again with the current URL, secret, and
-   `allowed_updates`.
-2. Send a new `/start` or press a callback button.
-3. Call `getWebhookInfo` again. `pending_update_count` should fall to `0`, with no new
-   `last_error_date`.
-4. Inspect telesrv Warning logs for `bot api webhook delivery failed`. The record contains
-   `bot_user_id`, `retry_in`, and the failure reason, but must not contain the webhook URL, Bot
-   token, or secret.
-5. Confirm that the receiver recorded and processed the `update_id`. Delivery is at-least-once, so
-   the application must safely handle duplicate updates caused by retries.
-
-Immediately rotate any Bot token, webhook secret, OIDC Client Secret, API key, or database
-password exposed in shell history, chat, or screenshots. Keep only redacted diagnostics in support
-material.
+telesrv has no HTTP Bot API listener. The Bot API is served by an external telegram-bot-api
+(TDLib) that logs in to telesrv over MTProto; bot applications, `cmd/walletminiapp`, and the
+`cmd/bots/` demos set their Bot API base URL to telegram-bot-api. Webhook registration and
+delivery happen there as well. See [bot-api.en.md](./bot-api.en.md). The only telesrv-side
+setting is the bot qts retention, `TELESRV_BOT_UPDATE_RETENTION` (section 9).
 
 ### 3.2 Complete Telegram Login / OIDC setup
 
@@ -413,7 +303,8 @@ python -m venv "$env:TEMP\telesrv-bedolaga-demo-venv"
   -r .\cmd\bots\bedolagaformat\requirements.txt
 ```
 
-Put the Client ID/Secret from step 3 and the same bot's Bot API token only in process environment:
+Put the Client ID/Secret from step 3 and the same bot's Bot API token only in process environment.
+`TELESRV_BOT_API_SERVER` is the address of the telegram-bot-api instance connected to this telesrv:
 
 ```powershell
 $env:TELESRV_BOT_TOKEN = "<bot_id>:<bot_api_secret>"
@@ -638,7 +529,6 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_CATCHUP_RATE_WINDOW` | duration / `1m` | Catch-up rate-limit window. |
 | `TELESRV_CHANNEL_NUDGE_MAX_TARGETS` | int / `0` | Maximum targets for one channel fan-out nudge; `<=0` uses the built-in default. |
 | `TELESRV_UPDATE_EVENT_RETENTION` | duration / `168h` | Durable update-log retention. Cleanup only removes events covered by protocol-safe watermarks/state. |
-| `TELESRV_BOT_API_UPDATE_RETENTION` | duration / `24h` | Maximum Bot API update queue retention; acknowledged rows also have a shorter fixed grace period. |
 | `TELESRV_BOT_UPDATE_RETENTION` | duration / `24h` | Retention of the per-bot MTProto qts sequence (`bot_updates`); a bot asking for an older qts gets the retained updates from the oldest one on (expired ones are dropped). |
 | `TELESRV_ORPHAN_AUTH_KEY_RETENTION` | duration / `24h` | Minimum retention for handshake-created keys with no authorization/temp binding/active connection. |
 | `TELESRV_RETENTION_INTERVAL` | duration / `1h` | General retention worker interval. |

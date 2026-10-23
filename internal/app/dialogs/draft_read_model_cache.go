@@ -147,7 +147,7 @@ func dialogDraftEntryApproxBytes(entry dialogDraftCacheEntry) int64 {
 		weight += int64(64 + len(draft.WebPage.URL))
 	}
 	if draft.RichMessage != nil {
-		weight += int64(len(draft.RichMessage.Blocks) + len(draft.RichMessage.BotAPIProjection) + len(draft.RichMessage.Photos)*256 + len(draft.RichMessage.Documents)*256)
+		weight += int64(len(draft.RichMessage.Blocks) + len(draft.RichMessage.Photos)*256 + len(draft.RichMessage.Documents)*256)
 	}
 	return weight
 }

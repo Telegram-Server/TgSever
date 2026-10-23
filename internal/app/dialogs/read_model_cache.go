@@ -279,7 +279,7 @@ func dialogPeerListApproxBytes(list domain.DialogList) int64 {
 			weight += int64(96 + len(msg.Forward.FromName))
 		}
 		if msg.RichMessage != nil {
-			weight += int64(len(msg.RichMessage.Blocks) + len(msg.RichMessage.BotAPIProjection) + len(msg.RichMessage.Photos)*256 + len(msg.RichMessage.Documents)*256)
+			weight += int64(len(msg.RichMessage.Blocks) + len(msg.RichMessage.Photos)*256 + len(msg.RichMessage.Documents)*256)
 		}
 	}
 	for _, user := range list.Users {

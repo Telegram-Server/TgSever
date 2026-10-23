@@ -226,10 +226,6 @@ type MessageRichMessage struct {
 	Blocks      []byte     `json:"blocks,omitempty"`
 	Photos      []Photo    `json:"photos,omitempty"`
 	Documents   []Document `json:"documents,omitempty"`
-	// BotAPIProjection 是由 RPC 边界从同一组已校验 PageBlock 派生出的
-	// Bot API RichMessage JSON。它不是第二事实源：写入边界只允许从 Blocks
-	// 生成，HTTP Bot API 投影只读，避免 botapi 包反向依赖 tg 类型。
-	BotAPIProjection []byte `json:"bot_api_projection,omitempty"`
 }
 
 // EffectiveBlocksLayer returns the deterministic storage grammar for Blocks.

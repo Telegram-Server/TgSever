@@ -75,9 +75,6 @@ func (r *Router) enrichPreparedUpdateEvents(ctx context.Context, viewerUserID in
 		collectMessagePeerRefs(out[i].Message, 0, userIDs, channelIDs)
 		if message := out[i].EphemeralMessage; message != nil {
 			collectEphemeralMessagePeerRefs(*message, userIDs, channelIDs)
-			if message.BotAPIReply != nil {
-				collectEphemeralMessagePeerRefs(*message.BotAPIReply, userIDs, channelIDs)
-			}
 		}
 		if out[i].BotCallbackQuery != nil && out[i].BotCallbackQuery.UserID != 0 {
 			userIDs[out[i].BotCallbackQuery.UserID] = struct{}{}
