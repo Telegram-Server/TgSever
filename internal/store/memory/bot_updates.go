@@ -81,8 +81,8 @@ func (s *BotUpdateStore) appendLocked(updates []domain.BotUpdate) ([]domain.BotU
 	}
 	out := make([]domain.BotUpdate, 0, len(updates))
 	for i, update := range updates {
-		s.qts[update.BotUserID]++
-		update.Qts = s.qts[update.BotUserID]
+		update.Qts = s.allocatedLocked(update.BotUserID) + 1
+		s.qts[update.BotUserID] = update.Qts
 		s.records[update.BotUserID] = append(s.records[update.BotUserID], memoryBotUpdate{qts: update.Qts, date: update.Date, payload: encoded[i]})
 		out = append(out, update)
 	}
@@ -115,11 +115,19 @@ func (s *BotUpdateStore) ListBotUpdates(_ context.Context, botUserID int64, afte
 func (s *BotUpdateStore) BotUpdatesState(_ context.Context, botUserID int64) (domain.BotUpdatesState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := domain.BotUpdatesState{Qts: s.qts[botUserID]}
+	st := domain.BotUpdatesState{Qts: s.allocatedLocked(botUserID)}
 	if rows := s.records[botUserID]; len(rows) > 0 {
 		st.MinRetainedQts = rows[0].qts
 	}
 	return st, nil
+}
+
+// allocatedLocked 返回 bot 已分配的最大 qts；还没有记录时是 domain.BotInitialQts。
+func (s *BotUpdateStore) allocatedLocked(botUserID int64) int {
+	if qts, ok := s.qts[botUserID]; ok {
+		return qts
+	}
+	return domain.BotInitialQts
 }
 
 func (s *BotUpdateStore) DeleteExpiredBotUpdates(_ context.Context, before time.Time, limit int) (int, error) {

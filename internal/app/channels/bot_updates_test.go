@@ -105,7 +105,7 @@ func TestBotSelfMembershipChangesGenerateQtsUpdates(t *testing.T) {
 				t.Fatalf("broadcast=%v %s: current %+v, want %s/%s send-restricted=%v", broadcast, w.name, p.Current, w.status, w.role, w.restrictedSend)
 			}
 		}
-		if st, _ := updates.BotUpdatesState(ctx, human); st != (domain.BotUpdatesState{}) {
+		if st, _ := updates.BotUpdatesState(ctx, human); st != (domain.BotUpdatesState{Qts: domain.BotInitialQts}) {
 			t.Fatalf("human has a qts sequence: %+v", st)
 		}
 	}

@@ -40,11 +40,16 @@ type BotChannelParticipantUpdate struct {
 
 // BotUpdatesState 是一个 bot 的 qts 序列状态。
 type BotUpdatesState struct {
-	// Qts 是已分配的最大 qts；从未分配过为 0。
+	// Qts 是已分配的最大 qts；从未分配过为 BotInitialQts。
 	Qts int
 	// MinRetainedQts 是仍保留的最小 qts；没有保留记录时为 0。
 	MinRetainedQts int
 }
+
+// BotInitialQts 是还没有任何记录的 bot 的 qts：第一条记录分配 BotInitialQts+1。TDLib 拒收
+// qts <= 1 的在线推送（td/td/telegram/UpdatesManager.cpp add_pending_qts_update），序列因此
+// 不能从 1 开始。
+const BotInitialQts = 1
 
 // MaxBotUpdatesDifference 是一次 getDifference 读取的 bot qts 记录上限；更多时返回
 // differenceSlice 让客户端接着拉。

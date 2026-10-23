@@ -63,20 +63,20 @@ func TestBotMessageReactionPushAndDifference(t *testing.T) {
 		t.Fatalf("bot received %d updateBotMessageReaction, want 1", len(pushed))
 	}
 	got := pushed[0]
-	if peer, ok := got.Peer.(*tg.PeerChannel); !ok || peer.ChannelID != f.channel.ID || got.MsgID != sent.Message.ID || got.Qts != 3 {
-		t.Fatalf("pushed = %+v, want channel %d msg %d qts 3 (after join and promotion)", got, f.channel.ID, sent.Message.ID)
+	if peer, ok := got.Peer.(*tg.PeerChannel); !ok || peer.ChannelID != f.channel.ID || got.MsgID != sent.Message.ID || got.Qts != 4 {
+		t.Fatalf("pushed = %+v, want channel %d msg %d qts 4 (after join and promotion)", got, f.channel.ID, sent.Message.ID)
 	}
 	if actor, ok := got.Actor.(*tg.PeerUser); !ok || actor.UserID != f.owner.ID || len(got.OldReactions) != 0 || len(got.NewReactions) != 1 {
 		t.Fatalf("pushed actor/reactions = %+v", got)
 	}
 
-	diff, err := f.router.onUpdatesGetDifference(f.botCtx(1), &tg.UpdatesGetDifferenceRequest{Qts: 2, Date: 1})
+	diff, err := f.router.onUpdatesGetDifference(f.botCtx(1), &tg.UpdatesGetDifferenceRequest{Qts: 3, Date: 1})
 	if err != nil {
 		t.Fatalf("getDifference: %v", err)
 	}
 	full, ok := diff.(*tg.UpdatesDifference)
-	if !ok || full.State.Qts != 3 || len(full.Chats) == 0 {
-		t.Fatalf("difference = %#v, want state qts 3 with chats", diff)
+	if !ok || full.State.Qts != 4 || len(full.Chats) == 0 {
+		t.Fatalf("difference = %#v, want state qts 4 with chats", diff)
 	}
 	var replayed []int
 	for _, update := range full.OtherUpdates {
@@ -84,8 +84,8 @@ func TestBotMessageReactionPushAndDifference(t *testing.T) {
 			replayed = append(replayed, r.Qts)
 		}
 	}
-	if len(replayed) != 1 || replayed[0] != 3 {
-		t.Fatalf("difference reaction qts = %v, want [3]", replayed)
+	if len(replayed) != 1 || replayed[0] != 4 {
+		t.Fatalf("difference reaction qts = %v, want [4]", replayed)
 	}
 }
 

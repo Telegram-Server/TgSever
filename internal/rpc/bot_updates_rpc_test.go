@@ -97,6 +97,10 @@ func (f *botQtsFixture) pushedBotParticipants(t *testing.T) []*tg.UpdateChannelP
 // 序列，getDifference 按 qts 顺序补回。
 func TestBotQtsChannelParticipantPushAndDifference(t *testing.T) {
 	f := newBotQtsFixture(t)
+	// 新 bot 的 qts 是 1：TDLib 拒收 qts <= 1 的在线推送，第一条记录必须是 qts 2。
+	if state, err := f.router.onUpdatesGetState(f.botCtx(1)); err != nil || state.Qts != 1 {
+		t.Fatalf("fresh bot getState = %+v, %v; want qts 1", state, err)
+	}
 	if _, err := f.router.onChannelsInviteToChannel(f.ownerCtx(), &tg.ChannelsInviteToChannelRequest{
 		Channel: f.inputChannel(),
 		Users:   []tg.InputUserClass{&tg.InputUser{UserID: f.bot.ID, AccessHash: f.bot.AccessHash}},
@@ -115,8 +119,8 @@ func TestBotQtsChannelParticipantPushAndDifference(t *testing.T) {
 	if len(pushed) != 2 {
 		t.Fatalf("bot received %d updateChannelParticipant, want 2 (qts only): %+v", len(pushed), pushed)
 	}
-	if pushed[0].Qts != 1 || pushed[1].Qts != 2 {
-		t.Fatalf("pushed qts = %d,%d, want 1,2", pushed[0].Qts, pushed[1].Qts)
+	if pushed[0].Qts != 2 || pushed[1].Qts != 3 {
+		t.Fatalf("pushed qts = %d,%d, want 2,3", pushed[0].Qts, pushed[1].Qts)
 	}
 	if _, hasPrev := pushed[0].GetPrevParticipant(); hasPrev {
 		t.Fatalf("join update has a previous participant: %+v", pushed[0])
@@ -138,8 +142,8 @@ func TestBotQtsChannelParticipantPushAndDifference(t *testing.T) {
 		if err != nil {
 			t.Fatalf("session %d getState: %v", session, err)
 		}
-		if state.Qts != 2 {
-			t.Fatalf("session %d getState qts = %d, want 2", session, state.Qts)
+		if state.Qts != 3 {
+			t.Fatalf("session %d getState qts = %d, want 3", session, state.Qts)
 		}
 	}
 	diff, err := f.router.onUpdatesGetDifference(f.botCtx(3), &tg.UpdatesGetDifferenceRequest{Qts: 0, Date: 1})
@@ -156,15 +160,15 @@ func TestBotQtsChannelParticipantPushAndDifference(t *testing.T) {
 			qts = append(qts, p.Qts)
 		}
 	}
-	if len(qts) != 2 || qts[0] != 1 || qts[1] != 2 || full.State.Qts != 2 {
-		t.Fatalf("difference qts = %v state qts %d, want [1 2] and 2", qts, full.State.Qts)
+	if len(qts) != 2 || qts[0] != 2 || qts[1] != 3 || full.State.Qts != 3 {
+		t.Fatalf("difference qts = %v state qts %d, want [2 3] and 3", qts, full.State.Qts)
 	}
 	if len(full.Chats) == 0 {
 		t.Fatal("difference carries no chats for the participant updates")
 	}
-	again, err := f.router.onUpdatesGetDifference(f.botCtx(3), &tg.UpdatesGetDifferenceRequest{Qts: 2, Date: full.State.Date, Pts: full.State.Pts})
+	again, err := f.router.onUpdatesGetDifference(f.botCtx(3), &tg.UpdatesGetDifferenceRequest{Qts: 3, Date: full.State.Date, Pts: full.State.Pts})
 	if err != nil {
-		t.Fatalf("bot getDifference from qts 2: %v", err)
+		t.Fatalf("bot getDifference from qts 3: %v", err)
 	}
 	if next, ok := again.(*tg.UpdatesDifference); ok {
 		for _, update := range next.OtherUpdates {
@@ -172,8 +176,8 @@ func TestBotQtsChannelParticipantPushAndDifference(t *testing.T) {
 				t.Fatalf("difference from the current qts replays %+v", update)
 			}
 		}
-		if next.State.Qts != 2 {
-			t.Fatalf("difference from qts 2 moved qts to %d", next.State.Qts)
+		if next.State.Qts != 3 {
+			t.Fatalf("difference from qts 3 moved qts to %d", next.State.Qts)
 		}
 	}
 }
@@ -218,14 +222,14 @@ func TestBotQtsDifferenceSkipsPastRetention(t *testing.T) {
 	if !ok {
 		t.Fatalf("getDifference past retention = %T, want updates.difference from the oldest retained record", diff)
 	}
-	if got := participantQts(full); len(got) != 1 || got[0] != 3 || full.State.Qts != 3 {
-		t.Fatalf("difference past retention qts = %v state %d, want [3] and state 3", got, full.State.Qts)
+	if got := participantQts(full); len(got) != 1 || got[0] != 4 || full.State.Qts != 4 {
+		t.Fatalf("difference past retention qts = %v state %d, want [4] and state 4", got, full.State.Qts)
 	}
 
 	if _, err := f.updates.DeleteExpiredBotUpdates(f.ctx, time.Now().Add(time.Hour), 100); err != nil {
 		t.Fatal(err)
 	}
-	diff, err = f.router.onUpdatesGetDifference(f.botCtx(1), &tg.UpdatesGetDifferenceRequest{Qts: 1, Date: 1})
+	diff, err = f.router.onUpdatesGetDifference(f.botCtx(1), &tg.UpdatesGetDifferenceRequest{Qts: 2, Date: 1})
 	if err != nil {
 		t.Fatalf("getDifference with nothing retained: %v", err)
 	}
@@ -233,8 +237,8 @@ func TestBotQtsDifferenceSkipsPastRetention(t *testing.T) {
 	if !ok {
 		t.Fatalf("getDifference with nothing retained = %T, want updates.difference carrying the current qts", diff)
 	}
-	if got := participantQts(empty); len(got) != 0 || empty.State.Qts != 3 {
-		t.Fatalf("difference with nothing retained qts = %v state %d, want none and state 3", got, empty.State.Qts)
+	if got := participantQts(empty); len(got) != 0 || empty.State.Qts != 4 {
+		t.Fatalf("difference with nothing retained qts = %v state %d, want none and state 4", got, empty.State.Qts)
 	}
 }
 

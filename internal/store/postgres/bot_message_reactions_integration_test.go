@@ -130,7 +130,7 @@ func TestPrivateReactionBotUpdatesShareTransactionPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM private_message_reactions WHERE user_id = $1`, human).Scan(&stored); err != nil || stored != 0 {
 		t.Fatalf("reactions after rollback = %d, %v", stored, err)
 	}
-	if st, _ := updates.BotUpdatesState(ctx, bot); st.Qts != 0 {
+	if st, _ := updates.BotUpdatesState(ctx, bot); st.Qts != domain.BotInitialQts {
 		t.Fatalf("qts after rollback = %d", st.Qts)
 	}
 
@@ -138,7 +138,7 @@ func TestPrivateReactionBotUpdatesShareTransactionPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("react: %v", err)
 	}
-	if len(res.BotUpdates) != 1 || res.BotUpdates[0].Qts != 1 {
+	if len(res.BotUpdates) != 1 || res.BotUpdates[0].Qts != domain.BotInitialQts+1 {
 		t.Fatalf("result bot updates = %+v", res.BotUpdates)
 	}
 	rows, err := updates.ListBotUpdates(ctx, bot, 0, 10)

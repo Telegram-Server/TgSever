@@ -115,7 +115,7 @@ func TestJoinRequestReachesInviteAdminBots(t *testing.T) {
 			t.Fatalf("%s qts %d -> %d, want unchanged", name, st.before.Qts, after.Qts)
 		}
 	}
-	if st := stateOf(humanAdmin); st.Qts != 0 {
+	if st := stateOf(humanAdmin); st.Qts != domain.BotInitialQts {
 		t.Fatalf("human admin got bot qts %d", st.Qts)
 	}
 

@@ -38,7 +38,7 @@ FOR EACH ROW EXECUTE FUNCTION fail_bot_stopped_block();`, user)); err != nil {
 	if _, err := mutate(store.BlocklistBlock, bot); err == nil {
 		t.Fatal("block succeeded despite the injected failure")
 	}
-	if st, err := updates.BotUpdatesState(ctx, bot); err != nil || st != (domain.BotUpdatesState{}) {
+	if st, err := updates.BotUpdatesState(ctx, bot); err != nil || st != (domain.BotUpdatesState{Qts: domain.BotInitialQts}) {
 		t.Fatalf("bot qts state after rollback = %+v, %v; want nothing allocated", st, err)
 	}
 	if _, err := pool.Exec(ctx, `DROP TRIGGER fail_bot_stopped_block ON contact_blocks`); err != nil {
@@ -49,8 +49,8 @@ FOR EACH ROW EXECUTE FUNCTION fail_bot_stopped_block();`, user)); err != nil {
 	if err != nil {
 		t.Fatalf("block bot: %v", err)
 	}
-	if len(blocked.BotUpdates) != 1 || blocked.BotUpdates[0].Qts != 1 {
-		t.Fatalf("block bot returned %+v, want the qts=1 record", blocked.BotUpdates)
+	if len(blocked.BotUpdates) != 1 || blocked.BotUpdates[0].Qts != domain.BotInitialQts+1 {
+		t.Fatalf("block bot returned %+v, want the first record", blocked.BotUpdates)
 	}
 	if again, err := mutate(store.BlocklistBlock, bot); err != nil || len(again.BotUpdates) != 0 {
 		t.Fatalf("repeated block returned %+v, %v", again.BotUpdates, err)
@@ -71,11 +71,11 @@ FOR EACH ROW EXECUTE FUNCTION fail_bot_stopped_block();`, user)); err != nil {
 	}
 	for i, stopped := range []bool{true, false} {
 		row := rows[i]
-		if row.Qts != i+1 || row.Date != date || row.BotStopped == nil || *row.BotStopped != (domain.BotStoppedUpdate{UserID: user, Stopped: stopped}) {
+		if row.Qts != domain.BotInitialQts+i+1 || row.Date != date || row.BotStopped == nil || *row.BotStopped != (domain.BotStoppedUpdate{UserID: user, Stopped: stopped}) {
 			t.Fatalf("record %d = %+v (bot stopped %+v), want user %d stopped=%v", i, row, row.BotStopped, user, stopped)
 		}
 	}
-	if st, err := updates.BotUpdatesState(ctx, human); err != nil || st.Qts != 0 {
+	if st, err := updates.BotUpdatesState(ctx, human); err != nil || st.Qts != domain.BotInitialQts {
 		t.Fatalf("human qts state = %+v, %v; want none", st, err)
 	}
 }

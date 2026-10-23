@@ -78,7 +78,7 @@ FOR EACH ROW EXECUTE FUNCTION fail_bot_qts_admin_log();`, channelID)); err != ni
 	if err == nil {
 		t.Fatal("edit admin succeeded despite the injected failure")
 	}
-	if st, err := updates.BotUpdatesState(ctx, bot); err != nil || st != (domain.BotUpdatesState{}) {
+	if st, err := updates.BotUpdatesState(ctx, bot); err != nil || st != (domain.BotUpdatesState{Qts: domain.BotInitialQts}) {
 		t.Fatalf("bot qts state after rollback = %+v, %v; want nothing allocated", st, err)
 	}
 
@@ -92,7 +92,7 @@ FOR EACH ROW EXECUTE FUNCTION fail_bot_qts_admin_log();`, channelID)); err != ni
 	if err != nil {
 		t.Fatalf("edit admin after dropping trigger: %v", err)
 	}
-	if len(res.BotUpdates) != 1 || res.BotUpdates[0].Qts != 1 {
-		t.Fatalf("bot updates after successful edit = %+v, want qts 1", res.BotUpdates)
+	if len(res.BotUpdates) != 1 || res.BotUpdates[0].Qts != domain.BotInitialQts+1 {
+		t.Fatalf("bot updates after successful edit = %+v, want qts 2", res.BotUpdates)
 	}
 }

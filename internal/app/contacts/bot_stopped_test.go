@@ -39,8 +39,8 @@ func TestBlockingBotGeneratesBotStoppedQtsUpdates(t *testing.T) {
 	}
 
 	blocked := mutate("block bot", store.BlocklistBlock, user, bot)
-	if len(blocked.BotUpdates) != 1 || blocked.BotUpdates[0].Qts != 1 {
-		t.Fatalf("block bot returned bot updates %+v, want the qts=1 record", blocked.BotUpdates)
+	if len(blocked.BotUpdates) != 1 || blocked.BotUpdates[0].Qts != domain.BotInitialQts+1 {
+		t.Fatalf("block bot returned bot updates %+v, want the first record", blocked.BotUpdates)
 	}
 	if again := mutate("block bot again", store.BlocklistBlock, user, bot); len(again.BotUpdates) != 0 {
 		t.Fatalf("repeated block returned bot updates %+v", again.BotUpdates)
@@ -48,8 +48,8 @@ func TestBlockingBotGeneratesBotStoppedQtsUpdates(t *testing.T) {
 	mutate("block human", store.BlocklistBlock, user, human)
 	mutate("bot blocks human", store.BlocklistBlock, bot, human)
 	unblocked := mutate("unblock bot", store.BlocklistUnblock, user, bot)
-	if len(unblocked.BotUpdates) != 1 || unblocked.BotUpdates[0].Qts != 2 {
-		t.Fatalf("unblock bot returned bot updates %+v, want the qts=2 record", unblocked.BotUpdates)
+	if len(unblocked.BotUpdates) != 1 || unblocked.BotUpdates[0].Qts != domain.BotInitialQts+2 {
+		t.Fatalf("unblock bot returned bot updates %+v, want the second record", unblocked.BotUpdates)
 	}
 	mutate("unblock bot again", store.BlocklistUnblock, user, bot)
 	// setBlocked 一次替换整张名单：把 bot 换进去等同拉黑。
@@ -64,7 +64,7 @@ func TestBlockingBotGeneratesBotStoppedQtsUpdates(t *testing.T) {
 		t.Fatalf("bot qts records = %+v, want %d", rows, len(want))
 	}
 	for i, row := range rows {
-		if row.Qts != i+1 || row.Date != contactMutationTestDate || row.BotStopped == nil {
+		if row.Qts != domain.BotInitialQts+i+1 || row.Date != contactMutationTestDate || row.BotStopped == nil {
 			t.Fatalf("record %d = %+v", i, row)
 		}
 		if got := *row.BotStopped; got.UserID != user || got.Stopped != want[i] {
@@ -73,7 +73,7 @@ func TestBlockingBotGeneratesBotStoppedQtsUpdates(t *testing.T) {
 	}
 	for _, id := range []int64{user, human} {
 		st, err := updates.BotUpdatesState(ctx, id)
-		if err != nil || st.Qts != 0 {
+		if err != nil || st.Qts != domain.BotInitialQts {
 			t.Fatalf("non-bot %d qts state = %+v err=%v, want none", id, st, err)
 		}
 	}

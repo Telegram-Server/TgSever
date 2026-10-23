@@ -12,13 +12,14 @@ import (
 const allocateBotUpdateQts = `-- name: AllocateBotUpdateQts :one
 
 INSERT INTO bot_update_states (bot_user_id, qts)
-VALUES ($1, 1)
+VALUES ($1, 2)
 ON CONFLICT (bot_user_id) DO UPDATE SET qts = bot_update_states.qts + 1
 RETURNING qts
 `
 
 // bot qts 序列（#145）。
 // 在调用方的事务里为 bot 分配下一个 qts；行锁让同一 bot 的并发写入排队，qts 连续。
+// 初始 qts 是 1（domain.BotInitialQts），第一条记录分配 2。
 func (q *Queries) AllocateBotUpdateQts(ctx context.Context, botUserID int64) (int32, error) {
 	row := q.db.QueryRow(ctx, allocateBotUpdateQts, botUserID)
 	var qts int32
@@ -79,7 +80,7 @@ func (q *Queries) FilterBotUserIDs(ctx context.Context, userIds []int64) ([]int6
 
 const getBotUpdatesState = `-- name: GetBotUpdatesState :one
 SELECT
-    COALESCE((SELECT s.qts FROM bot_update_states s WHERE s.bot_user_id = $1), 0)::integer AS qts,
+    COALESCE((SELECT s.qts FROM bot_update_states s WHERE s.bot_user_id = $1), 1)::integer AS qts,
     COALESCE((SELECT min(u.qts) FROM bot_updates u WHERE u.bot_user_id = $1), 0)::integer AS min_retained_qts
 `
 

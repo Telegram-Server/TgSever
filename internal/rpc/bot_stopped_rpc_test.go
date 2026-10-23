@@ -69,8 +69,8 @@ func TestBotStoppedPushAndDifference(t *testing.T) {
 			t.Fatalf("%s: %d updateBotStopped, want 2: %+v", where, len(got), got)
 		}
 		for i, stopped := range []bool{true, false} {
-			if got[i].Qts != i+1 || got[i].UserID != user.ID || got[i].Stopped != stopped {
-				t.Fatalf("%s: update %d = %+v, want qts %d user %d stopped=%v", where, i, got[i], i+1, user.ID, stopped)
+			if got[i].Qts != i+2 || got[i].UserID != user.ID || got[i].Stopped != stopped {
+				t.Fatalf("%s: update %d = %+v, want qts %d user %d stopped=%v", where, i, got[i], i+2, user.ID, stopped)
 			}
 		}
 	}
@@ -115,7 +115,7 @@ func TestBotStoppedPushAndDifference(t *testing.T) {
 		}
 	}
 	checkStopped("getDifference", replayed)
-	if !hasUser(full.Users) || full.State.Qts != 2 {
-		t.Fatalf("getDifference users=%+v qts=%d, want the user and qts 2", full.Users, full.State.Qts)
+	if !hasUser(full.Users) || full.State.Qts != 3 {
+		t.Fatalf("getDifference users=%+v qts=%d, want the user and qts 3", full.Users, full.State.Qts)
 	}
 }

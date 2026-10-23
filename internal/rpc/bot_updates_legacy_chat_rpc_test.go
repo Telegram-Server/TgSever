@@ -64,8 +64,8 @@ func TestBotQtsLegacyChatEntrypointsUseChannelParticipantPath(t *testing.T) {
 		t.Fatalf("bot received %d updateChannelParticipant, want %d: %+v", len(pushed), len(wantNew), pushed)
 	}
 	for i, p := range pushed {
-		if p.Qts != i+1 || p.ChannelID != chatID {
-			t.Fatalf("push %d = qts %d channel %d, want qts %d channel %d", i, p.Qts, p.ChannelID, i+1, chatID)
+		if p.Qts != i+2 || p.ChannelID != chatID {
+			t.Fatalf("push %d = qts %d channel %d, want qts %d channel %d", i, p.Qts, p.ChannelID, i+2, chatID)
 		}
 		np, _ := p.GetNewParticipant()
 		if got := participantKind(np); got != wantNew[i] {
@@ -91,7 +91,7 @@ func TestBotQtsLegacyChatEntrypointsUseChannelParticipantPath(t *testing.T) {
 	for _, tc := range []struct {
 		from int
 		want []int
-	}{{0, []int{1, 2, 3, 4, 5, 6}}, {4, []int{5, 6}}} {
+	}{{0, []int{2, 3, 4, 5, 6, 7}}, {5, []int{6, 7}}} {
 		diff, err := f.router.onUpdatesGetDifference(f.botCtx(2), &tg.UpdatesGetDifferenceRequest{Qts: tc.from, Date: 1})
 		if err != nil {
 			t.Fatalf("getDifference from qts %d: %v", tc.from, err)
@@ -109,8 +109,8 @@ func TestBotQtsLegacyChatEntrypointsUseChannelParticipantPath(t *testing.T) {
 				t.Fatalf("difference carries basic-group updateChatParticipant %+v", u)
 			}
 		}
-		if len(got) != len(tc.want) || full.State.Qts != 6 {
-			t.Fatalf("difference from qts %d = %v state %d, want %v state 6", tc.from, got, full.State.Qts, tc.want)
+		if len(got) != len(tc.want) || full.State.Qts != 7 {
+			t.Fatalf("difference from qts %d = %v state %d, want %v state 7", tc.from, got, full.State.Qts, tc.want)
 		}
 		for i := range got {
 			if got[i] != tc.want[i] {

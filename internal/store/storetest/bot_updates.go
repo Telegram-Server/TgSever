@@ -27,7 +27,8 @@ type BotUpdatesFixture struct {
 	NewUser  func(t *testing.T, bot bool) int64
 }
 
-// BotUpdatesContract 是 bot qts 序列的存储契约（#145）：每个 bot 的 qts 从 1 连续分配、
+// BotUpdatesContract 是 bot qts 序列的存储契约（#145）：每个 bot 的初始 qts 是 1（TDLib
+// 拒收 qts <= 1 的在线推送），第一条记录分配 qts 2，之后连续分配、
 // 互相独立；按 qts 翻页读取；保留期回收后已分配的 qts 不回退、最小保留 qts 前移；
 // bot 自己的成员变动与 qts 记录由频道 store 一起写入，普通用户的变动不写。
 func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFixture) {
@@ -79,8 +80,8 @@ func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFi
 	t.Run("qts is contiguous and independent per bot", func(t *testing.T) {
 		f := newFixture(t)
 		a, b := f.NewUser(t, true), f.NewUser(t, true)
-		if st := state(t, f, a); st != (domain.BotUpdatesState{}) {
-			t.Fatalf("fresh bot state = %+v, want zero", st)
+		if st := state(t, f, a); st != (domain.BotUpdatesState{Qts: 1}) {
+			t.Fatalf("fresh bot state = %+v, want qts 1 and nothing retained", st)
 		}
 		got, err := f.Updates.AppendBotUpdates(ctx, []domain.BotUpdate{
 			record(a, int64(now), 501), record(b, int64(now), 502), record(a, int64(now), 503),
@@ -88,25 +89,25 @@ func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFi
 		if err != nil {
 			t.Fatalf("append: %v", err)
 		}
-		if len(got) != 3 || got[0].Qts != 1 || got[1].Qts != 1 || got[2].Qts != 2 {
-			t.Fatalf("assigned qts = %v, want [1 1 2]", qtsOf(got))
+		if len(got) != 3 || got[0].Qts != 2 || got[1].Qts != 2 || got[2].Qts != 3 {
+			t.Fatalf("assigned qts = %v, want [2 2 3]", qtsOf(got))
 		}
 		if _, err := f.Updates.AppendBotUpdates(ctx, []domain.BotUpdate{record(a, int64(now), 504)}); err != nil {
 			t.Fatalf("append again: %v", err)
 		}
 		rows := list(t, f, a, 0, 10)
-		if !equalInts(qtsOf(rows), []int{1, 2, 3}) {
-			t.Fatalf("bot a qts = %v, want [1 2 3]", qtsOf(rows))
+		if !equalInts(qtsOf(rows), []int{2, 3, 4}) {
+			t.Fatalf("bot a qts = %v, want [2 3 4]", qtsOf(rows))
 		}
 		if p := rows[1].ChannelParticipant; p == nil || p.Channel.ID != 503 || p.ActorUserID != 7 ||
 			p.Current.UserID != a || p.Current.Status != domain.ChannelMemberActive || rows[1].BotUserID != a || rows[1].Date != now {
 			t.Fatalf("round trip = %+v (payload %+v)", rows[1], rows[1].ChannelParticipant)
 		}
-		if bRows := list(t, f, b, 0, 10); !equalInts(qtsOf(bRows), []int{1}) {
-			t.Fatalf("bot b qts = %v, want [1]", qtsOf(bRows))
+		if bRows := list(t, f, b, 0, 10); !equalInts(qtsOf(bRows), []int{2}) {
+			t.Fatalf("bot b qts = %v, want [2]", qtsOf(bRows))
 		}
-		if st := state(t, f, a); st != (domain.BotUpdatesState{Qts: 3, MinRetainedQts: 1}) {
-			t.Fatalf("bot a state = %+v, want qts 3 min 1", st)
+		if st := state(t, f, a); st != (domain.BotUpdatesState{Qts: 4, MinRetainedQts: 2}) {
+			t.Fatalf("bot a state = %+v, want qts 4 min 2", st)
 		}
 	})
 
@@ -118,10 +119,10 @@ func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFi
 				t.Fatalf("append %d: %v", i, err)
 			}
 		}
-		if got := qtsOf(list(t, f, bot, 2, 2)); !equalInts(got, []int{3, 4}) {
-			t.Fatalf("after 2 limit 2 = %v, want [3 4]", got)
+		if got := qtsOf(list(t, f, bot, 3, 2)); !equalInts(got, []int{4, 5}) {
+			t.Fatalf("after 3 limit 2 = %v, want [4 5]", got)
 		}
-		if got := list(t, f, bot, 5, 10); len(got) != 0 {
+		if got := list(t, f, bot, 6, 10); len(got) != 0 {
 			t.Fatalf("after last = %v, want empty", qtsOf(got))
 		}
 	})
@@ -140,22 +141,22 @@ func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFi
 			t.Fatalf("delete expired = %d, %v; want at least the 2 old records", deleted, err)
 		}
 		st := state(t, f, bot)
-		if st != (domain.BotUpdatesState{Qts: 3, MinRetainedQts: 3}) {
-			t.Fatalf("state after retention = %+v, want qts 3 min 3", st)
+		if st != (domain.BotUpdatesState{Qts: 4, MinRetainedQts: 4}) {
+			t.Fatalf("state after retention = %+v, want qts 4 min 4", st)
 		}
-		if got := qtsOf(list(t, f, bot, 0, 10)); !equalInts(got, []int{3}) {
-			t.Fatalf("retained = %v, want [3]", got)
+		if got := qtsOf(list(t, f, bot, 0, 10)); !equalInts(got, []int{4}) {
+			t.Fatalf("retained = %v, want [4]", got)
 		}
 		if _, err := f.Updates.DeleteExpiredBotUpdates(ctx, time.Unix(int64(now+1), 0), 100); err != nil {
 			t.Fatalf("delete all: %v", err)
 		}
 		st = state(t, f, bot)
-		if st != (domain.BotUpdatesState{Qts: 3}) {
-			t.Fatalf("state with nothing retained = %+v, want qts 3 and nothing retained", st)
+		if st != (domain.BotUpdatesState{Qts: 4}) {
+			t.Fatalf("state with nothing retained = %+v, want qts 4 and nothing retained", st)
 		}
 		next, err := f.Updates.AppendBotUpdates(ctx, []domain.BotUpdate{record(bot, int64(now), 704)})
-		if err != nil || len(next) != 1 || next[0].Qts != 4 {
-			t.Fatalf("append after retention = %v, %v; want qts 4", qtsOf(next), err)
+		if err != nil || len(next) != 1 || next[0].Qts != 5 {
+			t.Fatalf("append after retention = %v, %v; want qts 5", qtsOf(next), err)
 		}
 	})
 
@@ -171,37 +172,37 @@ func BotUpdatesContract(t *testing.T, newFixture func(t *testing.T) BotUpdatesFi
 		if err != nil {
 			t.Fatalf("invite: %v", err)
 		}
-		if len(invited.BotUpdates) != 1 || invited.BotUpdates[0].BotUserID != bot || invited.BotUpdates[0].Qts != 1 {
-			t.Fatalf("invite result bot updates = %+v, want one for the bot at qts 1", invited.BotUpdates)
+		if len(invited.BotUpdates) != 1 || invited.BotUpdates[0].BotUserID != bot || invited.BotUpdates[0].Qts != 2 {
+			t.Fatalf("invite result bot updates = %+v, want one for the bot at qts 2", invited.BotUpdates)
 		}
 		promoted, err := f.Channels.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{UserID: owner, ChannelID: channelID, MemberID: bot, AdminRights: domain.ChannelAdminRights{DeleteMessages: true}, Date: now})
 		if err != nil {
 			t.Fatalf("promote: %v", err)
 		}
-		if len(promoted.BotUpdates) != 1 || promoted.BotUpdates[0].Qts != 2 {
-			t.Fatalf("promote result bot updates = %+v, want qts 2", promoted.BotUpdates)
+		if len(promoted.BotUpdates) != 1 || promoted.BotUpdates[0].Qts != 3 {
+			t.Fatalf("promote result bot updates = %+v, want qts 3", promoted.BotUpdates)
 		}
 		kicked, err := f.Channels.EditChannelBanned(ctx, domain.EditChannelBannedRequest{UserID: owner, ChannelID: channelID, Participant: domain.Peer{Type: domain.PeerTypeUser, ID: bot}, BannedRights: domain.ChannelBannedRights{ViewMessages: true}, Date: now})
 		if err != nil {
 			t.Fatalf("kick: %v", err)
 		}
-		if len(kicked.BotUpdates) != 1 || kicked.BotUpdates[0].Qts != 3 {
-			t.Fatalf("kick result bot updates = %+v, want qts 3", kicked.BotUpdates)
+		if len(kicked.BotUpdates) != 1 || kicked.BotUpdates[0].Qts != 4 {
+			t.Fatalf("kick result bot updates = %+v, want qts 4", kicked.BotUpdates)
 		}
 		if _, err := f.Channels.LeaveChannel(ctx, channelID, human, now); err != nil {
 			t.Fatalf("human leave: %v", err)
 		}
 		rows := list(t, f, bot, 0, 10)
-		if !equalInts(qtsOf(rows), []int{1, 2, 3}) {
-			t.Fatalf("bot qts = %v, want [1 2 3]", qtsOf(rows))
+		if !equalInts(qtsOf(rows), []int{2, 3, 4}) {
+			t.Fatalf("bot qts = %v, want [2 3 4]", qtsOf(rows))
 		}
 		last := rows[2].ChannelParticipant
 		if last == nil || last.Channel.ID != channelID || last.ActorUserID != owner ||
 			last.Previous.Role != domain.ChannelRoleAdmin || last.Current.Status != domain.ChannelMemberKicked {
 			t.Fatalf("kick record = %+v, want admin -> kicked by owner", last)
 		}
-		if st := state(t, f, human); st != (domain.BotUpdatesState{}) {
-			t.Fatalf("human qts state = %+v, want none", st)
+		if got := list(t, f, human, 0, 10); len(got) != 0 {
+			t.Fatalf("human qts records = %v, want none", qtsOf(got))
 		}
 	})
 }
