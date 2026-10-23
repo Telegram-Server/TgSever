@@ -274,21 +274,6 @@ func (s *Service) sendFromBot(ctx context.Context, request domain.SendBotEphemer
 	return message, fresh, err
 }
 
-func (s *Service) EditFromBot(ctx context.Context, botUserID int64, peer domain.Peer, id int, content domain.EphemeralContent) (domain.EphemeralMessage, error) {
-	now := s.now()
-	message, found, err := s.messages.GetEphemeralMessage(ctx, peer, id, now)
-	if err != nil {
-		return domain.EphemeralMessage{}, err
-	}
-	if !found {
-		return domain.EphemeralMessage{}, domain.ErrEphemeralNotFound
-	}
-	if message.SenderUserID != botUserID {
-		return domain.EphemeralMessage{}, domain.ErrEphemeralForbidden
-	}
-	return s.messages.EditEphemeralMessage(ctx, peer, id, message.Version, content, int(now.Unix()), now)
-}
-
 func (s *Service) EditFieldsFromBot(ctx context.Context, botUserID, receiverUserID int64, peer domain.Peer, id int, mode domain.EphemeralEditMode, fields domain.EditEphemeralFields) (domain.EphemeralMessage, error) {
 	return s.editFieldsFromBot(ctx, botUserID, receiverUserID, peer, id, mode, func(context.Context) (domain.EditEphemeralFields, error) {
 		return fields, nil
