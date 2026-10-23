@@ -84,10 +84,6 @@ type EphemeralMessage struct {
 	Deleted            bool
 	CreatedAt          time.Time
 	ExpiresAt          time.Time
-	// BotAPIReply is a one-level, runtime-only reply snapshot. It is attached
-	// after the authoritative message has been written, excluded from Redis and
-	// broker JSON, and used only to project a valid Bot API reply_to_message.
-	BotAPIReply *EphemeralMessage `json:"-"`
 }
 
 type SendClientEphemeralRequest struct {
@@ -206,48 +202,6 @@ type EditEphemeralFields struct {
 	Media          *MessageMedia
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
-}
-
-type BotAPIFileInput struct {
-	LocationKey string
-	RemoteURL   string
-	FileName    string
-	MimeType    string
-	Bytes       []byte
-	Width       int
-	Height      int
-	Duration    int
-	Title       string
-	Performer   string
-	Emoji       string
-}
-
-type BotAPIEphemeralSendInput struct {
-	BotUserID          int64
-	ChatID             int64
-	ReceiverUserID     int64
-	CallbackQueryID    int64
-	ReplyToEphemeralID int
-	TopMessageID       int
-	Kind               string
-	Text               string
-	Entities           []MessageEntity
-	ReplyMarkup        *MessageReplyMarkup
-	File               BotAPIFileInput
-	SecondaryFile      BotAPIFileInput
-	DirectMedia        *MessageMedia
-}
-
-type BotAPIEphemeralEditInput struct {
-	BotUserID      int64
-	ChatID         int64
-	ReceiverUserID int64
-	MessageID      int
-	Mode           EphemeralEditMode
-	Fields         EditEphemeralFields
-	MediaKind      string
-	File           BotAPIFileInput
-	SecondaryFile  BotAPIFileInput
 }
 
 type EphemeralEditMode string

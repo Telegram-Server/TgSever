@@ -94,7 +94,6 @@ func (s *Service) SendFromClient(ctx context.Context, request domain.SendClientE
 	if !found || !receiver.Bot || receiver.Deleted {
 		return domain.EphemeralMessage{}, false, domain.ErrEphemeralReceiverInvalid
 	}
-	var replyTarget *domain.EphemeralMessage
 	if request.ReplyToEphemeralID != 0 {
 		target, found, err := s.messages.GetEphemeralMessage(ctx, request.Peer, request.ReplyToEphemeralID, s.now())
 		if err != nil {
@@ -110,7 +109,6 @@ func (s *Service) SendFromClient(ctx context.Context, request domain.SendClientE
 			return domain.EphemeralMessage{}, false, domain.ErrEphemeralPeerInvalid
 		}
 		request.TopMessageID = target.TopMessageID
-		replyTarget = &target
 	} else {
 		allowed, err := s.isEphemeralCommand(ctx, receiver, request.Content.Message)
 		if err != nil {
@@ -134,9 +132,6 @@ func (s *Service) SendFromClient(ctx context.Context, request domain.SendClientE
 		OriginDevice:       request.OriginDevice,
 		PayloadHash:        clientPayloadHash(request),
 	})
-	if err == nil && replyTarget != nil {
-		message.BotAPIReply = replyTarget
-	}
 	return message, fresh, err
 }
 
@@ -247,7 +242,6 @@ func (s *Service) sendFromBot(ctx context.Context, request domain.SendBotEphemer
 			return domain.EphemeralMessage{}, false, domain.ErrEphemeralPeerInvalid
 		}
 		request.TopMessageID = reply.TopMessageID
-		replyTarget = &reply
 	}
 	if err := s.validateForumTopic(ctx, request.BotUserID, view, request.TopMessageID); err != nil {
 		return domain.EphemeralMessage{}, false, err
@@ -277,9 +271,6 @@ func (s *Service) sendFromBot(ctx context.Context, request domain.SendBotEphemer
 		OriginDevice:       targetDevice,
 		PayloadHash:        botPayloadHash(request),
 	})
-	if err == nil && replyTarget != nil {
-		message.BotAPIReply = replyTarget
-	}
 	return message, fresh, err
 }
 

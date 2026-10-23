@@ -228,9 +228,6 @@ func collectOutboxEventUserRefs(event domain.UpdateEvent) map[int64]struct{} {
 	collectMessagePeerRefs(event.Message, 0, userIDs, channelIDs)
 	if message := event.EphemeralMessage; message != nil {
 		collectEphemeralMessagePeerRefs(*message, userIDs, channelIDs)
-		if message.BotAPIReply != nil {
-			collectEphemeralMessagePeerRefs(*message.BotAPIReply, userIDs, channelIDs)
-		}
 	}
 	if event.BotCallbackQuery != nil && event.BotCallbackQuery.UserID != 0 {
 		userIDs[event.BotCallbackQuery.UserID] = struct{}{}

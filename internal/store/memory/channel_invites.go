@@ -310,7 +310,11 @@ func (s *ChannelStore) ImportInvite(_ context.Context, req domain.ImportChannelI
 		if err := s.recordPendingInviteRequestLocked(invite, req.UserID, req.Date); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		botUpdates, err := s.appendBotJoinRequestUpdatesLocked(channel, invite, req.UserID, req.Date)
+		if err != nil {
+			return domain.CreateChannelResult{}, err
+		}
+		return domain.CreateChannelResult{Channel: channel, BotUpdates: botUpdates}, domain.ErrInviteRequestSent
 	}
 	return s.approveInviteImporterLocked(channel, invite, req.UserID, 0, req.Date)
 }

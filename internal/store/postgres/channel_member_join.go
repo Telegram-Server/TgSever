@@ -53,11 +53,15 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 		if err := s.recordPublicJoinRequestTx(ctx, tx, channel, userID, date); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
+		botUpdates, err := appendBotJoinRequestUpdatesTx(ctx, tx, channel, domain.ChannelInvite{ChannelID: channel.ID}, userID, date)
+		if err != nil {
+			return domain.CreateChannelResult{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return domain.CreateChannelResult{}, fmt.Errorf("commit public channel join request: %w", err)
 		}
 		committed = true
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		return domain.CreateChannelResult{Channel: channel, BotUpdates: botUpdates}, domain.ErrInviteRequestSent
 	}
 	preJoinTopID := channel.TopMessageID
 	minID := channelInitialAvailableMinID(channel)

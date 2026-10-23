@@ -69,11 +69,15 @@ func (s *ChannelStore) ImportInvite(ctx context.Context, req domain.ImportChanne
 		if err := s.recordPendingInviteImporterTx(ctx, tx, invite, req.UserID, req.Date); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
+		botUpdates, err := appendBotJoinRequestUpdatesTx(ctx, tx, channel, invite, req.UserID, req.Date)
+		if err != nil {
+			return domain.CreateChannelResult{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return domain.CreateChannelResult{}, fmt.Errorf("commit pending channel invite request: %w", err)
 		}
 		committed = true
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		return domain.CreateChannelResult{Channel: channel, BotUpdates: botUpdates}, domain.ErrInviteRequestSent
 	}
 	result, err := s.approveInviteImporterTx(ctx, tx, channel, invite, req.UserID, 0, req.Date)
 	if err != nil {

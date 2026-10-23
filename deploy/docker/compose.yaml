@@ -119,8 +119,6 @@ services:
       TELESRV_REDIS_DB: 0
       TELESRV_ADMIN_API_ADDR: 127.0.0.1:${TELESRV_ADMIN_API_PORT:-2599}
       TELESRV_ADMIN_API_TOKEN: ${TELESRV_ADMIN_API_TOKEN:?set TELESRV_ADMIN_API_TOKEN in deploy/docker/.env}
-      # Empty keeps the Bot API gateway off. Host networking only: bridge mode
-      # publishes no port for it.
       TELESRV_DEV_AUTH_CODE: ${TELESRV_DEV_AUTH_CODE:-12345}
       # Sign-up switch default; the admin service gets the same value so the
       # panel's "from environment" state matches what this server enforces.

@@ -75,7 +75,7 @@ func (r *Router) pushBotUpdates(ctx context.Context, updates []domain.BotUpdate)
 	}
 	cache := newViewerPeerCache(r)
 	for _, update := range updates {
-		tgUpdate, userIDs, chat := tgBotUpdate(update, nil)
+		tgUpdate, userIDs, chat := r.projectBotUpdate(update, nil)
 		if tgUpdate == nil {
 			continue
 		}
@@ -156,8 +156,8 @@ func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts 
 	}
 	channelIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
-		if row.ChannelParticipant != nil {
-			channelIDs = append(channelIDs, row.ChannelParticipant.Channel.ID)
+		if channelID := botUpdateChannelID(row); channelID != 0 {
+			channelIDs = append(channelIDs, channelID)
 		}
 	}
 	views := make(map[int64]domain.ChannelView, len(channelIDs))
@@ -174,20 +174,17 @@ func (r *Router) botQtsDifference(ctx context.Context, botUserID int64, fromQts 
 	seenChats := make(map[int64]struct{}, len(channelIDs))
 	for _, row := range rows {
 		var view *domain.ChannelView
-		if row.ChannelParticipant != nil {
-			if v, ok := views[row.ChannelParticipant.Channel.ID]; ok {
-				view = &v
-			}
+		if v, ok := views[botUpdateChannelID(row)]; ok {
+			view = &v
 		}
-		update, ids, chat := tgBotUpdate(row, view)
+		update, ids, chat := r.projectBotUpdate(row, view)
 		newQts = row.Qts
 		if update == nil {
 			continue
 		}
 		updates = append(updates, update)
 		userIDs = append(userIDs, ids...)
-		if chat != nil && row.ChannelParticipant != nil {
-			channelID := row.ChannelParticipant.Channel.ID
+		if channelID := botUpdateChannelID(row); chat != nil && channelID != 0 {
 			if _, ok := seenChats[channelID]; !ok {
 				seenChats[channelID] = struct{}{}
 				chats = append(chats, chat)

@@ -150,7 +150,11 @@ func (s *ChannelStore) joinChannel(channelID, userID int64, date int) (domain.Cr
 		if err := s.recordPublicJoinRequestLocked(channel, userID, date); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
-		return domain.CreateChannelResult{Channel: channel}, domain.ErrInviteRequestSent
+		botUpdates, err := s.appendBotJoinRequestUpdatesLocked(channel, domain.ChannelInvite{ChannelID: channel.ID}, userID, date)
+		if err != nil {
+			return domain.CreateChannelResult{}, err
+		}
+		return domain.CreateChannelResult{Channel: channel, BotUpdates: botUpdates}, domain.ErrInviteRequestSent
 	}
 	member := domain.ChannelMember{
 		ChannelID: channelID,
