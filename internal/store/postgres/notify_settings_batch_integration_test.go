@@ -8,7 +8,7 @@ import (
 )
 
 func TestNotifySettingsBatchContractPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	owners := [3]int64{
 		createRevokeTestUser(t, ctx, pool, "notify-batch-a"),

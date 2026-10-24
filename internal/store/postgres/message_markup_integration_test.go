@@ -17,7 +17,7 @@ import (
 //   - 接收方经 UpdateEventStore.ListAfter（在线/离线 difference 共用重建路径）带 markup；
 //   - 编辑替换/清空 markup 后双盒一致。
 func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -140,7 +140,7 @@ func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
 }
 
 func TestSendPrivateViaBotIDSurvivesReadPaths(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

@@ -12,7 +12,7 @@ import (
 // completed_at column, so the listing must surface a nil completion timestamp
 // instead of failing on a column that does not exist there.
 func TestAdminAuditLogListingRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)
 	if err != nil {

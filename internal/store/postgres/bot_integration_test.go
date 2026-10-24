@@ -14,7 +14,7 @@ import (
 // TestBotStoreRoundTripPostgres 验证迁移 0090 的 bot 模型：BotFather 种子行、
 // CreateBotAccount 双行事务、空 phone 不撞唯一索引、token 轮换、对话状态。
 func TestBotStoreRoundTripPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	users := NewUserStore(pool)

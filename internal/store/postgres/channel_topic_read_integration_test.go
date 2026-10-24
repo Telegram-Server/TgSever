@@ -11,7 +11,7 @@ import (
 // 旧的频道级水位会把 topicB 误判已读，而 per-topic 水位下 topicB 未读保持不变。
 // 同时验证 outbox 已读回执（S6）。
 func TestChannelTopicReadIsolation(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -137,7 +137,7 @@ func topicUnread(t *testing.T, channels *ChannelStore, ctx context.Context, user
 // TestChannelGeneralTopicRead 验证 General 话题（id=1）独立已读：General 未读排除其它话题的根
 // 服务消息，且 ReadChannelTopicHistory(General) 只推进 General 自己的水位。
 func TestChannelGeneralTopicRead(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

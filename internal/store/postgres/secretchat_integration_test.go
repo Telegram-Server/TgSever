@@ -124,7 +124,7 @@ func TestSecretChatStorePostgres(t *testing.T) {
 // 级联 discard 的查询基础，P1 修复）：匹配 admin 或 participant auth_key、排除 discarded、
 // 按 chat_id 升序；与 memory 实现同构。
 func TestSecretChatListActiveByAuthKeyPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewSecretChatStore(pool)
 

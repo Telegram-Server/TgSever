@@ -31,7 +31,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 // TestAuthKeyStoreRoundTrip 验证 auth_key 落 PG 后，用全新 store 实例（模拟进程重启、无内存缓存）能原样读回。
 // 这是「server 重启保住 auth_key」的直接证明。
 func TestAuthKeyStoreRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	var id [8]byte
@@ -156,7 +156,7 @@ func (c *authKeyStatementCounter) QueryRow(ctx context.Context, sql string, args
 }
 
 func TestAuthKeyStoreClientInfoRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	var id [8]byte
@@ -212,7 +212,7 @@ func TestAuthKeyStoreClientInfoRoundTrip(t *testing.T) {
 }
 
 func TestAuthKeyStoreUpdateClientInfoProtectsObservedLayerPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 

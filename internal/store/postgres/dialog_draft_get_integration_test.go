@@ -11,7 +11,7 @@ import (
 // TestDialogDraftGetRoundTrip 回归：GetDraft（draft_message 事件重放按 peer 重载权威态）
 // 与 SaveDraft/DeleteDraft 的键语义一致（user, peer, top_message_id）。
 func TestDialogDraftGetRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner, err := NewUserStore(pool).Create(ctx, domain.User{AccessHash: 31, Phone: "+1777" + suffix + "01", FirstName: "DraftOwner"})
@@ -45,7 +45,7 @@ func TestDialogDraftGetRoundTrip(t *testing.T) {
 }
 
 func TestListDialogDraftsByPeersMatchesCompositePeerKeys(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner, err := NewUserStore(pool).Create(ctx, domain.User{AccessHash: 41, Phone: "+1888" + suffix + "01", FirstName: "DraftPageOwner"})

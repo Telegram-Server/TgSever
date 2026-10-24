@@ -15,7 +15,7 @@ import (
 // is what makes a retried sendGift answer success instead of a bogus failure — and
 // what keeps a reused key from answering with another request's result.
 func TestSettledStarGiftPurchaseReplaysBotCommandKeyPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

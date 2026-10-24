@@ -22,7 +22,7 @@ import (
 // A gift whose entire auction supply is awarded must flip sold_out=true on the
 // active revision so the rpc layer exposes its first/last sale timestamps.
 func TestStarGiftAuctionExhaustedSupplyFlipsSoldOutPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -71,7 +71,7 @@ JOIN star_gift_catalog_revisions r ON r.id=c.active_revision_id WHERE c.gift_id=
 }
 
 func TestStarGiftAuctionBidAfterSettledRoundNeedsFreshFormPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

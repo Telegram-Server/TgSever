@@ -7,15 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	broadcastapp "telesrv/internal/app/broadcast"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
 
 func TestBroadcastDeliveryPreservesAutoEntitiesInHistoryAndUpdates(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	recipient := createLoginCodeDeliveryTestUser(t, ctx, pool, "BroadcastEntities")
 
@@ -106,7 +104,7 @@ func TestBroadcastDeliveryPreservesAutoEntitiesInHistoryAndUpdates(t *testing.T)
 }
 
 func TestBroadcastSelectedClaimsAreDisjointAndDeliveryIsIncomingOnly(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	firstUser := createLoginCodeDeliveryTestUser(t, ctx, pool, "BroadcastFirst")
 	secondUser := createLoginCodeDeliveryTestUser(t, ctx, pool, "BroadcastSecond")
@@ -194,7 +192,7 @@ func TestBroadcastSelectedClaimsAreDisjointAndDeliveryIsIncomingOnly(t *testing.
 }
 
 func TestBroadcastAllMaterializationUsesCreationHighWaterAndBoundedKeysets(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	firstUser := createLoginCodeDeliveryTestUser(t, ctx, pool, "BroadcastAllFirst")
 	secondUser := createLoginCodeDeliveryTestUser(t, ctx, pool, "BroadcastAllSecond")
@@ -259,7 +257,7 @@ GROUP BY b.id`, campaign.ID).Scan(&targetCount, &materializedCount, &actualCount
 	}
 }
 
-func broadcastWatermark(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID int64) int {
+func broadcastWatermark(t *testing.T, ctx context.Context, pool testDB, userID int64) int {
 	t.Helper()
 	var pts int
 	if err := pool.QueryRow(ctx, `
@@ -269,7 +267,7 @@ SELECT COALESCE((SELECT contiguous_pts FROM user_update_watermarks WHERE user_id
 	return pts
 }
 
-func broadcastFactCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, query string, args ...any) int {
+func broadcastFactCount(t *testing.T, ctx context.Context, pool testDB, query string, args ...any) int {
 	t.Helper()
 	var count int
 	if err := pool.QueryRow(ctx, query, args...).Scan(&count); err != nil {
@@ -278,7 +276,7 @@ func broadcastFactCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, q
 	return count
 }
 
-func assertBroadcastDeliveryFacts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, claim store.BroadcastRecipientClaim, msg domain.Message) {
+func assertBroadcastDeliveryFacts(t *testing.T, ctx context.Context, pool testDB, claim store.BroadcastRecipientClaim, msg domain.Message) {
 	t.Helper()
 	var status string
 	var privateMessageID int64

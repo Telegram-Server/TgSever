@@ -13,7 +13,7 @@ import (
 // 修复前统一用发起者视角，对端推送会把发起者的 reaction 标成"对端自己选的"
 // （TDesktop 非 min 更新用 chosen_order 直接覆盖本地 my 状态）。
 func TestSetMessageReactionsPeerViewpoint(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

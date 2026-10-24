@@ -11,7 +11,7 @@ import (
 )
 
 func TestPhoneChangeStoreUpdatesUserWithoutPTSPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	changes := NewPhoneChangeStore(pool)

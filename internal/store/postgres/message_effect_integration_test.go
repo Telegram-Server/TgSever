@@ -12,7 +12,7 @@ import (
 // 保真——发送结果双盒、history、GetByIDs、以及更新事件重建路径（离线 difference / 在线推送
 // 共用）。漏一处读站点 = 特效静默丢失（发送方播了、接收方/重载看不到）。
 func TestSendPrivateEffectSurvivesReadPaths(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

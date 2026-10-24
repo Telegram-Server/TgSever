@@ -12,7 +12,7 @@ import (
 // TestAIComposeStoreRoundTripPostgres 验证自定义 AI tone 与保存列表持久化，
 // 含 creator/saved 视角、slug/id 解析和删除级联。
 func TestAIComposeStoreRoundTripPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewAIComposeStore(pool)
 	users := NewUserStore(pool)

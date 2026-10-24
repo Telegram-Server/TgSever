@@ -17,7 +17,7 @@ import (
 )
 
 func TestMessageStorePrivateRandomIDConflictMatrix(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -83,7 +83,7 @@ func TestMessageStorePrivateRandomIDConflictMatrix(t *testing.T) {
 }
 
 func TestMessageStorePrivateRandomIDReplaySelfAndBlocked(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -151,7 +151,7 @@ func TestMessageStorePrivateRandomIDReplaySelfAndBlocked(t *testing.T) {
 }
 
 func TestMessageStorePrivateRandomIDReplayUsesCurrentSnapshotAndDurableDelete(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

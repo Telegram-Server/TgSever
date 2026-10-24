@@ -10,7 +10,7 @@ import (
 )
 
 func TestBotAPICallbackQueryQueueRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -63,7 +63,7 @@ VALUES ($1, $1, 'callback-queue-secret')`, bot.ID); err != nil {
 }
 
 func TestBotAPIInlineCallbackAndWebhookStateRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -196,7 +196,7 @@ func TestBotAPIPollLeaseCrossStoreInstance(t *testing.T) {
 }
 
 func TestBotAPIPollingStateClampFilterTailAndDrop(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	suffix := randomSuffix(t)
@@ -277,7 +277,7 @@ func TestBotAPIPollingStateClampFilterTailAndDrop(t *testing.T) {
 //   - 未确认 + created_at 在保留期内 → 留；
 //   - 删除后 getUpdates 读路径（fromID > confirmed）不受影响。
 func TestBotAPIUpdateRetention(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	suffix := randomSuffix(t)
@@ -383,7 +383,7 @@ ON CONFLICT (bot_user_id) DO NOTHING`, u.ID); err != nil {
 }
 
 func TestBotAPIEphemeralEnvelopeRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -449,7 +449,7 @@ func TestBotAPIEphemeralEnvelopeRoundTrip(t *testing.T) {
 // store that silently drops it breaks every payment: the bot is never asked, the
 // 10 second gate closes, and the payer gets PAYMENT_FAILED.
 func TestBotAPIUpdatePreCheckoutRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

@@ -186,7 +186,7 @@ WHERE owner_user_id = ANY($1::bigint[]) AND pinned AND NOT deleted
 }
 
 func TestMessageStoreUnpinAllPrivateMessagesSweepsBothSides(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

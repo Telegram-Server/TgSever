@@ -41,7 +41,7 @@ func TestSelectPlainPrivateSendBatchPreservesConflictingFIFOAndCombinesDisjointS
 }
 
 func TestPlainPrivateSendBatchEligibilityRejectsLocalAllocator(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	if processPlainPrivateSendBatcher.Eligible(messages) {
 		t.Fatal("local allocator entered distributed private-send batch path")

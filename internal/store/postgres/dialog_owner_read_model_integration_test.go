@@ -10,7 +10,7 @@ import (
 )
 
 func TestDialogOwnerReadModelSeedsAndAdvancesExactlyOnce(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)
 	if err != nil {

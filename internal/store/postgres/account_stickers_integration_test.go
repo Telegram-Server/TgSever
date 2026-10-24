@@ -10,7 +10,7 @@ import (
 // TestStickerCollectionsRoundTripPostgres 回归迁移 0006：个人贴纸/GIF 集合持久化
 // （最新置顶 / 截断 / unsave / clear / 类别隔离）。store 仅存 document_id（无 FK）。
 func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewPasswordStore(pool)
 

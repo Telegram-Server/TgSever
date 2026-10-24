@@ -14,7 +14,7 @@ import (
 // 相邻的不变量：中标号被预留（普通购买与管理员发放都要跳过它）、预留号耗尽库存
 // 时普通升级得到干净的 sold out、中标者最终拿到自己的号码并写进服务消息快照。
 func TestStarGiftAuctionWinnerKeepsWonCollectibleNumberPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

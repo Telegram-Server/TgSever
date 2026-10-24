@@ -17,7 +17,7 @@ import (
 // TestAdminSetLoginPasswordCommandAuditPostgres 后台设置登录密码命令在真实存储上：试运行不写密码，
 // 执行后登录密码落库，命令表和审计表的 request/result/error 里都没有明文密码，也没有不带密钥的摘要。
 func TestAdminSetLoginPasswordCommandAuditPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	passwords := NewLoginPasswordStore(pool)

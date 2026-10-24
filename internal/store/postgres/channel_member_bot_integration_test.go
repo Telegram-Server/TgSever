@@ -8,7 +8,7 @@ import (
 )
 
 func TestChannelStoreListActiveChannelBotMembers(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -81,7 +81,7 @@ func TestChannelStoreListActiveChannelBotMembers(t *testing.T) {
 }
 
 func TestChannelStoreGetParticipantsHidesAnonymousAdminFromRegularMember(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

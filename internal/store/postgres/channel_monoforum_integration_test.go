@@ -12,7 +12,7 @@ import (
 // 新列(monoforum/linked_monoforum_id)经共享 channelColumns + scan 正确往返;再次开启复用、
 // 同步价格;非广播不建。
 func TestChannelStoreEnablingDirectMessagesCreatesMonoforum(t *testing.T) {
-	pool := testPool(t) // 未设 DSN 会 t.Skip
+	pool := testTx(t) // 未设 DSN 会 t.Skip
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

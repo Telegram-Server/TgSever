@@ -5,13 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 )
 
 func TestDialogTopProjectionInvalidationTracksOnlyVisibleTopPayloads(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -136,7 +134,7 @@ VALUES ($1, $2, $3, $4, 'emoji', 'top', $5, 1)`, channelID, topChannelMessage.Me
 	}
 }
 
-func testReadModelVersion(t *testing.T, ctx context.Context, pool *pgxpool.Pool, model string, ownerUserID int64, peerType string, peerID int64) int64 {
+func testReadModelVersion(t *testing.T, ctx context.Context, pool testDB, model string, ownerUserID int64, peerType string, peerID int64) int64 {
 	t.Helper()
 	var version int64
 	if err := pool.QueryRow(ctx, `

@@ -17,7 +17,7 @@ import (
 //   - 内嵌 photo 快照（id/access_hash/sizes）存活；
 //   - history（ListByUser）/ GetByIDs / 更新事件重建路径均带 rich_message。
 func TestSendPrivateRichMessageSurvivesReadPaths(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

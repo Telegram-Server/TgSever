@@ -9,7 +9,7 @@ import (
 
 // Command 读出 BeginCommand 写下的记录；没有记录时 found=false 而不是报错。
 func TestAdminCommandLookupPostgres(t *testing.T) {
-	store := NewAdminStore(testPool(t))
+	store := NewAdminStore(testTx(t))
 	ctx := context.Background()
 	if _, found, err := store.Command(ctx, "lookup-missing"); err != nil || found {
 		t.Fatalf("missing command found=%v err=%v", found, err)

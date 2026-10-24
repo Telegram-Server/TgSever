@@ -12,7 +12,7 @@ import (
 // media 就地换 done、body/edit_date 不变、durable channel_web_page 事件被白名单接受（迁移0016）、
 // 历史读回 done、幂等。需 TELESRV_TEST_POSTGRES_DSN。
 func TestChannelStoreResolveWebPageIntegration(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

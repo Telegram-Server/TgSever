@@ -46,7 +46,7 @@ func TestPlainPrivateSendHotPathClassifier(t *testing.T) {
 }
 
 func TestPlainPrivateSendHotPathDurableFactsAndQueryCount(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	baseCtx := context.Background()
 	users := NewUserStore(pool)
 	suffix := randomSuffix(t)

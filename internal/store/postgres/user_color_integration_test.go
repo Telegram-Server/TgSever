@@ -10,7 +10,7 @@ import (
 )
 
 func TestUserStoreUpdateColorPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	suffix := time.Now().UnixNano() % 1_000_000_000

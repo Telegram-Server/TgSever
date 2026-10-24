@@ -8,7 +8,7 @@ import (
 )
 
 func TestChannelStoreDifferenceStartsAtMemberAvailableMinPts(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -111,7 +111,7 @@ func TestChannelStoreDifferenceStartsAtMemberAvailableMinPts(t *testing.T) {
 }
 
 func TestChannelStorePublicPreviewDifferenceReplaysVisibleMessages(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -225,7 +225,7 @@ func TestChannelStorePublicPreviewDifferenceReplaysVisibleMessages(t *testing.T)
 }
 
 func TestChannelStoreDifferenceUsesDurableMessageSnapshots(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -362,7 +362,7 @@ func TestChannelStoreDifferenceUsesDurableMessageSnapshots(t *testing.T) {
 }
 
 func TestChannelStoreSendFailureBeforePtsAllocationDoesNotRecordNoopGap(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -447,7 +447,7 @@ WHERE channel_id = $1 AND pts > $2`, channelID, created.Channel.Pts).Scan(&gapRo
 }
 
 func TestChannelDifferenceStopsAtPtsHole(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -511,7 +511,7 @@ func TestChannelDifferenceStopsAtPtsHole(t *testing.T) {
 }
 
 func TestReserveChannelPtsRollsBackWithTransaction(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -569,7 +569,7 @@ func TestReserveChannelPtsRollsBackWithTransaction(t *testing.T) {
 }
 
 func TestChannelStoreDifferenceTooLongSnapshot(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

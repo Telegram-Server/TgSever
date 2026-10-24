@@ -16,7 +16,7 @@ import (
 	"telesrv/internal/store"
 )
 
-func externalReplyUsers(t *testing.T, pool *pgxpool.Pool) (domain.User, domain.User) {
+func externalReplyUsers(t *testing.T, pool testDB) (domain.User, domain.User) {
 	t.Helper()
 	ctx := context.Background()
 	users := NewUserStore(pool)
@@ -219,7 +219,7 @@ func TestPrivateExternalReplyAllReadPathsAndReplay(t *testing.T) {
 }
 
 func TestPrivateExternalReplyProtectedPairAndQuoteRejectAtomically(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	a, b := externalReplyUsers(t, pool)
 	messages := newTestMessageStore(pool)

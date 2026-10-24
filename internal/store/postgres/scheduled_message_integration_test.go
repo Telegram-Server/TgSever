@@ -36,7 +36,7 @@ func TestScheduledMessagesContractPostgres(t *testing.T) {
 // lease_until / last_error / sent_message_id，以及私聊 dialogs.has_scheduled 标志随
 // 队列增减维护。
 func TestScheduledMessageColumnsRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

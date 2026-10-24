@@ -10,7 +10,7 @@ import (
 // TestAccountSettingsRoundTripPostgres 回归迁移 0004：账号级单例设置真实持久化
 // （globalPrivacy/accountTTL/sensitive/contactSignUp），含 not-found→默认、upsert 覆盖。
 func TestAccountSettingsRoundTripPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewPasswordStore(pool)
 

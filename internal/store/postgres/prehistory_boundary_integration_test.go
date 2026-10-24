@@ -11,7 +11,7 @@ import (
 // available_min_id 只增不减(upsert/batch/clear history 全是 GREATEST),不显式归零则
 // "隐藏历史期间入群"的成员永久看到空频道,重新加入也救不回。
 func TestPreHistoryHiddenBoundaryReleasedOnDisable(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

@@ -7,7 +7,7 @@ import (
 )
 
 func TestMessageStoreDeleteMessagesRecomputesRecipientUnreadAndTop(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -106,7 +106,7 @@ func TestMessageStoreDeleteMessagesRecomputesRecipientUnreadAndTop(t *testing.T)
 }
 
 func TestMessageStoreDeleteMiddleUnreadKeepsRecipientTop(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -221,7 +221,7 @@ func TestMessageStoreDeleteMiddleUnreadKeepsRecipientTop(t *testing.T) {
 }
 
 func TestMessageStoreDeleteFirstUnreadEmitsSafeUnreadCorrection(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -308,7 +308,7 @@ func TestMessageStoreDeleteFirstUnreadEmitsSafeUnreadCorrection(t *testing.T) {
 }
 
 func TestMessageStoreDeleteHistoryRebuildsDialogAndEmitsDeleteUpdates(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -410,7 +410,7 @@ func TestMessageStoreDeleteHistoryRebuildsDialogAndEmitsDeleteUpdates(t *testing
 }
 
 func TestMessageStoreDeleteHistoryJustClearPreservesHistoryClearMessage(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -501,7 +501,7 @@ WHERE target_user_id = $1
 }
 
 func TestMessageStoreDeleteHistoryJustClearRevokeKeepsPerOwnerAnchors(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -567,7 +567,7 @@ func TestMessageStoreDeleteHistoryJustClearRevokeKeepsPerOwnerAnchors(t *testing
 }
 
 func TestMessageStoreDeleteHistoryJustClearKeepsAnchorAcrossBatches(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

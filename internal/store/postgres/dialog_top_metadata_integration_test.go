@@ -13,7 +13,7 @@ import (
 // 必须带 grouped_id / effect / reply_markup / rich_message —— TDesktop 把 getDialogs
 // 返回的消息入缓存且不被后续 getHistory 覆盖，缺任一字段都让最新那条消息永久按缺失态渲染。
 func TestDialogTopMessageCarriesFullMetadata(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -89,7 +89,7 @@ func TestDialogTopMessageCarriesFullMetadata(t *testing.T) {
 // 同样不复用 message.sql，必须带 grouped_id/effect/reply_markup/rich_message(转发相册/
 // bot 键盘/富文本进收藏夹后子会话最新一条会缺失)。
 func TestSavedDialogTopMessageCarriesFullMetadata(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

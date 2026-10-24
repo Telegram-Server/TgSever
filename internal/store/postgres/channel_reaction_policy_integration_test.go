@@ -225,7 +225,7 @@ WHERE channel_id = $1 AND message_id = $2 AND reaction_type = $3`, env.channelID
 }
 
 func TestChannelStoreSetAvailableReactionsRefreshesRowCache(t *testing.T) {
-	pool := testPool(t) // 未设 DSN 会 t.Skip
+	pool := testTx(t) // 未设 DSN 会 t.Skip
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

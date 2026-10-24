@@ -11,7 +11,7 @@ import (
 )
 
 func TestChannelStoreResolvePublicUsernameRejectsStaleIndex(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -85,7 +85,7 @@ ON CONFLICT (username_lower) DO UPDATE SET peer_type = EXCLUDED.peer_type, peer_
 }
 
 func TestPeerUsernameNamespaceIsGlobal(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

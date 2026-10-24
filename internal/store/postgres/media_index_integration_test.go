@@ -10,7 +10,7 @@ import (
 // TestChannelMediaIndexSearch 端到端验证频道共享媒体索引(迁移 0118):发送各类媒体消息 →
 // 写路径建索引 → SearchChannelMedia 按标签页类别返回正确消息。
 func TestChannelMediaIndexSearch(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -147,7 +147,7 @@ func TestChannelMediaIndexSearch(t *testing.T) {
 }
 
 func TestPrivateMediaCategoryCountsMaterialized(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

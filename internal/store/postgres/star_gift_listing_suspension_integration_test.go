@@ -271,7 +271,7 @@ func TestStarGiftResaleSuspendedByAccountFreezePostgres(t *testing.T) {
 // продавца нет строки в account_restrictions вообще, поэтому FOR SHARE не находит
 // ничего и выставление проходит.
 func TestStarGiftResaleFreezeSkipsNeverFrozenSellerPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	var frozen int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM account_restrictions`).Scan(&frozen); err != nil {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestMessageStoreReadAndEditEmitDurableEvents(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -105,7 +105,7 @@ func TestMessageStoreReadAndEditEmitDurableEvents(t *testing.T) {
 }
 
 func TestMessageStoreEditCanHideEditedBadge(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -175,7 +175,7 @@ func TestMessageStoreEditCanHideEditedBadge(t *testing.T) {
 }
 
 func TestMessageStoreReadHistoryStaleUnreadRepairDoesNotAppendPts(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -300,7 +300,7 @@ func TestMessageStoreReadHistoryStaleUnreadRepairDoesNotAppendPts(t *testing.T) 
 }
 
 func TestMessageStoreReadHistoryClampsFutureMaxIDAndRepairsDialog(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

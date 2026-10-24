@@ -12,7 +12,7 @@ import (
 // TestChannelMultiPin 验证超级群多置顶模型：多条共存、filterPinned 搜索、
 // 上限、unpinAll 批量清除、删除被置顶消息后的缓存重算。
 func TestChannelMultiPin(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

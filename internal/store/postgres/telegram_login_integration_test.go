@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 )
 
@@ -391,7 +389,7 @@ func TestTelegramLoginStorePostgresNativeCallbackAndRetention(t *testing.T) {
 	})
 }
 
-func assertTelegramLoginConfigDeleteTakesClientLock(t *testing.T, pool *pgxpool.Pool, botUserID int64, remove func() (bool, error)) {
+func assertTelegramLoginConfigDeleteTakesClientLock(t *testing.T, pool testDB, botUserID int64, remove func() (bool, error)) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)

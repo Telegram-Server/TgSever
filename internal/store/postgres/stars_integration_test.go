@@ -11,7 +11,7 @@ import (
 // TestStarsLedgerPostgres 回归迁移 0009：Stars 本地账本对真实 PG 的原子语义
 // （首读授予幂等 / 贷记 / 借记原子 / 余额不足拦截且不动账 / keyset 分页末页无游标）。
 func TestStarsLedgerPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	st := NewStarsStore(pool)
 
@@ -126,7 +126,7 @@ func TestStarsLedgerPostgres(t *testing.T) {
 // （is_bot=false、排除系统账号），余额与流水原子写入，新账号建行即 granted=true
 // （吸收起始授予、避免重复发放）。
 func TestStarsAirdropPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	st := NewStarsStore(pool)
 	users := NewUserStore(pool)

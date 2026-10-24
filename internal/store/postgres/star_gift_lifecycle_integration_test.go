@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/deploy"
 	"telesrv/internal/domain"
 )
@@ -1094,7 +1092,7 @@ func TestStarGiftOfferRejectsDeletedOwnerPostgres(t *testing.T) {
 }
 
 func TestStarGiftPurchaseRejectsFrozenRecipientPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -1160,7 +1158,7 @@ func TestStarGiftPurchaseRejectsFrozenRecipientPostgres(t *testing.T) {
 }
 
 func TestStarGiftChannelLifecycleAtomicPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -1665,7 +1663,7 @@ WHERE channel_id=$1 AND message::text LIKE '%auction_acquired%' ORDER BY id DESC
 }
 
 func TestStarGiftCraftFailureConsumesThreeInputsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -1823,7 +1821,7 @@ func upgradedSourceEditForMessage(result domain.StarGiftUpgradeResult, userID in
 func verifyPrepaidMessageRefMigration(
 	t *testing.T,
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool testDB,
 	savedGiftID int64,
 	ownerUserID int64,
 	payerUserID int64,
@@ -1908,7 +1906,7 @@ WHERE target_user_id=$1 AND pts=$2 AND event_type='edit_message'`, userID, pts).
 func verifyPrepaidViewerProjectionMigrationNoop(
 	t *testing.T,
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool testDB,
 	savedGiftID int64,
 	ownerUserID int64,
 	senderUserID int64,
@@ -2043,7 +2041,7 @@ WHERE sender_user_id=$1 AND id=$2`, messageSenderID, privateMessageID, hash); er
 // ~600 XTR gift listed at 35000 XTR no longer locks the market, while genuine
 // premiums within the multiple still push the floor up.
 func TestStarGiftResaleFloorIgnoresTrollListingsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

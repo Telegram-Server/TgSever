@@ -11,7 +11,7 @@ import (
 )
 
 func TestAuthKeyStoreDeleteOrphanedIsBoundedAndProtectsReferencesPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	auths := NewAuthorizationStore(pool)
@@ -102,7 +102,7 @@ WHERE auth_key_id = ANY($1::bigint[])`, []int64{
 }
 
 func TestAuthKeyStoreDeleteCleansPermanentAndTempUpdateStatesPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	userID := createRevokeTestUser(t, ctx, pool, "auth-key-delete-state")
@@ -150,7 +150,7 @@ SELECT
 }
 
 func TestTempAuthKeyRetentionUsesAuthKeyExpiryForBoundAndUnboundKeysPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	bindings := NewTempAuthKeyBindingStore(pool)
@@ -205,7 +205,7 @@ func TestTempAuthKeyRetentionUsesAuthKeyExpiryForBoundAndUnboundKeysPostgres(t *
 }
 
 func TestAuthKeyGetTouchPreventsOrphanCollectionPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	var id [8]byte
@@ -238,7 +238,7 @@ func TestAuthKeyGetTouchPreventsOrphanCollectionPostgres(t *testing.T) {
 }
 
 func TestActiveRawAuthKeyHeartbeatProtectsOtherInstanceKeyPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	var id [8]byte

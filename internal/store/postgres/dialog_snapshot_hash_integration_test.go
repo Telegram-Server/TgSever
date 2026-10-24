@@ -8,7 +8,7 @@ import (
 )
 
 func TestChannelDialogSnapshotHashTracksDependenciesWithoutWideHeaders(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -76,7 +76,7 @@ func TestChannelDialogSnapshotHashTracksDependenciesWithoutWideHeaders(t *testin
 }
 
 func TestPrivateDialogSnapshotHashTracksDraftDependency(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -133,7 +133,7 @@ func TestPrivateDialogSnapshotHashTracksDraftDependency(t *testing.T) {
 }
 
 func TestPrivateDialogAllBuiltinSnapshotIncludesMainAndArchive(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

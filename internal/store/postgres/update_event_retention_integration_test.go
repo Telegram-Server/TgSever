@@ -14,7 +14,7 @@ import (
 )
 
 func TestUserUpdateRetentionUsesClientObservedCommonPrefixPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "update-retention")
 	keys := NewAuthKeyStore(pool)
@@ -121,7 +121,7 @@ SELECT observed_pts FROM update_states WHERE auth_key_id = $1 AND user_id = $2
 }
 
 func TestAuthorizationBindSwitchesAccountAfterRetainedFloorPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	oldUserID := createRevokeTestUser(t, ctx, pool, "retention-switch-old")
 	newUserID := createRevokeTestUser(t, ctx, pool, "retention-switch-new")
@@ -206,7 +206,7 @@ WHERE auth_key_id = $1 AND user_id = $2`, authKeyIDToInt64(mainKey), newUserID).
 }
 
 func TestAuthorizationBindRejectsFutureSameUserStatePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "retention-stale-rebind")
 	keys := NewAuthKeyStore(pool)
@@ -458,7 +458,7 @@ WHERE auth_key_id = $1 AND user_id = $2`, authKeyIDToInt64(newKey), userID).Scan
 }
 
 func TestUserUpdateRetentionOldTailsDoNotConsumeCandidatePassPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	const tailUsers = 256
 	const totalUsers = tailUsers + 1

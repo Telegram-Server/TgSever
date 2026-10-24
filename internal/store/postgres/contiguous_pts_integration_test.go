@@ -19,7 +19,7 @@ func TestReserveUserPtsRejectsZeroBeforeQuery(t *testing.T) {
 // back first allocation must leave no watermark; the committed retry must
 // create one range ending at pts=3 with pts_count=3.
 func TestAppendAllocatedFirstPtsRangeAndRollback(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner, err := NewUserStore(pool).Create(ctx, domain.User{
@@ -89,7 +89,7 @@ func TestAppendAllocatedFirstPtsRangeAndRollback(t *testing.T) {
 
 // TestAppendRejectsPtsHole 用真实 PG 验证显式 pts 写入不能制造空洞。
 func TestAppendRejectsPtsHole(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	suffix := randomSuffix(t)
@@ -146,7 +146,7 @@ func TestAppendRejectsPtsHole(t *testing.T) {
 }
 
 func TestAppendWithDispatchWritesEventAndOutboxAtomically(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	suffix := randomSuffix(t)
@@ -204,7 +204,7 @@ func TestAppendWithDispatchWritesEventAndOutboxAtomically(t *testing.T) {
 }
 
 func TestDispatchOutboxLifecycleKeepsDurableEvents(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	suffix := randomSuffix(t)

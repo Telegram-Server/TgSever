@@ -7,14 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 )
 
 // ratingTestUser inserts a user row with an explicit creation date so the account
 // age signal is deterministic.
-func ratingTestUser(t *testing.T, pool *pgxpool.Pool, seed int64, createdAt time.Time) int64 {
+func ratingTestUser(t *testing.T, pool testDB, seed int64, createdAt time.Time) int64 {
 	t.Helper()
 	ctx := context.Background()
 	var id int64
@@ -29,7 +27,7 @@ RETURNING id`, seed, fmt.Sprintf("%d", seed), createdAt).Scan(&id); err != nil {
 
 // ratingTestCatalogRevision publishes a throwaway star gift so peer_star_gifts
 // rows can satisfy their catalog revision foreign key.
-func ratingTestCatalogRevision(t *testing.T, pool *pgxpool.Pool) (revisionID, giftID int64) {
+func ratingTestCatalogRevision(t *testing.T, pool testDB) (revisionID, giftID int64) {
 	t.Helper()
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -69,7 +67,7 @@ SELECT id FROM star_gift_catalog_revisions WHERE gift_id = $1 ORDER BY revision 
 // creates the row, a stale version is refused without an error, and the next
 // version wins.
 func TestAccountRatingSaveVersionConflict(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewAccountRatingStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -153,7 +151,7 @@ func TestAccountRatingSaveVersionConflict(t *testing.T) {
 // TestAccountRatingAdjustmentIdempotency covers the manual ledger: a replayed
 // command key records nothing new and the manual total feeds the recompute.
 func TestAccountRatingAdjustmentIdempotency(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewAccountRatingStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -204,7 +202,7 @@ func TestAccountRatingAdjustmentIdempotency(t *testing.T) {
 // Stars ledger sign split, saved gifts, upheld moderation cases, the peer flags,
 // account age and the private-message count.
 func TestAccountRatingSignalsSources(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewAccountRatingStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -287,7 +285,7 @@ INSERT INTO message_boxes (
 // TestAccountRatingLeaderboardPaging covers the keyset walk over
 // (level DESC, stars DESC, user_id).
 func TestAccountRatingLeaderboardPaging(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewAccountRatingStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000
@@ -338,7 +336,7 @@ func TestAccountRatingLeaderboardPaging(t *testing.T) {
 // Without this query the read model can never populate itself -- StaleAccountRatings
 // walks account_rating and so cannot return a user who is not in it.
 func TestAccountRatingUnratedAccountsSeedsTheReadModel(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewAccountRatingStore(pool)
 	seed := time.Now().UnixNano() % 1_000_000

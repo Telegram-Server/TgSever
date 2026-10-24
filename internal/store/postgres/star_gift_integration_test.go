@@ -14,7 +14,7 @@ import (
 // TestStarGiftStorePostgres 回归迁移 0089：目录不可变版本与用户收到礼物实例对真实 PG 的 CRUD
 // （版本固定 / 创建 / keyset 分页 / excludeUnsaved / 隐藏切换 / 转换幂等）。
 func TestStarGiftStorePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	st := NewStarGiftStore(pool)
 
@@ -255,7 +255,7 @@ func TestStarGiftStorePostgres(t *testing.T) {
 // gift_date 被重置为转移时刻而 id 不变，按 id 排序会让被转送的礼物停在旧位置。
 // keyset 游标必须携带日期，且同秒礼物靠 id 兜底。
 func TestStarGiftProfileDateOrderPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	st := NewStarGiftStore(pool)
 

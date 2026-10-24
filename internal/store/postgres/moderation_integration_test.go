@@ -8,14 +8,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	moderationapp "telesrv/internal/app/moderation"
 	"telesrv/internal/domain"
 )
 
 func TestModerationReportStoreAtomicEvidenceAndIdempotency(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	reporter := now.UnixNano()&0x3fffffff + 5_000
@@ -156,7 +155,7 @@ WHERE reporter_user_id = $1 AND source = 'sponsored'`,
 }
 
 func TestModerationCaseActionAppealLinkAndTelemetryPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	reporter := now.UnixNano()&0x3fffffff + 12_000
@@ -267,7 +266,7 @@ func TestModerationCaseActionAppealLinkAndTelemetryPostgres(t *testing.T) {
 }
 
 func TestModerationSanctionSupersessionAndAppealOwnershipPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	store := NewModerationReportStore(pool)
@@ -410,7 +409,7 @@ func TestModerationSanctionSupersessionAndAppealOwnershipPostgres(t *testing.T) 
 	}
 }
 
-func cleanupModerationReport(t *testing.T, pool *pgxpool.Pool, reportID int64) {
+func cleanupModerationReport(t *testing.T, pool testDB, reportID int64) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)

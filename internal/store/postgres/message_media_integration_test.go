@@ -14,7 +14,7 @@ import (
 //     能拿回 media（曾因 update event 查询漏选 m.media 导致收件人/离线丢媒体，本测试守护该修复）；
 //   - history（ListByUser）读取也带 media。
 func TestSendPrivateMediaSurvivesUpdateEvent(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -89,7 +89,7 @@ func TestSendPrivateMediaSurvivesUpdateEvent(t *testing.T) {
 }
 
 func TestEditPrivateTodoMediaByParticipantPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -163,7 +163,7 @@ func TestEditPrivateTodoMediaByParticipantPostgres(t *testing.T) {
 }
 
 func TestEditChannelTodoMediaByParticipantPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -293,7 +293,7 @@ func TestEditChannelTodoMediaByParticipantPostgres(t *testing.T) {
 }
 
 func TestSendChannelMediaSurvivesDifference(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

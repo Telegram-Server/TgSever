@@ -7,7 +7,7 @@ import (
 )
 
 func TestChannelStoreListDialogsUsesDateAndOffset(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -68,7 +68,7 @@ func TestChannelStoreListDialogsUsesDateAndOffset(t *testing.T) {
 }
 
 func TestChannelStoreListDialogsWarmsDialogCache(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -117,7 +117,7 @@ func TestChannelStoreListDialogsWarmsDialogCache(t *testing.T) {
 }
 
 func TestChannelStoreMaterializedSnapshotWarmsExactDialogCache(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -185,7 +185,7 @@ WHERE user_id = $1 AND channel_id = $2`, owner.ID, channelID); err != nil {
 }
 
 func TestChannelStoreListDialogsScansChannelWallpaper(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -243,7 +243,7 @@ func TestChannelStoreListDialogsScansChannelWallpaper(t *testing.T) {
 }
 
 func TestChannelStoreListDialogsDerivesRecipientTopWithoutWriteFanout(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -314,7 +314,7 @@ func TestChannelStoreListDialogsDerivesRecipientTopWithoutWriteFanout(t *testing
 }
 
 func TestChannelStoreListDialogsSeeksBeyondQueryWindow(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -417,7 +417,7 @@ FROM unnest($1::bigint[]) AS t(id)`, ids, owner.ID); err != nil {
 }
 
 func TestChannelStoreListDialogsFolderFiltersBeforeQueryLimit(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

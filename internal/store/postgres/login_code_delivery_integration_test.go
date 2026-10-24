@@ -19,7 +19,7 @@ import (
 )
 
 func TestLoginCodeDeliveryPostgresAtomicFactsAndReplay(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	user := createLoginCodeDeliveryTestUser(t, ctx, pool, "basic")
 	req := domain.LoginCodeDeliveryRequest{
@@ -289,7 +289,7 @@ WHERE peer_type = 'user' AND peer_id = $1`, domain.OfficialSystemUserID).Scan(&u
 }
 
 func TestLoginCodeDeliveryPostgresSurvivesCompiledOfficialUsernameChange(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	recipient := createLoginCodeDeliveryTestUser(t, ctx, pool, "official-source-update-recipient")
 	decoy := createLoginCodeDeliveryTestUser(t, ctx, pool, "official-source-update-decoy")
@@ -345,7 +345,7 @@ WHERE peer_type = 'user' AND peer_id = $1 AND editable`, domain.OfficialSystemUs
 }
 
 func TestLoginCodeDeliveryPostgresReceiptRetentionIsBoundedAndSeekOrdered(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	now := time.Now().Truncate(time.Second)
 	users := []domain.User{
@@ -389,7 +389,7 @@ func TestLoginCodeDeliveryPostgresReceiptRetentionIsBoundedAndSeekOrdered(t *tes
 }
 
 func TestLoginCodeDeliveryPostgresRollsBackEveryFact(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	user := createLoginCodeDeliveryTestUser(t, ctx, pool, "rollback")
 	first, err := NewMessageStore(pool).DeliverLoginCodeMessage(ctx, domain.LoginCodeDeliveryRequest{
@@ -491,7 +491,7 @@ func (a loginCodeFixedBoxAllocator) CurrentBoxID(context.Context, int64) (int, e
 	return a.boxID, nil
 }
 
-func createLoginCodeDeliveryTestUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool, label string) domain.User {
+func createLoginCodeDeliveryTestUser(t *testing.T, ctx context.Context, pool testDB, label string) domain.User {
 	t.Helper()
 	user, err := NewUserStore(pool).Create(ctx, domain.User{
 		AccessHash: 8100000000,
@@ -504,7 +504,7 @@ func createLoginCodeDeliveryTestUser(t *testing.T, ctx context.Context, pool *pg
 	return user
 }
 
-func assertLoginCodeDeliveryFacts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID int64, msg domain.Message, want int) {
+func assertLoginCodeDeliveryFacts(t *testing.T, ctx context.Context, pool testDB, userID int64, msg domain.Message, want int) {
 	t.Helper()
 	queries := []struct {
 		name string

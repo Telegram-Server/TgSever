@@ -9,7 +9,7 @@ import (
 )
 
 func TestAuthDeliveryReportPostgresIsIdempotentAndRetainedSeparately(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	createdAt := time.Unix(123_456, 0).UTC()
 	report, err := domain.NewAuthDeliveryReport(

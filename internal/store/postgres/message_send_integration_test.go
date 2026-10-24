@@ -11,7 +11,7 @@ import (
 )
 
 func TestMessageStoreSendPrivateTextRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -120,7 +120,7 @@ func TestMessageStoreSendPrivateTextRoundTrip(t *testing.T) {
 }
 
 func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -200,7 +200,7 @@ func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
 }
 
 func TestMessageStoreRequestedPeerDisclosureSnapshotRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -261,7 +261,7 @@ func TestMessageStoreRequestedPeerDisclosureSnapshotRoundTrip(t *testing.T) {
 }
 
 func TestMessageStorePhoneCallServiceFirstMessageFeedsDialogsAndUpdates(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -367,7 +367,7 @@ func TestMessageStorePhoneCallServiceFirstMessageFeedsDialogsAndUpdates(t *testi
 }
 
 func TestUpdateEventStorePreservesChannelForwardRefsWithoutChannelSnapshot(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -424,7 +424,7 @@ func TestUpdateEventStorePreservesChannelForwardRefsWithoutChannelSnapshot(t *te
 }
 
 func TestMessageStoreSendPrivateTextDuplicateDoesNotAppendPts(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -518,7 +518,7 @@ func requireChannelForwardRefOnlyEvent(t *testing.T, event domain.UpdateEvent, s
 }
 
 func TestMessageStoreSendPrivateTextRecomputesInboxUnreadFromReadMax(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -607,7 +607,7 @@ func TestMessageStoreSendPrivateTextRecomputesInboxUnreadFromReadMax(t *testing.
 }
 
 func TestMessageStoreSendPrivateTextRollbackDoesNotAdvancePts(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

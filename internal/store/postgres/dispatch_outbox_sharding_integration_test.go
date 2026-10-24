@@ -12,7 +12,7 @@ import (
 )
 
 func TestDispatchOutboxUserHeadBlocksHigherPts(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner := createTestUser(t, ctx, NewUserStore(pool), "+1884"+suffix+"01", "OutboxHead", "")
@@ -397,7 +397,7 @@ WHERE (target_user_id, id) IN (($1, $2), ($3, $4))
 }
 
 func TestDispatchOutboxDurableHeadRejectsStaleRowReference(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner := createTestUser(t, ctx, NewUserStore(pool), "+1886"+suffix+"01", "OutboxHeadFK", "")

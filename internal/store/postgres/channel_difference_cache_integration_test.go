@@ -10,7 +10,7 @@ import (
 )
 
 func TestChannelDifferenceBaseLoaderRejectsChangedStableCutPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner, err := NewUserStore(pool).Create(ctx, domain.User{
@@ -59,7 +59,7 @@ func TestChannelDifferenceBaseLoaderRejectsChangedStableCutPostgres(t *testing.T
 }
 
 func TestChannelDifferenceBaseCacheSharesDurablePageAcrossViewersPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -134,7 +134,7 @@ func TestChannelDifferenceBaseCacheSharesDurablePageAcrossViewersPostgres(t *tes
 }
 
 func TestChannelDifferenceRetentionInvalidatesSharedBasePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner, err := NewUserStore(pool).Create(ctx, domain.User{

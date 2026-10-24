@@ -10,7 +10,7 @@ import (
 )
 
 func TestEphemeralReportStoreDurableEvidenceAndIdempotency(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	now := time.Now()
 	reporter := now.UnixNano()&0x3fffffff + 1000

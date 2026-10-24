@@ -8,7 +8,7 @@ import (
 )
 
 func TestChannelStoreEditAboutPersistsAndChecksPermission(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -75,7 +75,7 @@ func TestChannelStoreEditAboutPersistsAndChecksPermission(t *testing.T) {
 }
 
 func TestChannelStoreCreatorCanEditOwnAdminRights(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -159,7 +159,7 @@ func TestChannelStoreCreatorCanEditOwnAdminRights(t *testing.T) {
 }
 
 func TestChannelStoreAdminLogFiltersAndSearch(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -297,7 +297,7 @@ func TestChannelStoreAdminLogFiltersAndSearch(t *testing.T) {
 // real database: creator-owned and PostMessages-admin broadcast channels are included; an admin without
 // PostMessages, an owned megagroup, and a member-only broadcast are excluded.
 func TestChannelStoreListSendAsChannelsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -364,7 +364,7 @@ func TestChannelStoreListSendAsChannelsPostgres(t *testing.T) {
 }
 
 func TestChannelStoreCommonChannelsOnlySharedMegagroups(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -447,7 +447,7 @@ func TestChannelStoreCommonChannelsOnlySharedMegagroups(t *testing.T) {
 }
 
 func TestChannelStoreListActiveChannelIDsForUserUsesMembershipIndexState(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -531,7 +531,7 @@ func TestChannelStoreListActiveChannelIDsForUserUsesMembershipIndexState(t *test
 }
 
 func TestChannelStoreUserChannelMemberIndexListPaths(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -634,7 +634,7 @@ func TestChannelStoreUserChannelMemberIndexListPaths(t *testing.T) {
 }
 
 func TestChannelStoreListStoryPostableChannelsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -723,7 +723,7 @@ func TestChannelStoreListStoryPostableChannelsPostgres(t *testing.T) {
 }
 
 func TestChannelStoreLeftChannelsReturnsPagedLeftMemberships(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -791,7 +791,7 @@ func TestChannelStoreLeftChannelsReturnsPagedLeftMemberships(t *testing.T) {
 }
 
 func TestChannelStoreDiscussionGroupLinksAreBidirectional(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

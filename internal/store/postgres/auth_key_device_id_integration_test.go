@@ -9,7 +9,7 @@ import (
 )
 
 func TestAuthKeyDeviceIDContractPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	storetest.AuthKeyDeviceIDContract(t,
 		func(*testing.T) store.AuthKeyStore { return NewAuthKeyStore(pool) },
 		// 只共享数据库的新实例，模拟服务端重启后重新读取；用生产路径的批量读取包装，

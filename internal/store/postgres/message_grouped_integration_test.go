@@ -12,7 +12,7 @@ import (
 // 全部读路径保真——发送结果双盒、history、GetByIDs、以及更新事件重建路径（离线
 // difference / 在线推送共用）。这是「漏一处读站点=分组静默丢失」最易踩的地方。
 func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -101,7 +101,7 @@ func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
 // TestSendChannelGroupedIDSurvivesReadPaths 回归迁移 0008：频道侧（手写 SQL）相册
 // grouped_id 经发送结果/事件/history/GetChannelMessages 保真。
 func TestSendChannelGroupedIDSurvivesReadPaths(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

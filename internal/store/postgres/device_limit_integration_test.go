@@ -13,7 +13,7 @@ import (
 // 冻结读路径照旧报告"没有冻结记录"（SetAccountFrozen 的 would_change 等据此判断），第一次
 // 冻结仍是 version 1，冻结写入不动上限。迁移前就有的未冻结行（command_id 可能为空）仍是冻结记录。
 func TestDeviceLimitOnlyRowIsNotAFreezeRecordPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	auths := NewAuthorizationStore(pool)

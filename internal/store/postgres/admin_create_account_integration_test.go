@@ -16,7 +16,7 @@ import (
 // 试运行不建号，同一 command id 重放不建第二个号，每次（含号码冲突的失败）都写入命令日志和审计日志，
 // 建出的账号没有任何授权。
 func TestAdminCreateAccountCommandAuditPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	authorizations := NewAuthorizationStore(pool)

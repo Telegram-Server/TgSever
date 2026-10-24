@@ -9,7 +9,7 @@ import (
 )
 
 func TestBootstrapUpdateJobPostgresSameAuthKeyReconnectTakesOverPendingSession(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	user := createLoginCodeDeliveryTestUser(t, ctx, pool, "bootstrap-reconnect")
 	msg, err := NewMessageStore(pool).Create(ctx, domain.Message{
@@ -53,7 +53,7 @@ func TestBootstrapUpdateJobPostgresSameAuthKeyReconnectTakesOverPendingSession(t
 }
 
 func TestBootstrapUpdateJobPostgresMarksReadinessBatchByOrdinal(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	user := createLoginCodeDeliveryTestUser(t, ctx, pool, "bootstrap-batch")
 	messages := NewMessageStore(pool)

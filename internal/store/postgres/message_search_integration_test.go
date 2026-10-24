@@ -8,7 +8,7 @@ import (
 )
 
 func TestMessageSearchSenderAndCountPredicates(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	suffix := randomSuffix(t)

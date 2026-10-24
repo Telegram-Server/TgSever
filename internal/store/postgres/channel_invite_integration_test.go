@@ -11,7 +11,7 @@ import (
 )
 
 func TestChannelStoreCreateChannelCreatesPermanentInviteAndHasLink(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -65,7 +65,7 @@ func TestChannelStoreCreateChannelCreatesPermanentInviteAndHasLink(t *testing.T)
 }
 
 func TestChannelStoreJoinRejectsKickedMember(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -167,7 +167,7 @@ func TestChannelStoreJoinRejectsKickedMember(t *testing.T) {
 }
 
 func TestChannelStoreImportInviteRequestNeededAndUsageLimitErrors(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -253,7 +253,7 @@ func TestChannelStoreImportInviteRequestNeededAndUsageLimitErrors(t *testing.T) 
 }
 
 func TestChannelStorePendingJoinRequestsSummaryAndInviteAdmins(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -444,7 +444,7 @@ WHERE channel_id = $1 AND invite_id = $2`, channelID, invite.Invite.InviteID); e
 // 撤销后重建、非授权用户被拒（DrKLO 建频道后 getExportedChatInvites 直接取
 // invites[0]，主链接缺失即客户端闪退）。
 func TestChannelStoreEnsurePermanentInvite(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

@@ -9,7 +9,7 @@ import (
 )
 
 func TestStarGiftLedgerTransactionDirectionsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	ownerID := (time.Now().UnixNano() & 0x1fffffffffffffff) + 3_000_000_000
 	channelID := ownerID + 1

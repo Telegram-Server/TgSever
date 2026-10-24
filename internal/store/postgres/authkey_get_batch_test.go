@@ -139,7 +139,7 @@ func TestBatchedAuthKeyStorePostgres(t *testing.T) {
 }
 
 func TestNewBatchedAuthKeyStoreRejectsInvalidConfig(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	base := NewAuthKeyStore(pool)
 	for _, cfg := range []AuthKeyGetBatchConfig{
 		{},

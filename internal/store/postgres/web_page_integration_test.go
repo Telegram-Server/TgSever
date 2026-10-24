@@ -10,7 +10,7 @@ import (
 // TestWebPageStoreRoundTrip 验证 web_pages 的 upsert/读回（snapshot JSONB 字节级往返）与
 // 按 url_hash 去重覆盖。需 TELESRV_TEST_POSTGRES_DSN。
 func TestWebPageStoreRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewMediaStore(pool)
 

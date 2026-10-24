@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
@@ -18,7 +16,7 @@ import (
 // verificationTestUser inserts a throwaway user row and registers the cleanup for
 // everything the verification tables may hang off it. Events reference the
 // application with ON DELETE RESTRICT, so the timeline has to go first.
-func verificationTestUser(t *testing.T, pool *pgxpool.Pool) int64 {
+func verificationTestUser(t *testing.T, pool testDB) int64 {
 	t.Helper()
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -94,7 +92,7 @@ func submittedVerificationApplication(t *testing.T, s *VerificationStore, applic
 	return app
 }
 
-func verificationUserVerified(t *testing.T, pool *pgxpool.Pool, userID int64) bool {
+func verificationUserVerified(t *testing.T, pool testDB, userID int64) bool {
 	t.Helper()
 	var verified bool
 	if err := pool.QueryRow(context.Background(),
@@ -124,7 +122,7 @@ func verificationTxApply(_ *testing.T) func(context.Context, domain.Verification
 // real schema: a draft is opened once and resumed on the next /start, the payload
 // round-trips, and only a complete application reaches the queue.
 func TestVerificationDraftLifecyclePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewVerificationStore(pool)
 	applicant := verificationTestUser(t, pool)
@@ -206,7 +204,7 @@ func TestVerificationDraftLifecyclePostgres(t *testing.T) {
 // TestVerificationActiveTargetUniquenessPostgres is the partial unique index at
 // work, including the cancelled-draft case the submitted_at CHECK constrains.
 func TestVerificationActiveTargetUniquenessPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewVerificationStore(pool)
 	first := verificationTestUser(t, pool)
@@ -256,7 +254,7 @@ func TestVerificationActiveTargetUniquenessPostgres(t *testing.T) {
 // store's hand: a draft that is withdrawn before submission still needs
 // submitted_at, because "status <> 'draft'" requires it.
 func TestVerificationCancelledDraftPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewVerificationStore(pool)
 	applicant := verificationTestUser(t, pool)
@@ -290,7 +288,7 @@ func TestVerificationCancelledDraftPostgres(t *testing.T) {
 // flag and the decision share one transaction, so a failing callback leaves
 // neither behind and a successful one cannot be observed without the other.
 func TestVerificationApproveWritesPeerFlagPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewVerificationStore(pool)
 	applicant := verificationTestUser(t, pool)
@@ -545,7 +543,7 @@ WHERE application_id = $1 AND kind = 'approved'`, app.ID).Scan(&events); err != 
 // same transaction, the application stays approved as history, and the revocation
 // notifies exactly once.
 func TestVerificationRevokePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewVerificationStore(pool)
 	applicant := verificationTestUser(t, pool)
@@ -650,7 +648,7 @@ WHERE application_id = $1 AND kind = 'revoked'`, app.ID).Scan(&revokedOutbox); e
 // TestVerificationHistoryAndOutboxPostgres pins the append-only timeline and
 // walks one notification from pending to delivered.
 func TestVerificationHistoryAndOutboxPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewVerificationStore(pool)
 	applicant := verificationTestUser(t, pool)
@@ -769,7 +767,7 @@ WHERE application_id = $1 AND created_at < (
 // and keyset paging. Every assertion is scoped by the date lower bound so rows
 // from other runs cannot leak into it.
 func TestVerificationQueueQueriesPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewVerificationStore(pool)
 	suffix := randomSuffix(t)
@@ -923,7 +921,7 @@ func TestVerificationQueueQueriesPostgres(t *testing.T) {
 // TestVerificationMissingApplicationPostgres pins the not-found surface every
 // mutation shares.
 func TestVerificationMissingApplicationPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewVerificationStore(pool)
 	var missing int64

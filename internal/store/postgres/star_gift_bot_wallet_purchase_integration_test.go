@@ -18,7 +18,7 @@ import (
 // TestBotGiftPurchaseDebitsBotWalletPostgres proves a bot-initiated sendGift is
 // charged to bot_stars_balances and leaves the personal ledger untouched.
 func TestBotGiftPurchaseDebitsBotWalletPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -157,7 +157,7 @@ WHERE bot_user_id=$1 AND amount<0 ORDER BY id DESC LIMIT 1`, bot.ID).Scan(&reaso
 // keep the catalog price, otherwise the fix above would just disable
 // conversion for everyone.
 func TestBotGiftPurchaseIsNotConvertibleToStarsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -300,7 +300,7 @@ func TestBotGiftPurchaseIsNotConvertibleToStarsPostgres(t *testing.T) {
 // never earned anything has an absent wallet row, which must read as an empty
 // wallet rather than as an internal failure.
 func TestGiftPurchaseForUnfundedBotRefusesPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

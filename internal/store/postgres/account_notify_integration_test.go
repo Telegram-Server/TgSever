@@ -10,7 +10,7 @@ import (
 // TestNotifySettingsRoundTripPostgres 回归迁移 0005：per-scope 通知设置真实持久化
 // （peer / 类别默认 / 批量 / reset），含可空字段=未设置语义。
 func TestNotifySettingsRoundTripPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewPasswordStore(pool)
 

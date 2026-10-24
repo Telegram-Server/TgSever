@@ -12,7 +12,7 @@ import (
 // projection against the real schema. It verifies linked-root mapping and the
 // durable idempotent boundary without invoking the full discussion aggregate.
 func TestResolveDiscussionReadTargetPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

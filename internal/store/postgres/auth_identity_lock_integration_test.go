@@ -185,7 +185,7 @@ func TestAuthIdentitySelectorSerializesWithPermanentRevocationAndDeletePostgres(
 }
 
 func TestAuthIdentityAuthorizationMirrorUsesLockedPrimaryLayerPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	auths := NewAuthorizationStore(pool)

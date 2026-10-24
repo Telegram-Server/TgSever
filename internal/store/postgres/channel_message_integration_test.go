@@ -12,7 +12,7 @@ import (
 )
 
 func TestChannelStoreSendMessageFansOutDialogRows(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -411,7 +411,7 @@ WHERE user_id = $1 AND channel_id = $2`, friend.ID, channelID).Scan(&recoveryDat
 }
 
 func TestChannelStoreStoryMessageForwardsPublicOnlyAndDeleteRollbackPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -523,7 +523,7 @@ func TestChannelStoreStoryMessageForwardsPublicOnlyAndDeleteRollbackPostgres(t *
 }
 
 func TestChannelStoreSendMessageViaBotIDSurvivesReadPaths(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -692,7 +692,7 @@ func TestChannelStoreSendMessageViaBotIDSurvivesReadPaths(t *testing.T) {
 }
 
 func TestChannelStoreSendMessageSkipDeliveryAdvancesReadBoundary(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -881,7 +881,7 @@ func TestChannelStoreConcurrentSendAndReadHistoryDoNotSurfaceDeadlock(t *testing
 }
 
 func TestChannelStoreJoinInitialReadWatermarkSkipsExistingHistory(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -975,7 +975,7 @@ func TestChannelStoreJoinInitialReadWatermarkSkipsExistingHistory(t *testing.T) 
 }
 
 func TestChannelStoreInviteInitialReadWatermarkSkipsExistingHistory(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -1037,7 +1037,7 @@ func TestChannelStoreInviteInitialReadWatermarkSkipsExistingHistory(t *testing.T
 }
 
 func TestChannelStoreImportInviteInitialReadWatermarkSkipsExistingHistory(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -1124,7 +1124,7 @@ func TestChannelStoreImportInviteInitialReadWatermarkSkipsExistingHistory(t *tes
 }
 
 func TestChannelStoreSendMessageResolvesReplyTopID(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -1216,7 +1216,7 @@ func TestChannelStoreSendMessageResolvesReplyTopID(t *testing.T) {
 }
 
 func TestChannelStoreHistorySupportsOffsetDateOnly(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -1275,7 +1275,7 @@ func TestChannelStoreHistorySupportsOffsetDateOnly(t *testing.T) {
 }
 
 func TestChannelStoreDeleteHistoryForEveryoneBatchesHugeMaxID(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

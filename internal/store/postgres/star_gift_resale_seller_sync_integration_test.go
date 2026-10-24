@@ -20,7 +20,7 @@ import (
 // server state and server push, so a client still showing the gift after this
 // test passes is showing its own cache, not our state.
 func TestStarGiftResaleClearsSellerProfileStatePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

@@ -78,7 +78,7 @@ func TestTempAuthKeyBindingStoreRejectsIntegerWraparoundPostgres(t *testing.T) {
 	if strconv.IntSize < 64 {
 		t.Skip("64-bit int required to construct an out-of-int32 expiry")
 	}
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	bindings := NewTempAuthKeyBindingStore(pool)
@@ -106,7 +106,7 @@ func TestTempAuthKeyBindingStoreRejectsIntegerWraparoundPostgres(t *testing.T) {
 }
 
 func TestAuthorizationStoreRejectsTemporaryProtocolKeyPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	temp := saveTempIdentityTestAuthKey(t, ctx, pool, keys, int(time.Now().Add(time.Hour).Unix()))
@@ -126,7 +126,7 @@ func TestAuthorizationStoreRejectsTemporaryProtocolKeyPostgres(t *testing.T) {
 }
 
 func TestTempAuthKeyBindingStorePreservesHandshakeExpiryAndRejectsRebindPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	keys := NewAuthKeyStore(pool)
 	bindings := NewTempAuthKeyBindingStore(pool)
@@ -186,7 +186,7 @@ func TestTempAuthKeyBindingStorePreservesHandshakeExpiryAndRejectsRebindPostgres
 }
 
 func TestTempAuthKeyBindingStoreAtomicallyMergesLayerObservationsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	tests := []struct {
 		name      string
@@ -487,7 +487,7 @@ SELECT EXISTS (
 func saveTempIdentityTestAuthKey(
 	t *testing.T,
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool testDB,
 	keys store.AuthKeyStore,
 	expiresAt int,
 ) [8]byte {
@@ -574,7 +574,7 @@ func assertTempIdentityAuthKeyMissing(
 func assertTempIdentityLayerTuple(
 	t *testing.T,
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool testDB,
 	authKeyID [8]byte,
 	wantLayer int,
 	wantObservationID int64,
@@ -598,7 +598,7 @@ WHERE auth_key_id = $1`, authKeyIDToInt64(authKeyID)).Scan(&layer, &observationI
 func assertTempIdentityAuthorizationLayer(
 	t *testing.T,
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	pool testDB,
 	authKeyID [8]byte,
 	wantLayer int,
 ) {

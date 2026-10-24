@@ -8,7 +8,7 @@ import (
 )
 
 func TestChannelCreateInitialPtsBaselinePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -70,7 +70,7 @@ WHERE c.id = $1`, channelID).Scan(
 }
 
 func TestChannelStoreGetChannelsBatchesVisibleAndPublicPreview(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

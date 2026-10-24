@@ -11,7 +11,7 @@ import (
 )
 
 func TestClaimOfficialUsernameDisplacesOrdinaryUserAtomically(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 
@@ -60,7 +60,7 @@ func TestClaimOfficialUsernameDisplacesOrdinaryUserAtomically(t *testing.T) {
 }
 
 func TestClaimOfficialUsernameDoesNotDisplaceBot(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	suffix := time.Now().UnixNano()

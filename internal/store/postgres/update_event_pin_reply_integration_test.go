@@ -11,7 +11,7 @@ import (
 // 接收方经 ListAfter 读到的 pin 服务消息事件必须携带 reply_to（指向
 // 接收方视角的被置顶消息），否则 TDesktop 渲染 "pinned Deleted message"。
 func TestUpdateEventListAfterCarriesPinServiceReply(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

@@ -12,7 +12,7 @@ import (
 // 双盒 media 就地换 done、body/edit_date 不变（无「已编辑」标记）、durable web_page 事件
 // 经 box JOIN 重建出 done media（difference 复用）、幂等。需 TELESRV_TEST_POSTGRES_DSN。
 func TestMessageStoreResolveWebPageIntegration(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

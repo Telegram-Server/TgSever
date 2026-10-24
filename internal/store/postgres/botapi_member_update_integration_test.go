@@ -4,14 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 	"telesrv/internal/store/storetest"
 )
 
 // botAPIMemberUpdateFixture 建一个机器人与一个普通用户，结束时连同队列与用户一起清理。
-func botAPIMemberUpdateFixture(t *testing.T, pool *pgxpool.Pool) storetest.BotAPIMemberUpdateFixture {
+func botAPIMemberUpdateFixture(t *testing.T, pool testDB) storetest.BotAPIMemberUpdateFixture {
 	t.Helper()
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -33,7 +31,7 @@ VALUES ($1, $1, 'member-queue-secret')`, bot.ID); err != nil {
 }
 
 func TestBotAPIChatMemberUpdatesRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	storetest.BotAPIMemberUpdates(t, func(t *testing.T) storetest.BotAPIMemberUpdateFixture {
 		return botAPIMemberUpdateFixture(t, pool)
 	})
@@ -41,7 +39,7 @@ func TestBotAPIChatMemberUpdatesRoundTrip(t *testing.T) {
 
 // 只有 Postgres 才有的部分：ListTailBotAPIUpdates 读出成员载荷，以及表约束本身。
 func TestBotAPIChatMemberUpdatesTailAndConstraintsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	f := botAPIMemberUpdateFixture(t, pool)
 	if _, created, err := f.Store.EnqueueBotAPIUpdate(ctx, storetest.BotAPIMemberUpdateRequest(f, domain.BotAPIUpdateMyChatMember, f.BotID)); err != nil || !created {

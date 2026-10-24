@@ -10,7 +10,7 @@ import (
 )
 
 func TestContactProjectionForViewerUserIDsPostgresDoesNotCrossPairs(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -92,7 +92,7 @@ func TestContactProjectionForViewerUserIDsPostgresDoesNotCrossPairs(t *testing.T
 }
 
 func TestGetReverseContactsForViewerUserIDsPostgresDoesNotCrossPairs(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

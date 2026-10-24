@@ -10,7 +10,7 @@ import (
 )
 
 func TestPremiumPlanAdminOverrideSurvivesConfigSync(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	premium := NewPremiumStore(pool, nil, domain.PremiumBotConfiguredUserID())
 	const months = 119

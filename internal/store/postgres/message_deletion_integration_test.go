@@ -10,7 +10,7 @@ import (
 )
 
 func TestMessageDeletionsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	storetest.MessageDeletions(t, func(t *testing.T) storetest.MessageDeletionFixture {
 		ctx := context.Background()
 		users := NewUserStore(pool)
@@ -28,7 +28,7 @@ func TestMessageDeletionsPostgres(t *testing.T) {
 }
 
 func TestChannelMessageDeletionsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	storetest.ChannelMessageDeletions(t, func(t *testing.T) storetest.ChannelMessageDeletionFixture {
 		ctx := context.Background()
 		users := NewUserStore(pool)
@@ -46,7 +46,7 @@ func TestChannelMessageDeletionsPostgres(t *testing.T) {
 }
 
 func TestModerationChannelDeletionRecordsTheModeratorPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	suffix := randomSuffix(t)
@@ -83,7 +83,7 @@ func TestModerationChannelDeletionRecordsTheModeratorPostgres(t *testing.T) {
 }
 
 func TestMessageDeletionKeepsDeviceAfterLogoutPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	suffix := randomSuffix(t)

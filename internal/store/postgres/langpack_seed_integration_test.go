@@ -13,7 +13,7 @@ import (
 )
 
 func TestLangPackSeedReconciliationPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	packName := "seedtest-" + randomSuffix(t)
 	store := NewLangPackStore(pool)
@@ -122,7 +122,7 @@ func postgresLangPackValue(items []domain.LangPackString, key string) string {
 // 0 条、元数据计数与有效行一致。完整的 113 MB 语料由 app/langpack 的内存测试覆盖，这里只验证
 // PostgreSQL 一侧，不必把全部文件（26 秒）再灌一遍。
 func TestBundledLangPackSeedPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	bundled := filepath.Join("..", "..", "..", "data", "langpack")

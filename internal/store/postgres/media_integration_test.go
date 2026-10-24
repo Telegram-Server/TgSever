@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
@@ -16,7 +14,7 @@ import (
 // TestMediaStoreRoundTrip 验证 MediaStore 各表的写读往返（含 nil bytea 归一、JSONB attributes/sizes、
 // 头像历史 current/list/delete、上传分片）。直接证明媒体元数据落 PG 后可原样读回。
 func TestMediaStoreRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewMediaStore(pool)
 
@@ -223,7 +221,7 @@ func TestMediaStoreRoundTrip(t *testing.T) {
 }
 
 func TestUploadedMediaReceiptFirstWriterWinsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	media := NewMediaStore(pool)
 	userID := createRevokeTestUser(t, ctx, pool, "upload-receipt")
@@ -257,7 +255,7 @@ func TestUploadedMediaReceiptFirstWriterWinsPostgres(t *testing.T) {
 }
 
 func TestMediaStoreDocumentCacheCopiesAndRefreshes(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewMediaStore(pool)
 
@@ -347,7 +345,7 @@ func TestMediaStoreDocumentCacheCopiesAndRefreshes(t *testing.T) {
 }
 
 func TestMediaStoreListProfilePhotoDetailsBatchesPhotosAndRefreshesMaxID(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewMediaStore(pool)
 
@@ -418,7 +416,7 @@ func photoIDsFromDomain(photos []domain.Photo) []int64 {
 	return ids
 }
 
-func cleanupMediaStoreRoundTripRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func cleanupMediaStoreRoundTripRows(t *testing.T, ctx context.Context, pool testDB) {
 	t.Helper()
 
 	const docID = int64(9100000000000000001)
@@ -446,7 +444,7 @@ func cleanupMediaStoreRoundTripRows(t *testing.T, ctx context.Context, pool *pgx
 	}
 }
 
-func cleanupProfilePhotoDetailsRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerID int64, photoIDs []int64) {
+func cleanupProfilePhotoDetailsRows(t *testing.T, ctx context.Context, pool testDB, ownerID int64, photoIDs []int64) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, "DELETE FROM profile_photos WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND photo_id = ANY($2::bigint[])", ownerID, photoIDs); err != nil {
 		t.Fatalf("cleanup profile photo details profile_photos: %v", err)

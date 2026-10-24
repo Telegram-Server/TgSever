@@ -40,7 +40,7 @@ func (a *staleChannelIDAllocator) NextChannelIDAtLeast(_ context.Context, floor 
 // （Redis 快照回退 / 测试 fallback 分配器绕过 Redis 直写同一库）时，
 // CreateChannel 经预检自愈拿到空闲 id，而非撞主键 500。
 func TestChannelStoreCreateChannelRecoversFromStaleIDCounter(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

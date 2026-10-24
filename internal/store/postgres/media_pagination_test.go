@@ -9,7 +9,7 @@ import (
 
 func TestMediaPaginationBoundaries(t *testing.T) {
 	ctx := context.Background()
-	pool := testPool(t)
+	pool := testTx(t)
 	users := NewUserStore(pool)
 	suffix := randomSuffix(t)
 	a, err := users.Create(ctx, domain.User{AccessHash: 61, Phone: "+1677" + suffix + "01", FirstName: "Media A"})

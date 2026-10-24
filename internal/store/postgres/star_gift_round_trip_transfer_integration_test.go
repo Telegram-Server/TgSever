@@ -22,7 +22,7 @@ import (
 // Retries inside one ownership epoch must stay idempotent, so the key now
 // carries the epoch (peer_star_gifts.gift_date, rewritten on every move).
 func TestStarGiftRoundTripTransferNotReplayedPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

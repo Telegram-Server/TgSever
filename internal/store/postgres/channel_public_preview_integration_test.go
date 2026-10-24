@@ -10,7 +10,7 @@ import (
 )
 
 func TestPublicChannelAndMegagroupPreviewPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -178,7 +178,7 @@ SELECT 1 FROM channel_dialogs WHERE channel_id = $1 AND user_id = $2
 }
 
 func TestLinkedDiscussionGuestPeerDialogProjectionPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

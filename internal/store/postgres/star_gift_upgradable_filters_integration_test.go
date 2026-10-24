@@ -21,7 +21,7 @@ import (
 // categories with exactly these two flags, so the pair is only neutralised when
 // both are present.
 func TestStarGiftOwnGiftsFiltersPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

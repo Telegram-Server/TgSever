@@ -13,7 +13,7 @@ import (
 // escrow and refund are committed through the real PostgreSQL transaction.
 // It is gated by TELESRV_TEST_POSTGRES_DSN and testPool migrates to latest.
 func TestSuggestedPostLifecyclePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

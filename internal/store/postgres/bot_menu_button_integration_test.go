@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 	"telesrv/internal/store/storetest"
 )
 
 // menuButtonFixture 建一个机器人与两个普通用户，结束时清理。
-func menuButtonFixture(t *testing.T, pool *pgxpool.Pool) (bot domain.User, userA, userB int64) {
+func menuButtonFixture(t *testing.T, pool testDB) (bot domain.User, userA, userB int64) {
 	t.Helper()
 	ctx := context.Background()
 	users := NewUserStore(pool)
@@ -48,7 +46,7 @@ func TestBotUserMenuButtonsPostgres(t *testing.T) {
 // read-model 事件（监听器据此调用 InvalidateRPCProjectionReadModelForPeer），而不是
 // bump 机器人共享的 bot_info_version 去失效所有人。
 func TestBotUserMenuButtonEmitsPairReadModelEvent(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	bot, a, b := menuButtonFixture(t, pool)
 	bots := NewBotStore(pool)

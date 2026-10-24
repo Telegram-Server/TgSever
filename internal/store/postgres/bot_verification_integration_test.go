@@ -10,8 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 	"telesrv/internal/observability/dbtrace"
 )
@@ -20,7 +18,7 @@ import (
 // for everything the third-party verification tables may hang off it. Marks
 // cascade from the verifier row, but the applications reference users directly,
 // so they have to go first.
-func botVerificationTestUser(t *testing.T, pool *pgxpool.Pool) int64 {
+func botVerificationTestUser(t *testing.T, pool testDB) int64 {
 	t.Helper()
 	ctx := context.Background()
 	var id int64
@@ -57,7 +55,7 @@ func botVerificationTestDocumentID(t *testing.T) int64 {
 
 // botVerificationTestIcon adds a catalogue entry and removes it afterwards; the
 // catalogue is deployment-wide, so it is not covered by the user cleanup.
-func botVerificationTestIcon(t *testing.T, pool *pgxpool.Pool, s *BotVerificationStore, name string, ownerBotID int64) domain.VerificationIcon {
+func botVerificationTestIcon(t *testing.T, pool testDB, s *BotVerificationStore, name string, ownerBotID int64) domain.VerificationIcon {
 	t.Helper()
 	icon, err := s.UpsertVerificationIcon(context.Background(), domain.VerificationIcon{
 		DocumentID: botVerificationTestDocumentID(t),
@@ -159,7 +157,7 @@ func botVerificationIconIndex(icons []domain.VerificationIcon, iconID int64) int
 // schema: an entry is keyed by document id, retiring one keeps it readable, and
 // the listing pages newest first with the activeOnly filter honoured.
 func TestBotVerificationIconCataloguePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewBotVerificationStore(pool)
 
@@ -251,7 +249,7 @@ func TestBotVerificationIconCataloguePostgres(t *testing.T) {
 // locking on version, the idempotent kill switch and the cascade that takes the
 // marks with the verifier row while the applications stay as history.
 func TestBotVerifierSettingsLifecyclePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewBotVerificationStore(pool)
 	bot := botVerificationTestUser(t, pool)
@@ -411,7 +409,7 @@ func TestBotVerifierSettingsLifecyclePostgres(t *testing.T) {
 // verifier projects nothing while its row survives, and the batch form resolves
 // every peer in a single query.
 func TestCustomVerificationProjectionPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewBotVerificationStore(pool)
 	alphaBot := botVerificationTestUser(t, pool)
@@ -653,7 +651,7 @@ func TestCustomVerificationProjectionPostgres(t *testing.T) {
 // TestCustomVerificationLimitPostgres pins the per-verifier bound: a new mark is
 // refused at the limit while an existing one can still be re-described.
 func TestCustomVerificationLimitPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewBotVerificationStore(pool)
 	bot := botVerificationTestUser(t, pool)
@@ -1004,7 +1002,7 @@ func TestCustomVerificationRequestQueuePostgres(t *testing.T) {
 // TestBotVerificationDescriptionsAcceptEmojiPostgres pins the app-configured
 // configured custom-description limit against UTF-8 byte constraints.
 func TestBotVerificationDescriptionsAcceptEmojiPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	s := NewBotVerificationStore(pool)
 	bot := botVerificationTestUser(t, pool)

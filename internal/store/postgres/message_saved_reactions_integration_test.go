@@ -9,7 +9,7 @@ import (
 )
 
 func TestSavedMessageTagsPostgresAssignmentCountsSearchAndDelete(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)

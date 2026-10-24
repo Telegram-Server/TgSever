@@ -49,7 +49,7 @@ func (s brokenPasswordStore) CreateUserWithLoginPassword(ctx context.Context, u 
 // 这个密码登录（证明由 td 客户端的 SRP 实现算出）；号码冲突或写密码失败时什么都不留下；
 // 命令表和审计表里没有明文密码，也没有不带密钥的摘要。
 func TestAdminCreateAccountWithPasswordPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	passwords := NewLoginPasswordStore(pool)

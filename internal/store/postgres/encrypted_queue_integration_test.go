@@ -11,7 +11,7 @@ import (
 // 无空洞）、幂等去重（同 random_id 返既有 qts/date）、按 qts seek 补差分、reserved/
 // confirmed 水位、ack 标记。
 func TestEncryptedQueueStorePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewEncryptedQueueStore(pool)
 
@@ -92,7 +92,7 @@ func TestEncryptedQueueStorePostgres(t *testing.T) {
 // TestEncryptedStateEventsPostgres 验证密聊状态事件 PG 实现：账号级（target_auth_key_id=0）
 // 对该 user 所有设备可见、设备级仅对绑定设备可见、未投递标记一次性投递。
 func TestEncryptedStateEventsPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewEncryptedQueueStore(pool)
 
@@ -156,7 +156,7 @@ func TestEncryptedStateEventsPostgres(t *testing.T) {
 // TestEncryptedFilesPostgres 验证密聊文件元数据 PG 实现：put/get round-trip、access_hash
 // 校验、不存在返回 found=false。
 func TestEncryptedFilesPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	store := NewEncryptedQueueStore(pool)
 

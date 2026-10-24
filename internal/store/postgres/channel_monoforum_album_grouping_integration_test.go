@@ -10,7 +10,7 @@ import (
 
 // TestSendMonoforumMessageKeepsAlbumGroupedIDPostgres 跑 monoforum 相册分组共享契约。
 func TestSendMonoforumMessageKeepsAlbumGroupedIDPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

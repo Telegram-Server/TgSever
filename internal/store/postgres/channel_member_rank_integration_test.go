@@ -10,7 +10,7 @@ import (
 // TestChannelStoreEditMemberRank 验证 rank-only 编辑在 PG 上的持久化、权限矩阵、
 // 以及 participant_edit_rank 通过 channel_admin_log_events_type_check 约束（0086）。
 func TestChannelStoreEditMemberRank(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

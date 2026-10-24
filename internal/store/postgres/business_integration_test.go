@@ -15,7 +15,7 @@ import (
 )
 
 func TestBusinessStoresRoundTrip(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	suffix := randomSuffix(t)
@@ -285,7 +285,7 @@ func TestBusinessStoresRoundTrip(t *testing.T) {
 }
 
 func TestHasBusinessAutomationUsesConfiguredGreetingOrAwayState(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner, err := NewUserStore(pool).Create(ctx, domain.User{

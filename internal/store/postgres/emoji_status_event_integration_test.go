@@ -10,7 +10,7 @@ import (
 )
 
 func TestUpdateEmojiStatusWithEventIsAtomic(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	u, err := users.Create(ctx, domain.User{

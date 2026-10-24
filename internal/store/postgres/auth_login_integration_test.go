@@ -14,7 +14,7 @@ import (
 )
 
 func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	// testPool clones a database per test, so a fixed E.164 number cannot collide.
@@ -83,7 +83,7 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 }
 
 func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 
 	phone := "15555550132"

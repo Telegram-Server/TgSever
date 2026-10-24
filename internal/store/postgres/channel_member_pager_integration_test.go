@@ -8,7 +8,7 @@ import (
 )
 
 func TestChannelMemberPagerContractPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	channels := NewChannelStore(pool)
 	storetest.ChannelMemberPagerContract(t, func(t *testing.T) storetest.ChannelMemberPagerFixture {
 		ctx := context.Background()

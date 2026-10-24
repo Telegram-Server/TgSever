@@ -9,7 +9,7 @@ import (
 )
 
 func TestPasswordStoreLoginEmailUniqueCaseInsensitivePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	passwords := NewPasswordStore(pool)
 	users := NewUserStore(pool)

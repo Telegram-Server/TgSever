@@ -14,7 +14,7 @@ import (
 // must stay monotonic across refunds.
 
 func TestBotStarsWalletCreditIsIdempotentPerInvoice(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -66,7 +66,7 @@ func TestBotStarsWalletCreditIsIdempotentPerInvoice(t *testing.T) {
 }
 
 func TestBotStarsWalletRefundKeepsRevenueMonotonicAndRejectsOverdraft(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -108,7 +108,7 @@ func TestBotStarsWalletRefundKeepsRevenueMonotonicAndRejectsOverdraft(t *testing
 }
 
 func TestBotStarsRevenueSeriesGroupsByUTCDay(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -176,7 +176,7 @@ func TestBotStarsRevenueSeriesGroupsByUTCDay(t *testing.T) {
 }
 
 func TestBotStarsWalletTransactionsPageAndRejectsInvalidCredit(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

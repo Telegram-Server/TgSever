@@ -91,7 +91,7 @@ FROM gif_catalog_capacity WHERE singleton`).Scan(&existing, &reserved); err != n
 }
 
 func TestGifCatalogCategoryOverrideAndAutoRestore(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	id := time.Now().UnixNano()
 	if err := NewMediaStore(pool).PutDocument(ctx, domain.Document{ID: id, MimeType: "video/mp4", Size: 1, DCID: 2}); err != nil {

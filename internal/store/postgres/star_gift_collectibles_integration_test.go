@@ -529,7 +529,7 @@ UPDATE star_gift_collectible_revisions SET status='published', published_at=now(
 }
 
 func TestStarGiftUpgradeWithoutCraftedModelDoesNotAdvertiseCraft(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -630,7 +630,7 @@ FROM peer_star_gifts p JOIN unique_star_gifts u ON u.id=p.unique_gift_id WHERE p
 }
 
 func TestAdminUniqueStarGiftGrantIsAtomicAndReplayable(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())
@@ -749,7 +749,7 @@ func TestAdminUniqueStarGiftGrantIsAtomicAndReplayable(t *testing.T) {
 }
 
 func TestAdminUniqueStarGiftGrantDeliversWhenRecipientBlocked(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

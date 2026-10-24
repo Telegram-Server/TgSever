@@ -23,7 +23,7 @@ UPDATE users SET
 WHERE id = $1 AND deleted_at IS NULL`
 
 func TestAuthorizationStoreBindRejectsTombstonePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "bind-tombstone")
 	key := saveTempIdentityTestAuthKey(t, ctx, pool, NewAuthKeyStore(pool), 0)

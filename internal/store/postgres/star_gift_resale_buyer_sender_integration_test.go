@@ -16,7 +16,7 @@ import (
 // Emitting the card from the seller instead made the recipient believe the
 // seller gifted it, which is exactly what the report was about.
 func TestStarGiftResaleSendsGiftFromBuyerPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	now := int(time.Now().Unix())

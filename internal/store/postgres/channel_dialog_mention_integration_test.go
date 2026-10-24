@@ -12,7 +12,7 @@ import (
 // 否则 TDesktop 先入缓存的残缺版永不触发 contents-read，服务端 unread
 // 提及挂死、每次冷启动 unread_mentions_count 把 @ 角标带回来。
 func TestChannelDialogTopMessageCarriesMentionFlags(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

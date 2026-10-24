@@ -10,8 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
@@ -355,7 +353,7 @@ func TestTruncateAccountDeletionReasonUTF8(t *testing.T) {
 	}
 }
 
-func saveLifecycleTestAuthorization(t *testing.T, ctx context.Context, db *pgxpool.Pool, userID int64, marker byte) [8]byte {
+func saveLifecycleTestAuthorization(t *testing.T, ctx context.Context, db testDB, userID int64, marker byte) [8]byte {
 	t.Helper()
 	var id [8]byte
 	var value [256]byte

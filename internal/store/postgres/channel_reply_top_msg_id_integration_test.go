@@ -13,7 +13,7 @@ import (
 // messages.sendMessage — нет. Раньше расхождение с серверным thread root давало
 // ErrReplyMessageIDInvalid, т.е. "ответ фотографией в группе" был невозможен.
 func TestChannelReplyTopMsgIDMismatchIsAccepted(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

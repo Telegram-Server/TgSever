@@ -11,7 +11,7 @@ import (
 // 直发/转发的 saved_peer 写入、fwd saved_from 持久化（重读非内存 echo）、
 // 聚合分页、置顶、按子会话历史过滤与删除（含置顶清理）。
 func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -186,7 +186,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 // migration 已在建库时应用，这里手工插入老格式行（saved_peer_type=”）后
 // 重放回填语句验证规则本身。
 func TestSavedDialogsBackfillRule(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

@@ -14,7 +14,7 @@ import (
 // 被 CHECK 约束拒（SQLSTATE 23514）→ RPC 500，且话题已读不进 durable / getDifference。
 // memory store 无 CHECK 约束故单测未暴露，真双机 DrKLO 才发现。
 func TestUpdateEventAppendDiscussionTypes(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 

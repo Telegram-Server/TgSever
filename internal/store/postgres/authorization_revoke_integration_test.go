@@ -7,14 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
 
 func TestAuthorizationStoreRevokeByHashKeepsProtocolIdentityPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "hash")
 	perm := revokeTestAuthKeyID(0x91)
@@ -70,7 +68,7 @@ func TestAuthorizationStoreRevokeByHashKeepsProtocolIdentityPostgres(t *testing.
 }
 
 func TestAuthorizationStoreRevokeByUserExceptKeepsRevokedProtocolIdentitiesPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "bulk")
 	keys := NewAuthKeyStore(pool)
@@ -118,7 +116,7 @@ func TestAuthorizationStoreRevokeByUserExceptKeepsRevokedProtocolIdentitiesPostg
 }
 
 func TestAuthorizationStoreUpdateClientInfoMergesPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "client-info")
 	id := revokeTestAuthKeyID(0xb1)
@@ -161,7 +159,7 @@ func TestAuthorizationStoreUpdateClientInfoMergesPostgres(t *testing.T) {
 }
 
 func TestAuthorizationStoreLoginAndPasswordCompletionRefreshSessionAgePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	userA := createRevokeTestUser(t, ctx, pool, "session-age-a")
 	userB := createRevokeTestUser(t, ctx, pool, "session-age-b")
@@ -236,7 +234,7 @@ WHERE auth_key_id=$1`, authKeyIDToInt64(key)); err != nil {
 	}
 }
 
-func assertFreshAuthorizationCreatedAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, key [8]byte, userID int64, old time.Time) {
+func assertFreshAuthorizationCreatedAt(t *testing.T, ctx context.Context, pool testDB, key [8]byte, userID int64, old time.Time) {
 	t.Helper()
 	var (
 		actualUserID int64
@@ -617,7 +615,7 @@ func TestAuthorizationStoreRevokeByUserExceptPartiallySkipsTransferredCandidateP
 	}
 }
 
-func createRevokeTestUser(t *testing.T, ctx context.Context, db *pgxpool.Pool, suffix string) int64 {
+func createRevokeTestUser(t *testing.T, ctx context.Context, db testDB, suffix string) int64 {
 	t.Helper()
 	phone := fmt.Sprintf("+1555%09d", time.Now().UnixNano()%1_000_000_000)
 	var userID int64
@@ -672,7 +670,7 @@ func assertRevokeTestPresentAuthorization(t *testing.T, ctx context.Context, aut
 	}
 }
 
-func assertRevokeTestTableCount(t *testing.T, ctx context.Context, db *pgxpool.Pool, table, column string, value int64, want int) {
+func assertRevokeTestTableCount(t *testing.T, ctx context.Context, db testDB, table, column string, value int64, want int) {
 	t.Helper()
 	var got int
 	if err := db.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE %s = $1", table, column), value).Scan(&got); err != nil {

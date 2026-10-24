@@ -11,7 +11,7 @@ import (
 )
 
 func TestChannelUpdateRetentionFloorDifferenceAndDirtyCheckpointPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -102,7 +102,7 @@ WHERE cp.channel_id = $1`, channelID).Scan(&floor, &latestDate, &latestPts, &rem
 }
 
 func TestDeleteExpiredChannelUpdateEventsContinuesPastCandidatePagePostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -152,7 +152,7 @@ SELECT
 }
 
 func TestDeleteExpiredChannelUpdateEventsIsolatesGapAndContinuesPostgres(t *testing.T) {
-	pool := testPool(t)
+	pool := testTx(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	owner, err := NewUserStore(pool).Create(ctx, domain.User{
