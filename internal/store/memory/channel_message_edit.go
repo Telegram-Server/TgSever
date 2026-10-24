@@ -25,8 +25,11 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	}
 	prevMsg := s.messages[req.ChannelID][idx]
 	msg := prevMsg
+	// SetWebPage 用 Media 替换链接预览（nil = 清除）；否则 Media 为 nil 表示不改媒体。
+	replaceMedia := req.Media != nil || req.SetWebPage
+	mediaChanged := req.Media != nil || (req.SetWebPage && !msg.Media.IsZero())
 	finalMedia := msg.Media
-	if req.Media != nil {
+	if replaceMedia {
 		finalMedia = req.Media
 	}
 	finalRich := msg.RichMessage
@@ -78,15 +81,18 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
+	if !mediaChanged && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
 	}
 	pts := s.nextChannelPtsLocked(req.ChannelID)
 	msg.Body = req.Message
 	msg.Entities = append([]domain.MessageEntity(nil), req.Entities...)
-	if req.Media != nil {
-		media := *req.Media
-		msg.Media = &media
+	if replaceMedia {
+		msg.Media = nil
+		if req.Media != nil {
+			media := *req.Media
+			msg.Media = &media
+		}
 	}
 	if req.SetReplyMarkup {
 		msg.ReplyMarkup = cloneReplyMarkup(req.ReplyMarkup)

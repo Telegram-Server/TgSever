@@ -68,7 +68,15 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 		return res, fmt.Errorf("decode target rich message: %w", err)
 	}
 	// 空文本只在目标消息携带媒体/rich（或本次写入媒体/rich）时合法（清空 caption）。
-	if req.Message == "" && req.Media == nil && (target.MediaJson == "" || target.MediaJson == "{}") {
+	targetHasMedia := target.MediaJson != "" && target.MediaJson != "{}" && target.MediaJson != "null"
+	// SetWebPage 用 Media 替换链接预览（nil = 清除）；否则 Media 为 nil 表示不改媒体。
+	replaceMedia := req.Media != nil || req.SetWebPage
+	mediaChanged := req.Media != nil || (req.SetWebPage && targetHasMedia)
+	finalHasMedia := targetHasMedia
+	if replaceMedia {
+		finalHasMedia = !req.Media.IsZero()
+	}
+	if req.Message == "" && !finalHasMedia {
 		if req.SetRichMessage {
 			if req.RichMessage.IsZero() {
 				return res, domain.ErrMessageEmpty
@@ -87,7 +95,7 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 		return res, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(targetRich, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
+	if !mediaChanged && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	replyMarkupJSON, err := encodeReplyMarkup(req.ReplyMarkup)
@@ -195,21 +203,25 @@ WHERE owner_user_id = $1 AND box_id = $2`, box.OwnerUserID, box.BoxID, int32(pts
 	}); err != nil {
 		return res, fmt.Errorf("update private message edit: %w", err)
 	}
-	if req.Media != nil {
-		// 媒体快照整体替换（live location 续报/停止）；先于 box 行编辑执行，
-		// 让 UpdateMessageBoxEdit RETURNING 直接带回新媒体。
+	if replaceMedia {
+		// 媒体快照整体替换（live location 续报/停止、链接预览重算/清除）；先于 box 行编辑
+		// 执行，让 UpdateMessageBoxEdit RETURNING 直接带回新媒体。
 		mediaJSON, err := encodeMessageMedia(req.Media)
 		if err != nil {
 			return res, fmt.Errorf("encode edit message media: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `
-UPDATE private_messages SET media = $3
-WHERE sender_user_id = $1 AND id = $2`, messageSenderID, target.PrivateMessageID, mediaJSON); err != nil {
+		if err := qtx.ReplacePrivateMessageMedia(ctx, sqlcgen.ReplacePrivateMessageMediaParams{
+			MediaJson:        mediaJSON,
+			SenderUserID:     messageSenderID,
+			PrivateMessageID: target.PrivateMessageID,
+		}); err != nil {
 			return res, fmt.Errorf("update private message media: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `
-UPDATE message_boxes SET media = $3
-WHERE message_sender_id = $1 AND private_message_id = $2`, messageSenderID, target.PrivateMessageID, mediaJSON); err != nil {
+		if err := qtx.ReplaceMessageBoxesMedia(ctx, sqlcgen.ReplaceMessageBoxesMediaParams{
+			MediaJson:        mediaJSON,
+			MessageSenderID:  messageSenderID,
+			PrivateMessageID: target.PrivateMessageID,
+		}); err != nil {
 			return res, fmt.Errorf("update message box media: %w", err)
 		}
 	}

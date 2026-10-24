@@ -1624,3 +1624,17 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND m.pinned
   AND NOT m.deleted
 RETURNING m.box_id;
+
+-- name: ReplacePrivateMessageMedia :exec
+-- 编辑替换私聊消息的媒体快照（live location、链接预览重算）；'{}' 表示无媒体。
+UPDATE private_messages
+SET media = sqlc.arg(media_json)::jsonb
+WHERE sender_user_id = sqlc.arg(sender_user_id)::bigint
+  AND id = sqlc.arg(private_message_id)::bigint;
+
+-- name: ReplaceMessageBoxesMedia :exec
+-- 同步替换该私聊消息所有 box 副本的媒体快照。
+UPDATE message_boxes
+SET media = sqlc.arg(media_json)::jsonb
+WHERE message_sender_id = sqlc.arg(message_sender_id)::bigint
+  AND private_message_id = sqlc.arg(private_message_id)::bigint;

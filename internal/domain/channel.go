@@ -2038,6 +2038,9 @@ type EditChannelMessageRequest struct {
 	// SetReplyMarkup 置位时替换 reply_markup（ReplyMarkup 为 nil/空 = 清空键盘）。
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
+	// SetWebPage 置位时按编辑后的文本替换链接预览：Media 为新预览，nil = 清除预览。
+	// 未置位时 Media 为 nil 仍表示「不改媒体」。
+	SetWebPage bool
 	// SetRichMessage 置位时替换 rich_message（RichMessage nil/空 = 清空富文本）。
 	SetRichMessage bool
 	RichMessage    *MessageRichMessage

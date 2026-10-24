@@ -585,6 +585,9 @@ type EditMessageRequest struct {
 	// 未置位则保留原 markup。仅 bot 编辑自己消息时由 RPC 层置位（P3）。
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
+	// SetWebPage 置位时按编辑后的文本替换链接预览：Media 为新预览，nil = 清除预览。
+	// 未置位时 Media 为 nil 仍表示「不改媒体」。由 RPC 层按 decideEditedWebPage 置位。
+	SetWebPage bool
 	// SetRichMessage 置位时替换 rich_message（RichMessage nil/空 = 清空富文本）。
 	// TDesktop EditRichMessage 只带 f_rich_message，不带 f_message；store 不能把它误判为空编辑。
 	SetRichMessage bool

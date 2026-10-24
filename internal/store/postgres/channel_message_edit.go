@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
@@ -55,8 +56,11 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 	if msg.Deleted || msg.Action != nil {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageIDInvalid
 	}
+	// SetWebPage 用 Media 替换链接预览（nil = 清除）；否则 Media 为 nil 表示不改媒体。
+	replaceMedia := req.Media != nil || req.SetWebPage
+	mediaChanged := req.Media != nil || (req.SetWebPage && !msg.Media.IsZero())
 	finalMedia := msg.Media
-	if req.Media != nil {
+	if replaceMedia {
 		finalMedia = req.Media
 	}
 	finalRich := msg.RichMessage
@@ -125,7 +129,7 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
+	if !mediaChanged && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
 	}
 	ptsCount := 1
@@ -151,18 +155,23 @@ WHERE channel_id = $1 AND id = $2 AND NOT deleted AND (sender_user_id = $3 OR $8
 		req.ChannelID, req.ID, req.UserID, req.Message, entities, req.EditDate, editPts, canWriteEdit, req.SetReplyMarkup, string(replyMarkupJSON), req.SetRichMessage, string(richMessageJSON)); err != nil {
 		return domain.EditChannelMessageResult{}, fmt.Errorf("update channel edit: %w", err)
 	}
-	if req.Media != nil {
+	if replaceMedia {
 		mediaJSON, err := encodeMessageMedia(req.Media)
 		if err != nil {
 			return domain.EditChannelMessageResult{}, fmt.Errorf("encode channel edit media: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `
-UPDATE channel_messages SET media = $3, updated_at = now()
-WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON); err != nil {
+		if err := sqlcgen.New(tx).ReplaceChannelMessageMedia(ctx, sqlcgen.ReplaceChannelMessageMediaParams{
+			MediaJson: mediaJSON,
+			ChannelID: req.ChannelID,
+			ID:        int32(req.ID),
+		}); err != nil {
 			return domain.EditChannelMessageResult{}, fmt.Errorf("update channel edit media: %w", err)
 		}
-		media := *req.Media
-		msg.Media = &media
+		msg.Media = nil
+		if req.Media != nil {
+			media := *req.Media
+			msg.Media = &media
+		}
 	}
 	msg.Body = req.Message
 	msg.Entities = append([]domain.MessageEntity(nil), req.Entities...)

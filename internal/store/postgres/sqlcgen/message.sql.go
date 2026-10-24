@@ -3549,6 +3549,44 @@ func (q *Queries) MaxMessageBoxID(ctx context.Context, ownerUserID int64) (int32
 	return max_box_id, err
 }
 
+const replaceMessageBoxesMedia = `-- name: ReplaceMessageBoxesMedia :exec
+UPDATE message_boxes
+SET media = $1::jsonb
+WHERE message_sender_id = $2::bigint
+  AND private_message_id = $3::bigint
+`
+
+type ReplaceMessageBoxesMediaParams struct {
+	MediaJson        []byte
+	MessageSenderID  int64
+	PrivateMessageID int64
+}
+
+// 同步替换该私聊消息所有 box 副本的媒体快照。
+func (q *Queries) ReplaceMessageBoxesMedia(ctx context.Context, arg ReplaceMessageBoxesMediaParams) error {
+	_, err := q.db.Exec(ctx, replaceMessageBoxesMedia, arg.MediaJson, arg.MessageSenderID, arg.PrivateMessageID)
+	return err
+}
+
+const replacePrivateMessageMedia = `-- name: ReplacePrivateMessageMedia :exec
+UPDATE private_messages
+SET media = $1::jsonb
+WHERE sender_user_id = $2::bigint
+  AND id = $3::bigint
+`
+
+type ReplacePrivateMessageMediaParams struct {
+	MediaJson        []byte
+	SenderUserID     int64
+	PrivateMessageID int64
+}
+
+// 编辑替换私聊消息的媒体快照（live location、链接预览重算）；'{}' 表示无媒体。
+func (q *Queries) ReplacePrivateMessageMedia(ctx context.Context, arg ReplacePrivateMessageMediaParams) error {
+	_, err := q.db.Exec(ctx, replacePrivateMessageMedia, arg.MediaJson, arg.SenderUserID, arg.PrivateMessageID)
+	return err
+}
+
 const setMessageBoxPinned = `-- name: SetMessageBoxPinned :execrows
 UPDATE message_boxes
 SET pinned = $1::boolean

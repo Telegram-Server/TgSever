@@ -41,8 +41,11 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 			return res, domain.ErrMessageNotModified
 		}
 	}
+	// SetWebPage 用 Media 替换链接预览（nil = 清除）；否则 Media 为 nil 表示不改媒体。
+	replaceMedia := req.Media != nil || req.SetWebPage
+	mediaChanged := req.Media != nil || (req.SetWebPage && !target.Media.IsZero())
 	finalMedia := target.Media
-	if req.Media != nil {
+	if replaceMedia {
 		finalMedia = req.Media
 	}
 	finalRich := target.RichMessage
@@ -53,7 +56,7 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 		return res, domain.ErrMessageEmpty
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(target.RichMessage, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
+	if !mediaChanged && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	messageSenderID := target.From.ID
@@ -74,9 +77,12 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 				}
 				msg.Body = req.Message
 				msg.Entities = append([]domain.MessageEntity(nil), req.Entities...)
-				if req.Media != nil {
-					media := *req.Media
-					msg.Media = &media
+				if replaceMedia {
+					msg.Media = nil
+					if req.Media != nil {
+						media := *req.Media
+						msg.Media = &media
+					}
 				}
 				if req.SetReplyMarkup {
 					// 替换 markup（nil/空 = 清空键盘）；双盒一致。

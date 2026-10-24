@@ -115,6 +115,25 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			return nil, err
 		}
 	}
+	// 链接预览按编辑后的文本重算（官方行为）：只在本次改了文本时才读原消息。
+	webPageInput := editWebPageInput{
+		TextEdited: hasMessage || hasRichMessage,
+		Message:    message,
+		Entities:   entities,
+		NoWebpage:  req.NoWebpage,
+		WebPage:    inputMediaWebPage(req.GetMedia()),
+	}
+	if richMessage != nil {
+		webPageInput.Message, webPageInput.Entities = "", nil
+	}
+	var setWebPage bool
+	var webPageMedia *domain.MessageMedia
+	if webPageInput.TextEdited {
+		if original, ok := r.editTargetMedia(ctx, userID, peer, req.ID); ok {
+			webPageInput.Original = original
+			setWebPage, webPageMedia = r.editedWebPageMedia(ctx, original, decideEditedWebPage(webPageInput), req.InvertMedia)
+		}
+	}
 	if peer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
@@ -132,6 +151,8 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			MentionUserIDs: mentionUserIDs,
 			SetReplyMarkup: setReplyMarkup,
 			ReplyMarkup:    replyMarkup,
+			SetWebPage:     setWebPage,
+			Media:          webPageMedia,
 			SetRichMessage: replaceRichMessage,
 			RichMessage:    richMessage,
 			EditDate:       int(r.clock.Now().Unix()),
@@ -143,6 +164,9 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		// 编辑 fan-out 异步化 + 跨 viewer 投影预热（设计 Phase 0/Phase 1；P1-x bot 高频 editMessage
 		// 是稳态放大源）。同步 echo 仍走上面单 viewer 的 channelEditMessageUpdates。
 		r.enqueueChannelEditMessageFanout(ctx, userID, res)
+		if setWebPage {
+			r.maybeEnqueueWebPageResolve(userID, peer, res.Message.ID, res.Message.Media)
+		}
 		return updates, nil
 	}
 	if peer.Type != domain.PeerTypeUser || r.deps.Messages == nil {
@@ -167,6 +191,8 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		OriginSessionID: sessionID,
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,
+		SetWebPage:      setWebPage,
+		Media:           webPageMedia,
 		SetRichMessage:  replaceRichMessage,
 		RichMessage:     richMessage,
 	})
@@ -176,6 +202,9 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 	self := res.Self()
 	if self.Event.Pts == 0 || self.Message.ID == 0 {
 		return nil, messageIDInvalidErr()
+	}
+	if setWebPage {
+		r.maybeEnqueueWebPageResolve(userID, peer, self.Message.ID, self.Message.Media)
 	}
 	users := r.usersForMessageUpdate(ctx, userID, self.Message)
 	chats := r.chatsForMessageUpdate(ctx, userID, self.Message)

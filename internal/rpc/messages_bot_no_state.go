@@ -168,16 +168,18 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 			return false, replyMarkupErr(err)
 		}
 	}
-	_, err = r.deps.Messages.EditMessage(ctx, target.OwnerUserID, domain.EditMessageRequest{
+	setWebPage, media := r.inlineEditWebPage(ctx, target.Media, newMedia, req)
+	res, err := r.deps.Messages.EditMessage(ctx, target.OwnerUserID, domain.EditMessageRequest{
 		OwnerUserID:     target.OwnerUserID,
 		Peer:            target.Peer,
 		ID:              target.ID,
 		Message:         message,
 		Entities:        entities,
-		Media:           newMedia,
+		Media:           media,
 		EditDate:        int(r.clock.Now().Unix()),
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,
+		SetWebPage:      setWebPage,
 		SetRichMessage:  setRichMessage,
 		RichMessage:     richMessage,
 		ViaBotEditBotID: botID,
@@ -185,7 +187,32 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 	if err != nil {
 		return false, messageEditErr(err)
 	}
+	if setWebPage {
+		self := res.Self()
+		r.maybeEnqueueWebPageResolve(target.OwnerUserID, target.Peer, self.Message.ID, self.Message.Media)
+	}
 	return true, nil
+}
+
+// inlineEditWebPage 为 editInlineBotMessage 算出编辑后的媒体：bot 换了真正媒体时原样使用；
+// 否则按编辑后的文本重算链接预览（规则见 decideEditedWebPage）。
+func (r *Router) inlineEditWebPage(ctx context.Context, original, newMedia *domain.MessageMedia, req *tg.MessagesEditInlineBotMessageRequest) (setWebPage bool, media *domain.MessageMedia) {
+	if newMedia != nil {
+		return false, newMedia
+	}
+	rawMessage, hasMessage := req.GetMessage()
+	_, hasRichMessage := req.GetRichMessage()
+	in := editWebPageInput{
+		Original:   original,
+		TextEdited: hasMessage || hasRichMessage,
+		NoWebpage:  req.NoWebpage,
+		WebPage:    inputMediaWebPage(req.GetMedia()),
+	}
+	if hasMessage && !hasRichMessage {
+		in.Message = rawMessage
+		in.Entities, _ = req.GetEntities()
+	}
+	return r.editedWebPageMedia(ctx, original, decideEditedWebPage(in), req.InvertMedia)
 }
 
 func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, target domain.ChannelMessage, req *tg.MessagesEditInlineBotMessageRequest) (bool, error) {
@@ -260,17 +287,19 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 			return false, replyMarkupErr(err)
 		}
 	}
+	setWebPage, media := r.inlineEditWebPage(ctx, target.Media, newMedia, req)
 	res, err := r.deps.Channels.EditInlineBotMessage(ctx, botID, domain.EditChannelMessageRequest{
 		UserID:          target.SenderUserID,
 		ChannelID:       target.ChannelID,
 		ID:              target.ID,
 		Message:         message,
 		Entities:        entities,
-		Media:           newMedia,
+		Media:           media,
 		MentionUserIDs:  mentionUserIDs,
 		EditDate:        int(r.clock.Now().Unix()),
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,
+		SetWebPage:      setWebPage,
 		SetRichMessage:  setRichMessage,
 		RichMessage:     richMessage,
 		ViaBotEditBotID: botID,
@@ -279,6 +308,9 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 		return false, channelEditErr(err)
 	}
 	r.enqueueChannelEditMessageFanout(ctx, target.SenderUserID, res)
+	if setWebPage {
+		r.maybeEnqueueWebPageResolve(target.SenderUserID, domain.Peer{Type: domain.PeerTypeChannel, ID: target.ChannelID}, res.Message.ID, res.Message.Media)
+	}
 	return true, nil
 }
 
