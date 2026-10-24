@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"math"
 
 	"go.uber.org/zap"
 
@@ -20,7 +21,7 @@ func (r *Router) reserveAlbumGroup(ctx context.Context, userID int64, peer domai
 		SenderUserID:      userID,
 		Peer:              peer,
 		Items:             items,
-		ProposedGroupedID: randomNonZeroInt64(),
+		ProposedGroupedID: randomPositiveInt64(),
 	})
 	if errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
 		return 0, randomIDDuplicateErr()
@@ -36,4 +37,16 @@ func (r *Router) reserveAlbumGroup(ctx context.Context, userID int64, peer domai
 		return 0, internalErr()
 	}
 	return groupedID, nil
+}
+
+// randomPositiveInt64 取密码学随机正 int64，用于新相册的 grouped_id。官方服务端
+// 分配的 grouped_id 都是正数，TDLib 把负数留给本地待发送相册
+// (generate_new_media_album_id)，telegram-bot-api 又把它原样输出为
+// media_group_id，所以这里清掉符号位，结果为 0 时重取。
+func randomPositiveInt64() int64 {
+	for {
+		if v := randomNonZeroInt64() & math.MaxInt64; v != 0 {
+			return v
+		}
+	}
 }
