@@ -1012,6 +1012,33 @@ func TestSendMultiMediaPartialFailureSubsetRetryKeepsReservedGroupedID(t *testin
 	}
 }
 
+// 发相册分配的 grouped_id 必须为正：bot 经 telegram-bot-api 收到的 media_group_id
+// 就是它，负数是 TDLib 本地待发送相册的取值空间。连发多个相册，随机取到负数的
+// 旧实现几乎不可能全部通过。
+func TestSendMultiMediaAssignsPositiveGroupedID(t *testing.T) {
+	ctx := context.Background()
+	r, owner, friend := newMediaTestRouter(t)
+	files := r.deps.Files.(*fakeFiles)
+	files.docs[556] = domain.Document{ID: 556, AccessHash: 6, DCID: 2, MimeType: "image/jpeg"}
+	peer := &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash}
+	for i := int64(0); i < 24; i++ {
+		updates, err := r.onMessagesSendMultiMedia(WithUserID(ctx, owner.ID), &tg.MessagesSendMultiMediaRequest{
+			Peer: peer,
+			MultiMedia: []tg.InputSingleMedia{
+				{Media: &tg.InputMediaDocument{ID: &tg.InputDocument{ID: 556, AccessHash: 6}}, RandomID: 52000 + 2*i, Message: "a"},
+				{Media: &tg.InputMediaDocument{ID: &tg.InputDocument{ID: 556, AccessHash: 6}}, RandomID: 52001 + 2*i, Message: "b"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("album %d: %v", i, err)
+		}
+		group, ok := newMessageFromUpdates(t, updates).GetGroupedID()
+		if !ok || group <= 0 {
+			t.Fatalf("album %d grouped_id = %d present=%v, want > 0", i, group, ok)
+		}
+	}
+}
+
 func TestSendMultiMediaChannelPartialFailureSubsetRetryKeepsReservedGroupedID(t *testing.T) {
 	f := newRPCChannelFixture(t)
 	owner := f.user(51, "15550009401", "AlbumOwner")
