@@ -44,6 +44,8 @@ func LoadOrCreateKeyCipher(path string) (*KeyCipher, error) {
 		if err = writeKeyFile(path, raw); err != nil {
 			return nil, err
 		}
+		// The decoder accepts the persisted hex format on both first boot and reload.
+		raw = []byte(hex.EncodeToString(raw) + "\n")
 	} else if err != nil {
 		return nil, err
 	}
@@ -55,20 +57,7 @@ func LoadOrCreateKeyCipher(path string) (*KeyCipher, error) {
 	return newKeyCipher(decodeKeyFile(path, raw))
 }
 
-// decodeKeyFile turns what is on disk back into the 32 raw bytes newKeyCipher
-// wants.
-//
-// writeKeyFile persists the key hex-encoded with a trailing newline, so the file
-// is 65 bytes and reading it straight into newKeyCipher made the wallet work on
-// first boot -- where the freshly generated in-memory key was still in hand --
-// and fail on every boot after it, because 65 != 32. The failure looked like a
-// corrupt key file rather than an encoding mismatch, which is what made it worth
-// a round-trip test rather than a hand check.
-//
-// Both encodings are accepted: the hex form this build writes, and the bare 32
-// bytes an earlier build could have left behind, so an existing deployment is
-// repaired in place instead of needing its key rotated. Rotating would orphan
-// every wallet already sealed under the old key.
+// decodeKeyFile reads the hex format written by writeKeyFile.
 func decodeKeyFile(path string, raw []byte) []byte {
 	trimmed := bytes.TrimRight(raw, "\n")
 	if len(trimmed) == hex.EncodedLen(32) {
@@ -76,7 +65,7 @@ func decodeKeyFile(path string, raw []byte) []byte {
 			return decoded
 		}
 	}
-	return raw
+	return nil
 }
 
 func writeKeyFile(path string, raw []byte) error {
@@ -93,7 +82,18 @@ func writeKeyFile(path string, raw []byte) error {
 	if _, err = f.WriteString(hex.EncodeToString(raw) + "\n"); err != nil {
 		return err
 	}
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func newKeyCipher(raw []byte) (*KeyCipher, error) {

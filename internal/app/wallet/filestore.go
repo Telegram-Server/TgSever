@@ -3,6 +3,8 @@ package wallet
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +39,7 @@ type FileStore struct {
 type storedChallenge struct {
 	Challenge   domain.WalletChallenge `json:"challenge"`
 	Consumed    bool                   `json:"consumed"`
+	Operation   string                 `json:"operation,omitempty"`
 	RequestHash []byte                 `json:"request_hash,omitempty"`
 }
 
@@ -218,7 +222,7 @@ func (s *FileStore) CommitWalletLink(ctx context.Context, c domain.WalletChallen
 		return domain.ErrWalletProofInvalid
 	}
 	if stored.Consumed {
-		if !bytes.Equal(stored.RequestHash, hash[:]) || record.Link == nil || !bytes.Equal(record.Link.PublicKey, link.PublicKey) {
+		if stored.Operation != "import" || !bytes.Equal(stored.RequestHash, hash[:]) || record.Link == nil || !bytes.Equal(record.Link.PublicKey, link.PublicKey) {
 			return domain.ErrWalletProofInvalid
 		}
 		return nil
@@ -228,9 +232,11 @@ func (s *FileStore) CommitWalletLink(ctx context.Context, c domain.WalletChallen
 	}
 	stored.Consumed = true
 	stored.RequestHash = bytes.Clone(hash[:])
+	stored.Operation = "import"
 	record.Challenges[key] = stored
 	link.PublicKey = bytes.Clone(link.PublicKey)
 	record.Link = &link
+	record.Key = nil
 	return s.write(c.UserID, record)
 }
 
@@ -271,7 +277,7 @@ func (s *FileStore) CommitWalletCreated(
 	if stored.Consumed {
 		// Retry of a committed creation: answer with the wallet that won, and
 		// never with the discarded candidate.
-		if record.Link == nil {
+		if stored.Operation != "create" || record.Link == nil || record.Key == nil || !bytes.Equal(stored.RequestHash, record.Link.PublicKey) {
 			return domain.WalletLink{}, false, domain.ErrWalletProofInvalid
 		}
 		return *record.Link, true, nil
@@ -281,6 +287,7 @@ func (s *FileStore) CommitWalletCreated(
 	}
 	stored.Consumed = true
 	stored.RequestHash = bytes.Clone(link.PublicKey)
+	stored.Operation = "create"
 	record.Challenges[key8] = stored
 	link.PublicKey = bytes.Clone(link.PublicKey)
 	record.Link = &link
@@ -310,4 +317,62 @@ func (s *FileStore) WalletLinks(ctx context.Context, ids []int64) ([]domain.Wall
 		}
 	}
 	return result, nil
+}
+
+// ValidateKeyCipher fails startup if persisted custody keys cannot be opened by
+// the configured master key. It also binds each secret to its stored public key.
+func (s *FileStore) ValidateKeyCipher(keys *KeyCipher) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir, err := os.Open(s.dir)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	for {
+		entries, err := dir.ReadDir(128)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			id, parseErr := strconv.ParseInt(strings.TrimSuffix(name, ".json"), 10, 64)
+			if parseErr != nil || entry.IsDir() {
+				return ErrWalletStore
+			}
+			record, readErr := s.read(id)
+			if readErr != nil {
+				return readErr
+			}
+			if record.Key == nil {
+				continue
+			}
+			if record.Link == nil {
+				return ErrWalletStore
+			}
+			ciphertext, e := base64.RawStdEncoding.DecodeString(record.Key.Ciphertext)
+			if e != nil {
+				return ErrWalletStore
+			}
+			nonce, e := base64.RawStdEncoding.DecodeString(record.Key.Nonce)
+			if e != nil {
+				return ErrWalletStore
+			}
+			private, e := keys.Open(ciphertext, nonce)
+			if e != nil {
+				return ErrWalletKeyFile
+			}
+			valid := len(private) == ed25519.PrivateKeySize && bytes.Equal(ed25519.PrivateKey(private).Public().(ed25519.PublicKey), record.Link.PublicKey)
+			clear(private)
+			if !valid {
+				return ErrWalletKeyFile
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+	}
 }

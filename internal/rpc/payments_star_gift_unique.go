@@ -139,7 +139,10 @@ func (r *Router) starGiftUpgradeSavedTarget(ctx context.Context, userID int64, i
 	if err != nil {
 		return domain.SavedStarGift{}, internalErr()
 	}
-	if !found {
+	// A deleted gift was never upgraded (payments.deleteStarGift refuses
+	// collectibles), so no upgrade receipt can be replayed for it: refuse it
+	// before a payment form is issued.
+	if !found || saved.LifecycleStatus == domain.StarGiftLifecycleDeleted {
 		return domain.SavedStarGift{}, starGiftInvalidErr()
 	}
 	return saved, nil

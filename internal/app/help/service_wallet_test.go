@@ -40,26 +40,15 @@ func TestAppConfigWalletKeysFollowAvailability(t *testing.T) {
 		t.Fatal("wallet_available = true while the wallet is disabled: the client would offer an entry point that cannot work")
 	}
 
-	// The limits describe the capability, so they ship in both states and must not
-	// disappear when the wallet is off.
-	for _, key := range []string{"wallet_transfer_min_nanos", "wallet_gasless_min_nanos", "wallet_gasless_daily_transfers"} {
-		if _, ok := off[key].(float64); !ok {
-			t.Fatalf("%s = %v, want a number even when the wallet is off", key, off[key])
+	// No transfer or relay implementation exists in this server.
+	for _, cfg := range []map[string]any{on, off} {
+		if cfg["wallet_gasless_daily_transfers"] != float64(0) {
+			t.Fatal("gasless must remain disabled")
 		}
-	}
-}
-
-// The values have to match production, because a client scales its transfer and
-// gasless UI off them.
-func TestAppConfigWalletLimitsMatchProduction(t *testing.T) {
-	decoded := walletConfigValues(t, NewService(nil, nil, WithWalletAvailable(true)))
-	for key, want := range map[string]float64{
-		"wallet_transfer_min_nanos":      100000000,
-		"wallet_gasless_min_nanos":       100000000,
-		"wallet_gasless_daily_transfers": 5,
-	} {
-		if got, ok := decoded[key].(float64); !ok || got != want {
-			t.Fatalf("%s = %v, want %v", key, decoded[key], want)
+		for _, key := range []string{"wallet_transfer_min_nanos", "wallet_gasless_min_nanos", "ton_topup_url", "starref_connect_allowed"} {
+			if _, ok := cfg[key]; ok {
+				t.Fatalf("unsupported capability %s advertised", key)
+			}
 		}
 	}
 }

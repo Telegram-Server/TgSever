@@ -45,6 +45,23 @@ TAB_RE = re.compile(
     r'\s*permission:\s*(?P<perm>\w+)(?P<rest>[^}]*)\}'
 )
 
+ALIAS_RE = re.compile(r'aliases:\s*\[(?P<paths>[^\]]*)\]')
+
+
+def parse_aliases(rest: str) -> list[str]:
+    """Return the extra paths a tab entry serves, if it lists any.
+
+    A tab that carries aliases is served under a second URL as well: the
+    Messages tab answers to a bare /messages, and the Stars & Premium tab
+    still answers to the old /star-issue. The table prints those paths, so
+    the URL a bookmark points at is written down next to the one the tab
+    lives at.
+    """
+    match = ALIAS_RE.search(rest)
+    if not match:
+        return []
+    return re.findall(r'"([^"]+)"', match.group("paths"))
+
 
 def read_bracket_array(src: str, open_bracket: int) -> str:
     """Return the text between the `[` at open_bracket and its matching `]`."""
@@ -59,8 +76,8 @@ def read_bracket_array(src: str, open_bracket: int) -> str:
     raise ValueError(f"unbalanced [ at offset {open_bracket} of nav.ts")
 
 
-def parse_nav() -> list[tuple[str, str, list[tuple[str, str, str, bool]]]]:
-    """Return [(section id, label key, [(path, label key, permission const, has alias)])]."""
+def parse_nav() -> list[tuple[str, str, list[tuple[str, str, str, list[str]]]]]:
+    """Return [(section id, label key, [(path, label key, permission const, aliases)])]."""
     src = (WEB / "nav.ts").read_text(encoding="utf-8")
     body = src[src.index("export const navSections"):]
     body = body[: body.index("\n];")]
@@ -77,7 +94,7 @@ def parse_nav() -> list[tuple[str, str, list[tuple[str, str, str, bool]]]]:
                     t.group("path"),
                     t.group("label"),
                     t.group("perm"),
-                    "aliases" in t.group("rest"),
+                    parse_aliases(t.group("rest")),
                 )
             )
         # A section that parses to zero tabs is a broken parse, not an empty
@@ -423,9 +440,12 @@ def render_tables() -> dict[str, str]:
     ]
     tab_count = 0
     for _sid, section_key, tabs in sections:
-        for path, tab_key, perm, has_alias in tabs:
+        for path, tab_key, perm, aliases in tabs:
             name = const_to_name.get(perm, perm)
-            suffix = " (also served at the bare alias)" if has_alias else ""
+            suffix = ""
+            if aliases:
+                extra = ", ".join(f"`{alias}`" for alias in aliases)
+                suffix = f" (also served at {extra})"
             sections_md.append(
                 f"| {label(section_key)} | {label(tab_key)} | `{path}` | `{name}`{suffix} |"
             )

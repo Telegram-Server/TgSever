@@ -470,6 +470,8 @@ type AccountService interface {
 	GetPasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck) (domain.PrivatePasswordSettings, error)
 	UpdatePasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck, input domain.PasswordInputSettings) error
 	CheckPassword(ctx context.Context, userID int64, check domain.PasswordCheck) error
+	IssueTmpPassword(ctx context.Context, userID int64, authKeyID [8]byte, check domain.PasswordCheck, period int, now time.Time) (domain.TmpPassword, error)
+	CheckTmpPassword(ctx context.Context, userID int64, authKeyID [8]byte, tmpPassword []byte, now time.Time) error
 	RevenueWithdrawalPasswordState(ctx context.Context, userID int64) (domain.RevenueWithdrawalPasswordState, error)
 	RequestPasswordRecovery(ctx context.Context, userID int64) (string, error)
 	CheckRecoveryPassword(ctx context.Context, userID int64, code string) error
@@ -767,6 +769,10 @@ type ChannelsService interface {
 	JoinChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
 	LeaveChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
 	EditTitle(ctx context.Context, userID int64, req domain.EditChannelTitleRequest) (domain.EditChannelTitleResult, error)
+	// EditFactCheck 写入/删除消息的 Layer 231 事实核查标签；空文本表示删除。
+	EditFactCheck(ctx context.Context, userID int64, req domain.EditFactCheckRequest) (domain.EditFactCheckResult, error)
+	// GetFactChecks 批量读取消息的事实核查标签。
+	GetFactChecks(ctx context.Context, userID, channelID int64, messageIDs []int) (domain.FactCheckList, error)
 	SetWallpaper(ctx context.Context, userID int64, req domain.SetChannelWallpaperRequest) (domain.SetChannelWallpaperResult, error)
 	EditAbout(ctx context.Context, userID int64, req domain.EditChannelAboutRequest) (domain.Channel, error)
 	EditAdmin(ctx context.Context, userID int64, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error)
@@ -1297,6 +1303,9 @@ type GiftsService interface {
 	DropOriginalDetails(ctx context.Context, req domain.StarGiftDropOriginalDetailsRequest) (domain.StarGiftDropOriginalDetailsResult, error)
 	SetNotifications(ctx context.Context, userID, channelID int64, enabled bool) error
 	Withdraw(ctx context.Context, req domain.StarGiftWithdrawalRequest) (domain.StarGiftWithdrawal, error)
+	// DeleteStarGift removes a received gift from the owner's profile
+	// (payments.deleteStarGift, Layer 232).
+	DeleteStarGift(ctx context.Context, req domain.StarGiftDeleteRequest) (domain.StarGiftDeleteResult, error)
 	TonBalance(ctx context.Context, userID int64) (int64, error)
 	TonTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error)
 	IssuePurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)

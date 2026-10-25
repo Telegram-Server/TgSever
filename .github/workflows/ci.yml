@@ -78,12 +78,17 @@ jobs:
       - name: Verify gift inventory and Stars ledger against PostgreSQL
         env:
           TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
-        run: go test ./internal/store/postgres -run '^(TestOfficialStarGiftInventoryPostgres|TestOfficialStarGiftBundleIsAtomicPostgres|TestStarGiftStorePostgres|TestStarsLedgerPostgres|TestBotGiftPurchaseIsNotConvertibleToStarsPostgres)$' -count=1 -timeout=3m
+        run: go test ./internal/store/postgres -run '^(TestOfficialStarGiftInventoryPostgres|TestOfficialStarGiftBundleIsAtomicPostgres|TestStarGiftStorePostgres|TestStarsLedgerPostgres|TestBotGiftPurchaseIsNotConvertibleToStarsPostgres|TestStarGiftDeleteRemovesGiftFromProfilePostgres|TestStarGiftDeleteRefusesUpgradedGiftPostgres|TestStarGiftDeleteRefreshesCollectionHashPostgres|TestStarGiftDeleteRefusesIrreversibleGiftsPostgres|TestStarGiftDeleteBlocksLaterUpgradePostgres)$' -count=1 -timeout=3m
 
       - name: Verify admin operator and audit command flow against PostgreSQL
         env:
           TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
         run: go test ./cmd/telesrv-admin -run '^(TestOperatorCommand|TestOperatorCreateRoute|TestOperatorUniqueness|TestNamedOperator|TestDemotion|TestAuditTrail)' -count=1 -timeout=5m
+
+      - name: Verify fact-check persistence and visibility against PostgreSQL
+        env:
+          TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
+        run: go test ./internal/store/postgres -run '^TestChannelFactCheck' -count=1 -timeout=3m
 
   admin-web:
     name: Admin web build
@@ -199,14 +204,15 @@ jobs:
           # (which mounts the volume read-only), so both must name the same
           # directory on the volume -- with the relative default the panel's
           # server settings were silently never saved.
-          "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; assert s["server"].get("network_mode") == "host"; assert s["admin"].get("network_mode") == "host"; assert len(s["server"].get("ports", [])) == 0; assert len(s["admin"].get("ports", [])) == 0; assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12999"; _e = s["server"]["environment"]; assert _e["TELESRV_WALLET_STATE_DIR"].startswith("/var/lib/telesrv"); assert _e["TELESRV_WALLET_KEY_FILE"].startswith("/var/lib/telesrv"); _a = s["admin"]["environment"]; assert _e["TELESRV_IDENTITY_DIR"].startswith("/var/lib/telesrv"); assert _a["TELESRV_IDENTITY_DIR"].startswith("/var/lib/telesrv"); assert _e["TELESRV_IDENTITY_DIR"] == _a["TELESRV_IDENTITY_DIR"]'
+          "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; assert s["server"].get("network_mode") == "host"; assert s["admin"].get("network_mode") == "host"; assert len(s["server"].get("ports", [])) == 0; assert len(s["admin"].get("ports", [])) == 0; assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12999"; _e = s["server"]["environment"]; assert not _e["TELESRV_WALLET_STATE_DIR"] or _e["TELESRV_WALLET_STATE_DIR"].startswith("/var/lib/telesrv/"); assert _e["TELESRV_WALLET_KEY_FILE"].startswith("/var/lib/telesrv"); _a = s["admin"]["environment"]; assert _e["TELESRV_IDENTITY_DIR"].startswith("/var/lib/telesrv"); assert _a["TELESRV_IDENTITY_DIR"].startswith("/var/lib/telesrv"); assert _e["TELESRV_IDENTITY_DIR"] == _a["TELESRV_IDENTITY_DIR"]'
           # Desktop updates stay off by default (a non-empty manifest turns the
           # in-process service on), and the update volume is the only writable
           # mount the server gains. The update root public key comes from a
           # read-only bind of deploy/docker/update-keys, never from that volume.
           # APNs push is off by default and its certificate comes from a
-          # read-only bind of deploy/docker/apns-keys.
-          "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]["server"]; e=s["environment"]; keys=("TELESRV_UPDATE_MANIFEST", "TELESRV_UPDATE_FILES_DIR", "TELESRV_UPDATE_ROOT_PUBLIC_KEY", "TELESRV_UPDATE_PUBLIC_URL"); assert all(k in e and not e[k] for k in keys), {k: e.get(k) for k in keys}; m={v["target"]: v for v in s["volumes"]}; assert sorted(m) == ["/etc/telesrv-apns", "/etc/telesrv-updates", "/var/lib/telesrv", "/var/lib/telesrv-updates"], sorted(m); a=m["/etc/telesrv-apns"]; assert a["type"] == "bind" and a.get("read_only") is True and a["source"].endswith("/deploy/docker/apns-keys"), a; assert str(e["TELESRV_APNS_ENABLED"]).lower() == "false", e["TELESRV_APNS_ENABLED"]; assert m["/var/lib/telesrv-updates"]["type"] == "volume" and not m["/var/lib/telesrv-updates"].get("read_only", False); k=m["/etc/telesrv-updates"]; assert k["type"] == "bind" and k.get("read_only") is True and k["source"].endswith("/deploy/docker/update-keys"), k; assert s["read_only"] is True'
+          # read-only bind of deploy/docker/apns-keys. The sticker/reaction seed
+          # is a read-only bind as well.
+          "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]["server"]; e=s["environment"]; keys=("TELESRV_UPDATE_MANIFEST", "TELESRV_UPDATE_FILES_DIR", "TELESRV_UPDATE_ROOT_PUBLIC_KEY", "TELESRV_UPDATE_PUBLIC_URL"); assert all(k in e and not e[k] for k in keys), {k: e.get(k) for k in keys}; m={v["target"]: v for v in s["volumes"]}; assert sorted(m) == ["/app/data/sticker-seed", "/etc/telesrv-apns", "/etc/telesrv-updates", "/var/lib/telesrv", "/var/lib/telesrv-updates"], sorted(m); g=m["/app/data/sticker-seed"]; assert g["type"] == "bind" and g.get("read_only") is True, g; a=m["/etc/telesrv-apns"]; assert a["type"] == "bind" and a.get("read_only") is True and a["source"].endswith("/deploy/docker/apns-keys"), a; assert str(e["TELESRV_APNS_ENABLED"]).lower() == "false", e["TELESRV_APNS_ENABLED"]; assert m["/var/lib/telesrv-updates"]["type"] == "volume" and not m["/var/lib/telesrv-updates"].get("read_only", False); k=m["/etc/telesrv-updates"]; assert k["type"] == "bind" and k.get("read_only") is True and k["source"].endswith("/deploy/docker/update-keys"), k; assert s["read_only"] is True'
           "${bridge[@]}" config --quiet
           "${bridge[@]}" config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin); s=c["services"]; assert s["server"].get("network_mode") != "host"; assert s["admin"].get("network_mode") != "host"; assert len(s["server"].get("ports", [])) == 69; assert len(s["admin"].get("ports", [])) == 1; assert "admin_host_access" in s["admin"]["networks"]; assert not c["networks"]["admin_host_access"].get("internal", False); assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12563"'
 

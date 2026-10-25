@@ -12,7 +12,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gotd/ige v0.3.0
 	github.com/gotd/log/logzap v0.1.1
-	github.com/iamxvbaba/td v1.4.1
+	github.com/iamxvbaba/td v1.7.0
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/klauspost/compress v1.19.1
@@ -138,4 +138,4 @@ require (
 )
 
 // telesrv.* 扩展协议只在 Telegram-Server/td 发布；td 改用新模块路径后由 #58 去掉这一行。
-replace github.com/iamxvbaba/td => github.com/Telegram-Server/td v1.5.0
+replace github.com/iamxvbaba/td => github.com/Telegram-Server/td v1.7.0-telesrv.1

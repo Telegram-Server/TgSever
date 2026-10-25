@@ -1057,42 +1057,54 @@ td.evidence-message-cell {
   min-width: 0;
 }
 
-.premium-mass-grant {
-  display: grid;
-  grid-template-columns: minmax(170px, max-content) minmax(74px, 92px) minmax(190px, 1fr);
-  align-items: stretch;
-  gap: 10px;
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  background: var(--panel-subtle);
-  border: 1px solid var(--line);
-  border-radius: 11px;
+/* The bulk giveaway. It is the only write on the page that touches every
+   account at once, so it gets its own frame with a warned border and reads as
+   the last thing on the page rather than as one more control. */
+.premium-mass-surface {
+  margin-top: 12px;
+  padding: 14px;
+  border-color: var(--warn-border);
 }
 
-.premium-mass-grant-head {
+.premium-mass-head {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--heading);
-  font-size: 12px;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 12px;
 }
 
-.premium-mass-grant-head > span {
+.premium-mass-head > span {
   display: grid;
   width: 26px;
   height: 26px;
+  flex: 0 0 auto;
   place-items: center;
-  color: #c58a00;
-  background: rgba(232, 165, 0, .12);
+  color: var(--warn);
+  background: var(--warn-tint);
+  border: 1px solid var(--warn-border);
   border-radius: 8px;
 }
 
-.premium-mass-grant-control {
-  display: grid;
-  min-width: 0;
+.premium-mass-head strong {
+  display: block;
+  color: var(--heading);
+  font-size: 13px;
 }
 
-.premium-mass-grant-control > input {
+.premium-mass-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.premium-mass-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 120px) max-content minmax(200px, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.premium-mass-row > input {
   width: 100%;
   min-width: 0;
   height: 36px;
@@ -1100,22 +1112,17 @@ td.evidence-message-cell {
   font-variant-numeric: tabular-nums;
 }
 
-.premium-mass-grant-actions {
-  display: grid;
-  gap: 4px;
-  align-content: start;
-  min-width: 0;
-}
-
-.premium-mass-grant-actions .btn {
-  width: 100%;
+.premium-mass-row .btn {
   min-height: 36px;
   justify-content: center;
   white-space: normal;
 }
 
-.premium-mass-grant .premium-store-hint {
-  align-self: start;
+.premium-mass-row .premium-store-hint {
+  /* The plan editor lets this hint span the whole grid; here it belongs
+     beside the button, not under it. */
+  grid-column: auto;
+  align-self: center;
   margin: 0;
   font-size: 11px;
 }
@@ -1460,7 +1467,7 @@ td.evidence-message-cell {
 @media (max-width: 1180px) {
   .premium-operation-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .premium-account-picker { grid-column: 1 / -1; }
-  .premium-mass-grant { grid-template-columns: minmax(160px, max-content) minmax(74px, 92px) minmax(0, 1fr); }
+  .premium-mass-row { grid-template-columns: minmax(90px, 120px) max-content minmax(0, 1fr); }
   .premium-plan-card > summary {
     grid-template-columns: 20px minmax(160px, 1fr) minmax(90px, .55fr) minmax(118px, .65fr) auto minmax(96px, auto);
   }
@@ -1469,8 +1476,8 @@ td.evidence-message-cell {
 
 @media (max-width: 820px) {
   .premium-operation-bar { grid-template-columns: 1fr; }
-  .premium-mass-grant { grid-template-columns: 1fr; }
-  .premium-mass-grant-head { white-space: nowrap; }
+  .premium-mass-row { grid-template-columns: 1fr; }
+  .premium-mass-row .btn { justify-self: start; }
   .premium-account-picker { grid-column: auto; }
   .premium-plan-card > summary {
     grid-template-columns: 20px minmax(0, 1fr) auto;

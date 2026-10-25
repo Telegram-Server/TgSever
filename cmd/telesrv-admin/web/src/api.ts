@@ -1,3 +1,4 @@
+import { withBase } from "./lib/base";
 import type {
   AccountDetail,
   AccountListResponse,
@@ -150,7 +151,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
       headers[csrfHeaderName] = token;
     }
   }
-  const response = await fetch(url, {
+  const response = await fetch(withBase(url), {
     credentials: "same-origin",
     ...init,
     headers
@@ -304,8 +305,8 @@ export const api = {
 	gifCatalog: () => request<GifCatalogListResponse>("/api/gif-catalog"),
 	stickerSets: (kind: "stickers" | "emoji") => request<StickerSetListResponse>(`/api/stickers?kind=${encodeURIComponent(kind)}`),
 	stickerSetDocuments: (setID: string) => request<{ document_ids: string[] }>(`/api/stickers/${encodeURIComponent(setID)}/documents`),
-	stickerDocumentAnimationURL: (documentID: string) => `/api/stickers/documents/${encodeURIComponent(documentID)}/animation`,
-	gifCatalogDocumentPreviewURL: (documentID: string) => `/api/gif-catalog/documents/${encodeURIComponent(documentID)}/preview`,
+	stickerDocumentAnimationURL: (documentID: string) => withBase(`/api/stickers/documents/${encodeURIComponent(documentID)}/animation`),
+	gifCatalogDocumentPreviewURL: (documentID: string) => withBase(`/api/gif-catalog/documents/${encodeURIComponent(documentID)}/preview`),
 	createStickerSet: (form: FormData) => request<CommandResult>("/api/actions/create-sticker-set", { method: "POST", body: form }),
 	addStickerToSet: (form: FormData) => request<CommandResult>("/api/actions/add-sticker-to-set", { method: "POST", body: form }),
 	createGifCatalogEntry: (form: FormData) => request<CommandResult>("/api/actions/create-gif-catalog-entry", { method: "POST", body: form }),
@@ -321,11 +322,11 @@ export const api = {
   serverIdentity: () => request<ServerIdentity>("/api/server/identity"),
   serverEnv: () => request<EnvGroup[]>("/api/server/env"),
   serverStatus: () => request<ServerStatus>("/api/server/status"),
-  serverIconURL: (bust = 0) => `/api/server/icon?_=${bust}`,
+  serverIconURL: (bust = 0) => withBase(`/api/server/icon?_=${bust}`),
   // The login screen renders before a session exists, so it cannot read the
   // server.manage-gated icon route. This one is public and serves the same
   // bytes; the page falls back to /logo.png on a 404 (no icon configured).
-  publicServerIconURL: (bust = 0) => `/api/public/icon?_=${bust}`,
+  publicServerIconURL: (bust = 0) => withBase(`/api/public/icon?_=${bust}`),
   uploadServerIcon: (form: FormData) => request<CommandResult>("/api/actions/upload-server-icon", { method: "POST", body: form }),
   // action posts an audited command. A FormData body is sent as multipart -- the
 // browser sets the boundary and request() leaves Content-Type alone for it --

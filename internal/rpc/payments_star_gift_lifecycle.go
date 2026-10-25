@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
@@ -664,8 +665,89 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 	return r.starGiftTransferUpdates(ctx, userID, result, false), nil
 }
 
+// onPaymentsDeleteStarGift implements payments.deleteStarGift (Layer 232).
+// 只有礼物主人能删自己的那份普通礼物：礼物离开资料页，同时退出所属集合。
+// 已升级的藏品、限量/拍卖礼物以及仍带转换价或预付升级 Stars 的礼物一律拒绝
+// （STARGIFT_INVALID），因为删除不可逆、会连带销毁这些 Stars。删除不硬删行：
+// 升级命令、报价、转账记录都引用这一行。频道礼物属于频道资产，不走个人删除
+// 路径（STARGIFT_OWNER_INVALID）；频道方删除需要频道所有权/转账权限语义，
+// 目前尚未实现。
+func (r *Router) onPaymentsDeleteStarGift(ctx context.Context, req *tg.PaymentsDeleteStarGiftRequest) (bool, error) {
+	if req == nil {
+		return false, inputRequestInvalidErr()
+	}
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return false, internalErr()
+	}
+	if r.deps.Gifts == nil {
+		return false, notImplementedErr()
+	}
+	if r.userIsBot(ctx, userID) {
+		return false, botMethodInvalidErr()
+	}
+	ref, ok, err := r.starGiftRefFromInput(ctx, userID, req.Stargift)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, starGiftInvalidErr()
+	}
+	// 频道礼物属于频道资产：官方客户端允许有转账权限的频道主/管理员删除，
+	// 这需要另一套频道所有权检查，本方法明确不覆盖，继续按个人删除路径拒绝。
+	if ref.Owner.Type != domain.PeerTypeUser || ref.Owner.ID != userID {
+		return false, tgerr.New(400, "STARGIFT_OWNER_INVALID")
+	}
+	result, err := r.deps.Gifts.DeleteStarGift(ctx, domain.StarGiftDeleteRequest{
+		UserID: userID, Ref: ref, Date: int(r.clock.Now().Unix()),
+	})
+	if err != nil {
+		return false, starGiftLifecycleErr(err)
+	}
+	if !result.Deleted {
+		return false, starGiftInvalidErr()
+	}
+	// 礼物离开资料页 → 失效 owner full 投影。
+	r.invalidateStarGiftOwnerProjection(ref.Owner)
+	return true, nil
+}
+
 func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLRequest) (*tg.PaymentsStarGiftWithdrawalURL, error) {
-	if req == nil || r.deps.Gifts == nil || r.deps.Account == nil || r.deps.Auth == nil {
+	if req == nil {
+		return nil, starGiftInvalidErr()
+	}
+	// Layer 232 的 2FA 证明是本授权经 account.getTmpPassword 签发的 tmp_password。
+	return r.starGiftWithdrawalURL(ctx, req.Stargift, func(userID int64, authKeyID [8]byte, now time.Time) error {
+		return r.deps.Account.CheckTmpPassword(ctx, userID, authKeyID, req.TmpPassword, now)
+	})
+}
+
+// onPaymentsGetStarGiftWithdrawalURLLegacy 服务 exact Layer 225–231 客户端：
+// 它们的 payments.getStarGiftWithdrawalUrl#d06e93a8 携带 SRP 证明而不是
+// tmp_password。td 把该构造器提升为独立的 legacy 方法，证明原样到达这里，
+// 只按 SRP 校验，永远不会被当成 tmp_password 或被丢弃。
+func (r *Router) onPaymentsGetStarGiftWithdrawalURLLegacy(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLLegacyRequest) (*tg.PaymentsStarGiftWithdrawalURL, error) {
+	if req == nil {
+		return nil, starGiftInvalidErr()
+	}
+	return r.starGiftWithdrawalURL(ctx, req.Stargift, func(userID int64, _ [8]byte, _ time.Time) error {
+		// 与 payments.getStarsRevenueWithdrawalUrl 一致只认 SRP：账号已设 2FA 时
+		// inputCheckPasswordEmpty 不是证明。
+		if _, ok := req.Password.(*tg.InputCheckPasswordSRP); !ok {
+			return domain.ErrPasswordHashInvalid
+		}
+		return r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password))
+	})
+}
+
+// starGiftWithdrawalURL 是两种 2FA 证明共用的导出门禁；checkProof 只校验
+// 各自方法的证明，其余顺序与判定对两种证明完全相同。
+func (r *Router) starGiftWithdrawalURL(
+	ctx context.Context,
+	input tg.InputSavedStarGiftClass,
+	checkProof func(userID int64, authKeyID [8]byte, now time.Time) error,
+) (*tg.PaymentsStarGiftWithdrawalURL, error) {
+	if r.deps.Gifts == nil || r.deps.Account == nil || r.deps.Auth == nil {
 		return nil, starGiftInvalidErr()
 	}
 	userID, _, err := r.currentUserID(ctx)
@@ -681,18 +763,23 @@ func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg
 	if err != nil {
 		return nil, internalErr()
 	}
-	// checkSRP 只在“已设密码”时认 SRP，在“未设密码”时只认 inputCheckPasswordEmpty，
-	// 所以这里不单设 PASSWORD_MISSING，保持与 account 域的既有判定一致。
-	if err := r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password)); err != nil {
-		return nil, passwordErr(err)
+	// 未设 2FA 的账号没有可校验的证明：空 tmp_password 与 inputCheckPasswordEmpty
+	// 都不能代表通过；与 payments.getStarsRevenueWithdrawalUrl 一致，先要求账号已设 2FA。
+	if !passwordState.HasPassword {
+		return nil, tgerr.New(400, "PASSWORD_MISSING")
+	}
+	authKeyID, ok := AuthKeyIDFrom(ctx)
+	if !ok || authKeyID == ([8]byte{}) {
+		return nil, authKeyUnregisteredErr()
 	}
 	now := r.clock.Now()
-	if passwordState.HasPassword {
-		if wait := revenueWithdrawalFreshWait(passwordState.PasswordChangedAt, now); wait < 0 {
-			return nil, internalErr()
-		} else if wait > 0 {
-			return nil, tgerr.New(400, fmt.Sprintf("PASSWORD_TOO_FRESH_%d", wait))
-		}
+	if err := checkProof(userID, authKeyID, now); err != nil {
+		return nil, passwordErr(err)
+	}
+	if wait := revenueWithdrawalFreshWait(passwordState.PasswordChangedAt, now); wait < 0 {
+		return nil, internalErr()
+	} else if wait > 0 {
+		return nil, tgerr.New(400, fmt.Sprintf("PASSWORD_TOO_FRESH_%d", wait))
 	}
 	authorization, signedIn, err := r.signedInAuthorization(ctx, userID)
 	if err != nil {
@@ -706,7 +793,7 @@ func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg
 	} else if wait > 0 {
 		return nil, tgerr.New(400, fmt.Sprintf("SESSION_TOO_FRESH_%d", wait))
 	}
-	ref, ok, err := r.starGiftRefFromInput(ctx, userID, req.Stargift)
+	ref, ok, err := r.starGiftRefFromInput(ctx, userID, input)
 	if err != nil {
 		return nil, err
 	}
@@ -1167,6 +1254,7 @@ func starGiftLifecycleErr(err error) error {
 	case errors.Is(err, domain.ErrStarGiftNotFound), errors.Is(err, domain.ErrStarGiftResaleUnavailable),
 		errors.Is(err, domain.ErrStarGiftTransferUnavailable), errors.Is(err, domain.ErrStarGiftOfferInvalid),
 		errors.Is(err, domain.ErrStarGiftAuctionUnavailable),
+		errors.Is(err, domain.ErrStarGiftDeleteUnavailable),
 		errors.Is(err, domain.ErrStarGiftUnavailable), errors.Is(err, domain.ErrStarGiftInvalid),
 		errors.Is(err, domain.ErrStarGiftCollectibleUnavailable):
 		return starGiftInvalidErr()

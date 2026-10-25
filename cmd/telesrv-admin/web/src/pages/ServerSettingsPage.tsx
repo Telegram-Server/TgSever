@@ -8,6 +8,7 @@ import { Alert, LoadingSurface, PageFrame, SectionHead } from "../components/ui"
 import { useI18n } from "../i18n";
 import type { Navigate } from "../routing";
 import type { DockerService, EnvGroup, ServerIdentity, ServerStatus } from "../types";
+import { withBase } from "../lib/base";
 
 // Server Settings: the panel's equivalent of owpengram's server-panel menu —
 // admin-editable server name/description/icon, login-notification template
@@ -133,7 +134,7 @@ function IdentitySection() {
               ) : (
                 <img
                   className="avatar-photo-img server-icon-default"
-                  src="/logo.png"
+                  src={withBase("/logo.png")}
                   alt=""
                   style={{ width: 88, height: 88 }}
                 />

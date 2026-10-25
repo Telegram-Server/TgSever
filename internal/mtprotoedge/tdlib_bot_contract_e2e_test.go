@@ -15,6 +15,7 @@ import (
 	"github.com/iamxvbaba/td/mt"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"github.com/iamxvbaba/td/transport"
 
 	"telesrv/internal/app/auth"
@@ -165,6 +166,17 @@ func decodeInto[T any, P interface {
 	return &v
 }
 
+// decodeTDLibResult 按 TDLib 的 Layer（tdlibMTProtoLayer）解码响应：服务端按会话 layer 编码，
+// 规范模型（tg.Decode*）跟随 td 的最新 layer，构造器 ID 一变（如 Layer 232 的 channel）就解不开。
+func decodeTDLibResult(t *testing.T, name string, b *bin.Buffer) bin.Object {
+	t.Helper()
+	v, err := tlprofile.DecodeObject(tlprofile.Profile(tdlibMTProtoLayer), b, tlprofile.Limits{})
+	if err != nil {
+		t.Fatalf("decode %s: %v", name, err)
+	}
+	return v
+}
+
 type tdlibContractServer struct {
 	addr string
 	pub  exchange.PublicKey
@@ -312,10 +324,7 @@ func TestTDLibBotContract(t *testing.T) {
 	// （td/td/telegram/UpdatesManager.cpp:135,200,496-528）。
 	state := decodeInto[tg.UpdatesState](t, "updates.getState", bot.mustCall("updates.getState", &tg.UpdatesGetStateRequest{}))
 	diffRaw := bot.mustCall("updates.getDifference", &tg.UpdatesGetDifferenceRequest{Pts: state.Pts, Date: state.Date, Qts: state.Qts})
-	diff, err := tg.DecodeUpdatesDifference(diffRaw)
-	if err != nil {
-		t.Fatalf("decode updates.Difference: %v", err)
-	}
+	diff := decodeTDLibResult(t, "updates.Difference", diffRaw)
 	switch d := diff.(type) {
 	case *tg.UpdatesDifferenceEmpty:
 		// 从刚取得的 state 出发，无差异是正确结果。
@@ -420,16 +429,12 @@ func assertTDLibBotChannelDifference(t *testing.T, srv tdlibContractServer, bot 
 		t.Fatalf("channel pts advanced %d, want %d", channel.Pts-startPts, sent)
 	}
 	input := &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
-	getDiff := func(pts int) tg.UpdatesChannelDifferenceClass {
+	getDiff := func(pts int) bin.Object {
 		t.Helper()
 		raw := bot.mustCall("updates.getChannelDifference", &tg.UpdatesGetChannelDifferenceRequest{
 			Channel: input, Filter: &tg.ChannelMessagesFilterEmpty{}, Pts: pts, Limit: 100000,
 		})
-		out, err := tg.DecodeUpdatesChannelDifference(raw)
-		if err != nil {
-			t.Fatalf("decode updates.ChannelDifference: %v", err)
-		}
-		return out
+		return decodeTDLibResult(t, "updates.ChannelDifference", raw)
 	}
 
 	firstRaw := getDiff(startPts)
@@ -486,10 +491,7 @@ func TestTDLibBotContractQtsDifferenceAfterOffline(t *testing.T) {
 
 	second := login()
 	raw := second.mustCall("updates.getDifference", &tg.UpdatesGetDifferenceRequest{Pts: state.Pts, Date: state.Date, Qts: state.Qts})
-	diffClass, err := tg.DecodeUpdatesDifference(raw)
-	if err != nil {
-		t.Fatalf("decode updates.Difference: %v", err)
-	}
+	diffClass := decodeTDLibResult(t, "updates.Difference", raw)
 	// qts 类补差永远不能是 differenceTooLong：TDLib 收到它只 set_pts，然后用同一个旧 qts 再次
 	// getDifference（td/td/telegram/UpdatesManager.cpp:2168-2176），qts 落后于保留期时会无限循环。
 	// 服务端因此从最旧的保留记录补起，differenceTooLong 只留给 pts 的 pts_total_limit 场景。

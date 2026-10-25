@@ -57,45 +57,25 @@ const tdesktopClient = "tdesktop"
 //
 // WebK directly calls Array.some on fragment_prefixes while rendering user profiles,
 // so this compatibility key must always remain an array, even when it is empty.
-const tdesktopDefaultAppConfigBase = `{"chat_read_mark_expire_period":604800,"chat_read_mark_size_threshold":50,"pm_read_date_expire_period":604800,"quote_length_max":1024,"telegram_antispam_group_size_min":200,"telegram_antispam_user_id":"5434988373","fragment_prefixes":["888"],"forum_upgrade_participants_min":2,"reactions_default":{"_":"reactionEmoji","emoticon":"👍"},"reactions_uniq_max":11,"reactions_user_max_default":1,"reactions_user_max_premium":3,"reactions_in_chat_max":3,"boosts_channel_level_max":100,"rich_message_posting":"enabled","ephemeral_welcome_messages_max":5,"upload_markup_video":true,"emojies_send_dice":["🎲","🎯","🏀","⚽","⚽️","🎳","🎰"],"premium_purchase_blocked":false,"premium_gift_attach_menu_icon":true,"premium_gift_text_field_icon":true,"gift_text_length_max":128,"stars_purchase_blocked":false,"stargifts_blocked":false,"stargifts_pinned_to_top_limit":6,"giveaway_gifts_purchase_available":true,"giveaway_boosts_per_premium":4,"giveaway_countries_max":10,"giveaway_add_peers_max":10,"giveaway_period_max":604800,"stories_stealth_future_period":1500,"stories_stealth_past_period":300,"stories_stealth_cooldown_period":10800,"quick_replies_limit":100,"quick_reply_messages_limit":20,"business_chat_links_limit":100,"dialog_filters_enabled":true,"chatlist_update_period":3600,"chatlist_invites_limit_default":3,"chatlist_invites_limit_premium":20,"chatlists_joined_limit_default":2,"chatlists_joined_limit_premium":20,"about_length_limit_default":70,"about_length_limit_premium":140,"bot_verification_description_length_limit":128,"caption_length_limit_default":1024,"caption_length_limit_premium":4096,"channels_limit_default":500,"channels_limit_premium":1000,"channels_public_limit_default":10,"channels_public_limit_premium":20,"dialog_filters_limit_default":10,"dialog_filters_limit_premium":20,"dialog_filters_chats_limit_default":100,"dialog_filters_chats_limit_premium":200,"dialogs_pinned_limit_default":5,"dialogs_pinned_limit_premium":10,"dialogs_folder_pinned_limit_default":100,"dialogs_folder_pinned_limit_premium":200,"saved_dialogs_pinned_limit_default":5,"saved_dialogs_pinned_limit_premium":100,"saved_gifs_limit_default":200,"saved_gifs_limit_premium":400,"stickers_faved_limit_default":5,"stickers_faved_limit_premium":10,"recommended_channels_limit_default":10,"recommended_channels_limit_premium":100,"aicompose_tone_examples_num":3,"aicompose_tone_title_length_max":12,"aicompose_tone_prompt_length_max":1024,"aicompose_tone_saved_limit_default":5,"aicompose_tone_saved_limit_premium":20,"upload_max_fileparts_default":4000,"upload_max_fileparts_premium":8000,"settings_display_passkeys":true`
+const tdesktopDefaultAppConfigBase = `{"chat_read_mark_expire_period":604800,"chat_read_mark_size_threshold":50,"pm_read_date_expire_period":604800,"quote_length_max":1024,"telegram_antispam_group_size_min":200,"telegram_antispam_user_id":"5434988373","fragment_prefixes":["888"],"forum_upgrade_participants_min":2,"reactions_default":{"_":"reactionEmoji","emoticon":"👍"},"reactions_uniq_max":11,"reactions_user_max_default":1,"reactions_user_max_premium":3,"reactions_in_chat_max":3,"boosts_channel_level_max":100,"rich_message_posting":"enabled","ephemeral_welcome_messages_max":5,"upload_markup_video":true,"emojies_send_dice":["🎲","🎯","🏀","⚽","⚽️","🎳","🎰"],"premium_purchase_blocked":false,"premium_gift_attach_menu_icon":true,"premium_gift_text_field_icon":true,"gift_text_length_max":128,"stars_purchase_blocked":false,"stargifts_blocked":false,"stargifts_pinned_to_top_limit":6,"giveaway_gifts_purchase_available":true,"giveaway_boosts_per_premium":4,"giveaway_countries_max":10,"giveaway_add_peers_max":10,"giveaway_period_max":604800,"stories_stealth_future_period":1500,"stories_stealth_past_period":300,"stories_stealth_cooldown_period":10800,"quick_replies_limit":100,"quick_reply_messages_limit":20,"business_chat_links_limit":100,"dialog_filters_enabled":true,"chatlist_update_period":3600,"chatlist_invites_limit_default":3,"chatlist_invites_limit_premium":20,"chatlists_joined_limit_default":2,"chatlists_joined_limit_premium":20,"about_length_limit_default":70,"about_length_limit_premium":140,"bot_verification_description_length_limit":128,"caption_length_limit_default":1024,"caption_length_limit_premium":4096,"channels_limit_default":500,"channels_limit_premium":1000,"channels_public_limit_default":10,"channels_public_limit_premium":20,"dialog_filters_limit_default":10,"dialog_filters_limit_premium":20,"dialog_filters_chats_limit_default":100,"dialog_filters_chats_limit_premium":200,"dialogs_pinned_limit_default":5,"dialogs_pinned_limit_premium":10,"dialogs_folder_pinned_limit_default":100,"dialogs_folder_pinned_limit_premium":200,"saved_dialogs_pinned_limit_default":5,"saved_dialogs_pinned_limit_premium":100,"saved_gifs_limit_default":200,"saved_gifs_limit_premium":400,"stickers_faved_limit_default":5,"stickers_faved_limit_premium":10,"recommended_channels_limit_default":10,"recommended_channels_limit_premium":100,"aicompose_tone_examples_num":3,"aicompose_tone_title_length_max":12,"aicompose_tone_prompt_length_max":1024,"aicompose_tone_saved_limit_default":5,"aicompose_tone_saved_limit_premium":20,"upload_max_fileparts_default":4000,"upload_max_fileparts_premium":8000,"settings_display_passkeys":true,"can_edit_factcheck":true,"factcheck_length_limit":1024`
 const tdesktopNoForwardsAppConfig = `,"no_forwards_request_expire_period":86400`
 
-// tonAppConfigFragment carries the TON and StarRef keys production ships.
-//
-// ton_topup_url is the one that matters most: with it absent, "Add funds" in
-// the wallet has no URL to open and does nothing at all, with no error
-// anywhere to explain why. The amount limits are what clients size their TON
-// purchase and resale inputs against, in nanoton, so a missing key means a
-// client either clamps to its own default or refuses the input outright.
-//
-// These are operator-independent protocol constants rather than per-deployment
-// settings, which is why they are a const and not an option like the wallet
-// availability flag.
+// The local ledger has no chain top-up, gasless relay or TON Connect service.
+// Advertise only the explicitly configured wallet and the server reference rate.
 func tonAppConfigFragment() string {
-	return `,"ton_usd_rate":` + strconv.FormatFloat(domain.TonUSDRate, 'f', -1, 64) +
-		`,"ton_blockchain_explorer_url":"https://gram.org/","ton_proxy_address":"magic.org","ton_topup_url":"https://fragment.com/ads/topup","ton_stargift_resale_amount_max":100000000000000,"ton_stargift_resale_amount_min":7000000000,"ton_stargift_resale_commission_permille":900,"ton_suggested_post_amount_max":10000000000000,"ton_suggested_post_amount_min":10000000,"ton_suggested_post_commission_permille":850,"starref_connect_allowed":true,"starref_program_allowed":true,"starref_min_commission_permille":1,"starref_max_commission_permille":800,"starref_start_param_prefixes":["_tgr_"]`
+	return `,"ton_usd_rate":` + strconv.FormatFloat(domain.TonUSDRate, 'f', -1, 64)
 }
-
-// walletAppConfigFragment advertises the Layer 230 in-app TON wallet.
-//
-// wallet_available is the gate a client checks before it renders the wallet
-// entry point at all, which is why an absent key and a false one both hide it.
-// It is derived from whether the wallet actually came up rather than being a
-// constant true: pointing a client at an entry point whose every call fails is
-// worse than not offering one, and the wallet can fail to initialise (an
-// unwritable state directory stops the server outright).
-//
-// The three limits are the values production ships. They are denominated in
-// nanoton, which is the unit telesrv's own TON ledger already keeps balances in,
-// so they need no conversion on our side.
 func walletAppConfigFragment(available bool) string {
-	return `,"wallet_available":` + strconv.FormatBool(available) +
-		`,"wallet_transfer_min_nanos":100000000` +
-		`,"wallet_gasless_min_nanos":100000000` +
-		`,"wallet_gasless_daily_transfers":5`
+	return `,"wallet_available":` + strconv.FormatBool(available) + `,"wallet_gasless_daily_transfers":0`
 }
 
-const defaultAppConfigHash = 34 // 默认 app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+// The Stars resale floor the server enforces on payments.updateStarGiftPrice.
+// Clients otherwise fall back to their own built-in default for the key.
+func starGiftResaleAppConfigFragment() string {
+	return `,"stars_stargift_resale_amount_min":` + strconv.FormatInt(domain.MinStarGiftResaleStars, 10)
+}
+
+const defaultAppConfigHash = 37 // 默认 app config 内容变更时必须递增，否则缓存端只会收到 notModified。
 
 // Service 提供客户端启动配置与国家区号目录。
 //
@@ -309,15 +289,16 @@ func defaultAppConfigJSONWithPremiumBot(mapboxToken, premiumBotUsername string, 
 	premiumFragment := `,"premium_bot_username":` + string(username)
 	androidInvoiceBilling := `,"premium_playmarket_direct_currency_list":` + compatandroid.DirectInvoiceCurrenciesJSON()
 	wallet := tonAppConfigFragment() + walletAppConfigFragment(walletAvailable)
+	resale := starGiftResaleAppConfigFragment()
 	if mapboxToken == "" {
-		return []byte(tdesktopDefaultAppConfigBase + tdesktopNoForwardsAppConfig + premiumFragment + androidInvoiceBilling + wallet + `}`)
+		return []byte(tdesktopDefaultAppConfigBase + tdesktopNoForwardsAppConfig + premiumFragment + androidInvoiceBilling + wallet + resale + `}`)
 	}
 	token, err := json.Marshal(mapboxToken)
 	if err != nil {
-		return []byte(tdesktopDefaultAppConfigBase + tdesktopNoForwardsAppConfig + premiumFragment + androidInvoiceBilling + wallet + `}`)
+		return []byte(tdesktopDefaultAppConfigBase + tdesktopNoForwardsAppConfig + premiumFragment + androidInvoiceBilling + wallet + resale + `}`)
 	}
 	tokenJSON := string(token)
-	return []byte(tdesktopDefaultAppConfigBase + tdesktopNoForwardsAppConfig + premiumFragment + androidInvoiceBilling + wallet + `,"tdesktop_config_map":{"maps":` + tokenJSON + `,"geo":` + tokenJSON + `,"bmaps":` + tokenJSON + `,"bgeo":` + tokenJSON + `}}`)
+	return []byte(tdesktopDefaultAppConfigBase + tdesktopNoForwardsAppConfig + premiumFragment + androidInvoiceBilling + wallet + resale + `,"tdesktop_config_map":{"maps":` + tokenJSON + `,"geo":` + tokenJSON + `,"bmaps":` + tokenJSON + `,"bgeo":` + tokenJSON + `}}`)
 }
 
 func defaultAppConfigHashFor(mapboxToken string) int {

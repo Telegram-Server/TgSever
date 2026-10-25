@@ -600,11 +600,42 @@ func webPagePreviewOption(cfg config.Config) filesapp.Option {
 	return filesapp.WithWebPagePreview(cfg.WebPagePreviewMaxBytes, cfg.WebPagePreviewRatePerMin)
 }
 
+// logConfigDrift 在启动时比对 .env 与 .env.example，只报告、不改写：
+//
+//   - INFO「模板里声明、但本机没设」——多半是刻意走默认值，但「新版本加了配置、
+//     .env 还是旧的」这类遗漏也在这里，所以给个可核对的清单；
+//   - WARN「.env 里有、模板没收录」——几乎必然是键名笔误或模板滞后：readEnvFile
+//     接受任意 TELESRV_* 键名，而 Load 只查询认识的键，笔误值会被静默忽略。
+//
+// 模板缺失（生产镜像不带 .env.example）时 DetectEnvDrift 返回零值，静默跳过。
+// 刻意不自动补写 .env：容器是 read-only rootfs，且静默改运维的配置文件比漏报更糟。
+func logConfigDrift(logger *zap.Logger) {
+	drift, err := config.DetectEnvDrift()
+	if err != nil {
+		logger.Warn("配置漂移比对失败（不影响启动）", zap.Error(err))
+		return
+	}
+	if len(drift.Missing) == 0 && len(drift.Unknown) == 0 {
+		return
+	}
+	if len(drift.Missing) > 0 {
+		logger.Info(".env.example 声明但本机未设置，正使用代码默认值",
+			zap.Int("count", len(drift.Missing)),
+			zap.Strings("keys", drift.Missing))
+	}
+	if len(drift.Unknown) > 0 {
+		logger.Warn(".env 中的键未被 .env.example 收录：可能是键名笔误或模板滞后，笔误值会被静默忽略",
+			zap.Int("count", len(drift.Unknown)),
+			zap.Strings("keys", drift.Unknown))
+	}
+}
+
 func run(logger *zap.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	logConfigDrift(logger)
 	if err := branding.Configure(cfg.Branding); err != nil {
 		return fmt.Errorf("configure branding: %w", err)
 	}
@@ -614,6 +645,15 @@ func run(logger *zap.Logger) error {
 	if !domain.ConfigurePremiumBotUsername(cfg.PremiumBotUsername) {
 		return fmt.Errorf("configure Premium bot username %q", cfg.PremiumBotUsername)
 	}
+	// 手机号格式策略必须在 store / RPC service 构造前安装：login identity 的
+	// 规范化结果会落进 users.phone，策略切换不能留下半规范化数据。
+	domain.ConfigurePhoneFormatCheck(cfg.CheckNumberFormat)
+	logger.Info("手机号格式策略",
+		zap.Bool("check_number_format", cfg.CheckNumberFormat),
+		zap.Bool("strict", domain.PhoneFormatCheckEnabled()))
+	// SCAM/FAKE 警告文案（空白 → domain 内置英文默认值）：启动时写入一次，
+	// getFullUser / channels.getFullChannel / 邀请预览的 About 投影都会读取。
+	domain.SetModerationProfileWarning(cfg.ScamProfileWarning, cfg.FakeProfileWarning)
 	// 服务器身份由管理面板（Server Settings → Server identity）编辑，由本进程经
 	// admin API 的服务器设置命令写入 cfg.IdentityDir（后台只读该目录）；这里启动时
 	// 读取一次自定义服务器名，用作 777000 官方系统账号的展示名与登录通知
@@ -1160,6 +1200,7 @@ func run(logger *zap.Logger) error {
 		account.WithUsers(userStore),
 		account.WithPhoneChange(phoneChangeStore, authzStore, codeStore, userCache, cfg.DevAuthCode, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts),
 		account.WithAccountLifecycle(accountLifecycleStore),
+		account.WithTmpPasswords(postgres.NewTmpPasswordStore(pool), authzStore),
 		account.WithPublicBaseURL(cfg.PublicBaseURL),
 	}
 	var webhookSender otpdelivery.Sender
@@ -1905,7 +1946,7 @@ func run(logger *zap.Logger) error {
 	} else {
 		logger.Info("会话地理归属未启用：account.getAuthorizations 继续回传 Unknown 占位文案")
 	}
-	// Layer 230 应用内 TON 钱包。默认启用:挑战/绑定状态只在本地 data/wallet,
+	// Layer 230 应用内 TON 钱包。显式配置启用:挑战/绑定状态只在本地 data/wallet,
 	// 余额来自 telesrv 自己的 TON 账本。provider(toncenter)默认不配置,因此
 	// toncenter.* 与余额查询都不会联系任何外部 TON 节点。
 	var walletService rpc.WalletService
@@ -1924,6 +1965,9 @@ func run(logger *zap.Logger) error {
 		walletKeys, err := walletapp.LoadOrCreateKeyCipher(cfg.WalletKeyFile)
 		if err != nil {
 			return fmt.Errorf("load wallet master key: %w", err)
+		}
+		if err := walletStore.ValidateKeyCipher(walletKeys); err != nil {
+			return fmt.Errorf("validate wallet custody keys: %w", err)
 		}
 		walletService = walletapp.NewService(walletStore, walletProvider, cfg.AdvertiseIP,
 			walletapp.WithBalanceSource(walletapp.TONLedgerBalanceSource(starGiftLifecycleStore.TonBalance)),
@@ -1990,10 +2034,10 @@ func run(logger *zap.Logger) error {
 		Help: help.NewService(helpStore, helpStore,
 			help.WithMapboxToken(cfg.MapboxToken),
 			help.WithPremiumBotUsername(cfg.PremiumBotUsername),
-			// The wallet is enabled by default; an empty state directory is how an
+			// The wallet requires an explicit state directory; an empty directory is how an
 			// operator turns it off, and that is exactly when a client must be told
 			// the wallet is unavailable rather than shown an entry that cannot work.
-			help.WithWalletAvailable(cfg.WalletStateDir != ""),
+			help.WithWalletAvailable(walletService != nil),
 			help.WithPasswordLogin(loginPasswordService.Enabled()),
 			// 每次 getAppConfig 只读一次 identity，同时得出两个开关；参数与 auth 的两个判断函数相同。
 			help.WithLoginSwitches(auth.IdentityLoginSwitches(identityStore, cfg.SignUpEnabled, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled)),

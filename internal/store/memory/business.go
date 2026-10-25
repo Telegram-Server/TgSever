@@ -54,7 +54,7 @@ func (s *PasswordStore) ListBusinessChatLinks(_ context.Context, ownerUserID int
 }
 
 func (s *PasswordStore) CreateBusinessChatLink(_ context.Context, link domain.BusinessChatLink) (domain.BusinessChatLink, error) {
-	if link.OwnerUserID == 0 || link.Slug == "" || link.Link == "" || link.Message == "" {
+	if link.OwnerUserID == 0 || link.Slug == "" || link.Link == "" {
 		return domain.BusinessChatLink{}, domain.ErrBusinessChatLinkInvalid
 	}
 	s.mu.Lock()

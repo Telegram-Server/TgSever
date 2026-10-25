@@ -4,7 +4,8 @@ Telegram-compatible MTProto server written in Go. This file is a module map so y
 
 ## Identity and branches
 
-- Go module is `telesrv` (Go 1.25), repo is `gramsrv`, binary is `telesrv`. First compatibility target: **Telegram Desktop**. Protocol comes from `github.com/iamxvbaba/td` (fork of gotd/td); do not vendor or fork `td` here.
+- Go module is `telesrv` (Go 1.26), repo is `gramsrv`, binary is `telesrv`. First compatibility target: **Telegram Desktop**. Protocol comes from `github.com/iamxvbaba/td` (fork of gotd/td); do not vendor or fork `td` here.
+- The TL schema layer lives in `td`, not here: `td/tg` holds the canonical Go model and `td/tlprofile` the exact per-layer profiles. Canonical Layer is **232**. `go.mod` requires `github.com/iamxvbaba/td v1.7.0` and `replace`s it with our fork `github.com/Telegram-Server/td v1.7.0-telesrv.1`, which adds the `telesrv.*` extension methods (password login) on top of upstream; the replace stays until #58 moves the fork to its own module path. `tg.Layer`/`tlprofile.ProfileCanonical` follow it; bumping a layer means merging the upstream `td` release into the fork, regenerating, tagging a new `-telesrv.N`, then the layer-pinned tests in `internal/rpc/layer*_test.go`.
 - `main` = **monolith** (this branch), `v2` = microservices (Edge/Core/Egress/File/SFU). CI runs on `main`, `grammy`, `admin`. Current checkout: `main`.
 - Comments and package docs are commonly written in **Chinese** (e.g. `cmd/telesrv/main.go`, `internal/config/config.go`). Read them; match the style for new code. PowerShell artifacts may display `???` for Chinese in some terminals — the files are UTF-8.
 - No Makefile, no linter config, no test framework beyond stdlib `testing`. Formatting = `gofmt`.
@@ -63,6 +64,11 @@ The rules that keep it that way:
   `tabs` array. Commerce holds Prices and the Stars ledger; Media holds Storage;
   Accounts holds Account Rating and Shared devices. A new row is only for a
   genuinely new job. A section with a single visible tab draws no tab bar.
+- **A tab that is a single button is not a tab.** The Stars giveaway was a page
+  with one field and one button; it now lives at the bottom of the Stars &
+  Premium page, in its own warned frame, and the old `/star-issue` URL is an
+  alias of that tab (`aliases` in `nav.ts` keeps the sidebar row and the tab bar
+  lit on it).
 - **Declare the tab's real right.** It must be the right the route enforces
   server-side. A right that is not in the table has no route of its own -- it
   widens an action on a page already gated by its read right. If you need a new
@@ -140,7 +146,7 @@ Binaries in `cmd/`: `telesrv` (server), `telesrv-admin` (admin dashboard), `tele
 ## Migrations
 
 - `deploy/migrations/NNNN_name.up.sql` + matching `.down.sql`; single source of truth for both golang-migrate (embedded, run on startup via `store/postgres.Migrate`) and sqlc. **Migration 0123 is deliberately skipped** — the sequence jumps 0122 → 0124, don't reuse 0123.
-- After 0223 versions are timestamps (`YYYYMMDDhhmmss_name`). A new migration must sort after every existing one: golang-migrate keeps a single `schema_migrations.version`, so one slotted in between is never run on a deployed database. `TestEmbeddedMigrationsAreContiguousAndReversible` checks this against `publishedTimestampVersions`; adding a migration at the end needs no test change (append it to that list once it has shipped).
+- After 0223 versions are timestamps (`YYYYMMDDhhmmss_name`). A new migration must sort after every existing one: golang-migrate keeps a single `schema_migrations.version`, so one slotted in between is never run on a deployed database. `TestEmbeddedMigrationsAreContiguousAndReversible` checks this against `publishedTimestampVersions`; adding a migration at the end needs no test change (append it to that list once it has shipped). When merging `upstream` (iamxvbaba/gramsrv), an upstream migration that sorts before our latest one is renamed to a version after it in the merge commit (e.g. upstream `20261017010001_channel_message_fact_check` became `20261030020000_…`).
 - DBs are branch-isolated: `telesrv_main` and `telesrv_v2` in one container (`deploy/postgres-init/010_branch_databases.sql`). Legacy `telesrv` DB is kept for compat/migration only — never touch it.
 - Windows dev scripts derive the Postgres DB from the current branch name (`telesrv_main` for `main`, `telesrv_v2` for `v2`).
 

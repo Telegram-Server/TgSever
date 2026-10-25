@@ -14,8 +14,8 @@ github.com/RaduBerinde/btreemap v0.0.0-20250419174037-3d62b7205d54 h1:bsU8Tzxr/P
 github.com/RaduBerinde/btreemap v0.0.0-20250419174037-3d62b7205d54/go.mod h1:0tr7FllbE9gJkHq7CVeeDDFAFKQVy5RnCSSNBOvdqbc=
 github.com/StackExchange/wmi v1.2.1 h1:VIkavFPXSjcnS+O8yTq7NI32k0R5Aj+v39y29VYDOSA=
 github.com/StackExchange/wmi v1.2.1/go.mod h1:rcmrprowKIVzvc+NUiLncP2uuArMWLCbu9SBzvHz7e8=
-github.com/Telegram-Server/td v1.5.0 h1:9yEiYf6HNQot6OdaXxulibkZa+mTmPXeZ7SeVUmHbE4=
-github.com/Telegram-Server/td v1.5.0/go.mod h1:INkZJi18XbXtVOrldDnPtmQCJvIXhgDZdbo9MV/NY7M=
+github.com/Telegram-Server/td v1.7.0-telesrv.1 h1:4hYoPEHOXPjbxTxeCJbwRxrZPc0Mdw5t8BDso1PQIIU=
+github.com/Telegram-Server/td v1.7.0-telesrv.1/go.mod h1:INkZJi18XbXtVOrldDnPtmQCJvIXhgDZdbo9MV/NY7M=
 github.com/VictoriaMetrics/fastcache v1.13.0 h1:AW4mheMR5Vd9FkAPUv+NH6Nhw+fmbTMGMsNAoA/+4G0=
 github.com/VictoriaMetrics/fastcache v1.13.0/go.mod h1:hHXhl4DA2fTL2HTZDJFXWgW0LNjo6B+4aj2Wmng3TjU=
 github.com/aead/siphash v1.0.1/go.mod h1:Nywa3cDsYNNK3gaciGTWPwHt0wlpNV15vwmswBAUSII=

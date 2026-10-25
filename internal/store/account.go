@@ -13,6 +13,15 @@ type PasswordStore interface {
 	Save(ctx context.Context, userID int64, settings domain.PasswordSettings) error
 }
 
+// TmpPasswordStore persists account.getTmpPassword grants, at most one per
+// permanent auth key: PutTmpPassword replaces that authorization's previous
+// grant. Durable implementations delete the grant with its authorization and
+// return ErrAuthorizationStateChanged when the authorization no longer exists.
+type TmpPasswordStore interface {
+	PutTmpPassword(ctx context.Context, grant domain.TmpPasswordGrant) error
+	TmpPasswordByAuthKey(ctx context.Context, authKeyID [8]byte) (domain.TmpPasswordGrant, bool, error)
+}
+
 // AccountReactionSettingsStore persists account-level reaction preferences.
 type AccountReactionSettingsStore interface {
 	GetReactionSettings(ctx context.Context, userID int64) (domain.AccountReactionSettings, bool, error)
@@ -36,6 +45,8 @@ type AccountSettingsBatchStore interface {
 // NotifySettingsStore persists per-scope notification settings (specific peer /
 // forum topic / the three category defaults: users, chats, broadcasts).
 type NotifySettingsStore interface {
+	// GetForumTopicNotifySettings loads one bounded topic page for one owner and peer.
+	GetForumTopicNotifySettings(ctx context.Context, ownerUserID int64, peer domain.Peer, topicIDs []int) (map[int]domain.PeerNotifySettings, error)
 	GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, bool, error)
 	SaveNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error
 	ResetNotifySettings(ctx context.Context, ownerUserID int64) error

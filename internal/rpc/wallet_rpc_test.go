@@ -56,7 +56,9 @@ func (f *walletRPCFixture) Create(_ context.Context, uid int64, _ [8]byte, allow
 		return domain.WalletLink{}, 0, f.createErr
 	}
 	f.created = domain.WalletLink{UserID: uid, Address: "EQ-created", PublicKey: bytes.Repeat([]byte{3}, 32)}
-	return f.created, 4242, nil
+	f.links = []domain.WalletLink{f.created}
+	f.balance = 4242
+	return f.created, f.balance, nil
 }
 func (f *walletRPCFixture) ReplaceImported(context.Context, int64, [8]byte, []byte, int, []byte, bool) (domain.WalletLink, int64, error) {
 	f.calls++
@@ -240,8 +242,8 @@ func TestWalletStateProvisionsOnFirstRead(t *testing.T) {
 	if _, err = r.onWalletState(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if f.calls < 3 {
-		t.Fatalf("expected challenge + create on the first read only, saw %d calls", f.calls)
+	if f.calls != 2 {
+		t.Fatalf("expected exactly challenge + create on the first read only, saw %d calls", f.calls)
 	}
 
 	// The bound path still reports the ledger balance rather than zero.
@@ -268,21 +270,16 @@ func TestWalletStateProvisionsOnFirstRead(t *testing.T) {
 	}
 }
 
-// A deployment that cannot hold wallets -- no master key configured -- must keep
-// answering walletStateEmpty rather than failing the read. That is the previous
-// behaviour and is still true for those deployments; only a server that can
-// actually mint a wallet does.
-func TestWalletStateEmptyWhenCreationDisabled(t *testing.T) {
+// Missing custody capability is a failure, not a successful empty state.
+func TestWalletStateFailsClosedWhenCreationDisabled(t *testing.T) {
 	f := &walletRPCFixture{createErr: walletapp.ErrWalletCreationDisabled}
 	r := New(Config{}, Deps{Wallet: f}, zap.NewNop(), clock.System)
 	ctx := WithAuthKeyID(WithUserID(context.Background(), 42), [8]byte{1})
-
-	state, err := r.onWalletState(ctx)
-	if err != nil {
-		t.Fatalf("a disabled capability must not fail the read: %v", err)
+	if _, err := r.onWalletState(ctx); !tgerr.Is(err, "WALLET_UNAVAILABLE") {
+		t.Fatalf("missing custody = %v", err)
 	}
-	if _, ok := state.(*tg.WalletStateEmpty); !ok {
-		t.Fatalf("state = %T, want *tg.WalletStateEmpty", state)
+	if len(f.links) != 0 {
+		t.Fatal("failed creation persisted a wallet")
 	}
 }
 

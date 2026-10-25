@@ -390,22 +390,12 @@ func (s *StarGiftLifecycleStore) SetStarGiftListing(ctx context.Context, req dom
 			if unique.ResaleTonOnly && req.Amount.Currency != domain.StarGiftCurrencyTON {
 				return domain.ErrStarGiftResaleUnavailable
 			}
-			var minimum int64
-			if req.Amount.Currency == domain.StarGiftCurrencyStars {
-				// The enforced floor is the cheapest live listing for this gift type,
-				// excluding troll listings priced far above the gift's base price.
-				// Computed from listings rather than the projected catalog column so
-				// a stale seed can never lock resale below a sane price.
-				if err := tx.QueryRow(ctx, `SELECT COALESCE((
-  SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id
-  WHERE u.gift_id=$1 AND l.currency='XTR' AND NOT l.suspended
-    AND l.amount <= $2 * (SELECT r.stars FROM star_gift_catalog_revisions r JOIN star_gift_catalog c ON c.active_revision_id=r.id WHERE c.gift_id=$1)
- ),0)`, unique.GiftID, domain.StarGiftResaleFloorMultiple).Scan(&minimum); err != nil {
-					return err
-				}
-				if req.Amount.Amount < minimum {
-					return domain.ErrStarGiftResaleUnavailable
-				}
+			// A flat floor, not the cheapest current listing: a market-derived
+			// floor only ratchets upward and locks sellers out of pricing below
+			// whatever the first lister chose. resell_min_stars stays a display
+			// of the lowest price (see updateStarGiftResaleProjection).
+			if req.Amount.Currency == domain.StarGiftCurrencyStars && req.Amount.Amount < domain.MinStarGiftResaleStars {
+				return domain.ErrStarGiftResaleUnavailable
 			}
 			_, err = tx.Exec(ctx, `INSERT INTO star_gift_listings(unique_gift_id,seller_peer_type,seller_peer_id,currency,amount,listed_at,updated_at)
 VALUES($1,$2,$3,$4,$5,$6,$6)
@@ -1603,6 +1593,92 @@ VALUES($1,$2,$3,$4,$5,$6,$7)`, saved.UniqueGiftID, req.UserID, provider, provide
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftWithdrawalUnavailable
 	}
 	return s.resolveStarGiftWithdrawalByUniqueID(ctx, saved.UniqueGiftID)
+}
+
+// DeleteStarGift implements payments.deleteStarGift. Only a plain received
+// gift that carries no Stars can be deleted. Refused with
+// ErrStarGiftDeleteUnavailable:
+//
+//   - a gift upgraded into a collectible (NFT) — destroying a collectible is a
+//     different operation with its own financial rules;
+//   - a limited-edition or auction gift — the release is a scarce, numbered
+//     object and the delete is irreversible;
+//   - a gift with a conversion value or a prepaid upgrade — deleting it would
+//     silently destroy Stars the owner or the sender can still claim.
+//
+// This mirrors TDLib's deleteGift preconditions (not unique, availability_total
+// == 0, convert_star_count == 0). TDLib also requires "not refunded"; this tree
+// has no refunded saved-gift state, because a gift purchase is refunded at the
+// invoice layer before the gift is delivered, so there is nothing to check.
+//
+// The saved gift row stays (upgrade commands, offers and transfers reference
+// it), so the delete is a lifecycle transition: the gift leaves the profile and
+// is dropped from every collection. The collection refresh runs under the same
+// owner advisory lock as every other terminal transition, so a subsequent
+// payments.getStarGiftCollections never answers NotModified for a changed
+// membership.
+func (s *StarGiftLifecycleStore) DeleteStarGift(ctx context.Context, req domain.StarGiftDeleteRequest) (domain.StarGiftDeleteResult, error) {
+	if s == nil || req.UserID <= 0 || !req.Ref.Valid() || req.Date <= 0 {
+		return domain.StarGiftDeleteResult{}, domain.ErrStarGiftDeleteUnavailable
+	}
+	result := domain.StarGiftDeleteResult{}
+	err := withTx(ctx, s.db, "delete star gift", func(tx pgx.Tx) error {
+		// 与 convert/burn/transfer/export 一致：先拿 owner 的集合锁，再改成员关系，
+		// 否则 removeSavedGiftFromCollections 重算的 hash 会和并发更新互相覆盖。
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, starGiftCollectionLockKey(req.Ref.Owner)); err != nil {
+			return fmt.Errorf("lock star gift owner collections: %w", err)
+		}
+		saved, err := lockSavedStarGiftForUpgrade(ctx, tx, req.Ref)
+		if err != nil {
+			return err
+		}
+		if saved.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) {
+			return domain.ErrStarGiftOwnerInvalid
+		}
+		if !saved.LifecycleStatus.Live() {
+			return domain.ErrStarGiftDeleteUnavailable
+		}
+		allowed, err := starGiftDeletable(ctx, tx, saved)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return domain.ErrStarGiftDeleteUnavailable
+		}
+		result.SavedGiftID = saved.ID
+		if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts
+SET lifecycle_status=$2, unsaved=true, pinned_order=0 WHERE id=$1`, saved.ID, string(domain.StarGiftLifecycleDeleted)); err != nil {
+			return err
+		}
+		if err := removeSavedGiftFromCollections(ctx, tx, saved.Owner, saved.ID); err != nil {
+			return err
+		}
+		result.Deleted = true
+		return nil
+	})
+	if err != nil {
+		return domain.StarGiftDeleteResult{}, err
+	}
+	return result, nil
+}
+
+// starGiftDeletable applies the release-level rules of payments.deleteStarGift
+// to a locked saved gift. The saved row already tells us whether the gift was
+// upgraded, prepaid or carries a conversion value; the release revision adds
+// the limited-edition and auction shapes.
+func starGiftDeletable(ctx context.Context, tx pgx.Tx, saved domain.SavedStarGift) (bool, error) {
+	if saved.UniqueGiftID != 0 || saved.ConvertStars > 0 || saved.PrepaidUpgradeStars > 0 || saved.PrepaidUpgradeHash != "" {
+		return false, nil
+	}
+	var limited, auction bool
+	if err := tx.QueryRow(ctx, `
+SELECT limited, auction FROM star_gift_catalog_revisions WHERE id=$1`, saved.RevisionID).Scan(&limited, &auction); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read star gift release: %w", err)
+	}
+	return !limited && !auction, nil
 }
 
 func (s *StarGiftLifecycleStore) ResolveStarGiftWithdrawal(ctx context.Context, providerRequestID string) (domain.StarGiftWithdrawal, bool, error) {

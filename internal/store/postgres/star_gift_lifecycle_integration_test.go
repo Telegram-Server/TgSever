@@ -2035,13 +2035,14 @@ WHERE sender_user_id=$1 AND id=$2`, messageSenderID, privateMessageID, hash); er
 	}
 }
 
-// TestStarGiftResaleFloorIgnoresTrollListingsPostgres pins the troll-proof
-// resale floor: one overpriced listing set far above the gift's base price must
-// not become the enforced minimum for everybody else. The floor stays the
-// cheapest live listing of the gift type, ignoring listings priced above
-// StarGiftResaleFloorMultiple x the active revision's base stars — so a single
-// ~600 XTR gift listed at 35000 XTR no longer locks the market, while genuine
-// premiums within the multiple still push the floor up.
+// TestStarGiftResaleFloorIgnoresTrollListingsPostgres pins the resale floor.
+// The enforced minimum is flat, domain.MinStarGiftResaleStars, the value the
+// server advertises as stars_stargift_resale_amount_min: a floor derived from
+// the cheapest live listing only ever ratchets up and kept sellers, the lister
+// themself included, from pricing below it. resell_min_stars and the value
+// info floor stay a display of the cheapest live listing, ignoring listings
+// priced above StarGiftResaleFloorMultiple x the active revision's base stars,
+// so a single ~600 XTR gift listed at 35000 XTR does not distort it.
 func TestStarGiftResaleFloorIgnoresTrollListingsPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -2175,14 +2176,40 @@ func TestStarGiftResaleFloorIgnoresTrollListingsPostgres(t *testing.T) {
 		t.Fatalf("legit value floor = %d, want 3000", floor)
 	}
 
-	// A listing even further from the true market still cannot undercut the real
-	// market floor — the dynamic minimum keeps protecting against crash-downs.
+	// The cheapest listing is not an enforced minimum: the seller may lower
+	// their own price below it, and the displayed floor follows.
 	if _, err := lifecycle.SetStarGiftListing(ctx, domain.StarGiftListingRequest{
 		ActorUserID: legit.ID,
 		Ref:         legitRef,
 		Amount:      &domain.StarGiftAmount{Currency: domain.StarGiftCurrencyStars, Amount: 2500}, Date: now + 13,
+	}); err != nil {
+		t.Fatalf("undercut below the cheapest listing: %v", err)
+	}
+	if floor := readFloor(); floor != 2500 {
+		t.Fatalf("floor after undercut = %d, want 2500", floor)
+	}
+
+	// The flat minimum is the only enforced floor: one Star below it is refused
+	// and leaves the listing unchanged, the minimum itself is accepted.
+	if _, err := lifecycle.SetStarGiftListing(ctx, domain.StarGiftListingRequest{
+		ActorUserID: legit.ID,
+		Ref:         legitRef,
+		Amount:      &domain.StarGiftAmount{Currency: domain.StarGiftCurrencyStars, Amount: domain.MinStarGiftResaleStars - 1}, Date: now + 14,
 	}); err == nil || !errors.Is(err, domain.ErrStarGiftResaleUnavailable) {
-		t.Fatalf("undercut below the real floor = %v, want ErrStarGiftResaleUnavailable", err)
+		t.Fatalf("listing below the flat minimum = %v, want ErrStarGiftResaleUnavailable", err)
+	}
+	if floor := readFloor(); floor != 2500 {
+		t.Fatalf("floor after a refused listing = %d, want 2500", floor)
+	}
+	if _, err := lifecycle.SetStarGiftListing(ctx, domain.StarGiftListingRequest{
+		ActorUserID: legit.ID,
+		Ref:         legitRef,
+		Amount:      &domain.StarGiftAmount{Currency: domain.StarGiftCurrencyStars, Amount: domain.MinStarGiftResaleStars}, Date: now + 15,
+	}); err != nil {
+		t.Fatalf("listing at the flat minimum: %v", err)
+	}
+	if floor := readValueFloor(legitUnique.ID); floor != domain.MinStarGiftResaleStars {
+		t.Fatalf("value floor at the flat minimum = %d, want %d", floor, domain.MinStarGiftResaleStars)
 	}
 }
 

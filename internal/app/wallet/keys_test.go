@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/hex"
 	"os"
 	"path/filepath"
@@ -58,32 +57,6 @@ func TestLoadOrCreateKeyCipherSurvivesRestart(t *testing.T) {
 	}
 }
 
-// An existing deployment must be repaired in place: rotating the key would
-// orphan every wallet already sealed under it, so the bare-32-byte form an older
-// build may have written still has to load.
-func TestLoadOrCreateKeyCipherAcceptsRawLegacyKey(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "keys.key")
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
-	cipher, err := LoadOrCreateKeyCipher(path)
-	if err != nil {
-		t.Fatalf("legacy raw key: %v", err)
-	}
-	plaintext := []byte("legacy")
-	sealed, nonce, err := cipher.Seal(plaintext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = cipher.Open(sealed, nonce); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // Whatever is on disk has to come back as 32 bytes, which is the only shape
 // newKeyCipher accepts.
 func TestDecodeKeyFileRoundTrip(t *testing.T) {
@@ -94,7 +67,6 @@ func TestDecodeKeyFileRoundTrip(t *testing.T) {
 	for name, onDisk := range map[string][]byte{
 		"hex with newline": []byte(hex.EncodeToString(raw) + "\n"),
 		"hex no newline":   []byte(hex.EncodeToString(raw)),
-		"raw 32 bytes":     append([]byte(nil), raw...),
 	} {
 		got := decodeKeyFile("x", onDisk)
 		if len(got) != 32 {
@@ -116,5 +88,11 @@ func TestLoadOrCreateKeyCipherRejectsPermissiveFile(t *testing.T) {
 	}
 	if _, err := LoadOrCreateKeyCipher(path); err == nil {
 		t.Fatal("a 0640 master key file was accepted")
+	}
+}
+
+func TestDecodeKeyFileRejectsUnpublishedRawEncoding(t *testing.T) {
+	if decoded := decodeKeyFile("unused", bytes.Repeat([]byte{7}, 32)); decoded != nil {
+		t.Fatal("accepted an unsupported raw-key encoding")
 	}
 }

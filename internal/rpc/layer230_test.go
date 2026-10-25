@@ -31,23 +31,8 @@ func TestLayer230AdditionalBotUsernameRejected(t *testing.T) {
 	}
 }
 
-// Layer 230 wallet coverage: every method the client polls is registered.
-//
-// This test used to assert that getNfts stayed unregistered, on the reasoning
-// that it needs a TON indexer and a traced unknown method is more truthful than a
-// fabricated list. The client settled it: getNfts was polled 51 times in the
-// time it took to open one screen, so leaving it out cost a compatibility-trace
-// warning per poll for a screen that shows an empty collection correctly.
-//
-// The split is now capability, not registration. Methods backed by something
-// real answer with it: getTransactions reads the ledger. Methods with nothing
-// behind them say so -- an empty list, or an explicit refusal where a fabricated
-// value would be worse than none. getNfts answers empty and streaming refuses;
-// both report the truth that telesrv holds no NFT index and serves no TON
-// stream.
-//
-// The router carries no Wallet service on purpose: the answers below come from
-// the capability gate rather than from a backend.
+// Registered read stubs and unsupported capabilities must have explicit results.
+// Client polling does not make an unimplemented transfer/relay successful.
 func TestLayer230WalletSurfaceIsFullyRegistered(t *testing.T) {
 	core, logs := observer.New(zap.WarnLevel)
 	// A wallet service is present on purpose: the point is what each method
@@ -58,7 +43,6 @@ func TestLayer230WalletSurfaceIsFullyRegistered(t *testing.T) {
 	ctx := WithAuthKeyID(WithUserID(context.Background(), 1), [8]byte{1})
 	answer := map[string]bin.Object{
 		"getNfts":      &tg.WalletGetNftsRequest{},
-		"gasless":      &tg.WalletGetGaslessInfoRequest{},
 		"tonConnect":   &tg.WalletTonConnectGetSessionsRequest{},
 		"onramp":       &tg.PaymentsGetOnrampProvidersRequest{},
 		"transactions": &tg.WalletGetTransactionsRequest{},
@@ -74,6 +58,7 @@ func TestLayer230WalletSurfaceIsFullyRegistered(t *testing.T) {
 	}
 
 	for name, query := range map[string]bin.Object{
+		"gasless":          &tg.WalletGetGaslessInfoRequest{},
 		"streaming":        &tg.ToncenterGetStreamingURLRequest{},
 		"tonConnectCreate": &tg.WalletTonConnectCreateSessionRequest{},
 	} {

@@ -36,7 +36,6 @@ import { PremiumPlansPage } from "./PremiumPlansPage";
 import { PricesPage } from "./PricesPage";
 import { ServerSettingsPage } from "./ServerSettingsPage";
 import { SharedDevicesPage } from "./SharedDevicesPage";
-import { StarIssuePage } from "./StarIssuePage";
 import { StarsDetailPage } from "./StarsDetailPage";
 import { StarsPage } from "./StarsPage";
 import { StickerSetsPage } from "./StickerSetsPage";
@@ -131,11 +130,11 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
   if (route.path === "/storage") {
     return <StoragePage navigate={navigate} />;
   }
-  if (route.path === "/monetization" || route.path === "/premium") {
+  if (route.path === "/monetization" || route.path === "/premium" || route.path === "/star-issue") {
+    // "/star-issue" used to be a page of its own holding a single button. That
+    // button lives on the Stars & Premium page now, so the old URL opens the
+    // same place instead of falling through to the dashboard.
     return <PremiumPlansPage navigate={navigate} />;
-  }
-  if (route.path === "/star-issue") {
-    return <StarIssuePage navigate={navigate} />;
   }
   if (accountID) {
     return <AccountDetailPage id={Number(accountID)} navigate={navigate} />;

@@ -262,13 +262,7 @@ type StarsTransactionPage struct {
 	Users        []User // History 中提到的对手方用户，供 tg Users 富化
 }
 
-// TonUSDRate is how much one unit of the wallet currency is worth in USD.
-//
-// It lives here because two separate places need it and must not disagree:
-// appConfig advertises it as ton_usd_rate, and payments.getCurrencyRates
-// reports it to clients that ask for a fiat rate while rendering a balance.
-// When the two drifted, the client was told a rate in appConfig and no rate at
-// all over RPC, and rendered no fiat amount at all.
+// TonUSDRate is the fixed local-ledger USD reference rate, not a live market quote.
 const TonUSDRate = 1.3448279670684584
 
 // TonTransaction is an entry in telesrv's internal nanoton ledger. It models

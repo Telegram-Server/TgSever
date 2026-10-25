@@ -190,6 +190,16 @@ type AccountSetting struct {
 	DisallowStargiftsFromChannels    bool
 }
 
+type AccountTmpPassword struct {
+	AuthKeyID              int64
+	UserID                 int64
+	AuthorizationCreatedAt pgtype.Timestamptz
+	PasswordChangedAt      pgtype.Timestamptz
+	SecretHash             []byte
+	ValidUntil             pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+}
+
 type AdminAuditLog struct {
 	ID             int64
 	CommandID      string
@@ -942,6 +952,7 @@ type ChannelMessage struct {
 	SuggestedPost       []byte
 	PaidMessageStars    int64
 	ShowMessageSender   bool
+	Factcheck           []byte
 }
 
 type ChannelMessageMedium struct {

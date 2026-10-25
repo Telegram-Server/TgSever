@@ -58,6 +58,9 @@ func TONLedgerTransactionSource(transactions func(context.Context, int64, domain
 type transactionSourceFunc func(context.Context, int64, domain.StarsTransactionQuery) (domain.TonTransactionPage, error)
 
 func (f transactionSourceFunc) AccountTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error) {
+	if f == nil {
+		return domain.TonTransactionPage{}, ErrProviderUnavailable
+	}
 	return f(ctx, userID, query)
 }
 
@@ -228,7 +231,7 @@ func (s *Service) Create(ctx context.Context, userID int64, key [8]byte, allowRe
 	}
 	ciphertext, nonce, err := s.keys.Seal(private)
 	// Drop the plaintext key as early as possible; it is never stored or logged.
-	private = nil
+	clear(private)
 	if err != nil {
 		return domain.WalletLink{}, 0, err
 	}
@@ -315,19 +318,13 @@ func (s *Service) Perform(ctx context.Context, endpoint string, query, payload *
 	return s.provider.Perform(ctx, endpoint, query, payload)
 }
 
-// Transactions returns the account's ledger history, or an empty page when no
-// history source is configured.
-//
-// An absent source yields an empty page rather than an error: a deployment that
-// has no ledger to read has no history to report, and the client renders an empty
-// state for that. Failing the read would instead show the Money screen an error
-// in place of its history.
+// Transactions returns history from the configured ledger and fails closed without it.
 func (s *Service) Transactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error) {
 	if s == nil || userID <= 0 {
 		return domain.TonTransactionPage{}, domain.ErrWalletProofInvalid
 	}
 	if s.transactions == nil {
-		return domain.TonTransactionPage{Balance: 0, Transactions: []domain.TonTransaction{}}, nil
+		return domain.TonTransactionPage{}, ErrProviderUnavailable
 	}
 	page, err := s.transactions.AccountTransactions(ctx, userID, query)
 	if err != nil {

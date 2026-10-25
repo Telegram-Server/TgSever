@@ -59,3 +59,8 @@ tmp/
 !/deploy/docker/update-keys/.gitkeep
 /deploy/docker/apns-keys/*
 !/deploy/docker/apns-keys/.gitkeep
+
+# Local scratch files (not part of the repository)
+/gifts_catalog/
+/fix_docs.py
+/main.py

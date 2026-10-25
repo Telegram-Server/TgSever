@@ -49,6 +49,10 @@ type Config struct {
 	// partitioning auth keys, sessions, or business state. See
 	// mtprotoedge.Options.StrictDC for the optional strict behavior.
 	StrictDCCheck bool
+	// CheckNumberFormat 要求普通手机号通过已分配号段校验。默认关闭，
+	// 国家号码计划无法描述的 4-32 位非零开头号码也可作为登录身份。
+	// +888 虚拟号码与保留系统号继续使用各自的独立规则。
+	CheckNumberFormat bool
 	// MTProtoMaxConnections / PerIP 覆盖 raw Accept、codec sniff、握手到认证 session
 	// 的完整物理连接生命周期；负数关闭对应 admission 上限。
 	MTProtoMaxConnections      int
@@ -786,6 +790,16 @@ type Config struct {
 	// message send, so delivery cadence is a worker property.
 	VerificationNotifyInterval time.Duration
 	VerificationNotifyBatch    int
+	// ScamProfileWarning / FakeProfileWarning are the first line the server
+	// prepends to a peer's About in getFullUser / channels.getFullChannel and
+	// the chat-invite preview after an admin flags the peer SCAM/FAKE. Official
+	// clients render their own localized badge from the flag, but the badge is
+	// easy to miss; this text makes the mark part of the description itself,
+	// shown above the owner's own text. Empty keeps built-in English defaults
+	// (domain.ModerationProfileWarning). The stored description is never
+	// rewritten -- the warning lives only in the read projection.
+	ScamProfileWarning string
+	FakeProfileWarning string
 	// Broadcast worker enumerates all-user campaigns and delivers claimed
 	// recipients in bounded batches. Lease permits another instance to recover a
 	// claim after a crash; it is not a message timeout.
@@ -1055,6 +1069,7 @@ func Load() (Config, error) {
 		DC:                                envIntOr("TELESRV_DC", 2),
 		DefaultCountryCode:                countryCode,
 		StrictDCCheck:                     envBoolOr("TELESRV_STRICT_DC_CHECK", false),
+		CheckNumberFormat:                 envBoolOr("TELESRV_CHECK_NUMBER_FORMAT", false),
 		MTProtoMaxConnections:             envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS", 200000),
 		MTProtoMaxConnectionsPerIP:        envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP", 4096),
 		MTProtoMaxConcurrentHandshakes:    envIntOr("TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES", 256),
@@ -1136,7 +1151,7 @@ func Load() (Config, error) {
 		TelegramLoginRetention:                envDurationOr("TELESRV_TELEGRAM_LOGIN_RETENTION", 7*24*time.Hour),
 		TelegramLoginSweepInterval:            envDurationOr("TELESRV_TELEGRAM_LOGIN_SWEEP_INTERVAL", 5*time.Minute),
 		TelegramLoginSweepBatch:               envIntOr("TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH", 500),
-		WalletStateDir:                        strings.TrimSpace(envAllowEmptyOr("TELESRV_WALLET_STATE_DIR", "data/wallet")),
+		WalletStateDir:                        strings.TrimSpace(envAllowEmptyOr("TELESRV_WALLET_STATE_DIR", "")),
 		WalletKeyFile:                         envOr("TELESRV_WALLET_KEY_FILE", "data/wallet/keys.key"),
 		WalletToncenterAPIKey:                 strings.TrimSpace(envAllowEmptyOr("TELESRV_WALLET_TONCENTER_API_KEY", "")),
 		AdminUIPermissions:                    envListOr("TELESRV_ADMIN_UI_PERMISSIONS", []string{adminPermissionAll}),
@@ -1410,6 +1425,10 @@ func Load() (Config, error) {
 		VerificationBotRateWindow:    envDurationOr("TELESRV_VERIFICATION_BOT_RATE_WINDOW", time.Minute),
 		VerificationNotifyInterval:   envDurationOr("TELESRV_VERIFICATION_NOTIFY_INTERVAL", 15*time.Second),
 		VerificationNotifyBatch:      envIntOr("TELESRV_VERIFICATION_NOTIFY_BATCH", 50),
+		// Empty keeps the built-in English defaults: domain trims and falls
+		// back when the stored text is blank (domain.SetModerationProfileWarning).
+		ScamProfileWarning:           envOr("TELESRV_SCAM_WARNING", ""),
+		FakeProfileWarning:           envOr("TELESRV_FAKE_WARNING", ""),
 		BroadcastWorkerInterval:      envDurationOr("TELESRV_BROADCAST_WORKER_INTERVAL", 3*time.Second),
 		BroadcastWorkerLease:         envDurationOr("TELESRV_BROADCAST_WORKER_LEASE", 30*time.Second),
 		BroadcastMaterializeBatch:    envIntOr("TELESRV_BROADCAST_MATERIALIZE_BATCH", 200),
@@ -2379,11 +2398,7 @@ func defaultAIProviderAPIKey(env envSource, name string) string {
 type envSource map[string]string
 
 func loadConfigEnv() (envSource, error) {
-	path, explicit := os.LookupEnv("TELESRV_CONFIG")
-	if !explicit {
-		path = defaultConfigFile
-	}
-	path = strings.TrimSpace(path)
+	path, explicit := configFilePath()
 	if path == "" {
 		return nil, nil
 	}
@@ -2395,6 +2410,18 @@ func loadConfigEnv() (envSource, error) {
 		return nil, fmt.Errorf("config file %q: %w", path, err)
 	}
 	return env, nil
+}
+
+// configFilePath 解析配置文件路径：TELESRV_CONFIG 显式指定，否则用默认 .env；
+// 返回值同时报告该路径是否为显式指定（显式路径缺失是硬错误，缺省缺失则回落到
+// 纯进程环境）。TrimSpace 后为空表示调用方应跳过文件读取。EnvDrift 用同一规则
+// 定位被比对的文件，避免两处口径不一致。
+func configFilePath() (path string, explicit bool) {
+	path, explicit = os.LookupEnv("TELESRV_CONFIG")
+	if !explicit {
+		path = defaultConfigFile
+	}
+	return strings.TrimSpace(path), explicit
 }
 
 func readEnvFile(path string) (envSource, error) {

@@ -28,10 +28,7 @@ func TestDefaultAppConfigJSONParsesAndCarriesWalletKeys(t *testing.T) {
 	for key, want := range map[string]any{
 		"ton_usd_rate":                   domain.TonUSDRate,
 		"wallet_available":               true,
-		"wallet_transfer_min_nanos":      float64(100000000),
-		"wallet_gasless_min_nanos":       float64(100000000),
-		"wallet_gasless_daily_transfers": float64(5),
-		"ton_topup_url":                  "https://fragment.com/ads/topup",
+		"wallet_gasless_daily_transfers": float64(0),
 	} {
 		if got := cfg[key]; got != want {
 			t.Errorf("%s = %#v, want %#v", key, got, want)

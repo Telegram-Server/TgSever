@@ -60,7 +60,7 @@ func TestWalletTonConnectAndCurrencyRatesDoNotTrace(t *testing.T) {
 		{"sessions", &tg.WalletTonConnectGetSessionsRequest{}, ""},
 		{"nextEventID", &tg.WalletTonConnectNextEventIDRequest{}, ""},
 		{"currencyRates", &tg.PaymentsGetCurrencyRatesRequest{}, ""},
-		{"gasless", &tg.WalletGetGaslessInfoRequest{}, ""},
+		{"gasless", &tg.WalletGetGaslessInfoRequest{}, "WALLET_UNAVAILABLE"},
 		{"createSession", &tg.WalletTonConnectCreateSessionRequest{}, "WALLET_UNAVAILABLE"},
 		{"registerKey", &tg.WalletTonConnectRegisterKeyRequest{}, "WALLET_UNAVAILABLE"},
 		{"getPending", &tg.WalletTonConnectGetPendingRequest{}, "WALLET_UNAVAILABLE"},

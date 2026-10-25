@@ -22,15 +22,7 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.PaymentsCanPurchaseStoreRequest](d, tlprofile.SemanticMethodPaymentsCanPurchaseStore, func(ctx context.Context, req *tg.PaymentsCanPurchaseStoreRequest) (any, error) {
 		return r.onPaymentsCanPurchaseStore(ctx, req)
 	})
-	// telesrv has no fiat exchange-rate feed, so the honest answer is an empty
-	// The Money screen calls this on every open -- it was the most-called payments
-	// method in the journal, 434 times -- and renders the fiat amount next to the
-	// balance from the answer. An empty vector is not "no opinion", it is "this
-	// server has no rates", and the client duly rendered a balance with no USD
-	// beside it.
-	//
-	// The rate is the same number appConfig advertises as ton_usd_rate, so the two
-	// channels cannot disagree about what a balance is worth.
+	// Keep the fixed local-ledger reference rate consistent with app config.
 	registerRPC[*tg.PaymentsGetCurrencyRatesRequest](d, tlprofile.SemanticMethodPaymentsGetCurrencyRates, func(ctx context.Context, _ *tg.PaymentsGetCurrencyRatesRequest) (any, error) {
 		return &tg.PaymentsCurrencyRates{Rates: []tg.CurrencyRate{
 			{Currency: "USD", Rate: domain.TonUSDRate},
@@ -131,6 +123,12 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.PaymentsGetStarGiftWithdrawalURLRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftWithdrawalURL, func(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLRequest) (any, error) {
 		return r.onPaymentsGetStarGiftWithdrawalURL(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftWithdrawalURLLegacyRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftWithdrawalURLLegacy, func(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLLegacyRequest) (any, error) {
+		return r.onPaymentsGetStarGiftWithdrawalURLLegacy(ctx, req)
+	})
+	registerRPC[*tg.PaymentsDeleteStarGiftRequest](d, tlprofile.SemanticMethodPaymentsDeleteStarGift, func(ctx context.Context, req *tg.PaymentsDeleteStarGiftRequest) (any, error) {
+		return r.onPaymentsDeleteStarGift(ctx, req)
 	})
 	registerRPC[*tg.PaymentsSendStarGiftOfferRequest](d, tlprofile.SemanticMethodPaymentsSendStarGiftOffer, func(ctx context.Context, req *tg.PaymentsSendStarGiftOfferRequest) (any, error) {
 		return r.onPaymentsSendStarGiftOffer(ctx, req)

@@ -11,7 +11,6 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 	"github.com/iamxvbaba/td/tlprofile"
-	"go.uber.org/zap"
 	walletapp "telesrv/internal/app/wallet"
 	"telesrv/internal/domain"
 )
@@ -37,6 +36,9 @@ func (r *Router) registerWallet(d *tlprofile.Dispatcher) {
 		return r.onWalletState(ctx)
 	})
 	registerRPC[*tg.WalletGetExistingWaltBalanceRequest](d, tlprofile.SemanticMethodWalletGetExistingWaltBalance, func(ctx context.Context, _ *tg.WalletGetExistingWaltBalanceRequest) (any, error) {
+		if _, _, err := r.walletCaller(ctx, "existing-balance", 60); err != nil {
+			return nil, err
+		}
 		// telesrv holds balances in its own ledger and configures no external
 		// TON provider, so there is no on-chain balance page to send the client
 		// to. Reporting has_balance=false is the honest answer.
@@ -88,15 +90,9 @@ func (r *Router) registerWallet(d *tlprofile.Dispatcher) {
 		if _, _, err := r.walletCaller(ctx, "tonconnect-events", 30); err != nil {
 			return nil, err
 		}
-		// No session, so no events. The schema names a result type
-		// (TonConnectNextEventId) that this fork never defines a constructor
-		// for; the value on the wire is a bare long.
-		return int64(0), nil
+		// Layer 230 returns the boxed TonConnectNextEventId constructor.
+		return &tg.TonConnectNextEventID{EventID: 0}, nil
 	})
-	// Gasless refuses rather than returning an empty Updates vector. An empty
-	// vector reads as "I run a gasless system and nothing is pending", which is a
-	// claim telesrv cannot back: it fronts transfers itself and no gasless relay.
-	// An explicit refusal is the answer a client can act on.
 	// The four methods the client polls on the Money screen. All of them were
 	// unregistered, and an unregistered method logs a compatibility trace on
 	// every call, so this screen was producing ~200 warnings a minute on its own.
@@ -128,28 +124,10 @@ func (r *Router) registerWallet(d *tlprofile.Dispatcher) {
 		return nil, r.walletCapabilityUnsupported(ctx, "toncenter-stream", 60)
 	})
 
-	// Gasless answers with no updates rather than refusing, which reverses an
-	// earlier refusal.
-	//
-	// The config is the reason. appConfig now advertises
-	// wallet_gasless_daily_transfers and wallet_gasless_min_nanos, so the client has
-	// already been told gasless transfers exist and offers them; answering its
-	// follow-up RPC with a hard error contradicts what we told it, in the middle of
-	// composing a transfer. An Updates with no entries claims nothing about running a
-	// relay -- it reports no gasless progress to announce, which is true.
-	// The bare Updates type is required here: the schema returns `Updates`, not
-	// `Vector<Update>`, and a vector fails to encode.
+	// No gasless relay is configured. Refuse this capability consistently with
+	// the app config rather than reporting a successful no-op.
 	registerRPC[*tg.WalletGetGaslessInfoRequest](d, tlprofile.SemanticMethodWalletGetGaslessInfo, func(ctx context.Context, _ *tg.WalletGetGaslessInfoRequest) (any, error) {
-		if _, _, err := r.walletCaller(ctx, "gasless-info", 30); err != nil {
-			return nil, err
-		}
-		return &tg.Updates{
-			Updates: []tg.UpdateClass{},
-			Users:   []tg.UserClass{},
-			Chats:   []tg.ChatClass{},
-			Date:    int(r.clock.Now().Unix()),
-			Seq:     0,
-		}, nil
+		return nil, r.walletCapabilityUnsupported(ctx, "gasless-info", 30)
 	})
 
 	// Each of these would have to create or drive a session, so each refuses.
@@ -189,15 +167,7 @@ func (r *Router) walletCapabilityUnsupported(ctx context.Context, scope string, 
 	return tgerr.New(400, "WALLET_UNAVAILABLE")
 }
 
-// walletCaller authenticates and rate-limits every wallet method, and is the
-// single choke point they all pass through, which makes it the one place worth
-// logging from: a successful wallet call is otherwise invisible, and the client
-// polls wallet methods without ever producing an error or an unhandled trace.
-// Without this, "the client never asked" and "the client asked and was served"
-// look identical, which is how the TON Connect question got answered wrongly
-// once already.
-//
-// Temporary diagnostic: drop it once the wallet surface is understood.
+// walletCaller authenticates and rate-limits every wallet method.
 func (r *Router) walletCaller(ctx context.Context, scope string, limit int) (int64, [8]byte, error) {
 	uid, ok, err := r.currentUserID(ctx)
 	if err != nil {
@@ -222,12 +192,7 @@ func (r *Router) walletCaller(ctx context.Context, scope string, limit int) (int
 			return 0, key, floodWaitErr(retry)
 		}
 	}
-	if r.log != nil {
-		r.log.Info("wallet rpc",
-			zap.String("scope", scope),
-			zap.Int64("user_id", uid),
-			zap.String("auth_key_id", hex.EncodeToString(key[:])))
-	}
+
 	return uid, key, nil
 }
 
@@ -325,7 +290,7 @@ func (r *Router) onWalletTransactions(ctx context.Context, req *tg.WalletGetTran
 	if err != nil {
 		return nil, err
 	}
-	if req.Limit < 0 || req.Limit > 100 {
+	if req.Flags&^3 != 0 || req.Limit < 0 || req.Limit > 100 || len(req.Offset) > domain.MaxStarsTransactionsOffsetBytes {
 		return nil, inputRequestInvalidErr()
 	}
 	limit := req.Limit
@@ -350,6 +315,9 @@ func (r *Router) onWalletTransactions(ctx context.Context, req *tg.WalletGetTran
 		Balance:      page.Balance,
 		Transactions: make([]tg.WalletTransaction, 0, len(page.Transactions)),
 	}
+	if page.NextOffset != "" {
+		out.SetNextOffset(page.NextOffset)
+	}
 	for _, txn := range page.Transactions {
 		out.Transactions = append(out.Transactions, tg.WalletTransaction{
 			ID:       strconv.FormatInt(txn.ID, 10),
@@ -369,27 +337,12 @@ func walletTransactionPeer(peer domain.Peer) tg.WalletTransactionPeerClass {
 	return &tg.WalletTransactionPeerUnsupported{}
 }
 
-// provisionWallet mints the account's wallet the first time it asks for one.
-//
-// This reverses an earlier decision, and deliberately. wallet.getState used to
-// answer walletStateEmpty for an unbound account on the principle that telesrv
-// never invents an address. That is a reasonable-sounding rule that produces a
-// dead end in the client: the Money screen still renders, showing a balance of
-// zero, with no way to create a wallet and nothing behind "Send" or the receive
-// QR -- because there is no address for any of it to refer to. An account that
-// had funds in the ledger could not display them.
-//
-// So the wallet is now custodial and created on first view, which is what the
-// client expects: one keypair per account, sealed under the master key, never
-// leaving the server. The balance becomes readable at the same time, because
-// State() only reads the ledger once a link exists.
-//
-// The returned ok=false path is a real fallback rather than an error: a
-// deployment with no master key cannot hold wallets, and telling such a client
-// "you have no wallet" is exactly the previous behaviour, still true.
+// provisionWallet creates the first wallet for an explicitly enabled deployment.
+// A concurrent creation may win; only a successful reread can return that wallet.
+// Missing keys, storage failures and invalid challenges remain errors.
 func (r *Router) provisionWallet(ctx context.Context, uid int64, key [8]byte) (domain.WalletLink, int64, bool, error) {
 	if r.deps.Wallet == nil {
-		return domain.WalletLink{}, 0, false, nil
+		return domain.WalletLink{}, 0, false, walletapp.ErrWalletCreationDisabled
 	}
 	// Create accepts a challenge bound to this account and auth key, so the
 	// challenge has to be issued here rather than expected from the client --
@@ -400,17 +353,16 @@ func (r *Router) provisionWallet(ctx context.Context, uid int64, key [8]byte) (d
 	link, balance, err := r.deps.Wallet.Create(ctx, uid, key, false)
 	if err != nil {
 		switch {
-		case errors.Is(err, walletapp.ErrWalletCreationDisabled),
-			errors.Is(err, walletapp.ErrWalletKeyFile):
-			// No master key configured: the capability is unavailable, not broken.
-			return domain.WalletLink{}, 0, false, nil
-		case errors.Is(err, domain.ErrWalletProofInvalid):
+		case errors.Is(err, domain.ErrWalletProofInvalid), errors.Is(err, domain.ErrWalletPasswordRequired):
 			// A concurrent request already consumed the challenge and committed
 			// its own wallet. Re-read rather than mint a second one.
-			if existing, existingBalance, ok, stateErr := r.deps.Wallet.State(ctx, uid); stateErr == nil && ok {
+			existing, existingBalance, ok, stateErr := r.deps.Wallet.State(ctx, uid)
+			if stateErr != nil {
+				return domain.WalletLink{}, 0, false, stateErr
+			}
+			if ok {
 				return existing, existingBalance, true, nil
 			}
-			return domain.WalletLink{}, 0, false, nil
 		}
 		return domain.WalletLink{}, 0, false, err
 	}
@@ -486,7 +438,7 @@ func walletRPCError(err error) error {
 	case errors.Is(err, walletapp.ErrWalletCreationDisabled), errors.Is(err, walletapp.ErrWalletKeyFile):
 		// telesrv 没法保管私钥（未配置主密钥）。这是能力不可用，不是内部错误。
 		return tgerr.New(400, "WALLET_UNAVAILABLE")
-	case errors.Is(err, walletapp.ErrProviderRequest):
+	case errors.Is(err, walletapp.ErrProviderRequest), errors.Is(err, domain.ErrStarsTransactionQueryInvalid):
 		return inputRequestInvalidErr()
 	case errors.Is(err, walletapp.ErrProviderResponse):
 		return tgerr.New(502, "WALLET_PROVIDER_RESPONSE_INVALID")
@@ -501,18 +453,4 @@ func walletRPCError(err error) error {
 		return tgerr.New(503, "WALLET_PROVIDER_UNAVAILABLE")
 	}
 	return internalErr()
-}
-
-// Trace only routing metadata, never challenge, proof, provider payload or key.
-func (r *Router) walletTraceFields(ctx context.Context, method string) []zap.Field {
-	if r.log == nil {
-		return nil
-	}
-	switch method {
-	case "wallet.getProofChallenge", "wallet.replaceWallet", "wallet.getUserAddresses", "toncenter.performApiRequest":
-		uid, _ := UserIDFrom(ctx)
-		return []zap.Field{zap.String("method", method), zap.Int64("user_id", uid)}
-	default:
-		return nil
-	}
 }

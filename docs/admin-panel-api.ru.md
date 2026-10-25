@@ -230,12 +230,11 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Verification | Official | `/verification` | `verification.review` |
 | Verification | Third-party | `/bot-verification` | `botverification.review` |
 | Gifts | Star Gift Catalog | `/gifts` | `gifts.read` |
+| Gifts | Give Gifts | `/give-gifts` | `gifts.read` |
 | Gifts | Auctions & Drops | `/auctions` | `gifts.read` |
-| Commerce | Stars & Premium | `/monetization` | `premium.manage` |
-| Commerce | Giveaway | `/star-issue` | `premium.manage` |
-| Commerce | Gifts | `/give-gifts` | `gifts.read` |
+| Commerce | Stars & Premium | `/monetization` | `premium.manage` (also served at `/star-issue`) |
 | Commerce | Prices | `/prices` | `prices.manage` |
-| Commerce | Stars | `/stars` | `stars.read` |
+| Commerce | Stars balances | `/stars` | `stars.read` |
 | NFT Items | NFT Usernames | `/collectible-usernames` | `usernames.read` |
 | NFT Items | NFT Numbers | `/collectible-phones` | `phones.read` |
 | NFT Items | NFT Gifts | `/nft-gifts` | `gifts.read` |
@@ -244,7 +243,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Media | GIFs | `/gif-catalog` | `content.read` |
 | Media | Storage | `/storage` | `storage.read` |
 | Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
-| Messages | Private | `/messages/private` | `messages.read` (also served at the bare alias) |
+| Messages | Private | `/messages/private` | `messages.read` (also served at `/messages`) |
 | Messages | Groups | `/messages/groups` | `messages.read` |
 | Messages | Chat audit | `/messages/audit` | `messages.read` |
 | Messages | Deletions | `/messages/deletions` | `messages.deletions.read` |

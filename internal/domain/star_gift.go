@@ -104,6 +104,9 @@ const (
 	StarGiftLifecycleConverted StarGiftLifecycleStatus = "converted"
 	StarGiftLifecycleBurned    StarGiftLifecycleStatus = "burned"
 	StarGiftLifecycleExported  StarGiftLifecycleStatus = "exported"
+	// StarGiftLifecycleDeleted 是 payments.deleteStarGift 的终态：礼物离开资料页，
+	// 但历史行仍然保留（升级命令、报价、转账记录都引用它，不能硬删）。
+	StarGiftLifecycleDeleted StarGiftLifecycleStatus = "deleted"
 )
 
 func (s StarGiftLifecycleStatus) Live() bool {
@@ -826,6 +829,22 @@ type StarGiftWithdrawalRequest struct {
 	Date   int
 }
 
+// StarGiftDeleteRequest 是 payments.deleteStarGift 的输入：调用者要删掉自己
+// 收到的那份普通礼物。已升级的藏品、限量/拍卖礼物以及仍带 Stars 的礼物不可删除。
+type StarGiftDeleteRequest struct {
+	UserID int64
+	Ref    SavedStarGiftRef
+	Date   int
+}
+
+// StarGiftDeleteResult 报告删除结果。已升级成藏品（NFT）的礼物不可删除，
+// 所以 UniqueGiftID 恒为 0。
+type StarGiftDeleteResult struct {
+	SavedGiftID  int64
+	UniqueGiftID int64
+	Deleted      bool
+}
+
 type StarGiftWithdrawal struct {
 	ProviderRequestID string
 	URL               string
@@ -1222,6 +1241,11 @@ const (
 	// MaxPinnedStarGifts matches stargifts_pinned_to_top_limit advertised to
 	// official clients. Pin requests are complete replacement vectors.
 	MaxPinnedStarGifts = 6
+	// MinStarGiftResaleStars is the floor of a Stars resale price. It equals the
+	// clients' built-in stars_stargift_resale_amount_min default and is
+	// advertised under that key in help.getAppConfig. It is deliberately flat: a
+	// floor derived from the cheapest listing only ever ratchets up.
+	MinStarGiftResaleStars int64 = 125
 )
 
 // Star gift 哨兵错误（rpc 层 errors.Is 映射为 tgerr）。
@@ -1245,8 +1269,11 @@ var (
 	ErrStarGiftOwnerInvalid           = errors.New("stargift: owner invalid")
 	ErrStarGiftTransferUnavailable    = errors.New("stargift: transfer unavailable")
 	ErrStarGiftResaleUnavailable      = errors.New("stargift: resale unavailable")
-	ErrStarGiftOfferInvalid           = errors.New("stargift: offer invalid")
-	ErrStarGiftOfferExpired           = errors.New("stargift: offer expired")
+	// ErrStarGiftDeleteUnavailable 表示这份礼物当前不可删除：已转换、已导出、
+	// 已升级成藏品、限量或拍卖礼物、仍带转换价或预付升级 Stars、已被删除。
+	ErrStarGiftDeleteUnavailable = errors.New("stargift: delete unavailable")
+	ErrStarGiftOfferInvalid      = errors.New("stargift: offer invalid")
+	ErrStarGiftOfferExpired      = errors.New("stargift: offer expired")
 	// ErrStarGiftRecipientUnavailable 表示收礼人对其它用户呈 deleted 墓碑
 	// （冻结账号），礼物不能再被送出。
 	ErrStarGiftRecipientUnavailable  = errors.New("stargift: recipient account unavailable")

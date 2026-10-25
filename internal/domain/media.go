@@ -563,6 +563,14 @@ type MessageWebPage struct {
 	// ComposeToneEmojiID 映射 webPageAttributeAiComposeTone，用于 TDesktop 渲染
 	// addstyle tone 分享卡片；0 表示普通网页。
 	ComposeToneEmojiID int64 `json:"compose_tone_emoji_id,omitempty"`
+	// UniqueGift maps webPageAttributeUniqueStarGift (type telegram_nft).
+	UniqueGift *UniqueStarGift `json:"unique_gift,omitempty"`
+	// CollectionIcons maps webPageAttributeStarGiftCollection (telegram_collection).
+	CollectionIcons []Document `json:"collection_icons,omitempty"`
+	// AuctionGift and AuctionEndDate map webPageAttributeStarGiftAuction
+	// (telegram_auction).
+	AuctionGift    *StarGift `json:"auction_gift,omitempty"`
+	AuctionEndDate int       `json:"auction_end_date,omitempty"`
 
 	ForceLargeMedia bool `json:"force_large_media,omitempty"`
 	ForceSmallMedia bool `json:"force_small_media,omitempty"`

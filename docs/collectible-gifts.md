@@ -1,9 +1,10 @@
 # Collectible Star gifts: listing flags, value info, withdrawal
 
 What this service implements for collectible (unique) Star gifts on top of the
-Layer 225 TL schema: the saved-gift listing flags, `payments.getUniqueStarGiftValueInfo`,
-and `payments.getStarGiftWithdrawalUrl` with the 2FA SRP gate it shares with the
-self-hosted claim page.
+Layer 232 TL schema: the saved-gift listing flags,
+`payments.getUniqueStarGiftValueInfo`, `payments.getStarGiftWithdrawalUrl`
+(with the 2FA gate it shares with the self-hosted claim page) and
+`payments.deleteStarGift`.
 
 ## Saved gift listing (`getSavedStarGifts` family)
 
@@ -61,20 +62,41 @@ ledger recorded them.
 - `last_sale_on_fragment` and `fragment_listed_*` are never set: this ledger has
   no Fragment feed, so the correct value is "unknown" (left absent).
 
+## Resale price (`payments.updateStarGiftPrice`)
+
+- A Stars listing must be at least `domain.MinStarGiftResaleStars` (125 Stars).
+  `help.getAppConfig` advertises the same value as
+  `stars_stargift_resale_amount_min`, so the client's price field and the
+  server agree; a lower price is refused with `STARGIFT_INVALID`.
+- There is no market-derived minimum. A floor taken from the cheapest live
+  listing could only rise, and stopped every seller, the cheapest one included,
+  from pricing below it.
+- `resell_min_stars` and the `floor_price` of
+  `payments.getUniqueStarGiftValueInfo` are displays of the cheapest live,
+  unsuspended Stars listing of the gift type. Listings priced above
+  `domain.StarGiftResaleFloorMultiple` (10) times the active revision's base
+  price are ignored there, so one overpriced listing cannot move the display.
+- TON listings have no server-side minimum.
+
 ## `payments.getStarGiftWithdrawalUrl`
 
 Preconditions are checked in this order, because each later one would otherwise
 reveal state to a caller who has not proven who they are:
 
 1. Known method, non-bot caller (`BOT_METHOD_INVALID`).
-2. `account.CheckPassword` over `inputCheckPasswordSRP` / `inputCheckPasswordEmpty`.
-   There is deliberately no `PASSWORD_MISSING`: `checkSRP` itself accepts only
-   the empty check on accounts without a password, and only a real SRP answer on
-   accounts with one. Wrong answer → `PASSWORD_HASH_INVALID`, stale `srp_id` →
-   `SRP_ID_INVALID`.
-3. Freshness, only when the account has a password: `PASSWORD_TOO_FRESH_<wait>`
-   for a recently changed password and `SESSION_TOO_FRESH_<wait>` for a session
-   that is younger than the same window (`revenueWithdrawalFreshWait`).
+2. The account must have a 2FA password; without one there is nothing to
+   prove and the call fails with `PASSWORD_MISSING`.
+3. The 2FA proof. Layer 232 carries `tmp_password:bytes`: it must be the grant
+   that `account.getTmpPassword` issued to this authorization, still within
+   its `valid_until`, on the same login and under the current 2FA password;
+   anything else, empty included, is `TMP_PASSWORD_INVALID`. There is no SRP
+   fallback. Exact Layer 225–231 clients call
+   `payments.getStarGiftWithdrawalUrlLegacy` with the SRP challenge, and only
+   `inputCheckPasswordSRP` is accepted there. Wrong answer →
+   `PASSWORD_HASH_INVALID`, stale `srp_id` → `SRP_ID_INVALID`.
+   Freshness follows the proof: `PASSWORD_TOO_FRESH_<wait>` for a recently
+   changed password and `SESSION_TOO_FRESH_<wait>` for a session that is
+   younger than the same window (`revenueWithdrawalFreshWait`).
 4. The auth key exists, belongs to the caller, and is not `password_pending`
    (`AUTH_KEY_UNREGISTERED`).
 5. The gift ref resolves and the caller is its owner (`STARGIFT_INVALID`,
@@ -97,6 +119,49 @@ unique gift. A pending request that has not expired, or a completed one, is
 returned as-is instead of minting a second bearer URL; an expired one is
 reused/updated. Ten concurrent calls therefore collapse onto a single row and a
 single URL — covered by `TestStarGiftWithdrawalConcurrentRecordCollapsesPostgres`.
+
+## `payments.deleteStarGift`
+
+Layer 232 added `payments.deleteStarGift#3cdaf8aa stargift:InputSavedStarGift =
+Bool`. The owner removes a received gift from the profile.
+
+- Only the caller may delete their own gift. A channel gift is a channel asset
+  and is refused (`STARGIFT_OWNER_INVALID`); bots are refused
+  (`BOT_METHOD_INVALID`). Official clients let a channel owner or an admin with
+  transfer rights delete a channel gift; that needs a channel-ownership check
+  of its own, so this method deliberately keeps refusing it until that path
+  exists.
+- The delete is irreversible, so it is limited to a **plain** received gift
+  that carries no Stars. Refused (`STARGIFT_INVALID`):
+  - a gift upgraded into a collectible (NFT) — destroying a collectible is a
+    different operation with its own financial rules;
+  - a limited-edition or auction gift — the release is a scarce, numbered
+    object;
+  - a gift with a conversion value, or one carrying the sender's prepaid
+    upgrade Stars — deleting it would silently destroy Stars that can still be
+    claimed.
+
+  This matches TDLib's `deleteGift` preconditions (not unique,
+  `availability_total == 0`, `convert_star_count == 0`). TDLib also requires
+  "not refunded"; a saved gift is never in a refunded state here, because a
+  gift-purchase refund settles at the invoice layer before the gift is
+  delivered.
+- The gift row is **not** deleted: upgrade commands, offers and transfers
+  reference it, so the delete is a lifecycle transition
+  (`lifecycle_status='deleted'`, new state in migration
+  `20261030020200_star_gift_deleted_state`). Read paths only project
+  `lifecycle_status='active'`, so the gift leaves the profile, the account
+  rating signal and the saved-gift lists immediately.
+- Refused states (`STARGIFT_INVALID`): converted, exported, burned, already
+  deleted, upgraded into a collectible, limited/auction release, still
+  convertible or prepaid.
+- A deleted gift cannot be upgraded afterwards either: the upgrade form refuses
+  it (`STARGIFT_INVALID`) and the upgrade transaction re-checks the lifecycle
+  under the row lock, so no Stars are charged and no collectible is minted.
+- The gift is dropped from every collection it was part of under the owner
+  collection advisory lock, the affected collection hashes are refreshed (so
+  `payments.getStarGiftCollections` cannot answer `NotModified` for a changed
+  membership), and the profile projection is invalidated.
 
 ## Claim page mirror (FlashFragment)
 
@@ -166,6 +231,9 @@ init-data header injected.
   the same flags against PostgreSQL, including hosted rows.
 - `internal/store/postgres/star_gift_withdrawal_race_integration_test.go` —
   ten concurrent withdrawals collapse into one request row.
+- `internal/store/postgres/star_gift_lifecycle_integration_test.go`
+  (`TestStarGiftResaleFloorIgnoresTrollListingsPostgres`) — the flat resale
+  minimum, undercutting the cheapest listing, and the troll-proof display floor.
 
 The PostgreSQL ones run only when `TELESRV_TEST_POSTGRES_DSN` names a database
 whose name contains `test`.

@@ -612,13 +612,14 @@ WHERE ci.saved_gift_id = p.id AND ci.collection_id = $%d
     OR p.pinned_order > $%[1]d
     OR (p.pinned_order = $%[1]d AND (p.gift_date, p.id) < ($%[2]d, $%[3]d))
 )`, len(args)-2, len(args)-1, len(args))
-		} else {
+		} else if profileOrder {
 			args = append(args, cursor.Date, cursor.ID)
-			if profileOrder {
-				where += fmt.Sprintf(" AND p.pinned_order = 0 AND (p.gift_date, p.id) < ($%d, $%d)", len(args)-1, len(args))
-			} else {
-				where += fmt.Sprintf(" AND p.id < $%d", len(args))
-			}
+			where += fmt.Sprintf(" AND p.pinned_order = 0 AND (p.gift_date, p.id) < ($%d, $%d)", len(args)-1, len(args))
+		} else {
+			// Collection pages are ordered by id only: binding the unused date
+			// would leave a parameter PostgreSQL cannot type.
+			args = append(args, cursor.ID)
+			where += fmt.Sprintf(" AND p.id < $%d", len(args))
 		}
 	}
 	orderBy := "ORDER BY p.id DESC"

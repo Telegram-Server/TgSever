@@ -57,24 +57,27 @@ func (l *windowRateLimiter) AllowN(_ context.Context, key string, cost, limit in
 
 func TestSensitiveRPCRateLimitGroupTable(t *testing.T) {
 	want := map[uint32]sensitiveRateGroup{
-		tg.AuthCheckPasswordRequestTypeID:                    rateGroupSRP,
-		tg.AccountGetPasswordRequestTypeID:                   rateGroupSRP,
-		tg.AccountUpdatePasswordSettingsRequestTypeID:        rateGroupSRP,
-		tg.AccountDeleteAccountRequestTypeID:                 rateGroupSRP,
-		tg.MessagesEditChatCreatorRequestTypeID:              rateGroupSRP,
-		tg.TelesrvSignInWithPasswordRequestTypeID:            rateGroupSRP,
-		tg.PaymentsGetStarGiftWithdrawalURLRequestTypeID:     rateGroupWithdrawal,
-		tg.PaymentsGetStarsRevenueWithdrawalURLRequestTypeID: rateGroupWithdrawal,
-		tg.PaymentsSendStarsFormRequestTypeID:                rateGroupPayment,
-		tg.PaymentsSendPaymentFormRequestTypeID:              rateGroupPayment,
-		tg.PaymentsUpgradeStarGiftRequestTypeID:              rateGroupPayment,
-		tg.PaymentsTransferStarGiftRequestTypeID:             rateGroupPayment,
-		tg.PaymentsSendStarGiftOfferRequestTypeID:            rateGroupPayment,
-		tg.PaymentsResolveStarGiftOfferRequestTypeID:         rateGroupPayment,
-		tg.PaymentsUpdateStarGiftPriceRequestTypeID:          rateGroupPayment,
-		tg.PaymentsCraftStarGiftRequestTypeID:                rateGroupPayment,
-		tg.PaymentsSaveStarGiftRequestTypeID:                 rateGroupPayment,
-		tg.PaymentsConvertStarGiftRequestTypeID:              rateGroupPayment,
+		tg.AuthCheckPasswordRequestTypeID:                      rateGroupSRP,
+		tg.AccountGetPasswordRequestTypeID:                     rateGroupSRP,
+		tg.AccountGetTmpPasswordRequestTypeID:                  rateGroupSRP,
+		tg.AccountUpdatePasswordSettingsRequestTypeID:          rateGroupSRP,
+		tg.AccountDeleteAccountRequestTypeID:                   rateGroupSRP,
+		tg.MessagesEditChatCreatorRequestTypeID:                rateGroupSRP,
+		tg.TelesrvSignInWithPasswordRequestTypeID:              rateGroupSRP,
+		tg.PaymentsGetStarGiftWithdrawalURLRequestTypeID:       rateGroupWithdrawal,
+		tg.PaymentsGetStarGiftWithdrawalURLLegacyRequestTypeID: rateGroupWithdrawal,
+		tg.PaymentsGetStarsRevenueWithdrawalURLRequestTypeID:   rateGroupWithdrawal,
+		tg.PaymentsSendStarsFormRequestTypeID:                  rateGroupPayment,
+		tg.PaymentsSendPaymentFormRequestTypeID:                rateGroupPayment,
+		tg.PaymentsUpgradeStarGiftRequestTypeID:                rateGroupPayment,
+		tg.PaymentsTransferStarGiftRequestTypeID:               rateGroupPayment,
+		tg.PaymentsSendStarGiftOfferRequestTypeID:              rateGroupPayment,
+		tg.PaymentsResolveStarGiftOfferRequestTypeID:           rateGroupPayment,
+		tg.PaymentsUpdateStarGiftPriceRequestTypeID:            rateGroupPayment,
+		tg.PaymentsCraftStarGiftRequestTypeID:                  rateGroupPayment,
+		tg.PaymentsSaveStarGiftRequestTypeID:                   rateGroupPayment,
+		tg.PaymentsConvertStarGiftRequestTypeID:                rateGroupPayment,
+		tg.PaymentsDeleteStarGiftRequestTypeID:                 rateGroupPayment,
 	}
 	if len(sensitiveRPCRateGroups) != len(want) {
 		t.Fatalf("group table size = %d, want %d", len(sensitiveRPCRateGroups), len(want))
@@ -194,6 +197,7 @@ func TestCheckSensitiveRPCRateLimitPerGroupBudgets(t *testing.T) {
 	}{
 		{tg.AccountUpdatePasswordSettingsRequestTypeID, "auth:srp:", 1, 30 * time.Second},
 		{tg.PaymentsGetStarGiftWithdrawalURLRequestTypeID, "payments:withdrawal:", 2, time.Minute},
+		{tg.PaymentsGetStarGiftWithdrawalURLLegacyRequestTypeID, "payments:withdrawal:", 2, time.Minute},
 		{tg.PaymentsTransferStarGiftRequestTypeID, "payments:move:", 3, 2 * time.Minute},
 	}
 	for _, want := range cases {
