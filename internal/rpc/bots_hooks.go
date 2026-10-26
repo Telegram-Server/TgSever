@@ -15,9 +15,14 @@ import (
 // 在线提示，以及 @ChatBot 流式草稿 transient 推送。Router 创建后经
 // botsService.SetRouterHooks / SetTextDraftPusher 装配（见 cmd/telesrv/main.go）。
 
-// maxBotCommandsPushPeers 限制单次命令变更的推送扇出（bot 的最近 dialog peer 数）。
-// 超出的离线/长尾用户靠 bot_info_version bump 在下次 getFullUser 时拿到新命令。
+// maxBotCommandsPushPeers 限制单次命令变更的推送扇出：私聊取 bot 最近的这么多个用户
+// dialog，群取 bot 最近的这么多个群，每个群至多推这么多个在线成员。超出的离线/长尾
+// 用户靠 bot_info_version bump 与缓存失效，在下次 getFullUser / getFullChannel 时拿到新命令。
 const maxBotCommandsPushPeers = 100
+
+// maxBotCommandsPushes 是单次命令变更最多推送（并为之选取命令）的接收者总数：每人一次
+// 选取查询，群的全局 scope 最坏是「群 × 在线成员」，必须封顶。
+const maxBotCommandsPushes = 500
 
 // RevokeBotSessions 撤销 bot 的全部已登录 session：删除全部 authorization 行并
 // 强制断开在线连接（与 account.resetAuthorization 被踢闭环同款顺序）。
@@ -42,23 +47,26 @@ func (r *Router) RevokeBotSessions(ctx context.Context, botUserID int64) error {
 	return nil
 }
 
-// PushBotCommandsChanged 给「与该 bot 有私聊 dialog 且在线」的用户推
-// updateBotCommands（peer = 该 bot 的 user peer，对齐 TDesktop/DrKLO 消费语义）。
+// PushBotCommandsChanged 在 scope 内的命令变更后，给受影响的在线用户推
+// updateBotCommands，每人推按自己选出的那份（对齐 TDesktop/DrKLO 消费语义）：
+//   - 影响私聊（default / users / 私聊 peer）：peer = bot，推给与 bot 有私聊 dialog
+//     的在线用户（私聊 peer 只推那一个用户）；
+//   - 影响群（default / chats / chat_admins / 群 peer / peer_admins / peer_user）：
+//     peer = 群，推给 bot 所在群（群 peer 系列只推那一个群）的在线成员。
+//
 // updateBotCommands 无 pts/qts，不进 getDifference——离线用户由随写库一起完成的
-// bot_info_version bump 兜底（下次 getFullUser 重拉命令）。
+// bot_info_version bump 与投影缓存失效兜底（下次 getFullUser / getFullChannel 重拉）。
+// 推送时不知道每个会话的语言，按不分语言的桶选取；按语言分桶的 bot 在推送与下次
+// 重拉之间可能短暂看到不分语言的那份。
 //
 // fire-and-forget：在独立 goroutine 内执行（脱离已返回的 setBotCommands RPC ctx），
-// 否则 GetDialogs + 最多 maxBotCommandsPushPeers 次 best-effort 推送会把 RPC 响应
-// 拖到拥塞超时之和、并跨用户占住 BotFather 条带锁。推送是纯通知，丢失靠 version
-// bump 兜底，不需保证投达。扇出有界：只取 bot dialog 列表前 maxBotCommandsPushPeers
-// 个 user peer，再按在线快照过滤；超界部分走版本兜底（有意取舍）。
-func (r *Router) PushBotCommandsChanged(ctx context.Context, botUserID int64, commands []domain.BotCommand) {
-	if r.deps.Dialogs == nil || r.deps.Sessions == nil || botUserID == 0 {
+// 否则 GetDialogs + 有界的 best-effort 推送会把 RPC 响应拖到拥塞超时之和、并跨用户
+// 占住 BotFather 条带锁。推送是纯通知，不需保证投达；扇出见 maxBotCommandsPushPeers。
+func (r *Router) PushBotCommandsChanged(ctx context.Context, botUserID int64, scope domain.BotCommandScope) {
+	if r.deps.Sessions == nil || botUserID == 0 {
 		return
 	}
-	// 拷贝命令切片：调用方（service）可能复用底层数组。
-	cmds := append([]domain.BotCommand(nil), commands...)
-	go r.pushBotCommandsChanged(context.WithoutCancel(ctx), botUserID, cmds)
+	go r.pushBotCommandsChanged(context.WithoutCancel(ctx), botUserID, scope)
 }
 
 // PushStickerSetsChanged 给单个用户在线 session 推 updateStickerSets。该 update 无
@@ -100,7 +108,7 @@ func (r *Router) PushBotTextDraft(ctx context.Context, botUserID, userID, random
 	})
 }
 
-func (r *Router) pushBotCommandsChanged(ctx context.Context, botUserID int64, commands []domain.BotCommand) {
+func (r *Router) pushBotCommandsChanged(ctx context.Context, botUserID int64, scope domain.BotCommandScope) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			r.log.Error("push bot commands panicked", zap.Int64("bot_user_id", botUserID), zap.Any("panic", rec))
@@ -108,16 +116,63 @@ func (r *Router) pushBotCommandsChanged(ctx context.Context, botUserID int64, co
 	}()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	budget := maxBotCommandsPushes
+	if botCommandScopeAffectsPrivate(scope) {
+		r.pushPrivateBotCommands(ctx, botUserID, scope, &budget)
+	}
+	if botCommandScopeAffectsGroups(scope) {
+		r.pushGroupBotCommands(ctx, botUserID, scope, &budget)
+	}
+}
+
+func botCommandScopeAffectsPrivate(scope domain.BotCommandScope) bool {
+	switch scope.Type {
+	case domain.BotCommandScopeDefault, domain.BotCommandScopeUsers:
+		return true
+	case domain.BotCommandScopePeer:
+		return scope.Peer.Type == domain.PeerTypeUser
+	default:
+		return false
+	}
+}
+
+func botCommandScopeAffectsGroups(scope domain.BotCommandScope) bool {
+	switch scope.Type {
+	case domain.BotCommandScopeDefault, domain.BotCommandScopeChats, domain.BotCommandScopeChatAdmins,
+		domain.BotCommandScopePeerAdmins, domain.BotCommandScopePeerUser:
+		return true
+	case domain.BotCommandScopePeer:
+		return scope.Peer.Type == domain.PeerTypeChannel
+	default:
+		return false
+	}
+}
+
+// botDialogPeers 返回 bot 最近的至多 maxBotCommandsPushPeers 个某类会话 id。
+func (r *Router) botDialogPeers(ctx context.Context, botUserID int64, peerType domain.PeerType) []int64 {
+	if r.deps.Dialogs == nil {
+		return nil
+	}
 	list, err := r.deps.Dialogs.GetDialogs(ctx, botUserID, domain.DialogFilter{Limit: maxBotCommandsPushPeers})
 	if err != nil {
 		r.log.Warn("push bot commands: list bot dialogs", zap.Int64("bot_user_id", botUserID), zap.Error(err))
-		return
+		return nil
 	}
-	candidates := make([]int64, 0, len(list.Dialogs))
+	out := make([]int64, 0, len(list.Dialogs))
 	for _, dialog := range list.Dialogs {
-		if dialog.Peer.Type == domain.PeerTypeUser && dialog.Peer.ID != 0 && dialog.Peer.ID != botUserID {
-			candidates = append(candidates, dialog.Peer.ID)
+		if dialog.Peer.Type == peerType && dialog.Peer.ID != 0 && dialog.Peer.ID != botUserID && !dialog.ChannelLeft {
+			out = append(out, dialog.Peer.ID)
 		}
+	}
+	return out
+}
+
+func (r *Router) pushPrivateBotCommands(ctx context.Context, botUserID int64, scope domain.BotCommandScope, budget *int) {
+	var candidates []int64
+	if scope.Type == domain.BotCommandScopePeer {
+		candidates = []int64{scope.Peer.ID}
+	} else {
+		candidates = r.botDialogPeers(ctx, botUserID, domain.PeerTypeUser)
 	}
 	if len(candidates) == 0 {
 		return
@@ -125,18 +180,105 @@ func (r *Router) pushBotCommandsChanged(ctx context.Context, botUserID int64, co
 	if provider, ok := r.deps.Sessions.(OnlineUserProvider); ok {
 		candidates = provider.OnlineUserIDsForCandidates(candidates, maxBotCommandsPushPeers)
 	}
-	if len(candidates) == 0 {
+	for _, userID := range candidates {
+		if *budget <= 0 || ctx.Err() != nil {
+			return
+		}
+		*budget--
+		commands, ok := r.resolvedBotCommands(ctx, []int64{botUserID}, domain.BotCommandView{
+			Peer:         domain.Peer{Type: domain.PeerTypeUser, ID: userID},
+			ViewerUserID: userID,
+		})
+		if !ok {
+			return
+		}
+		r.pushUserMessage(ctx, userID, "push bot commands", r.botCommandsUpdate(&tg.PeerUser{UserID: botUserID}, botUserID, commands[botUserID]))
+	}
+}
+
+func (r *Router) pushGroupBotCommands(ctx context.Context, botUserID int64, scope domain.BotCommandScope, budget *int) {
+	provider, ok := r.deps.Sessions.(OnlineUserProvider)
+	if !ok || r.deps.Channels == nil {
 		return
 	}
-	update := &tg.Updates{
+	var channelIDs []int64
+	if scope.Peer.Type == domain.PeerTypeChannel {
+		channelIDs = []int64{scope.Peer.ID}
+	} else {
+		channelIDs = r.botDialogPeers(ctx, botUserID, domain.PeerTypeChannel)
+	}
+	for _, channelID := range channelIDs {
+		if *budget <= 0 || ctx.Err() != nil {
+			return
+		}
+		members := provider.OnlineChannelUserIDs(channelID, maxBotCommandsPushPeers)
+		if scope.Type == domain.BotCommandScopePeerUser {
+			members = filterInt64s(members, func(id int64) bool { return id == scope.UserID })
+		}
+		if len(members) == 0 {
+			continue
+		}
+		admins := r.channelAdminSet(ctx, botUserID, channelID)
+		peer := &tg.PeerChannel{ChannelID: channelID}
+		for _, userID := range members {
+			if userID == botUserID {
+				continue
+			}
+			_, isAdmin := admins[userID]
+			if scope.Type == domain.BotCommandScopeChatAdmins || scope.Type == domain.BotCommandScopePeerAdmins {
+				if !isAdmin {
+					continue // 管理员桶变化不影响普通成员
+				}
+			}
+			if *budget <= 0 {
+				return
+			}
+			*budget--
+			commands, ok := r.resolvedBotCommands(ctx, []int64{botUserID}, domain.BotCommandView{
+				Peer:          domain.Peer{Type: domain.PeerTypeChannel, ID: channelID},
+				ViewerUserID:  userID,
+				ViewerIsAdmin: isAdmin,
+			})
+			if !ok {
+				return
+			}
+			r.pushUserMessage(ctx, userID, "push bot commands", r.botCommandsUpdate(peer, botUserID, commands[botUserID]))
+		}
+	}
+}
+
+// channelAdminSet 返回群里仍在任的管理员与群主（按 bot 视角读取）。
+func (r *Router) channelAdminSet(ctx context.Context, botUserID, channelID int64) map[int64]struct{} {
+	list, err := r.deps.Channels.GetParticipants(ctx, botUserID, channelID, domain.ChannelParticipantsFilter{Kind: domain.ChannelParticipantsAdmins}, 0, domain.MaxChannelParticipantsLimit)
+	if err != nil {
+		return nil
+	}
+	out := make(map[int64]struct{}, len(list.Participants))
+	for _, member := range list.Participants {
+		if domain.BotCommandViewerIsAdmin(member) {
+			out[member.UserID] = struct{}{}
+		}
+	}
+	return out
+}
+
+func (r *Router) botCommandsUpdate(peer tg.PeerClass, botUserID int64, commands []domain.BotCommand) *tg.Updates {
+	return &tg.Updates{
 		Updates: []tg.UpdateClass{&tg.UpdateBotCommands{
-			Peer:     &tg.PeerUser{UserID: botUserID},
+			Peer:     peer,
 			BotID:    botUserID,
 			Commands: tgBotCommands(commands),
 		}},
 		Date: int(r.clock.Now().Unix()),
 	}
-	for _, userID := range candidates {
-		r.pushUserMessage(ctx, userID, "push bot commands", update)
+}
+
+func filterInt64s(in []int64, keep func(int64) bool) []int64 {
+	out := in[:0:0]
+	for _, v := range in {
+		if keep(v) {
+			out = append(out, v)
+		}
 	}
+	return out
 }

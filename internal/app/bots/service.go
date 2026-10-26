@@ -102,13 +102,14 @@ type verificationApplications interface {
 // router↔bots 的构造循环；这些能力都依赖 TL/连接层边界，不能在 app 层实现）：
 //   - RevokeBotSessions：token revoke 后撤销 bot 的全部已登录 session（删
 //     authorization + 强制断连）。
-//   - PushBotCommandsChanged：命令变更后给在线相关用户推 updateBotCommands
-//     （无 pts 的 ephemeral update，离线用户靠 bot_info_version bump 兜底）。
+//   - PushBotCommandsChanged：scope 内的命令变更后给受影响的在线用户推
+//     updateBotCommands（每人推自己选出的那份；无 pts 的 ephemeral update，
+//     离线用户靠 bot_info_version bump 兜底）。
 //   - PushStickerSetsChanged：@Stickers 发布后给 creator 当前在线 session 推
 //     updateStickerSets；离线端靠持久化 install 状态 + 下次 getAllStickers 兜底。
 type RouterHooks interface {
 	RevokeBotSessions(ctx context.Context, botUserID int64) error
-	PushBotCommandsChanged(ctx context.Context, botUserID int64, commands []domain.BotCommand)
+	PushBotCommandsChanged(ctx context.Context, botUserID int64, scope domain.BotCommandScope)
 	PushStickerSetsChanged(ctx context.Context, userID int64, kind domain.StickerSetKind)
 }
 
@@ -735,44 +736,116 @@ func (s *Service) RevokeBotToken(ctx context.Context, ownerUserID, botUserID int
 	return token, nil
 }
 
-// SetBotCommands 覆盖式写入 bot 的 default scope 命令（bots.setBotCommands /
-// BotFather /setcommands 共用收口）。校验命令名/描述/数量；写库（含 version bump）
-// 成功后给在线相关用户推 updateBotCommands。返回 bump 后的 bot_info_version。
+// SetBotCommands 覆盖式写入 bot 的 default scope + 空 lang 命令（BotFather
+// /setcommands 用）。等同于 SetScopedBotCommands 的 default 桶。
 func (s *Service) SetBotCommands(ctx context.Context, botUserID int64, commands []domain.BotCommand) (int, error) {
-	if len(commands) > domain.MaxBotCommands {
-		return 0, domain.ErrBotCommandInvalid
+	return s.SetScopedBotCommands(ctx, botUserID, domain.BotCommandSetKey{Scope: domain.BotCommandScope{Type: domain.BotCommandScopeDefault}}, commands)
+}
+
+// SetScopedBotCommands 覆盖式写入一个命令桶（bots.setBotCommands / resetBotCommands 的
+// 收口）；commands 为空 = 删除该桶，查看者回退到更宽的 scope。校验命令名/描述/数量与
+// lang_code；scope 指向的会话是否可用由调用方（rpc）校验。写库（含 version bump）成功后
+// 给受影响的在线用户推 updateBotCommands。返回 bump 后的 bot_info_version，无变更时为 0。
+func (s *Service) SetScopedBotCommands(ctx context.Context, botUserID int64, key domain.BotCommandSetKey, commands []domain.BotCommand) (int, error) {
+	if !domain.ValidBotCommandLangCode(key.LangCode) {
+		return 0, domain.ErrBotCommandLangCodeInvalid
 	}
-	clean := make([]domain.BotCommand, 0, len(commands))
-	for _, c := range commands {
-		cmd := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(c.Command, "/")))
-		desc := strings.TrimSpace(c.Description)
-		if !domain.ValidBotCommandName(cmd) || desc == "" || len(desc) > domain.MaxBotCommandDescriptionLen {
-			return 0, domain.ErrBotCommandInvalid
-		}
-		clean = append(clean, domain.BotCommand{Command: cmd, Description: desc, Ephemeral: c.Ephemeral})
+	if !key.Scope.Valid() {
+		return 0, domain.ErrBotCommandScopeInvalid
+	}
+	clean, err := cleanBotCommands(commands)
+	if err != nil {
+		return 0, err
 	}
 	// 同值短路：bot 框架启动时普遍无条件重发相同命令集，跳过可避免无意义的
 	// bot_info_version bump（驱动全体客户端多打一轮 getFullUser）与多余推送。
 	// 非原子（读后他写不影响正确性：要么对方已 bump、要么我们多 bump 一次）。
-	cur, found, err := s.botProfile(ctx, botUserID)
+	if _, found, err := s.botProfile(ctx, botUserID); err != nil {
+		return 0, err
+	} else if !found {
+		return 0, domain.ErrBotNotFound
+	}
+	cur, _, err := s.GetScopedBotCommands(ctx, botUserID, key)
 	if err != nil {
 		return 0, err
 	}
-	if !found {
-		return 0, domain.ErrBotNotFound
-	}
-	if botCommandsEqual(cur.Commands, clean) {
+	if botCommandsEqual(cur, clean) {
 		return 0, nil // 无变更；调用方忽略返回的 version
 	}
-	version, err := s.bots.UpdateBotCommands(ctx, botUserID, clean)
+	version, err := s.bots.SetBotCommandSet(ctx, botUserID, key, clean)
 	if err != nil {
 		return 0, err
 	}
 	s.invalidateBotReadCaches(ctx, botUserID)
 	if s.hooks != nil {
-		s.hooks.PushBotCommandsChanged(ctx, botUserID, clean)
+		s.hooks.PushBotCommandsChanged(ctx, botUserID, key.Scope)
 	}
 	return version, nil
+}
+
+// GetScopedBotCommands 精确读取一个命令桶，不做 scope 回退（bots.getBotCommands /
+// Bot API getMyCommands 的语义）。桶不存在时 found=false、commands 为空。
+func (s *Service) GetScopedBotCommands(ctx context.Context, botUserID int64, key domain.BotCommandSetKey) ([]domain.BotCommand, bool, error) {
+	if key.IsDefault() {
+		profile, found, err := s.botProfile(ctx, botUserID)
+		if err != nil {
+			return nil, false, err
+		}
+		if !found {
+			return nil, false, domain.ErrBotNotFound
+		}
+		return profile.Commands, len(profile.Commands) > 0, nil
+	}
+	return s.bots.GetBotCommandSet(ctx, botUserID, key)
+}
+
+// ResolveBotCommands 返回每个 bot 在 view 描述的会话里给该查看者展示的命令
+// （domain.ResolveBotCommands 的回退顺序）。没有任何命令的 bot 不出现在结果里。
+func (s *Service) ResolveBotCommands(ctx context.Context, botUserIDs []int64, view domain.BotCommandView) (map[int64][]domain.BotCommand, error) {
+	if len(botUserIDs) == 0 {
+		return nil, nil
+	}
+	sets, err := s.bots.ListBotCommandSetsForPeer(ctx, botUserIDs, view.Peer, view.ViewerUserID)
+	if err != nil {
+		return nil, err
+	}
+	byBot := make(map[int64][]domain.BotCommandSet, len(botUserIDs))
+	for _, set := range sets {
+		byBot[set.BotUserID] = append(byBot[set.BotUserID], set)
+	}
+	out := make(map[int64][]domain.BotCommand, len(botUserIDs))
+	for _, botUserID := range botUserIDs {
+		profile, found, err := s.botProfile(ctx, botUserID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		if commands := domain.ResolveBotCommands(profile.Commands, byBot[botUserID], view); len(commands) > 0 {
+			out[botUserID] = commands
+		}
+	}
+	return out, nil
+}
+
+// cleanBotCommands 规整并校验命令列表，规则对齐 td set_commands：命令名去前导 /、
+// 转小写；描述去首尾空白，非空且不超过 MaxBotCommandDescriptionLen 个字符（按 UTF-8
+// 字符计，不是字节）。
+func cleanBotCommands(commands []domain.BotCommand) ([]domain.BotCommand, error) {
+	if len(commands) > domain.MaxBotCommands {
+		return nil, domain.ErrBotCommandInvalid
+	}
+	clean := make([]domain.BotCommand, 0, len(commands))
+	for _, c := range commands {
+		cmd := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(c.Command), "/")))
+		desc := strings.TrimSpace(c.Description)
+		if !domain.ValidBotCommandName(cmd) || desc == "" || utf8.RuneCountInString(desc) > domain.MaxBotCommandDescriptionLen {
+			return nil, domain.ErrBotCommandInvalid
+		}
+		clean = append(clean, domain.BotCommand{Command: cmd, Description: desc, Ephemeral: c.Ephemeral})
+	}
+	return clean, nil
 }
 
 func botCommandsEqual(a, b []domain.BotCommand) bool {
@@ -787,7 +860,7 @@ func botCommandsEqual(a, b []domain.BotCommand) bool {
 	return true
 }
 
-// GetBotCommands 返回 bot 的 default scope 命令。
+// GetBotCommands 返回 bot 的 default scope + 空 lang 命令。
 func (s *Service) GetBotCommands(ctx context.Context, botUserID int64) ([]domain.BotCommand, error) {
 	profile, found, err := s.botProfile(ctx, botUserID)
 	if err != nil {

@@ -23,6 +23,16 @@ type BotStore interface {
 	// version。UpdateBotInfo 跨 users（first_name/about）与 bots（description）两表，
 	// 因此放在同一原子方法里。
 	UpdateBotCommands(ctx context.Context, botUserID int64, commands []domain.BotCommand) (newVersion int, err error)
+	// SetBotCommandSet 写入 default+空 lang 以外的一个命令桶（key.IsDefault() 的桶走
+	// UpdateBotCommands）；commands 为空 = 删除该桶。新建桶时 bot 已有
+	// domain.MaxBotCommandSets 个桶则返回 domain.ErrBotCommandSetsTooMany。同事务 bump
+	// bot_info_version。
+	SetBotCommandSet(ctx context.Context, botUserID int64, key domain.BotCommandSetKey, commands []domain.BotCommand) (newVersion int, err error)
+	// GetBotCommandSet 精确读取一个非 default 桶；不存在时 found=false。
+	GetBotCommandSet(ctx context.Context, botUserID int64, key domain.BotCommandSetKey) (commands []domain.BotCommand, found bool, err error)
+	// ListBotCommandSetsForPeer 返回这些 bot 在 peer 会话里可能用到的桶：全局桶，加上
+	// 绑在 peer 上的桶（peer_user 只取 viewerUserID 的）。不含 bots.commands 里的 default 桶。
+	ListBotCommandSetsForPeer(ctx context.Context, botUserIDs []int64, peer domain.Peer, viewerUserID int64) ([]domain.BotCommandSet, error)
 	UpdateBotInfo(ctx context.Context, botUserID int64, upd domain.BotInfoUpdate) (newVersion int, err error)
 	UpdateBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (newVersion int, err error)
 	// SetBotUserMenuButton 写入 bot 对单个用户的专属菜单按钮；Type 为 default 表示删除

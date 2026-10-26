@@ -461,6 +461,17 @@ type BotChatState struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type BotCommandSet struct {
+	BotUserID int64
+	Scope     string
+	PeerType  string
+	PeerID    int64
+	UserID    int64
+	LangCode  string
+	Commands  []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type BotEmojiStatusPermission struct {
 	BotUserID int64
 	UserID    int64

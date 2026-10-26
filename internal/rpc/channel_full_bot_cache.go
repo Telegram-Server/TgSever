@@ -26,7 +26,11 @@ type channelFullBotInfoCache struct {
 	*projectionCache[channelFullBotInfoCacheKey, channelFullBotInfoResult]
 }
 
+// channelFullBotInfoResult 的 commands 按查看者选取：键已含 viewer，另记构建时的命令
+// 语言与管理员身份，二者不同时按未命中重建。
 type channelFullBotInfoResult struct {
+	lang     string
+	isAdmin  bool
 	userIDs  []int64
 	botInfos []tg.BotInfo
 }
@@ -39,6 +43,8 @@ func newChannelFullBotInfoCache(clock func() time.Time) *channelFullBotInfoCache
 
 func cloneChannelFullBotInfoResult(in channelFullBotInfoResult) channelFullBotInfoResult {
 	return channelFullBotInfoResult{
+		lang:     in.lang,
+		isAdmin:  in.isAdmin,
 		userIDs:  cloneInt64s(in.userIDs),
 		botInfos: cloneBotInfos(in.botInfos),
 	}
@@ -70,20 +76,24 @@ func (c *channelFullBotInfoCache) DeleteChannel(channelID int64) {
 	c.deleteWhere(func(k channelFullBotInfoCacheKey) bool { return k.channelID == channelID })
 }
 
-func (r *Router) channelFullBotInfo(ctx context.Context, viewerUserID, channelID int64) channelFullBotInfoResult {
+func (r *Router) channelFullBotInfo(ctx context.Context, viewerUserID, channelID int64, viewerIsAdmin bool, lang string) channelFullBotInfoResult {
 	if r.deps.Channels == nil || viewerUserID == 0 || channelID == 0 {
 		return channelFullBotInfoResult{}
 	}
-	if cached, ok := r.channelFullBotCache.Lookup(viewerUserID, channelID); ok {
+	hit := func() (channelFullBotInfoResult, bool) {
+		cached, ok := r.channelFullBotCache.Lookup(viewerUserID, channelID)
+		return cached, ok && cached.lang == lang && cached.isAdmin == viewerIsAdmin
+	}
+	if cached, ok := hit(); ok {
 		return cached
 	}
-	key := channelFullBotInfoSingleflightKey(viewerUserID, channelID)
+	key := fmt.Sprintf("%s:%t:%s", channelFullBotInfoSingleflightKey(viewerUserID, channelID), viewerIsAdmin, lang)
 	value, _, _ := r.channelFullBotSF.Do(key, func() (any, error) {
-		if cached, ok := r.channelFullBotCache.Lookup(viewerUserID, channelID); ok {
+		if cached, ok := hit(); ok {
 			return cached, nil
 		}
 		loadEpoch := r.channelFullBotCache.LoadEpoch()
-		result := r.loadChannelFullBotInfo(ctx, viewerUserID, channelID)
+		result := r.loadChannelFullBotInfo(ctx, viewerUserID, channelID, viewerIsAdmin, lang)
 		r.channelFullBotCache.StoreIfEpoch(viewerUserID, channelID, result, loadEpoch)
 		return result, nil
 	})
@@ -93,7 +103,7 @@ func (r *Router) channelFullBotInfo(ctx context.Context, viewerUserID, channelID
 	return channelFullBotInfoResult{}
 }
 
-func (r *Router) loadChannelFullBotInfo(ctx context.Context, viewerUserID, channelID int64) channelFullBotInfoResult {
+func (r *Router) loadChannelFullBotInfo(ctx context.Context, viewerUserID, channelID int64, viewerIsAdmin bool, lang string) channelFullBotInfoResult {
 	list, err := r.deps.Channels.GetParticipants(ctx, viewerUserID, channelID, domain.ChannelParticipantsFilter{Kind: domain.ChannelParticipantsBots}, 0, domain.MaxChannelParticipantsLimit)
 	if err != nil {
 		return channelFullBotInfoResult{}
@@ -110,9 +120,17 @@ func (r *Router) loadChannelFullBotInfo(ctx context.Context, viewerUserID, chann
 		seen[member.UserID] = struct{}{}
 		userIDs = append(userIDs, member.UserID)
 	}
+	view := domain.BotCommandView{
+		Peer:          domain.Peer{Type: domain.PeerTypeChannel, ID: channelID},
+		ViewerUserID:  viewerUserID,
+		ViewerIsAdmin: viewerIsAdmin,
+		LangCode:      lang,
+	}
 	return channelFullBotInfoResult{
+		lang:     lang,
+		isAdmin:  viewerIsAdmin,
 		userIDs:  userIDs,
-		botInfos: r.tgBotInfos(ctx, userIDs),
+		botInfos: r.tgBotInfosForView(ctx, userIDs, &view),
 	}
 }
 

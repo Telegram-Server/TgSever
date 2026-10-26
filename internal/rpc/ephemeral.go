@@ -90,7 +90,8 @@ func (r *Router) onEphemeralSendMessage(ctx context.Context, request *tg.Ephemer
 		SenderUserID: userID, ReceiverBotID: receiver.ID, Peer: peer,
 		QueryID: queryID, RandomID: request.RandomID, TopMessageID: topMessageID,
 		ReplyToEphemeralID: replyID, Content: content,
-		OriginDevice: domain.EphemeralDevice{UserID: userID, BusinessAuthKeyID: authKeyID, SessionID: sessionID},
+		OriginDevice:   domain.EphemeralDevice{UserID: userID, BusinessAuthKeyID: authKeyID, SessionID: sessionID},
+		SenderLangCode: botCommandViewerLang(ctx),
 	})
 	if err != nil {
 		return nil, ephemeralRPCError(err)

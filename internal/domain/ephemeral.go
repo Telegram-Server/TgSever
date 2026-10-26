@@ -96,6 +96,9 @@ type SendClientEphemeralRequest struct {
 	ReplyToEphemeralID int
 	Content            EphemeralContent
 	OriginDevice       EphemeralDevice
+	// SenderLangCode 是发送者会话的命令语言（BotCommandViewerLang 规整后），用来按
+	// 发送者看到的那份命令判定 ephemeral 命令。
+	SenderLangCode string
 }
 
 type SendBotEphemeralRequest struct {

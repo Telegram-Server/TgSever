@@ -18,13 +18,12 @@ import (
 //     仅 bot 自己（调用者必须是 bot 账号）。
 //   - setBotInfo/getBotInfo：owner 经 bot:InputUser 代设，或 bot 自己（不带 bot 参数）。
 //
-// P2 范围：仅 default scope、单语言（非 default scope 与非空 lang_code 一律接受
-// 但不存储，避免覆盖全局——见各 handler 的 isDefaultBotCommandScope/lang_code 闸门）；
+// 命令按 scope + lang_code 分桶存储与选取，见 bot_commands.go。
 // menu button 有全局默认与按用户专属两层（专属按钮见 setBotMenuButtonForUser，
 // 不 bump bot_info_version）。元数据写入由 service 在事务内
-// bump bot_info_version；命令变更后 bots_hooks.PushBotCommandsChanged 给在线相关用户
-// 推 updateBotCommands（扇出封顶 100，无 pts），离线/超界用户靠 version bump 在下次
-// getFullUser 重拉兜底。
+// bump bot_info_version；命令变更后 bots_hooks.PushBotCommandsChanged 给受影响的在线
+// 用户推 updateBotCommands（扇出有界，无 pts），离线/超界用户靠 version bump 与缓存
+// 失效在下次 getFullUser / getFullChannel 重拉兜底。
 func (r *Router) registerBots(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.BotsSendCustomRequestRequest](d, tlprofile.SemanticMethodBotsSendCustomRequest, func(ctx context.Context, layerRequest *tg.BotsSendCustomRequestRequest) (any, error) {
 		return r.onBotsSendCustomRequest(ctx, layerRequest)
@@ -293,62 +292,6 @@ func (r *Router) onBotsExportBotToken(ctx context.Context, req *tg.BotsExportBot
 	return &tg.BotsExportedBotToken{Token: token}, nil
 }
 
-// isDefaultCommandsTarget 报告请求是否落在 P2 唯一持久化的桶（default scope +
-// 空 lang_code）。非 default scope 或非空 lang_code 一律接受但不存储——否则会
-// 用某语言/某 scope 的命令覆盖唯一的全局 default 桶（reset 还会误清全局）。
-func isDefaultCommandsTarget(scope tg.BotCommandScopeClass, langCode string) bool {
-	return isDefaultBotCommandScope(scope) && langCode == ""
-}
-
-func (r *Router) onBotsSetBotCommands(ctx context.Context, req *tg.BotsSetBotCommandsRequest) (bool, error) {
-	botID, err := r.callerBotID(ctx)
-	if err != nil {
-		return false, err
-	}
-	// P2 仅持久化 default scope + 空 lang_code；其它接受但不存储（记 todo），避免
-	// 覆盖全局桶，也避免客户端因 error 重试。
-	if !isDefaultCommandsTarget(req.Scope, req.LangCode) {
-		return true, nil
-	}
-	if _, err := r.deps.Bots.SetBotCommands(ctx, botID, domainBotCommands(req.Commands)); err != nil {
-		return false, setBotCommandsErr(err)
-	}
-	r.invalidateChannelFullBotInfoCache()
-	r.invalidateRPCProjectionForUser(botID)
-	return true, nil
-}
-
-func (r *Router) onBotsResetBotCommands(ctx context.Context, req *tg.BotsResetBotCommandsRequest) (bool, error) {
-	botID, err := r.callerBotID(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !isDefaultCommandsTarget(req.Scope, req.LangCode) {
-		return true, nil
-	}
-	if _, err := r.deps.Bots.SetBotCommands(ctx, botID, nil); err != nil {
-		return false, setBotCommandsErr(err)
-	}
-	r.invalidateChannelFullBotInfoCache()
-	r.invalidateRPCProjectionForUser(botID)
-	return true, nil
-}
-
-func (r *Router) onBotsGetBotCommands(ctx context.Context, req *tg.BotsGetBotCommandsRequest) ([]tg.BotCommand, error) {
-	botID, err := r.callerBotID(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !isDefaultCommandsTarget(req.Scope, req.LangCode) {
-		return []tg.BotCommand{}, nil
-	}
-	commands, err := r.deps.Bots.GetBotCommands(ctx, botID)
-	if err != nil {
-		return nil, internalErr()
-	}
-	return tgBotCommands(commands), nil
-}
-
 // resolveBotInfoTarget 解析 setBotInfo/getBotInfo 的目标 bot：带 bot 参数→owner 校验
 // 该 bot；不带→调用者本身须为 bot。
 func (r *Router) resolveBotInfoTarget(ctx context.Context, bot tg.InputUserClass, hasBot bool) (int64, error) {
@@ -519,14 +462,6 @@ func (r *Router) onBotsGetBotMenuButton(ctx context.Context, userid tg.InputUser
 }
 
 // --- tg ↔ domain 转换 ---
-
-func isDefaultBotCommandScope(scope tg.BotCommandScopeClass) bool {
-	if scope == nil {
-		return true
-	}
-	_, ok := scope.(*tg.BotCommandScopeDefault)
-	return ok
-}
 
 func domainBotCommands(in []tg.BotCommand) []domain.BotCommand {
 	out := make([]domain.BotCommand, 0, len(in))

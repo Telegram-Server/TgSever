@@ -22,29 +22,57 @@ type userFullProjectionKey struct {
 	targetUserID int64
 }
 
+// userFullProjection 记下构建时查看者的命令语言：bot 的 bot_info.commands 随语言而变。
+// 语言不进键——键保持 (viewer, target)，DeletePair 等失效仍是精确删除；语言不同按未命中
+// 处理并由新构建覆盖（同一查看者多语言会话交替时只是多构建几次）。
+type userFullProjection struct {
+	lang string
+	full tg.UserFull
+}
+
 type userFullProjectionCache struct {
-	*projectionCache[userFullProjectionKey, tg.UserFull]
+	*projectionCache[userFullProjectionKey, userFullProjection]
 }
 
 func newUserFullProjectionCache(clock func() time.Time) *userFullProjectionCache {
 	return &userFullProjectionCache{
-		newProjectionCache[userFullProjectionKey, tg.UserFull](rpcProjectionCacheMaxEntries, rpcProjectionCacheTTL, clock, cloneUserFull),
+		newProjectionCache[userFullProjectionKey, userFullProjection](rpcProjectionCacheMaxEntries, rpcProjectionCacheTTL, clock, func(in userFullProjection) userFullProjection {
+			return userFullProjection{lang: in.lang, full: cloneUserFull(in.full)}
+		}),
 	}
 }
 
+// Lookup 不区分语言地查找（测试与失效断言用）。
 func (c *userFullProjectionCache) Lookup(viewerUserID, targetUserID int64) (tg.UserFull, bool) {
 	if c == nil || viewerUserID == 0 || targetUserID == 0 {
 		return tg.UserFull{}, false
 	}
-	return c.lookup(userFullProjectionKey{viewerUserID: viewerUserID, targetUserID: targetUserID})
+	v, ok := c.lookup(userFullProjectionKey{viewerUserID: viewerUserID, targetUserID: targetUserID})
+	return v.full, ok
+}
+
+// LookupLang 只在缓存项按同一命令语言构建时命中。
+func (c *userFullProjectionCache) LookupLang(viewerUserID, targetUserID int64, lang string) (tg.UserFull, bool) {
+	if c == nil || viewerUserID == 0 || targetUserID == 0 {
+		return tg.UserFull{}, false
+	}
+	v, ok := c.lookup(userFullProjectionKey{viewerUserID: viewerUserID, targetUserID: targetUserID})
+	if !ok || v.lang != lang {
+		return tg.UserFull{}, false
+	}
+	return v.full, true
 }
 
 // StoreIfEpoch 仅在 epoch 未变(构建期间没有失效)时写入。
 func (c *userFullProjectionCache) StoreIfEpoch(viewerUserID, targetUserID int64, full tg.UserFull, loadEpoch uint64) {
+	c.StoreIfEpochLang(viewerUserID, targetUserID, "", full, loadEpoch)
+}
+
+func (c *userFullProjectionCache) StoreIfEpochLang(viewerUserID, targetUserID int64, lang string, full tg.UserFull, loadEpoch uint64) {
 	if c == nil || viewerUserID == 0 || targetUserID == 0 {
 		return
 	}
-	c.storeIfEpoch(userFullProjectionKey{viewerUserID: viewerUserID, targetUserID: targetUserID}, full, loadEpoch)
+	c.storeIfEpoch(userFullProjectionKey{viewerUserID: viewerUserID, targetUserID: targetUserID}, userFullProjection{lang: lang, full: full}, loadEpoch)
 }
 
 func (c *userFullProjectionCache) DeleteViewer(viewerUserID int64) {
@@ -126,6 +154,8 @@ type channelFullProjectionKey struct {
 }
 
 type channelFullProjection struct {
+	// lang 是构建时查看者的命令语言（full.bot_info 的 commands 随它而变），见 LookupLang。
+	lang                   string
 	defaultSendAsChannelID int64
 	accessHash             int64
 	canChangeInfo          bool
@@ -149,6 +179,15 @@ func (c *channelFullProjectionCache) Lookup(viewerUserID, channelID int64) (chan
 		return channelFullProjection{}, false
 	}
 	return c.lookup(channelFullProjectionKey{viewerUserID: viewerUserID, channelID: channelID})
+}
+
+// LookupLang 只在缓存项按同一命令语言构建时命中（语言不进键，理由同 userFullProjection）。
+func (c *channelFullProjectionCache) LookupLang(viewerUserID, channelID int64, lang string) (channelFullProjection, bool) {
+	v, ok := c.Lookup(viewerUserID, channelID)
+	if !ok || v.lang != lang {
+		return channelFullProjection{}, false
+	}
+	return v, true
 }
 
 // StoreIfEpoch 仅在 epoch 未变(构建期间没有失效)时写入。
@@ -182,6 +221,7 @@ func (c *channelFullProjectionCache) DeletePair(viewerUserID, channelID int64) {
 
 func cloneChannelFullProjection(in channelFullProjection) channelFullProjection {
 	return channelFullProjection{
+		lang:                   in.lang,
 		defaultSendAsChannelID: in.defaultSendAsChannelID,
 		accessHash:             in.accessHash,
 		canChangeInfo:          in.canChangeInfo,

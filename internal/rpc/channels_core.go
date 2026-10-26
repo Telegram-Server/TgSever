@@ -186,7 +186,8 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		return nil, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	loadEpoch := r.channelFullProjectionCache.LoadEpoch()
-	if cached, ok := r.channelFullProjectionCache.Lookup(userID, ref.ID); ok {
+	commandLang := botCommandViewerLang(ctx)
+	if cached, ok := r.channelFullProjectionCache.LookupLang(userID, ref.ID, commandLang); ok {
 		if !inputChannelAccessHashMatches(ref, domain.Channel{ID: ref.ID, AccessHash: cached.accessHash}) {
 			return nil, channelInvalidErr(domain.ErrChannelPrivate)
 		}
@@ -228,7 +229,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	userIDs := []int64{view.Channel.CreatorUserID, view.Self.UserID}
 	// 注：Bots 过滤实际会返回群内 bot（TestGroupBotRPCShape 覆盖），这里据此富化 full.BotInfo。
 	// （此前审计误判为死代码，已由单测纠正——勿删。）
-	botInfo := r.channelFullBotInfo(ctx, userID, view.Channel.ID)
+	botInfo := r.channelFullBotInfo(ctx, userID, view.Channel.ID, domain.BotCommandViewerIsAdmin(view.Self), commandLang)
 	userIDs = append(userIDs, botInfo.userIDs...)
 	full.BotInfo = append(full.BotInfo, botInfo.botInfos...)
 	if canViewChannelJoinRequests(view.Self) {
@@ -248,6 +249,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	}
 	canChangeInfo := channelMemberCanChangeInfo(view.Self)
 	r.channelFullProjectionCache.StoreIfEpoch(userID, view.Channel.ID, channelFullProjection{
+		lang:                   commandLang,
 		accessHash:             view.Channel.AccessHash,
 		defaultSendAsChannelID: defaultSendAsChannelID,
 		canChangeInfo:          canChangeInfo,

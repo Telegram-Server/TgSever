@@ -173,7 +173,12 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	applyPrivateContactRestrictionToUser(user, contactRestriction)
 	r.applyPeerReadModels(ctx, currentUserID, []tg.UserClass{user}, nil)
 	loadEpoch := r.userFullProjectionCache.LoadEpoch()
-	if full, ok := r.userFullProjectionCache.Lookup(currentUserID, u.ID); ok {
+	// bot 的 userFull.bot_info.commands 随查看者语言而变，缓存键要带上语言。
+	var cacheLang string
+	if u.Bot {
+		cacheLang = botCommandViewerLang(ctx)
+	}
+	if full, ok := r.userFullProjectionCache.LookupLang(currentUserID, u.ID, cacheLang); ok {
 		if !applyContactNoteToUserFull(u, &full) {
 			return nil, internalErr()
 		}
@@ -198,7 +203,7 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	if err != nil {
 		return nil, err
 	}
-	r.userFullProjectionCache.StoreIfEpoch(currentUserID, u.ID, full, loadEpoch)
+	r.userFullProjectionCache.StoreIfEpochLang(currentUserID, u.ID, cacheLang, full, loadEpoch)
 	if !applyContactNoteToUserFull(u, &full) {
 		return nil, internalErr()
 	}
@@ -873,13 +878,23 @@ func (r *Router) fillUserFullPhotos(ctx context.Context, viewerUserID, ownerUser
 // tgBotInfo 构造 userFull.bot_info。bot 用户必须携带（哪怕命令为空）：缺失时
 // TDesktop 的 botInfo.inited 永不置位，每次开聊/输 "/" 都会重拉 getFullUser；
 // user_id 必填且必须等于该 bot 的 id，不匹配会被客户端整体静默忽略。
-// menu_button 按查看者取：有专属按钮用专属的（结果进 per-(viewer,target) 的 userFull 缓存）。
+// menu_button 按查看者取：有专属按钮用专属的；commands 按查看者与私聊会话、语言选取
+// （结果进 per-(viewer,target,lang) 的 userFull 缓存）。
 func (r *Router) tgBotInfo(ctx context.Context, viewerUserID int64, u domain.User) tg.BotInfo {
 	info := tgBotInfoFromProfile(u.ID, domain.BotProfile{}, false)
 	if r.deps.Bots != nil {
 		if profile, found, err := r.deps.Bots.BotInfo(ctx, u.ID); err == nil && found {
 			if button, err := r.deps.Bots.BotMenuButtonForUser(ctx, u.ID, viewerUserID); err == nil {
 				profile.MenuButton = button
+			}
+			if viewerUserID != 0 && viewerUserID != u.ID {
+				if resolved, ok := r.resolvedBotCommands(ctx, []int64{u.ID}, domain.BotCommandView{
+					Peer:         domain.Peer{Type: domain.PeerTypeUser, ID: viewerUserID},
+					ViewerUserID: viewerUserID,
+					LangCode:     botCommandViewerLang(ctx),
+				}); ok {
+					profile.Commands = resolved[u.ID]
+				}
 			}
 			info = tgBotInfoFromProfile(u.ID, profile, true)
 		}
@@ -895,6 +910,12 @@ type botProfileBatchResolver interface {
 }
 
 func (r *Router) tgBotInfos(ctx context.Context, userIDs []int64) []tg.BotInfo {
+	return r.tgBotInfosForView(ctx, userIDs, nil)
+}
+
+// tgBotInfosForView 批量构造 bot_info；view 非 nil 时 commands 按该查看者与会话选取，
+// 否则用 default 桶。
+func (r *Router) tgBotInfosForView(ctx context.Context, userIDs []int64, view *domain.BotCommandView) []tg.BotInfo {
 	if len(userIDs) == 0 {
 		return nil
 	}
@@ -917,9 +938,17 @@ func (r *Router) tgBotInfos(ctx context.Context, userIDs []int64) []tg.BotInfo {
 	// above: channelFull.bot_info must not turn into an N+1 just to carry
 	// verifier_settings:flags.9.
 	verifiers := r.verifierSettingsBatch(ctx, ids)
+	var resolved map[int64][]domain.BotCommand
+	resolvedOK := false
+	if view != nil {
+		resolved, resolvedOK = r.resolvedBotCommands(ctx, ids, *view)
+	}
 	out := make([]tg.BotInfo, 0, len(userIDs))
 	for _, id := range userIDs {
 		profile, found := profiles[id]
+		if found && resolvedOK {
+			profile.Commands = resolved[id]
+		}
 		info := tgBotInfoFromProfile(id, profile, found)
 		if settings, ok := verifiers[id]; ok {
 			applyVerifierSettingsToBotInfo(&info, id, settings)

@@ -65,8 +65,12 @@ func (u testUsers) ByID(_ context.Context, _ int64, userID int64) (domain.User, 
 
 type testBots map[int64][]domain.BotCommand
 
-func (b testBots) GetBotCommands(_ context.Context, botUserID int64) ([]domain.BotCommand, error) {
-	return append([]domain.BotCommand(nil), b[botUserID]...), nil
+func (b testBots) ResolveBotCommands(_ context.Context, botUserIDs []int64, _ domain.BotCommandView) (map[int64][]domain.BotCommand, error) {
+	out := make(map[int64][]domain.BotCommand, len(botUserIDs))
+	for _, id := range botUserIDs {
+		out[id] = append([]domain.BotCommand(nil), b[id]...)
+	}
+	return out, nil
 }
 
 type serviceFixture struct {

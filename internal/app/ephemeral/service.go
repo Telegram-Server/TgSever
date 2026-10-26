@@ -26,7 +26,8 @@ type UserDirectory interface {
 }
 
 type BotCommands interface {
-	GetBotCommands(ctx context.Context, botUserID int64) ([]domain.BotCommand, error)
+	// ResolveBotCommands 返回每个 bot 在 view 会话里给查看者展示的命令（按 scope 回退）。
+	ResolveBotCommands(ctx context.Context, botUserIDs []int64, view domain.BotCommandView) (map[int64][]domain.BotCommand, error)
 }
 
 type Option func(*Service)
@@ -110,7 +111,12 @@ func (s *Service) SendFromClient(ctx context.Context, request domain.SendClientE
 		}
 		request.TopMessageID = target.TopMessageID
 	} else {
-		allowed, err := s.isEphemeralCommand(ctx, receiver, request.Content.Message)
+		allowed, err := s.isEphemeralCommand(ctx, receiver, request.Content.Message, domain.BotCommandView{
+			Peer:          request.Peer,
+			ViewerUserID:  request.SenderUserID,
+			ViewerIsAdmin: domain.BotCommandViewerIsAdmin(view.Self),
+			LangCode:      request.SenderLangCode,
+		})
 		if err != nil {
 			return domain.EphemeralMessage{}, false, err
 		}
@@ -524,16 +530,17 @@ func (s *Service) validateForumTopic(ctx context.Context, userID int64, view dom
 	return nil
 }
 
-func (s *Service) isEphemeralCommand(ctx context.Context, bot domain.User, message string) (bool, error) {
+// isEphemeralCommand 报告 message 是否是发送者在这个群里看到的、标了 ephemeral 的 bot 命令。
+func (s *Service) isEphemeralCommand(ctx context.Context, bot domain.User, message string, view domain.BotCommandView) (bool, error) {
 	command, username, ok := parseCommand(message)
 	if !ok || (username != "" && !strings.EqualFold(username, bot.Username)) {
 		return false, nil
 	}
-	commands, err := s.bots.GetBotCommands(ctx, bot.ID)
+	resolved, err := s.bots.ResolveBotCommands(ctx, []int64{bot.ID}, view)
 	if err != nil {
 		return false, err
 	}
-	for _, candidate := range commands {
+	for _, candidate := range resolved[bot.ID] {
 		if candidate.Ephemeral && strings.EqualFold(candidate.Command, command) {
 			return true, nil
 		}

@@ -64,7 +64,7 @@ func (c *ephemeralE2EChannels) ActiveChannelIDsForUser(context.Context, int64, i
 
 type ephemeralE2ECommands struct{}
 
-func (ephemeralE2ECommands) GetBotCommands(context.Context, int64) ([]domain.BotCommand, error) {
+func (ephemeralE2ECommands) ResolveBotCommands(context.Context, []int64, domain.BotCommandView) (map[int64][]domain.BotCommand, error) {
 	return nil, nil
 }
 

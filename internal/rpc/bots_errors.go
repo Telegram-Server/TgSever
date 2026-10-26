@@ -53,9 +53,17 @@ func setCustomVerificationErr(err error) error {
 	}
 }
 
+func langCodeInvalidErr() error { return tgerr.New(400, "LANG_CODE_INVALID") }
+
 func setBotCommandsErr(err error) error {
-	if errors.Is(err, domain.ErrBotCommandInvalid) {
+	if errors.Is(err, domain.ErrBotCommandInvalid) || errors.Is(err, domain.ErrBotCommandSetsTooMany) {
 		return botCommandInvalidErr()
+	}
+	if errors.Is(err, domain.ErrBotCommandLangCodeInvalid) {
+		return langCodeInvalidErr()
+	}
+	if errors.Is(err, domain.ErrBotCommandScopeInvalid) {
+		return peerIDInvalidErr()
 	}
 	if errors.Is(err, domain.ErrBotNotFound) {
 		return userBotRequiredErr()

@@ -642,7 +642,7 @@ func (h *stickersBotHookRecorder) RevokeBotSessions(context.Context, int64) erro
 	return nil
 }
 
-func (h *stickersBotHookRecorder) PushBotCommandsChanged(context.Context, int64, []domain.BotCommand) {
+func (h *stickersBotHookRecorder) PushBotCommandsChanged(context.Context, int64, domain.BotCommandScope) {
 }
 
 func (h *stickersBotHookRecorder) PushStickerSetsChanged(_ context.Context, userID int64, kind domain.StickerSetKind) {

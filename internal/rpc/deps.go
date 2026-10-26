@@ -352,6 +352,11 @@ type BotsService interface {
 	ExportBotToken(ctx context.Context, ownerUserID, botUserID int64, revoke bool) (string, error)
 	SetBotCommands(ctx context.Context, botUserID int64, commands []domain.BotCommand) (int, error)
 	GetBotCommands(ctx context.Context, botUserID int64) ([]domain.BotCommand, error)
+	// SetScopedBotCommands 写入一个命令桶（空 = 删除）；GetScopedBotCommands 精确读取，不回退。
+	SetScopedBotCommands(ctx context.Context, botUserID int64, key domain.BotCommandSetKey, commands []domain.BotCommand) (int, error)
+	GetScopedBotCommands(ctx context.Context, botUserID int64, key domain.BotCommandSetKey) ([]domain.BotCommand, bool, error)
+	// ResolveBotCommands 返回每个 bot 在 view 会话里给该查看者展示的命令（按 scope 回退选取）。
+	ResolveBotCommands(ctx context.Context, botUserIDs []int64, view domain.BotCommandView) (map[int64][]domain.BotCommand, error)
 	SetBotInfo(ctx context.Context, botUserID int64, upd domain.BotInfoUpdate) (int, error)
 	GetBotInfo(ctx context.Context, botUserID int64) (name, about, description string, err error)
 	SetBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (int, error)

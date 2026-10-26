@@ -583,7 +583,7 @@ func TestBotFatherDeleteBotRejectsForeignBot(t *testing.T) {
 type captureRevoker struct {
 	botUserID        int64
 	pushedCommandsTo int64
-	pushedCommands   []domain.BotCommand
+	pushedScope      domain.BotCommandScope
 	err              error
 }
 
@@ -592,9 +592,9 @@ func (c *captureRevoker) RevokeBotSessions(_ context.Context, botUserID int64) e
 	return c.err
 }
 
-func (c *captureRevoker) PushBotCommandsChanged(_ context.Context, botUserID int64, commands []domain.BotCommand) {
+func (c *captureRevoker) PushBotCommandsChanged(_ context.Context, botUserID int64, scope domain.BotCommandScope) {
 	c.pushedCommandsTo = botUserID
-	c.pushedCommands = append([]domain.BotCommand(nil), commands...)
+	c.pushedScope = scope
 }
 
 func (c *captureRevoker) PushStickerSetsChanged(context.Context, int64, domain.StickerSetKind) {}

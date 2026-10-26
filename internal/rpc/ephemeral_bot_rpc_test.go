@@ -64,8 +64,12 @@ func (c *ephemeralBotChannels) GetForumTopicsByID(context.Context, int64, int64,
 
 type ephemeralBotCommands map[int64][]domain.BotCommand
 
-func (b ephemeralBotCommands) GetBotCommands(_ context.Context, botUserID int64) ([]domain.BotCommand, error) {
-	return b[botUserID], nil
+func (b ephemeralBotCommands) ResolveBotCommands(_ context.Context, botUserIDs []int64, _ domain.BotCommandView) (map[int64][]domain.BotCommand, error) {
+	out := make(map[int64][]domain.BotCommand, len(botUserIDs))
+	for _, id := range botUserIDs {
+		out[id] = b[id]
+	}
+	return out, nil
 }
 
 type ephemeralBotFixture struct {
