@@ -972,7 +972,10 @@ func TestInlineBotChannelInlineEditRewritesMedia(t *testing.T) {
 	if msg.Media == nil || msg.Media.Kind != domain.MessageMediaKindGeo || msg.Media.Geo == nil {
 		t.Fatalf("channel media edited media = %+v, want geo", msg.Media)
 	}
-	assertDomainInlineReplyMarkup(t, msg.ReplyMarkup, "Open", []byte("channel-media-v1"))
+	// 编辑不带 reply_markup：按官方 bot 语义移除内联键盘。
+	if !msg.ReplyMarkup.IsZero() {
+		t.Fatalf("channel media edited markup = %+v, want removed", msg.ReplyMarkup)
+	}
 
 	diff, err := f.router.deps.Channels.GetDifference(ownerCtx, f.owner.ID, domain.ChannelDifferenceRequest{
 		UserID:    f.owner.ID,
@@ -989,7 +992,9 @@ func TestInlineBotChannelInlineEditRewritesMedia(t *testing.T) {
 	if diff.OtherUpdates[0].Message.Media == nil || diff.OtherUpdates[0].Message.Media.Kind != domain.MessageMediaKindGeo {
 		t.Fatalf("channel media edit difference message = %+v, want geo media", diff.OtherUpdates[0].Message)
 	}
-	assertDomainInlineReplyMarkup(t, diff.OtherUpdates[0].Message.ReplyMarkup, "Open", []byte("channel-media-v1"))
+	if markup := diff.OtherUpdates[0].Message.ReplyMarkup; !markup.IsZero() {
+		t.Fatalf("channel media edit difference markup = %+v, want removed", markup)
+	}
 }
 
 func TestInlineBotPhotoMediaPrivateRoundTrip(t *testing.T) {

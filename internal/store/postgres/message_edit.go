@@ -63,6 +63,15 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 		}
 		return res, fmt.Errorf("get message for edit: %w", err)
 	}
+	if req.KeepText {
+		req.Message = target.Body
+		if req.Entities, err = decodeMessageEntities(target.EntitiesJson); err != nil {
+			return res, fmt.Errorf("decode target entities: %w", err)
+		}
+		if entities, err = encodeMessageEntities(req.Entities); err != nil {
+			return res, err
+		}
+	}
 	targetRich, err := decodeRichMessage(target.RichMessageJson)
 	if err != nil {
 		return res, fmt.Errorf("decode target rich message: %w", err)

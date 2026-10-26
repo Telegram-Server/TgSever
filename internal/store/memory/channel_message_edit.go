@@ -25,6 +25,10 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	}
 	prevMsg := s.messages[req.ChannelID][idx]
 	msg := prevMsg
+	if req.KeepText {
+		req.Message = msg.Body
+		req.Entities = append([]domain.MessageEntity(nil), msg.Entities...)
+	}
 	// SetWebPage 用 Media 替换链接预览（nil = 清除）；否则 Media 为 nil 表示不改媒体。
 	replaceMedia := req.Media != nil || req.SetWebPage
 	mediaChanged := req.Media != nil || (req.SetWebPage && !msg.Media.IsZero())

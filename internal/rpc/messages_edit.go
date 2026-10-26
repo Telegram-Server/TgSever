@@ -82,11 +82,15 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			return nil, mediaInvalidErr()
 		}
 	}
+	isBot := r.userIsBot(ctx, userID)
 	_, hasMediaForContent := req.GetMedia()
-	if !hasMessage && !hasRichMessage && !hasMediaForContent {
+	// bot 的 markup-only 编辑（Bot API editMessageReplyMarkup）：editMessage 不带
+	// message/media/rich，只带 reply_markup 或什么都不带；保留原正文，只换/清键盘。
+	keepText := !hasMessage && !hasRichMessage && !hasMediaForContent
+	if keepText && !isBot {
 		return nil, messageEmptyErr()
 	}
-	if message == "" && richMessage == nil {
+	if !keepText && message == "" && richMessage == nil {
 		// 编辑媒体消息时 message="" 是合法的清空 caption；当前文本-only
 		// 编辑模型由 store 层校验目标消息（无媒体的纯文本消息清空仍会
 		// 落 MESSAGE_EMPTY），RPC 层不再一刀切拒绝。
@@ -95,13 +99,12 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		}
 	}
 	// reply_markup（bot inline keyboard）：仅 bot 编辑自己消息时替换/清空（非 bot 丢弃，
-	// 不报错）。P3 仅私聊；markup-only 编辑（无文本）暂不支持——须随文本一起编辑。
-	// 携带 inline markup（即便空 rows）即视为「设置」：空 inline 表示清空键盘，
+	// 不报错）。携带 inline markup（即便空 rows）即视为「设置」：空 inline 表示清空键盘，
 	// 否则替换；非 inline（reply keyboard 等）或非 bot 一律不设置（保留原 markup）。
+	// bot 编辑不带 reply_markup 时按官方行为移除内联键盘——bot 要保留按钮须每次重传。
 	var replyMarkup *domain.MessageReplyMarkup
-	var setReplyMarkup bool
+	setReplyMarkup := isBot && req.ReplyMarkup == nil
 	if req.ReplyMarkup != nil {
-		isBot := r.userIsBot(ctx, userID)
 		replyMarkup, err = domainReplyMarkupForSender(req.ReplyMarkup, isBot)
 		if err != nil {
 			return nil, replyMarkupErr(err)
@@ -151,6 +154,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			MentionUserIDs: mentionUserIDs,
 			SetReplyMarkup: setReplyMarkup,
 			ReplyMarkup:    replyMarkup,
+			KeepText:       keepText,
 			SetWebPage:     setWebPage,
 			Media:          webPageMedia,
 			SetRichMessage: replaceRichMessage,
@@ -191,6 +195,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		OriginSessionID: sessionID,
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,
+		KeepText:        keepText,
 		SetWebPage:      setWebPage,
 		Media:           webPageMedia,
 		SetRichMessage:  replaceRichMessage,

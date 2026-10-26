@@ -148,11 +148,12 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 		message = rawMessage
 		entities = domainMessageEntitiesForViewer(botID, rawEntities)
 		richMessage, setRichMessage = nil, true
-	} else if req.ReplyMarkup == nil && newMedia == nil {
+	} else if req.ReplyMarkup == nil && newMedia == nil && target.ReplyMarkup.IsZero() {
 		return false, messageNotModifiedErr()
 	}
 	var replyMarkup *domain.MessageReplyMarkup
-	setReplyMarkup := false
+	// 不带 reply_markup = 移除内联键盘（官方 bot 编辑语义）。
+	setReplyMarkup := req.ReplyMarkup == nil
 	if req.ReplyMarkup != nil {
 		var err error
 		replyMarkup, err = domainReplyMarkupForSender(req.ReplyMarkup, true)
@@ -262,7 +263,7 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 			return false, err
 		}
 	} else {
-		if req.ReplyMarkup == nil && newMedia == nil {
+		if req.ReplyMarkup == nil && newMedia == nil && target.ReplyMarkup.IsZero() {
 			return false, messageNotModifiedErr()
 		}
 		mentionUserIDs, err = r.mentionedUserIDsFromDomainMessage(ctx, botID, message, entities)
@@ -271,7 +272,8 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 		}
 	}
 	var replyMarkup *domain.MessageReplyMarkup
-	setReplyMarkup := false
+	// 不带 reply_markup = 移除内联键盘（官方 bot 编辑语义）。
+	setReplyMarkup := req.ReplyMarkup == nil
 	if req.ReplyMarkup != nil {
 		var err error
 		replyMarkup, err = domainReplyMarkupForSender(req.ReplyMarkup, true)

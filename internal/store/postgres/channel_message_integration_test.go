@@ -605,14 +605,25 @@ func TestChannelStoreSendMessageViaBotIDSurvivesReadPaths(t *testing.T) {
 	assertMarkup("sent event", sent.Event.Message.ReplyMarkup)
 
 	duplicate, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+		UserID:      owner.ID,
+		ChannelID:   channelID,
+		RandomID:    990301,
+		Message:     "inline channel via",
+		ViaBotID:    bot.ID,
+		ReplyMarkup: markup,
+		Date:        1700001102,
+	})
+	if err != nil {
+		t.Fatalf("duplicate channel via: %v", err)
+	}
+	if _, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
 		UserID:    owner.ID,
 		ChannelID: channelID,
 		RandomID:  990301,
 		Message:   "changed text must not win",
 		Date:      1700001102,
-	})
-	if err != nil {
-		t.Fatalf("duplicate channel via: %v", err)
+	}); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("conflicting channel via replay err = %v, want ErrMessageRandomIDDuplicate", err)
 	}
 	if !duplicate.Duplicate || duplicate.Message.ViaBotID != bot.ID || duplicate.Event.Message.ViaBotID != bot.ID {
 		t.Fatalf("duplicate = %+v event=%+v, want original via bot %d", duplicate.Message, duplicate.Event, bot.ID)
@@ -699,6 +710,30 @@ func TestChannelStoreSendMessageViaBotIDSurvivesReadPaths(t *testing.T) {
 	}
 	if editDiff.OtherUpdates[0].Message.ReplyMarkup == nil || editDiff.OtherUpdates[0].Message.ReplyMarkup.Inline[0][0].Text != "Done" {
 		t.Fatalf("channel edit difference markup = %+v, want Done", editDiff.OtherUpdates[0].Message.ReplyMarkup)
+	}
+
+	// markup-only 编辑（KeepText，Message 留空）→ 保留正文，只清空键盘，持久化后读回一致。
+	kept, err := channels.EditChannelMessage(ctx, domain.EditChannelMessageRequest{
+		UserID:          owner.ID,
+		ChannelID:       channelID,
+		ID:              sent.Message.ID,
+		KeepText:        true,
+		ViaBotEditBotID: bot.ID,
+		EditDate:        1700001105,
+		SetReplyMarkup:  true,
+	})
+	if err != nil {
+		t.Fatalf("channel markup-only edit: %v", err)
+	}
+	if kept.Message.Body != "inline channel edited" || !kept.Message.ReplyMarkup.IsZero() {
+		t.Fatalf("markup-only edited = %q/%+v, want kept body without markup", kept.Message.Body, kept.Message.ReplyMarkup)
+	}
+	keptByID, err := channels.GetChannelMessages(ctx, owner.ID, channelID, []int{sent.Message.ID})
+	if err != nil || len(keptByID.Messages) != 1 {
+		t.Fatalf("get after markup-only edit = %+v err=%v", keptByID.Messages, err)
+	}
+	if got := keptByID.Messages[0]; got.Body != "inline channel edited" || !got.ReplyMarkup.IsZero() {
+		t.Fatalf("persisted markup-only edit = %q/%+v, want kept body without markup", got.Body, got.ReplyMarkup)
 	}
 }
 

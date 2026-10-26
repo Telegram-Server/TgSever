@@ -111,6 +111,7 @@ func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
 		Peer:           domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
 		ID:             res.SenderMessage.ID,
 		Message:        "tap edited",
+		Entities:       []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 3}},
 		EditDate:       int(time.Now().Unix()) + 1,
 		SetReplyMarkup: true,
 		ReplyMarkup:    &domain.MessageReplyMarkup{Inline: [][]domain.MarkupButton{{{Type: domain.MarkupButtonCallback, Text: "Only", Data: []byte("x")}}}},
@@ -128,13 +129,43 @@ func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
 		}
 	}
 
+	// markup-only 编辑（KeepText，Message 留空）→ 双盒保留原正文/实体，只换 markup。
+	keepRes, err := messages.EditMessage(ctx, domain.EditMessageRequest{
+		OwnerUserID:    sender.ID,
+		Peer:           domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
+		ID:             res.SenderMessage.ID,
+		KeepText:       true,
+		EditDate:       int(time.Now().Unix()) + 2,
+		SetReplyMarkup: true,
+		ReplyMarkup:    &domain.MessageReplyMarkup{Inline: [][]domain.MarkupButton{{{Type: domain.MarkupButtonCallback, Text: "Next", Data: []byte("y")}}}},
+	})
+	if err != nil {
+		t.Fatalf("markup-only edit: %v", err)
+	}
+	if len(keepRes.Edited) != 2 {
+		t.Fatalf("markup-only edit boxes = %d, want 2", len(keepRes.Edited))
+	}
+	for _, e := range keepRes.Edited {
+		m := e.Message.ReplyMarkup
+		if m == nil || len(m.Inline) != 1 || len(m.Inline[0]) != 1 || string(m.Inline[0][0].Data) != "y" {
+			t.Fatalf("markup-only box %d markup not replaced: %+v", e.UserID, m)
+		}
+		if e.Message.Body != "tap edited" || len(e.Message.Entities) != 1 || e.Message.Entities[0].Type != domain.MessageEntityBold {
+			t.Fatalf("markup-only box %d text = %q/%+v, want kept body with bold", e.UserID, e.Message.Body, e.Message.Entities)
+		}
+	}
+	recipientList, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{Limit: 1})
+	if err != nil || len(recipientList.Messages) != 1 || recipientList.Messages[0].Body != "tap edited" {
+		t.Fatalf("recipient history after markup-only edit = %+v err=%v, want kept body", recipientList.Messages, err)
+	}
+
 	// 编辑清空 markup（SetReplyMarkup + nil）→ 双盒 markup 清空。
 	clearRes, err := messages.EditMessage(ctx, domain.EditMessageRequest{
 		OwnerUserID:    sender.ID,
 		Peer:           domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
 		ID:             res.SenderMessage.ID,
 		Message:        "tap cleared",
-		EditDate:       int(time.Now().Unix()) + 2,
+		EditDate:       int(time.Now().Unix()) + 3,
 		SetReplyMarkup: true,
 		ReplyMarkup:    nil,
 	})

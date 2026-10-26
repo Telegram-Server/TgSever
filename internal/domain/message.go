@@ -585,6 +585,9 @@ type EditMessageRequest struct {
 	// 未置位则保留原 markup。仅 bot 编辑自己消息时由 RPC 层置位（P3）。
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
+	// KeepText 置位时忽略 Message/Entities，沿用目标消息当前的正文与实体
+	// （bot editMessageReplyMarkup：editMessage 只带 reply_markup，不带 message）。
+	KeepText bool
 	// SetWebPage 置位时按编辑后的文本替换链接预览：Media 为新预览，nil = 清除预览。
 	// 未置位时 Media 为 nil 仍表示「不改媒体」。由 RPC 层按 decideEditedWebPage 置位。
 	SetWebPage bool

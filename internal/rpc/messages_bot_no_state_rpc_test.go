@@ -200,7 +200,10 @@ func TestMessagesEditInlineBotMessageRewritesPrivateMedia(t *testing.T) {
 		if msg.Media.Contact.PhoneNumber != f.peer.Phone || msg.Media.Contact.UserID != f.peer.ID {
 			t.Fatalf("%s edited contact = %+v, want peer contact", tc.name, msg.Media.Contact)
 		}
-		assertDomainInlineReplyMarkup(t, msg.ReplyMarkup, "open", []byte("media-v1"))
+		// 编辑不带 reply_markup：按官方 bot 语义移除内联键盘。
+		if !msg.ReplyMarkup.IsZero() {
+			t.Fatalf("%s edited markup = %+v, want removed", tc.name, msg.ReplyMarkup)
+		}
 	}
 }
 

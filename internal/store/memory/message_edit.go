@@ -29,6 +29,10 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	if targetIndex < 0 {
 		return res, domain.ErrMessageIDInvalid
 	}
+	if req.KeepText {
+		req.Message = target.Body
+		req.Entities = append([]domain.MessageEntity(nil), target.Entities...)
+	}
 	authorEdit := target.Out && target.From.ID == req.OwnerUserID
 	viaBotEdit := req.ViaBotEditBotID != 0 && target.ViaBotID == req.ViaBotEditBotID
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validMemoryTodoParticipantEdit(req, target) {

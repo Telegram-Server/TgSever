@@ -56,6 +56,13 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 	if msg.Deleted || msg.Action != nil {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageIDInvalid
 	}
+	if req.KeepText {
+		req.Message = msg.Body
+		req.Entities = append([]domain.MessageEntity(nil), msg.Entities...)
+		if entities, err = encodeMessageEntities(req.Entities); err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
+	}
 	// SetWebPage 用 Media 替换链接预览（nil = 清除）；否则 Media 为 nil 表示不改媒体。
 	replaceMedia := req.Media != nil || req.SetWebPage
 	mediaChanged := req.Media != nil || (req.SetWebPage && !msg.Media.IsZero())
