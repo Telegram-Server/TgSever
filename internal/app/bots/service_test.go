@@ -279,6 +279,23 @@ func TestCheckUsernameRejectsUserAndPublicChannelCollision(t *testing.T) {
 	}
 }
 
+// 逐位随机取字符时约 3/4 的随机段末位多出非零位，会被 td::base64url_decode 拒绝；
+// 批量生成断言每个都能通过 telegram-bot-api 的校验。
+func TestRandomTokenSecretAlwaysAcceptedByBotAPI(t *testing.T) {
+	for i := 0; i < 2000; i++ {
+		secret, err := randomTokenSecret()
+		if err != nil {
+			t.Fatalf("random token secret: %v", err)
+		}
+		if len(secret) != domain.BotTokenSecretLength {
+			t.Fatalf("secret %q length = %d, want %d", secret, len(secret), domain.BotTokenSecretLength)
+		}
+		if token := domain.FormatBotToken(1780243200, secret); !domain.ValidBotAPIToken(token) {
+			t.Fatalf("token %q rejected by telegram-bot-api rules", token)
+		}
+	}
+}
+
 func TestBotFatherTokenAndRevoke(t *testing.T) {
 	svc, users, bots, messages := newTestService(t)
 	owner := newOwner(t, users, "+1003")
@@ -287,6 +304,9 @@ func TestBotFatherTokenAndRevoke(t *testing.T) {
 	created, token, err := svc.CreateBot(ctx, owner.ID, "Token Bot", "tok_test_bot")
 	if err != nil {
 		t.Fatalf("create bot: %v", err)
+	}
+	if !domain.ValidBotAPIToken(token) {
+		t.Fatalf("created token %q rejected by telegram-bot-api rules", token)
 	}
 
 	sendToBotFather(t, svc, messages, owner, "/token")
@@ -303,6 +323,9 @@ func TestBotFatherTokenAndRevoke(t *testing.T) {
 	newToken := match[0]
 	if newToken == token {
 		t.Fatalf("revoke kept old token %q", token)
+	}
+	if !domain.ValidBotAPIToken(newToken) {
+		t.Fatalf("revoked token %q rejected by telegram-bot-api rules", newToken)
 	}
 	profile, _, err := bots.GetBot(ctx, created.ID)
 	if err != nil {

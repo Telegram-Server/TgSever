@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/base64"
 	"errors"
 	"strconv"
 	"strings"
@@ -11,6 +12,9 @@ import (
 const (
 	// MaxBotsPerOwner 是每个用户可创建的 bot 上限（对齐官方 appConfig bots_create_limit_default）。
 	MaxBotsPerOwner = 20
+	// BotTokenSecretBytes 是 bot token 随机段的熵字节数；随机段是它的无填充
+	// base64url 编码，长度 BotTokenSecretLength（官方格式 <bot_id>:<35 位>）。
+	BotTokenSecretBytes = 26
 	// BotTokenSecretLength 是 bot token 随机段长度（官方格式 <bot_id>:<35 位>）。
 	BotTokenSecretLength = 35
 	// BotUsernameSuffix 是 bot username 的强制后缀（大小写不敏感）。
@@ -389,6 +393,46 @@ func ParseBotToken(token string) (botUserID int64, secret string, ok bool) {
 		return 0, "", false
 	}
 	return id, secret, true
+}
+
+// maxBotAPIUserID 是 telegram-bot-api 接受的 bot id 上界（不含）：ClientManager::send
+// 拒绝 user_id >= 2^54。
+const maxBotAPIUserID = int64(1) << 54
+
+// ValidBotAPIToken 报告 token 能否被 telegram-bot-api 接受。规则逐条对齐其源码：
+//   - ClientManager::send：首字符非 '0'、总长 <= 80、不含 '/'、含 ':'，':' 前是
+//     0 < id < 2^54 的十进制 int64；
+//   - Client::start_up：首个 ':' 之后的部分须通过 td::base64url_decode 且长度 >= 24。
+//
+// 任一不满足时 Bot API 不会发出 auth.importBotAuthorization，服务端看不到这次登录。
+func ValidBotAPIToken(token string) bool {
+	if token == "" || token[0] == '0' || len(token) > 80 || strings.Contains(token, "/") {
+		return false
+	}
+	idPart, secret, found := strings.Cut(token, ":")
+	if !found {
+		return false
+	}
+	id, err := strconv.ParseInt(idPart, 10, 64)
+	if err != nil || id <= 0 || id >= maxBotAPIUserID {
+		return false
+	}
+	return len(secret) >= 24 && tdBase64URLDecodable(secret)
+}
+
+// tdBase64URLDecodable 复刻 tdutils base64url_decode 的接受条件：可选 '=' 填充
+// （至多 2 个，带填充时总长须为 4 的倍数）、去填充后长度 % 4 != 1、只含 base64url
+// 字符、末组多余的位为 0。Go 的 Strict 解码负责后三条，但它会跳过 \r\n，td 不会。
+func tdBase64URLDecodable(s string) bool {
+	unpadded := strings.TrimRight(s, "=")
+	if padding := len(s) - len(unpadded); padding >= 3 || (padding > 0 && len(s)%4 != 0) {
+		return false
+	}
+	if strings.ContainsAny(unpadded, "\r\n") {
+		return false
+	}
+	_, err := base64.RawURLEncoding.Strict().DecodeString(unpadded)
+	return err == nil
 }
 
 // ValidBotUsername 校验 bot username：5-32 位、字母开头、[A-Za-z0-9_]、

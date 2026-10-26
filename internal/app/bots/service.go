@@ -6,6 +6,7 @@ package bots
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -946,19 +947,15 @@ func (s *Service) OwnsBot(ctx context.Context, ownerUserID, botUserID int64) (bo
 	return found && profile.OwnerUserID == ownerUserID && botUserID != domain.BotFatherUserID, nil
 }
 
-// tokenSecretAlphabet 对齐官方 token 随机段字符集。
-const tokenSecretAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
-
+// randomTokenSecret 生成 token 随机段：26 个随机字节的无填充 base64url 编码（35 位）。
+// 必须编码字节而非逐位随机取字符：telegram-bot-api 用 td::base64url_decode 校验
+// 随机段，35 位时末字符的低 2 位须为 0，逐位随机约 3/4 的 token 会被它拒绝。
 func randomTokenSecret() (string, error) {
-	raw := make([]byte, domain.BotTokenSecretLength)
+	raw := make([]byte, domain.BotTokenSecretBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("rand: %w", err)
 	}
-	out := make([]byte, len(raw))
-	for i, b := range raw {
-		out[i] = tokenSecretAlphabet[int(b)%len(tokenSecretAlphabet)]
-	}
-	return string(out), nil
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func randomInt64() (int64, error) {
