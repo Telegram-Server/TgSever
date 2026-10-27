@@ -12,12 +12,9 @@ import (
 // 不做"含账号自己"的检查），不合法返回 domain.ErrPermissionWhitelistInvalid。只读；UserID、
 // UpdatedAt、CommandID 留空，由建号的 store 与调用方填写。
 func (s *Service) ResolveNewAccount(ctx context.Context, up Update) (domain.AccountPermissions, error) {
-	if up.SendWhitelist != nil {
-		whitelist, err := validateWhitelist(ctx, s.users, 0, *up.SendWhitelist)
-		if err != nil {
-			return domain.AccountPermissions{}, err
-		}
-		up.SendWhitelist = &whitelist
+	up, err := up.withValidWhitelist(ctx, s.users, 0)
+	if err != nil {
+		return domain.AccountPermissions{}, err
 	}
 	return up.apply(0, domain.DefaultAccountPermissions(0)), nil
 }

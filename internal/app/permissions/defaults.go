@@ -2,8 +2,6 @@ package permissions
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"slices"
 
 	"telesrv/internal/domain"
@@ -63,12 +61,8 @@ func (s *DefaultsService) ResolveDefaults(ctx context.Context, up DefaultsUpdate
 	if err != nil {
 		return domain.PermissionDefaults{}, false, ResolvedDefaults{}, err
 	}
-	if up.SendWhitelist != nil {
-		whitelist, err := validateWhitelist(ctx, s.users, 0, *up.SendWhitelist)
-		if err != nil {
-			return domain.PermissionDefaults{}, false, ResolvedDefaults{}, err
-		}
-		up.SendWhitelist = &whitelist
+	if up.Update, err = up.Update.withValidWhitelist(ctx, s.users, 0); err != nil {
+		return domain.PermissionDefaults{}, false, ResolvedDefaults{}, err
 	}
 	return current, found, ResolvedDefaults{up: up, preview: up.apply(current)}, nil
 }
@@ -84,11 +78,7 @@ func (s *DefaultsService) SetDefaults(ctx context.Context, r ResolvedDefaults, c
 		next.CommandID = commandID
 		return next
 	})
-	if errors.Is(err, domain.ErrUserNotFound) {
-		// 模板没有自身账号，store 报"不存在"只能是白名单成员在校验之后消失了。
-		err = fmt.Errorf("%w: %w", domain.ErrPermissionWhitelistInvalid, err)
-	}
-	if err != nil {
+	if err = WhitelistMemberVanished(err); err != nil {
 		return domain.PermissionDefaults{}, false, domain.PermissionDefaults{}, err
 	}
 	if !prevFound {

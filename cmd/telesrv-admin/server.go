@@ -1007,22 +1007,19 @@ func (s *server) handleAccountPermissionsAPI(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
-	raw, ok := s.getAdminJSON(w, r, fmt.Sprintf("/v1/accounts/%d/permissions", id), 1<<20)
-	if !ok {
-		return
-	}
-	out, status, err := s.withWhitelistMembers(r.Context(), raw)
-	if err != nil {
-		writeAPIError(w, status, err.Error())
-		return
-	}
-	writeRawJSON(w, out, "no-store")
+	s.proxyPermissionsWithWhitelistMembers(w, r, fmt.Sprintf("/v1/accounts/%d/permissions", id))
 }
 
 // handlePermissionDefaultsAPI 代理默认权限模板（#161），与账号权限一样补上 send_whitelist.members，
 // 不缓存。
 func (s *server) handlePermissionDefaultsAPI(w http.ResponseWriter, r *http.Request) {
-	raw, ok := s.getAdminJSON(w, r, "/v1/permission-defaults", 1<<20)
+	s.proxyPermissionsWithWhitelistMembers(w, r, "/v1/permission-defaults")
+}
+
+// proxyPermissionsWithWhitelistMembers 读取 admin API 上 path 处的一份权限设置，补上
+// send_whitelist.members 后不缓存地回给浏览器。
+func (s *server) proxyPermissionsWithWhitelistMembers(w http.ResponseWriter, r *http.Request, path string) {
+	raw, ok := s.getAdminJSON(w, r, path, 1<<20)
 	if !ok {
 		return
 	}

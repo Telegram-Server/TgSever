@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"telesrv/internal/app/auth"
@@ -94,18 +93,6 @@ func (s *Service) permissionsAccountCreator(perms *domain.AccountPermissions) (a
 	return func(ctx context.Context, u domain.User) (domain.User, error) {
 		return s.accountCreation.CreateAccount(ctx, u, store.AccountExtras{Permissions: perms})
 	}, nil
-}
-
-// createAccountPermissionsError 把建号时 store 报的"白名单成员不存在"归为白名单不合法：新账号
-// 自己正在创建，不存在的只能是白名单成员在校验之后消失了。
-func createAccountPermissionsError(err error) error {
-	if errors.Is(err, domain.ErrUserNotFound) {
-		return permissionsError(fmt.Errorf("%w: %w", domain.ErrPermissionWhitelistInvalid, err))
-	}
-	if errors.Is(err, domain.ErrPermissionWhitelistInvalid) {
-		return permissionsError(err)
-	}
-	return err
 }
 
 // writtenAccountPermissions 读回新账号实际写入的权限（store 会排除期间注销的白名单成员）；读不到

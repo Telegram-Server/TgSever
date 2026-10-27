@@ -23,6 +23,7 @@ import (
 
 	"telesrv/internal/app/auth"
 	"telesrv/internal/app/giftpack"
+	"telesrv/internal/app/permissions"
 	"telesrv/internal/domain"
 	"telesrv/internal/officialgifts"
 	"telesrv/internal/store"
@@ -2576,7 +2577,8 @@ func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (
 		}
 		if err != nil {
 			if perms != nil {
-				err = createAccountPermissionsError(err)
+				// 新账号自己正在创建，store 报"不存在"只能是白名单成员在校验之后消失了。
+				err = permissionsError(permissions.WhitelistMemberVanished(err))
 			}
 			return CommandResult{}, createAccountError(err)
 		}

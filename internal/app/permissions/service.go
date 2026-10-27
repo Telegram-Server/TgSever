@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -128,12 +129,8 @@ func (s *Service) Resolve(ctx context.Context, userID int64, up Update) (current
 	if err != nil {
 		return domain.AccountPermissions{}, false, Resolved{}, err
 	}
-	if up.SendWhitelist != nil {
-		whitelist, err := s.validateWhitelist(ctx, userID, *up.SendWhitelist)
-		if err != nil {
-			return domain.AccountPermissions{}, false, Resolved{}, err
-		}
-		up.SendWhitelist = &whitelist
+	if up, err = up.withValidWhitelist(ctx, s.users, userID); err != nil {
+		return domain.AccountPermissions{}, false, Resolved{}, err
 	}
 	return current, found, Resolved{userID: userID, up: up, preview: up.apply(userID, current)}, nil
 }
@@ -208,14 +205,33 @@ func (s *Service) FlushAccountPermissions() {
 	}
 }
 
-// validateWhitelist 去重并按 id 升序返回名单；超过上限、含账号自己、含不存在或已注销的账号时
-// 返回 domain.ErrPermissionWhitelistInvalid。
-func (s *Service) validateWhitelist(ctx context.Context, userID int64, ids []int64) ([]int64, error) {
-	return validateWhitelist(ctx, s.users, userID, ids)
+// withValidWhitelist 校验 update 给出的白名单并换成去重、按 id 升序的结果；没给出白名单时原样
+// 返回。账号权限、后台建号与默认权限模板共用这一步，规则见 validateWhitelist。
+func (up Update) withValidWhitelist(ctx context.Context, reader UserReader, selfID int64) (Update, error) {
+	if up.SendWhitelist == nil {
+		return up, nil
+	}
+	whitelist, err := validateWhitelist(ctx, reader, selfID, *up.SendWhitelist)
+	if err != nil {
+		return Update{}, err
+	}
+	up.SendWhitelist = &whitelist
+	return up, nil
 }
 
-// validateWhitelist 是账号权限与默认权限模板共用的白名单规则。selfID 为 0 时（模板没有自身 id）
-// 不做"含账号自己"的检查。
+// WhitelistMemberVanished 把 store 写入时报的 domain.ErrUserNotFound 归为白名单不合法，用于除白名单
+// 成员外没有别的账号可能"不存在"的写入（默认权限模板没有自身账号；后台建号时新账号正在创建）：
+// 不存在的只能是白名单成员在校验之后消失了。其他错误原样返回。
+func WhitelistMemberVanished(err error) error {
+	if errors.Is(err, domain.ErrUserNotFound) {
+		return fmt.Errorf("%w: %w", domain.ErrPermissionWhitelistInvalid, err)
+	}
+	return err
+}
+
+// validateWhitelist 去重并按 id 升序返回名单；超过上限、含账号自己、含不存在或已注销的账号时
+// 返回 domain.ErrPermissionWhitelistInvalid。selfID 为 0 时（模板与新账号没有自身 id）不做"含
+// 账号自己"的检查。
 func validateWhitelist(ctx context.Context, reader UserReader, selfID int64, ids []int64) ([]int64, error) {
 	out := domain.NormalizeSendWhitelist(ids)
 	if len(out) > domain.MaxSendWhitelistSize {
