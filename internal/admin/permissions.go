@@ -26,6 +26,8 @@ type AccountPermissionsService interface {
 	AccountPermissions(ctx context.Context, userID int64) (domain.AccountPermissions, bool, error)
 	Resolve(ctx context.Context, userID int64, up permissions.Update) (current domain.AccountPermissions, found bool, next permissions.Resolved, err error)
 	Set(ctx context.Context, next permissions.Resolved, commandID string) (prev domain.AccountPermissions, prevFound bool, written domain.AccountPermissions, err error)
+	// ResolveNewAccount 校验并合并后台建号时给出的权限（见 create_account_permissions.go）。
+	ResolveNewAccount(ctx context.Context, up permissions.Update) (domain.AccountPermissions, error)
 }
 
 // AccountPermissionsNotifier 在权限写入后通知在线会话（生产里是 rpc.Router：失效本实例缓存

@@ -25,6 +25,7 @@ import (
 	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
 	"telesrv/internal/officialgifts"
+	"telesrv/internal/store"
 )
 
 const (
@@ -574,7 +575,10 @@ type Dependencies struct {
 	PermissionsNotifier AccountPermissionsNotifier
 	// PermissionDefaults 是默认权限模板的业务模块（见 permission_defaults.go）。
 	PermissionDefaults PermissionDefaultsService
-	Now                func() time.Time
+	// AccountCreation 是原子建号操作：account.create 不带登录密码但要写权限时，用它在同一个
+	// 事务里建号并写入权限（见 create_account_permissions.go）。
+	AccountCreation store.AccountCreationStore
+	Now             func() time.Time
 }
 
 type Service struct {
@@ -629,6 +633,7 @@ type Service struct {
 	permissions                 AccountPermissionsService
 	permissionsNotifier         AccountPermissionsNotifier
 	permissionDefaults          PermissionDefaultsService
+	accountCreation             store.AccountCreationStore
 	now                         func() time.Time
 }
 
@@ -787,6 +792,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.PermissionDefaults != nil {
 		s.permissionDefaults = deps.PermissionDefaults
+	}
+	if deps.AccountCreation != nil {
+		s.accountCreation = deps.AccountCreation
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -1235,6 +1243,9 @@ type CreateAccountRequest struct {
 	LastName            string `json:"last_name,omitempty"`
 	Password            string `json:"-"`
 	PasswordFingerprint string `json:"password_fingerprint,omitempty"`
+	// Permissions 是新账号的员工权限（#162），字段与 account.set_permissions 一致；不给时有默认
+	// 权限模板就套用模板快照，没有模板就不写权限。见 create_account_permissions.go。
+	Permissions *CreateAccountPermissions `json:"permissions,omitempty"`
 }
 
 // ResolveUserByPhoneRequest is a read-only account lookup used by the
@@ -2495,6 +2506,10 @@ func (s *Service) SetPhone(ctx context.Context, req SetPhoneRequest) (CommandRes
 // transaction (see CreateAccountWith), so the member can sign in with
 // telesrv.signInWithPassword right away; the password never reaches the
 // command or audit records, only login_password=true in the details.
+//
+// Permissions (#162) are written in the same transaction: the given ones, or
+// else a snapshot of the default permissions template when there is one (see
+// create_account_permissions.go).
 func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (CommandResult, error) {
 	if s == nil || s.accountCreator == nil {
 		return CommandResult{}, fmt.Errorf("admin account creator dependency is not configured")
@@ -2523,25 +2538,48 @@ func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (
 					return CommandResult{}, setLoginPasswordError(err)
 				}
 			}
-			return CommandResult{Message: "account creation validated", Details: createAccountDetails(pending, withPassword)}, nil
+			perms, source, err := s.newAccountPermissions(ctx, req)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			details := createAccountDetails(pending, withPassword)
+			addCreateAccountPermissionDetails(details, perms, source)
+			return CommandResult{Message: "account creation validated", Details: details}, nil
+		}
+		// 先解析权限、算 verifier：白名单或密码不合规时还没有建号。
+		perms, source, err := s.newAccountPermissions(ctx, req)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		var create auth.CreateAccountFunc
+		if withPassword {
+			create, err = s.loginPasswords.AdminAccountCreator(req.Password, perms)
+			if err != nil {
+				return CommandResult{}, setLoginPasswordError(err)
+			}
+		} else if perms != nil {
+			if create, err = s.permissionsAccountCreator(perms); err != nil {
+				return CommandResult{}, err
+			}
 		}
 		var created domain.User
-		var err error
-		if withPassword {
-			// 先算 verifier：密码不合规时还没有建号。
-			create, perr := s.loginPasswords.AdminAccountCreator(req.Password)
-			if perr != nil {
-				return CommandResult{}, setLoginPasswordError(perr)
-			}
+		if create != nil {
 			created, err = s.accountCreator.CreateAccountWith(ctx, req.Phone, req.FirstName, req.LastName, create)
 		} else {
 			created, err = s.accountCreator.CreateAccount(ctx, req.Phone, req.FirstName, req.LastName)
 		}
 		if err != nil {
+			if perms != nil {
+				err = createAccountPermissionsError(err)
+			}
 			return CommandResult{}, createAccountError(err)
 		}
 		details := createAccountDetails(created, withPassword)
 		details["user_id"] = created.ID
+		if perms != nil {
+			written := s.writtenAccountPermissions(ctx, created.ID, *perms)
+			addCreateAccountPermissionDetails(details, &written, source)
+		}
 		return CommandResult{Message: "account created", Details: details}, nil
 	})
 }

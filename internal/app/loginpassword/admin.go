@@ -124,8 +124,9 @@ func (s *Service) ValidateAdminLoginPassword(password string) error {
 // AdminAccountCreator 是后台建号带登录密码（#89）的建号步骤：先按客户端设置新密码的算法从
 // 明文算出 verifier（密码不合规返回 domain.ErrLoginPasswordInvalid，此时还没有建号），再返回
 // 一个 auth.CreateAccountFunc，用 store.AccountCreationStore 在同一个事务里建号并写入登录密码。
-// 不受密码登录总开关限制；新账号还没有任何会话，不发 777000 通知。
-func (s *Service) AdminAccountCreator(password string) (auth.CreateAccountFunc, error) {
+// 不受密码登录总开关限制；新账号还没有任何会话，不发 777000 通知。permissions 非 nil 时（后台建号
+// 给出的或套用模板的权限，#162）在同一个事务里一起写入。
+func (s *Service) AdminAccountCreator(password string, permissions *domain.AccountPermissions) (auth.CreateAccountFunc, error) {
 	if err := s.adminReady(); err != nil {
 		return nil, err
 	}
@@ -137,7 +138,7 @@ func (s *Service) AdminAccountCreator(password string) (auth.CreateAccountFunc, 
 		return nil, fmt.Errorf("loginpassword: account creation store is not configured")
 	}
 	return func(ctx context.Context, u domain.User) (domain.User, error) {
-		return s.accounts.CreateAccount(ctx, u, store.AccountExtras{LoginPassword: &next})
+		return s.accounts.CreateAccount(ctx, u, store.AccountExtras{LoginPassword: &next, Permissions: permissions})
 	}, nil
 }
 

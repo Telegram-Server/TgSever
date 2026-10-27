@@ -2185,6 +2185,8 @@ func run(logger *zap.Logger) error {
 	adminService.Configure(adminapp.Dependencies{Permissions: permissionsService, PermissionsNotifier: router})
 	// 后台设置默认权限模板（permission_defaults.set，#161）：只影响之后新建的账号。
 	adminService.Configure(adminapp.Dependencies{PermissionDefaults: permissionDefaultsService})
+	// 后台建号（account.create，#162）：给出的权限或模板快照与账号在同一个事务里写入。
+	adminService.Configure(adminapp.Dependencies{AccountCreation: postgres.NewAccountCreationStore(pool)})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
 	// visible to online viewers immediately.

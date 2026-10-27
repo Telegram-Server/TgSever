@@ -1998,6 +1998,21 @@ td.evidence-message-cell {
   color: var(--heading);
 }
 
+/* Create account form: the collapsible staff permissions section (#162). */
+.create-account-permissions {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.create-account-permissions > summary {
+  color: var(--heading);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .perm-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

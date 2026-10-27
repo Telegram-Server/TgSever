@@ -1218,6 +1218,9 @@ type createAccountAPIRequest struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Password  string `json:"password"`
+	// Permissions 是新账号的员工权限（#162），字段与 set-permissions 一致；不给时服务端有默认
+	// 权限模板就套用模板。
+	Permissions *admin.CreateAccountPermissions `json:"permissions"`
 }
 
 // createAccountUpstreamRequest 是转发给服务端 POST /v1/accounts/create 的请求体。
@@ -1229,6 +1232,8 @@ type createAccountUpstreamRequest struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name,omitempty"`
 	Password  string `json:"password,omitempty"`
+	// Permissions 不给时省略，服务端按默认权限模板处理。
+	Permissions *admin.CreateAccountPermissions `json:"permissions,omitempty"`
 }
 
 // handleCreateAccountAPI creates a regular user account (phone, first name,
@@ -1247,6 +1252,7 @@ func (s *server) handleCreateAccountAPI(w http.ResponseWriter, r *http.Request) 
 		FirstName:   body.FirstName,
 		LastName:    body.LastName,
 		Password:    body.Password,
+		Permissions: body.Permissions,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/create", req)
 	writeCommandResultAPI(w, result, err)

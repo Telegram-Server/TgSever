@@ -744,6 +744,9 @@ type createAccountWire struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name,omitempty"`
 	Password  string `json:"password,omitempty"`
+	// Permissions 是新账号的员工权限（#162），字段与 /v1/accounts/set-permissions 一致；不给时
+	// 有默认权限模板就套用模板。
+	Permissions *admin.CreateAccountPermissions `json:"permissions,omitempty"`
 }
 
 func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
@@ -757,6 +760,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		FirstName:   body.FirstName,
 		LastName:    body.LastName,
 		Password:    body.Password,
+		Permissions: body.Permissions,
 	})
 	writeCommandResult(w, result, err)
 }

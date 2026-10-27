@@ -1,9 +1,11 @@
 import { UserPlus, X } from "lucide-react";
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { errorMessage } from "../api";
+import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { maxLoginPasswordBytes, passwordMaskFields } from "../components/attributes";
+import { draftFromPermissions, PermissionEditor, permissionFieldsFrom, type PermissionDraft } from "../components/PermissionEditor";
+import { Alert, LoadingSurface } from "../components/ui";
 import { useI18n } from "../i18n";
 
 // CreateAccountModal creates a regular user account through the
@@ -13,6 +15,12 @@ import { useI18n } from "../i18n";
 // it is filled in the server creates the account and its login password in
 // one transaction, so the member can sign in with phone + password right away.
 // The plaintext goes to the server over HTTPS and is masked in the preview.
+//
+// Staff permissions (#162) sit in a collapsible section. Opening it loads the
+// default permissions template into the shared PermissionEditor (uncontrolled
+// defaults when there is no template), and from then on what it shows is sent
+// as permissions and written with the account in one transaction. Left closed,
+// no permissions are sent and the server applies the template itself.
 
 // The stable codes internal/admin's createAccountError attaches, and the
 // message each one is shown as.
@@ -21,6 +29,7 @@ const createAccountErrorCodes = [
   ["PHONE_NUMBER_INVALID", "account.createPhoneInvalid"],
   ["PHONE_NUMBER_RESERVED", "account.createPhoneReserved"],
   ["LOGIN_PASSWORD_INVALID", "account.createPasswordInvalid"],
+  ["PERMISSION_WHITELIST_INVALID", "account.createWhitelistInvalid"],
 ] as const;
 
 export function CreateAccountModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
@@ -29,9 +38,28 @@ export function CreateAccountModal({ onClose, onCreated }: { onClose: () => void
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
+  const [permOpen, setPermOpen] = useState(false);
+  // The prefilled permissions once the section has been opened and the template
+  // loaded; templateFound says whether they came from a template.
+  const [perm, setPerm] = useState<{ draft: PermissionDraft; templateFound: boolean } | null>(null);
+  const [permError, setPermError] = useState("");
+
+  async function loadTemplate() {
+    setPermError("");
+    try {
+      const defaults = await api.permissionDefaults();
+      setPerm({ draft: draftFromPermissions({ ...defaults, user_id: 0 }), templateFound: defaults.found });
+    } catch (err) {
+      setPermError(errorMessage(err));
+    }
+  }
 
   const passwordTooLong = new TextEncoder().encode(password).length > maxLoginPasswordBytes;
-  const valid = phone.replace(/\D/g, "").length > 0 && firstName.trim().length > 0 && !passwordTooLong;
+  // An open section that has not loaded yet would send nothing and leave the
+  // template to the server, which is not what the operator is looking at.
+  const permPending = permOpen && perm === null;
+  const valid = phone.replace(/\D/g, "").length > 0 && firstName.trim().length > 0 && !passwordTooLong && !permPending;
+  const emptyWhitelist = perm !== null && perm.draft.enabled && perm.draft.whitelistEnabled && perm.draft.whitelist.length === 0;
 
   return createPortal(
     <div className="modal-backdrop" role="presentation">
@@ -64,6 +92,28 @@ export function CreateAccountModal({ onClose, onCreated }: { onClose: () => void
             </label>
             {passwordTooLong && <p className="muted">{t("attr.loginPasswordTooLong")}</p>}
           </div>
+          <details
+            className="create-account-permissions account-permissions"
+            onToggle={(event) => {
+              const open = event.currentTarget.open;
+              setPermOpen(open);
+              if (open && perm === null) void loadTemplate();
+            }}
+          >
+            <summary>{t("account.createPermissions")}</summary>
+            {!permOpen ? null : permError ? (
+              <Alert>{t("account.createPermissionsLoadFailed", { error: permError })}</Alert>
+            ) : perm === null ? (
+              <LoadingSurface label={t("permDefaults.loading")} />
+            ) : (
+              <>
+                <p className="muted">{perm.templateFound ? t("account.createPermissionsFromTemplate") : t("account.createPermissionsNoTemplate")}</p>
+                <PermissionEditor value={perm.draft} onChange={(draft) => setPerm({ ...perm, draft })} editable />
+                {emptyWhitelist && <Alert>{t("account.createPermissionsWhitelistEmpty")}</Alert>}
+              </>
+            )}
+          </details>
+          {!permOpen && perm === null && <p className="muted">{t("account.createPermissionsClosedHint")}</p>}
         </div>
         <div className="modal-actions">
           <button className="btn" type="button" onClick={onClose}>{t("common.close")}</button>
@@ -77,7 +127,8 @@ export function CreateAccountModal({ onClose, onCreated }: { onClose: () => void
               phone: phone.trim(),
               first_name: firstName.trim(),
               last_name: lastName.trim(),
-              ...(password !== "" ? { password } : {})
+              ...(password !== "" ? { password } : {}),
+              ...(perm !== null ? { permissions: permissionFieldsFrom(perm.draft) } : {})
             })}
             maskFields={passwordMaskFields}
             onError={(err) => {

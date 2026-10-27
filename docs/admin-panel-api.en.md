@@ -534,7 +534,7 @@ body always contains the **common command fields** (`command_id`, `reason`,
 | `set-account-username` | `user_id` (int64), `username` (string) | `accounts.manage` |
 | `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | `accounts.manage` |
 | `set-account-phone` | `user_id` (int64), `phone` (string) | `accounts.manage` |
-| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.), `password` (string, opt., 1..256 UTF-8 bytes); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED`; with `password` the account and its login password are created together — see below | `accounts.manage` |
+| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.), `password` (string, opt., 1..256 UTF-8 bytes), `permissions` (object, opt., the fields of `set-permissions` without `user_id`); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED`; with `password` the account and its login password are created together; without `permissions` the default permissions template is applied — see below | `accounts.manage` |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | `accounts.manage` |
 | `set-login-password` | `user_id` (int64), `password` (string, 1..256 UTF-8 bytes), `revoke_sessions` (bool, opt.); sets or resets the login password without the old one — see below | `accounts.manage` |
 | `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100, or `null` to clear); caps how many devices the account may be used on. A device (the `device_id` the client reports in `initConnection.params`) is bound to the account the first time it completes a login, and the cap counts bound devices; logging out or revoking a session does not unbind it, only `unbind-device` does. Once the cap is reached only bound devices can log in: a new device is refused with `AUTHORIZATIONS_TOO_MUCH`, a client that reports no `device_id` with `DEVICE_ID_REQUIRED`. Devices already signed in stay, and lowering or clearing the cap keeps the bound list. Setting the cap binds the account's devices that are already signed in and have reported a `device_id`, oldest login first, until the cap is filled; the rest stay signed in unbound. `details.backfilled_devices` gives how many were bound (in a dry run, how many would be). A signed-in device that reports its `device_id` later is bound if a slot is free, and left alone otherwise. System accounts, bots, deleted and missing accounts fail with `USER_INVALID`, a value outside 1..100 with `DEVICE_LIMIT_INVALID` | `accounts.manage` |
@@ -629,6 +629,35 @@ transaction, so the member can sign in with phone number + password
   without one — is rejected with `COMMAND_ID_CONFLICT`. The dry run validates
   the number and the password and writes nothing. No 777000 message is sent: the
   new account has no sessions yet.
+
+### Creating an account with staff permissions
+
+`create-account` takes an optional `permissions` object with the fields of
+`set-permissions` (`enabled`, the eleven flags, `send_whitelist`) minus
+`user_id`. The account is under permission control from the moment it exists:
+the account and its permissions are written in one transaction, together with
+the login password when one is given.
+
+- **Given:** the fields given replace the uncontrolled defaults (master switch
+  off, every action allowed, whitelist off and empty); fields left out take those
+  defaults. For an account that is explicitly not controlled, send
+  `"enabled": false`. The whitelist follows the `set-permissions` rules (accounts
+  exist and are not deleted, at most 1000, duplicates dropped); an invalid one is
+  rejected with `PERMISSION_WHITELIST_INVALID` and no account is created.
+- **Not given:** when there is a default permissions template (Accounts →
+  Default permissions) a snapshot of it is written; without a template no
+  permissions are written. This holds whatever the template's "Also apply to self
+  sign-ups" switch says: that switch only concerns self sign-ups.
+- **Dry run** validates the permissions too and writes nothing.
+- **Records:** the command details and the audit trail carry the permissions
+  finally written (`permissions`) and where they came from
+  (`permissions_source`: `request` or `defaults`); without permissions neither
+  key is present.
+- **Where:** Accounts → **Create account** → the collapsible **Staff
+  permissions** section. Opening it prefills the shared permission editor from
+  the template (or the uncontrolled defaults when there is none), and what it
+  then shows is sent as `permissions`. Left unopened, nothing is sent and the
+  server applies the template.
 
 ## API: machine account lookup (v1)
 
