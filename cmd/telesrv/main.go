@@ -1781,7 +1781,7 @@ func run(logger *zap.Logger) error {
 	// 密码登录的 SRP challenge 只存进程内存（与 passkey 挑战、QR 登录 token 相同，单体
 	// 部署不跨实例），不写进用户记录。
 	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool),
-		postgres.NewAccountCreationStore(pool), memory.NewLoginPasswordChallengeStore(nil), authService,
+		accountCreationStore, memory.NewLoginPasswordChallengeStore(nil), authService,
 		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled),
 		loginpasswordapp.WithUserRateLimit(rateLimiter, cfg.PasswordLoginUserRateLimit, cfg.PasswordLoginUserRateWindow),
 		// 设置、修改、删除登录密码后由 777000 通知该账号：消息与 outbox 同事务落库，再推给所有在线会话。
@@ -2191,7 +2191,7 @@ func run(logger *zap.Logger) error {
 	// 后台设置默认权限模板（permission_defaults.set，#161）：只影响之后新建的账号。
 	adminService.Configure(adminapp.Dependencies{PermissionDefaults: permissionDefaultsService})
 	// 后台建号（account.create，#162）：给出的权限或模板快照与账号在同一个事务里写入。
-	adminService.Configure(adminapp.Dependencies{AccountCreation: postgres.NewAccountCreationStore(pool)})
+	adminService.Configure(adminapp.Dependencies{AccountCreation: accountCreationStore})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
 	// visible to online viewers immediately.

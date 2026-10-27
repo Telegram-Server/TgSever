@@ -197,7 +197,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	limiter := newCountingRateLimiter()
 	loginPasswordStore := memory.NewLoginPasswordStore(baseUsers)
 	loginPasswords := loginpasswordapp.NewService(userStore, loginPasswordStore,
-		memory.NewAccountCreationStore(baseUsers, loginPasswordStore, nil),
+		memory.NewAccountCreationStore(baseUsers, loginPasswordStore, accountPermissions),
 		memory.NewLoginPasswordChallengeStore(nil, opts.challengeLimits...), authService,
 		loginpasswordapp.WithEnabled(opts.enabled), opts.rateLimits.userRateLimit(limiter),
 		loginpasswordapp.WithResetWindow(opts.resetWindow),
