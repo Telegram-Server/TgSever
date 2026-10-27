@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,13 +18,15 @@ import (
 )
 
 const (
-	accountSearchLimit      = 20
-	accountListDefaultLimit = 50
-	accountListMaxLimit     = 100
-	channelSearchLimit      = 50
-	channelListDefaultLimit = 50
-	channelListMaxLimit     = 100
-	messagePageLimit        = 100
+	accountSearchLimit = 20
+	// 名字包含匹配的最短关键词（按字符计）：再短就几乎命中全表。
+	accountNameSearchMinRunes = 2
+	accountListDefaultLimit   = 50
+	accountListMaxLimit       = 100
+	channelSearchLimit        = 50
+	channelListDefaultLimit   = 50
+	channelListMaxLimit       = 100
+	messagePageLimit          = 100
 	// Collectible username and account rating pages. The bounds mirror the
 	// use-case layer, so a table page costs the same whichever surface asks.
 	collectibleListDefaultLimit = 50
@@ -628,10 +631,34 @@ func (s *readStore) SearchAccounts(ctx context.Context, q string) ([]AccountRow,
 	phone := strings.TrimPrefix(strings.ReplaceAll(q, " ", ""), "+")
 	phoneRaw := strings.TrimSpace(q)
 	username := strings.ToLower(strings.TrimPrefix(q, "@"))
+	// 名字包含匹配的 LIKE 模式；空串表示不做名字匹配。
+	namePattern := ""
+	if utf8.RuneCountInString(q) >= accountNameSearchMinRunes {
+		namePattern = "%" + escapeLikePattern(q) + "%"
+	}
+	// 手写 SQL 而非 sqlc：本文件的读库查询都是手写的面板只读投影，沿用同一形式。
+	// 精确匹配（rank 0）与名字包含匹配（rank 1）分支各自走索引：名字分支的表达式
+	// 与 0001_init 的 users_name_lower_trgm_idx 一致（lower(btrim(名 || ' ' || 姓))），
+	// 关键词已去掉首尾空白，btrim 不改变包含匹配的结果。
 	rows, err := s.pool.Query(ctx, `
-WITH auth AS (
+WITH matched AS (
+	SELECT id, min(rank) AS rank
+	FROM (
+		SELECT id, 0 AS rank FROM users
+		WHERE id = $1 OR phone = $2 OR phone = $3 OR lower(username) = $4
+		UNION ALL
+		SELECT peer_id, 0 FROM peer_usernames
+		WHERE peer_type = 'user' AND editable AND username_lower = $4
+		UNION ALL
+		SELECT id, 1 FROM users
+		WHERE $5::text <> '' AND lower(btrim(first_name || ' ' || last_name)) LIKE lower($5::text)
+	) m
+	GROUP BY id
+),
+auth AS (
 	SELECT user_id, max(active_at) AS last_active_at, count(*)::int AS device_count
 	FROM authorizations
+	WHERE user_id IN (SELECT id FROM matched)
 	GROUP BY user_id
 )
 SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
@@ -639,13 +666,13 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), COALESCE(a.device_count, 0)::int,
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
-FROM users u
+FROM matched m
+JOIN users u ON u.id = m.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 LEFT JOIN auth a ON a.user_id = u.id
-WHERE u.id = $1 OR u.phone = $2 OR u.phone = $3 OR lower(u.username) = $4 OR p.username_lower = $4
-ORDER BY u.id
-LIMIT $5`, id, phone, phoneRaw, username, accountSearchLimit)
+ORDER BY m.rank, u.id
+LIMIT $6`, id, phone, phoneRaw, username, namePattern, accountSearchLimit)
 	if err != nil {
 		return nil, fmt.Errorf("search accounts: %w", err)
 	}
