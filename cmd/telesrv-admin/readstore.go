@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 const (
@@ -290,8 +291,6 @@ func (r *readStore) Ping(ctx context.Context) error {
 	return r.pool.Ping(ctx)
 }
 
-// AccountUsername is one collectible (Fragment-style) username a peer holds.
-//
 // WhitelistMember 是发送白名单里的一个人在面板上的展示信息（#160）。Found=false 表示库里已没有
 // 这个账号，只剩 id：名单仍显示这一项，管理员可以移除它。
 type WhitelistMember struct {
@@ -313,27 +312,16 @@ func (s *readStore) WhitelistMembers(ctx context.Context, ids []int64) ([]Whitel
 	if len(ids) == 0 {
 		return out, nil
 	}
-	// 手写 SQL 而非 sqlc：本文件的读库查询都是手写的面板只读投影，沿用同一形式。
-	// @用户名与账号列表一致：可编辑槽位优先，其次 peer_usernames 里的可编辑行。
-	rows, err := s.pool.Query(ctx, `
-SELECT u.id, u.first_name, u.last_name, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.phone, u.is_bot
-FROM users u
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
-WHERE u.id = ANY($1::bigint[])`, ids)
+	rows, err := sqlcgen.New(s.pool).AdminWhitelistMembers(ctx, ids)
 	if err != nil {
 		return nil, fmt.Errorf("whitelist members: %w", err)
 	}
-	defer rows.Close()
-	found := make(map[int64]WhitelistMember, len(ids))
-	for rows.Next() {
-		m := WhitelistMember{Found: true}
-		if err := rows.Scan(&m.ID, &m.FirstName, &m.LastName, &m.Username, &m.Phone, &m.Bot); err != nil {
-			return nil, err
+	found := make(map[int64]WhitelistMember, len(rows))
+	for _, r := range rows {
+		found[r.ID] = WhitelistMember{
+			ID: r.ID, Found: true, FirstName: r.FirstName, LastName: r.LastName,
+			Username: r.DisplayUsername, Phone: r.Phone, Bot: r.IsBot,
 		}
-		found[m.ID] = m
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	for i, id := range ids {
 		if m, ok := found[id]; ok {
@@ -343,6 +331,8 @@ WHERE u.id = ANY($1::bigint[])`, ids)
 	return out, nil
 }
 
+// AccountUsername is one collectible (Fragment-style) username a peer holds.
+//
 // Active mirrors the username#b4073647 flag: an inactive collectible is still
 // owned, it just does not resolve publicly, and an operator has to be able to
 // tell those two apart -- so the row is listed either way and carries the flag
@@ -689,56 +679,25 @@ func (s *readStore) SearchAccounts(ctx context.Context, q string) ([]AccountRow,
 	if utf8.RuneCountInString(q) >= accountNameSearchMinRunes {
 		namePattern = "%" + escapeLikePattern(q) + "%"
 	}
-	// 手写 SQL 而非 sqlc：本文件的读库查询都是手写的面板只读投影，沿用同一形式。
-	// 精确匹配（rank 0）与名字包含匹配（rank 1）分支各自走索引：名字分支的表达式
-	// 与 0001_init 的 users_name_lower_trgm_idx 一致（lower(btrim(名 || ' ' || 姓))），
-	// 关键词已去掉首尾空白，btrim 不改变包含匹配的结果。
-	rows, err := s.pool.Query(ctx, `
-WITH matched AS (
-	SELECT id, min(rank) AS rank
-	FROM (
-		SELECT id, 0 AS rank FROM users
-		WHERE id = $1 OR phone = $2 OR phone = $3 OR lower(username) = $4
-		UNION ALL
-		SELECT peer_id, 0 FROM peer_usernames
-		WHERE peer_type = 'user' AND editable AND username_lower = $4
-		UNION ALL
-		SELECT id, 1 FROM users
-		WHERE $5::text <> '' AND lower(btrim(first_name || ' ' || last_name)) LIKE lower($5::text)
-	) m
-	GROUP BY id
-),
-auth AS (
-	SELECT user_id, max(active_at) AS last_active_at, count(*)::int AS device_count
-	FROM authorizations
-	WHERE user_id IN (SELECT id FROM matched)
-	GROUP BY user_id
-)
-SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
-	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified, u.scam, u.fake,
-	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
-	COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), COALESCE(a.device_count, 0)::int,
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username, u.is_bot
-FROM matched m
-JOIN users u ON u.id = m.id
-LEFT JOIN account_restrictions r ON r.user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
-LEFT JOIN auth a ON a.user_id = u.id
-ORDER BY m.rank, u.id
-LIMIT $6`, id, phone, phoneRaw, username, namePattern, accountSearchLimit)
+	// 查询见 queries/admin_accounts.sql 的 AdminSearchAccounts；关键词已去掉首尾空白，名字分支
+	// 的 btrim 不改变包含匹配的结果。
+	rows, err := sqlcgen.New(s.pool).AdminSearchAccounts(ctx, sqlcgen.AdminSearchAccountsParams{
+		ID: id, Phone: phone, PhoneRaw: phoneRaw, Username: username, NamePattern: namePattern,
+		RowLimit: accountSearchLimit,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("search accounts: %w", err)
 	}
-	defer rows.Close()
-	out := make([]AccountRow, 0)
-	for rows.Next() {
-		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username, &item.Bot); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
+	out := make([]AccountRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, AccountRow{
+			ID: r.ID, Phone: r.Phone, Username: r.DisplayUsername, FirstName: r.FirstName, LastName: r.LastName,
+			CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time,
+			Frozen: r.Frozen, Reason: r.Reason, Verified: r.Verified, Scam: r.Scam, Fake: r.Fake, Bot: r.IsBot,
+			PremiumUntil: r.PremiumUntil, LastActiveAt: r.LastActiveAt.Time, DeviceCount: int(r.DeviceCount),
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 type BotRow struct {
