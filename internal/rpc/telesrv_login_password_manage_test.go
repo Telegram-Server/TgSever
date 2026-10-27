@@ -67,7 +67,7 @@ func TestTelesrvUpdateLoginPasswordReadsTheAuthorizationOnlyForAReset(t *testing
 		t.Fatalf("create user: %v", err)
 	}
 	authSvc := &failingAuthorizationLookup{captureAuthService: &captureAuthService{}}
-	svc := loginpassword.NewService(users, memory.NewLoginPasswordStore(users), memory.NewLoginPasswordChallengeStore(time.Now), unusedAuthFlows{},
+	svc := loginpassword.NewService(users, memory.NewLoginPasswordStore(users), nil, memory.NewLoginPasswordChallengeStore(time.Now), unusedAuthFlows{},
 		loginpassword.WithEnabled(true), loginpassword.WithResetWindow(10*time.Minute))
 	router := New(Config{}, Deps{Auth: authSvc, LoginPassword: svc}, zaptest.NewLogger(t), clock.System)
 	authKey := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}

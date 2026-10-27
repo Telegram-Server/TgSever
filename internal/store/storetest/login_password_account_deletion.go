@@ -28,14 +28,8 @@ func LoginPasswordAccountDeletionContract(t *testing.T, newFixture func(t *testi
 
 	t.Run("account deletion removes the login password", func(t *testing.T) {
 		f := newFixture(t)
-		doomed, err := f.Passwords.CreateUserWithLoginPassword(ctx, domain.User{AccessHash: 1, Phone: f.Phone, FirstName: "Doomed"}, testLoginPassword(20))
-		if err != nil {
-			t.Fatalf("create doomed account: %v", err)
-		}
-		kept, err := f.Passwords.CreateUserWithLoginPassword(ctx, domain.User{AccessHash: 2, Phone: f.OtherPhone, FirstName: "Kept"}, testLoginPassword(30))
-		if err != nil {
-			t.Fatalf("create kept account: %v", err)
-		}
+		doomed := createUserWithLoginPassword(t, f, domain.User{AccessHash: 1, Phone: f.Phone, FirstName: "Doomed"}, testLoginPassword(20))
+		kept := createUserWithLoginPassword(t, f, domain.User{AccessHash: 2, Phone: f.OtherPhone, FirstName: "Kept"}, testLoginPassword(30))
 
 		result, err := f.Lifecycle.ExecuteAccountDeletion(ctx, doomed.ID, domain.AccountDeletionManual, "contract", time.Now().UTC())
 		if err != nil {
@@ -72,4 +66,16 @@ func LoginPasswordAccountDeletionContract(t *testing.T, newFixture func(t *testi
 			t.Fatalf("login password found=%v err=%v, want none", found, err)
 		}
 	})
+}
+
+func createUserWithLoginPassword(t *testing.T, f LoginPasswordAccountDeletionFixture, u domain.User, password domain.LoginPassword) domain.User {
+	t.Helper()
+	created, err := f.Users.Create(context.Background(), u)
+	if err != nil {
+		t.Fatalf("create %s: %v", u.FirstName, err)
+	}
+	if err := f.Passwords.SetLoginPassword(context.Background(), created.ID, password); err != nil {
+		t.Fatalf("set login password of %s: %v", u.FirstName, err)
+	}
+	return created
 }

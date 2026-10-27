@@ -21,16 +21,14 @@ const (
 
 // LoginPasswordStore 是 store.LoginPasswordStore 的 PostgreSQL 实现（表 login_passwords）。
 type LoginPasswordStore struct {
-	db sqlcgen.DBTX
-	q  *sqlcgen.Queries
+	q *sqlcgen.Queries
 }
 
 var _ store.LoginPasswordStore = (*LoginPasswordStore)(nil)
 
-// NewLoginPasswordStore 创建登录密码存储。db 必须支持事务（*pgxpool.Pool），
-// CreateUserWithLoginPassword 需要在同一个事务里建号和写密码。
+// NewLoginPasswordStore 创建登录密码存储。建号时一起写入登录密码见 AccountCreationStore。
 func NewLoginPasswordStore(db sqlcgen.DBTX) *LoginPasswordStore {
-	return &LoginPasswordStore{db: db, q: sqlcgen.New(db)}
+	return &LoginPasswordStore{q: sqlcgen.New(db)}
 }
 
 func (s *LoginPasswordStore) GetLoginPassword(ctx context.Context, userID int64) (domain.LoginPassword, bool, error) {
@@ -60,38 +58,6 @@ func (s *LoginPasswordStore) DeleteLoginPassword(ctx context.Context, userID int
 		return false, fmt.Errorf("delete login password: %w", err)
 	}
 	return n > 0, nil
-}
-
-// CreateUserWithLoginPassword 复用建号事务主体 createUserTx，在同一个事务里写入登录密码后
-// 一起提交。任何一步失败都回滚整个事务，不会留下没有密码的账号。
-func (s *LoginPasswordStore) CreateUserWithLoginPassword(ctx context.Context, u domain.User, password domain.LoginPassword) (domain.User, error) {
-	beginner, ok := s.db.(txBeginner)
-	if !ok {
-		return domain.User{}, fmt.Errorf("create user with login password: db does not support transactions")
-	}
-	tx, err := beginner.Begin(ctx)
-	if err != nil {
-		return domain.User{}, fmt.Errorf("begin create user with login password: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-	qtx := s.q.WithTx(tx)
-	created, err := createUserTx(ctx, tx, qtx, u)
-	if err != nil {
-		return domain.User{}, err
-	}
-	if err := upsertLoginPassword(ctx, qtx, created.ID, password); err != nil {
-		return domain.User{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.User{}, fmt.Errorf("commit create user with login password: %w", err)
-	}
-	committed = true
-	return created, nil
 }
 
 // upsertLoginPassword 写入或替换登录密码，并把约束冲突映射成存储层错误：

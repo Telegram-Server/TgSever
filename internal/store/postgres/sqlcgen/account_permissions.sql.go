@@ -204,6 +204,42 @@ func (q *Queries) LockAccountPermissions(ctx context.Context, userID int64) (Loc
 	return i, err
 }
 
+const lockSendWhitelistMembers = `-- name: LockSendWhitelistMembers :many
+SELECT id, (deleted_at IS NOT NULL)::boolean AS deleted
+FROM users
+WHERE id = ANY($1::bigint[])
+ORDER BY id
+FOR SHARE
+`
+
+type LockSendWhitelistMembersRow struct {
+	ID      int64
+	Deleted bool
+}
+
+// 建号时写入权限快照（#159）：锁住白名单里的账号行并报告哪些已注销。FOR SHARE 让并发的注销
+// （软删除是对 users 行的 UPDATE）等到建号事务提交，它随后删除指向自己的白名单条目时就能
+// 看到新写入的那几行；先提交的注销则在这里读到 deleted=true，成员被排除。
+func (q *Queries) LockSendWhitelistMembers(ctx context.Context, memberUserIds []int64) ([]LockSendWhitelistMembersRow, error) {
+	rows, err := q.db.Query(ctx, lockSendWhitelistMembers, memberUserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockSendWhitelistMembersRow
+	for rows.Next() {
+		var i LockSendWhitelistMembersRow
+		if err := rows.Scan(&i.ID, &i.Deleted); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertAccountPermissions = `-- name: UpsertAccountPermissions :one
 INSERT INTO account_permissions (
     user_id, enabled,

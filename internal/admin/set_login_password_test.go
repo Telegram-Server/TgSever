@@ -85,9 +85,10 @@ func newLoginPasswordFixture(t *testing.T) *loginPasswordFixture {
 	}
 	f.passwords = memory.NewLoginPasswordStore(f.users)
 	challenges := memory.NewLoginPasswordChallengeStore(time.Now)
-	admin := loginpassword.NewService(f.users, f.passwords, challenges, loginPasswordFlows{},
+	accounts := memory.NewAccountCreationStore(f.users, f.passwords, nil)
+	admin := loginpassword.NewService(f.users, f.passwords, accounts, challenges, loginPasswordFlows{},
 		loginpassword.WithChangeNotices(f.notices, nil))
-	f.login = loginpassword.NewService(f.users, f.passwords, challenges, loginPasswordFlows{},
+	f.login = loginpassword.NewService(f.users, f.passwords, accounts, challenges, loginPasswordFlows{},
 		loginpassword.WithEnabled(true))
 	f.svc = NewService(Dependencies{
 		Commands:                    f.repo,

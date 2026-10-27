@@ -14,6 +14,7 @@ import (
 	authapp "telesrv/internal/app/auth"
 	"telesrv/internal/app/loginpassword"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
 
@@ -127,21 +128,19 @@ func TestCreateAccountWithPasswordLeavesNothingWhenRejected(t *testing.T) {
 	}
 }
 
-// failingLoginPasswordStore 写登录密码时失败：建号和写密码在同一个事务里，账号也不能留下。
-type failingLoginPasswordStore struct {
-	*memory.LoginPasswordStore
-}
+// failingAccountCreationStore 建号事务写登录密码时失败：建号和写密码在同一个事务里，账号也不能留下。
+type failingAccountCreationStore struct{}
 
 var errLoginPasswordWrite = errors.New("login password write failed")
 
-func (failingLoginPasswordStore) CreateUserWithLoginPassword(context.Context, domain.User, domain.LoginPassword) (domain.User, error) {
+func (failingAccountCreationStore) CreateAccount(context.Context, domain.User, store.AccountExtras) (domain.User, error) {
 	return domain.User{}, errLoginPasswordWrite
 }
 
 func TestCreateAccountWithPasswordCreatesNoAccountWhenThePasswordWriteFails(t *testing.T) {
 	f := newCreateAccountPasswordFixture(t)
 	ctx := context.Background()
-	failing := loginpassword.NewService(f.users, failingLoginPasswordStore{f.passwords},
+	failing := loginpassword.NewService(f.users, f.passwords, failingAccountCreationStore{},
 		memory.NewLoginPasswordChallengeStore(time.Now), loginPasswordFlows{})
 	f.svc.Configure(Dependencies{LoginPasswords: failing})
 
