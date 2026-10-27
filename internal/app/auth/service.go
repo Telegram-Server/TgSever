@@ -1733,7 +1733,7 @@ func (s *Service) CreateAccount(ctx context.Context, phone, firstName, lastName 
 }
 
 // CreateAccountWith 与 CreateAccount 相同，只是建号这一步交给 create：后台建号时带登录密码，
-// create 就是"建号并写入登录密码"的单事务操作（store.LoginPasswordStore.CreateUserWithLoginPassword），
+// create 就是"建号并写入登录密码"的单事务操作（store.AccountCreationStore.CreateAccount），
 // 账号和密码要么一起写入，要么都不写。create 为 nil 时退回普通建号。
 func (s *Service) CreateAccountWith(ctx context.Context, phone, firstName, lastName string, create CreateAccountFunc) (domain.User, error) {
 	if create == nil {

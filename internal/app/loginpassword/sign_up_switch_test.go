@@ -30,8 +30,9 @@ func newSignUpSwitchFixture(t *testing.T, opts ...loginpassword.Option) (*fixtur
 		auth.WithSignUpAllowed(sw.allowed))
 	f := &fixture{users: memory.NewUserStore(), flows: &fakeFlows{gate: gate}, now: time.Unix(1_800_000_000, 0)}
 	f.passwords = memory.NewLoginPasswordStore(f.users)
+	f.accounts = memory.NewAccountCreationStore(f.users, f.passwords, nil)
 	opts = append([]loginpassword.Option{loginpassword.WithEnabled(true), loginpassword.WithClock(f.clock)}, opts...)
-	f.svc = loginpassword.NewService(f.users, f.passwords, memory.NewLoginPasswordChallengeStore(f.clock), f.flows, opts...)
+	f.svc = loginpassword.NewService(f.users, f.passwords, f.accounts, memory.NewLoginPasswordChallengeStore(f.clock), f.flows, opts...)
 	return f, sw
 }
 

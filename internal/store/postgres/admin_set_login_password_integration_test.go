@@ -21,7 +21,7 @@ func TestAdminSetLoginPasswordCommandAuditPostgres(t *testing.T) {
 	ctx := context.Background()
 	users := NewUserStore(pool)
 	passwords := NewLoginPasswordStore(pool)
-	setter := loginpassword.NewService(users, passwords, memory.NewLoginPasswordChallengeStore(time.Now), nil)
+	setter := loginpassword.NewService(users, passwords, nil, memory.NewLoginPasswordChallengeStore(time.Now), nil)
 	svc := admin.NewService(admin.Dependencies{
 		Commands:                    NewAdminStore(pool),
 		LoginPasswords:              setter,

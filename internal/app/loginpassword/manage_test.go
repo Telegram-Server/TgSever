@@ -50,8 +50,9 @@ func newManageFixture(t *testing.T, notices *recordingNotices, log *zap.Logger, 
 	t.Helper()
 	f := &fixture{users: memory.NewUserStore(), flows: &fakeFlows{}, now: time.Unix(1_800_000_000, 0)}
 	f.passwords = memory.NewLoginPasswordStore(f.users)
+	f.accounts = memory.NewAccountCreationStore(f.users, f.passwords, nil)
 	opts = append([]loginpassword.Option{loginpassword.WithEnabled(true), loginpassword.WithClock(f.clock), loginpassword.WithChangeNotices(notices, log)}, opts...)
-	f.svc = loginpassword.NewService(f.users, f.passwords, memory.NewLoginPasswordChallengeStore(f.clock), f.flows, opts...)
+	f.svc = loginpassword.NewService(f.users, f.passwords, f.accounts, memory.NewLoginPasswordChallengeStore(f.clock), f.flows, opts...)
 	return f
 }
 

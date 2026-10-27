@@ -18,9 +18,9 @@ type LoginPasswordFixture struct {
 	Phone     string
 }
 
-// LoginPasswordContract 是登录密码存储的契约：读取、设置、删除；建号并写入登录密码的
-// 原子性（写密码失败时不留下账号）；号码已被占用；并发用同一个号码注册时恰好一个成功。
-// 每个子测试调用 newFixture 取得自己的号码。
+// LoginPasswordContract 是登录密码存储的契约：读取、设置、删除，拒绝不存在的账号和不完整的
+// 材料。建号时一起写入登录密码的原子性见 AccountCreationContract。每个子测试调用 newFixture
+// 取得自己的号码。
 func LoginPasswordContract(t *testing.T, newFixture func(t *testing.T) LoginPasswordFixture) {
 	t.Helper()
 	ctx := context.Background()
@@ -85,97 +85,6 @@ func LoginPasswordContract(t *testing.T, newFixture func(t *testing.T) LoginPass
 		if _, found, err := f.Passwords.GetLoginPassword(ctx, u.ID); err != nil || found {
 			t.Fatalf("get after rejected set found=%v err=%v, want not found", found, err)
 		}
-	})
-
-	t.Run("create with login password", func(t *testing.T) {
-		f := newFixture(t)
-		want := testLoginPassword(3)
-		u, err := f.Passwords.CreateUserWithLoginPassword(ctx, domain.User{AccessHash: 7, Phone: f.Phone, FirstName: "New"}, want)
-		if err != nil {
-			t.Fatalf("create with login password: %v", err)
-		}
-		if u.ID == 0 || u.Phone != f.Phone || u.FirstName != "New" || u.AccessHash != 7 {
-			t.Fatalf("created user = %+v, want id set phone=%s", u, f.Phone)
-		}
-		owner, found, err := f.Users.ByPhone(ctx, f.Phone)
-		if err != nil || !found || owner.ID != u.ID {
-			t.Fatalf("phone owner=%+v found=%v err=%v, want %d", owner, found, err, u.ID)
-		}
-		assertLoginPassword(t, f.Passwords, u.ID, want)
-	})
-
-	t.Run("create is atomic when the password write fails", func(t *testing.T) {
-		f := newFixture(t)
-		incomplete := testLoginPassword(4)
-		incomplete.Verifier = nil
-		if _, err := f.Passwords.CreateUserWithLoginPassword(ctx, domain.User{AccessHash: 8, Phone: f.Phone, FirstName: "Half"}, incomplete); !errors.Is(err, store.ErrLoginPasswordInvalid) {
-			t.Fatalf("create with incomplete password err=%v, want ErrLoginPasswordInvalid", err)
-		}
-		if owner, found, err := f.Users.ByPhone(ctx, f.Phone); err != nil || found {
-			t.Fatalf("phone owner after failed create=%+v found=%v err=%v, want no account", owner, found, err)
-		}
-		// 失败的尝试不能占住号码：之后用完整的密码仍然可以注册。
-		u, err := f.Passwords.CreateUserWithLoginPassword(ctx, domain.User{AccessHash: 9, Phone: f.Phone, FirstName: "Whole"}, testLoginPassword(5))
-		if err != nil {
-			t.Fatalf("create after failed attempt: %v", err)
-		}
-		assertLoginPassword(t, f.Passwords, u.ID, testLoginPassword(5))
-	})
-
-	t.Run("create on occupied phone", func(t *testing.T) {
-		f := newFixture(t)
-		first, err := f.Users.Create(ctx, domain.User{AccessHash: 1, Phone: f.Phone, FirstName: "First"})
-		if err != nil {
-			t.Fatalf("create first owner: %v", err)
-		}
-		if _, err := f.Passwords.CreateUserWithLoginPassword(ctx, domain.User{AccessHash: 2, Phone: f.Phone, FirstName: "Second"}, testLoginPassword(6)); !errors.Is(err, domain.ErrPhoneNumberOccupied) {
-			t.Fatalf("create on occupied phone err=%v, want ErrPhoneNumberOccupied", err)
-		}
-		if _, found, err := f.Passwords.GetLoginPassword(ctx, first.ID); err != nil || found {
-			t.Fatalf("first owner login password found=%v err=%v, want untouched", found, err)
-		}
-	})
-
-	t.Run("concurrent create on the same phone", func(t *testing.T) {
-		f := newFixture(t)
-		type result struct {
-			user     domain.User
-			password domain.LoginPassword
-			err      error
-		}
-		const workers = 4
-		start := make(chan struct{})
-		results := make(chan result, workers)
-		for i := 0; i < workers; i++ {
-			go func(i int) {
-				pw := testLoginPassword(byte(10 + i))
-				<-start
-				u, err := f.Passwords.CreateUserWithLoginPassword(ctx, domain.User{AccessHash: int64(i + 1), Phone: f.Phone, FirstName: "Racer"}, pw)
-				results <- result{user: u, password: pw, err: err}
-			}(i)
-		}
-		close(start)
-		var winner result
-		successes := 0
-		for i := 0; i < workers; i++ {
-			r := <-results
-			switch {
-			case r.err == nil:
-				successes++
-				winner = r
-			case errors.Is(r.err, domain.ErrPhoneNumberOccupied):
-			default:
-				t.Fatalf("concurrent create err=%v, want nil or ErrPhoneNumberOccupied", r.err)
-			}
-		}
-		if successes != 1 {
-			t.Fatalf("successful creates=%d, want exactly 1", successes)
-		}
-		owner, found, err := f.Users.ByPhone(ctx, f.Phone)
-		if err != nil || !found || owner.ID != winner.user.ID {
-			t.Fatalf("phone owner=%+v found=%v err=%v, want winner %d", owner, found, err, winner.user.ID)
-		}
-		assertLoginPassword(t, f.Passwords, winner.user.ID, winner.password)
 	})
 }
 

@@ -60,6 +60,7 @@ type Service struct {
 	enabled    bool
 	users      store.UserStore
 	passwords  store.LoginPasswordStore
+	accounts   store.AccountCreationStore
 	challenges store.LoginPasswordChallengeStore
 	flows      AuthFlows
 	now        func() time.Time
@@ -90,10 +91,11 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-// NewService 创建登录密码服务。users 用来按号码查账号，passwords 保存登录密码，
-// challenges 暂存密码登录的 SRP challenge，flows 提供与验证码登录/注册共用的收尾。
-func NewService(users store.UserStore, passwords store.LoginPasswordStore, challenges store.LoginPasswordChallengeStore, flows AuthFlows, opts ...Option) *Service {
-	s := &Service{users: users, passwords: passwords, challenges: challenges, flows: flows, now: time.Now}
+// NewService 创建登录密码服务。users 用来按号码查账号，passwords 保存登录密码，accounts 在
+// 同一个事务里建号并写入登录密码（密码注册、后台建号带密码），challenges 暂存密码登录的 SRP
+// challenge，flows 提供与验证码登录/注册共用的收尾。
+func NewService(users store.UserStore, passwords store.LoginPasswordStore, accounts store.AccountCreationStore, challenges store.LoginPasswordChallengeStore, flows AuthFlows, opts ...Option) *Service {
+	s := &Service{users: users, passwords: passwords, accounts: accounts, challenges: challenges, flows: flows, now: time.Now}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(s)
@@ -308,8 +310,11 @@ func (s *Service) SignUp(ctx context.Context, a domain.Authorization, phone, fir
 	if err != nil {
 		return domain.User{}, err
 	}
+	if s.accounts == nil {
+		return domain.User{}, fmt.Errorf("loginpassword: account creation store is not configured")
+	}
 	return s.flows.SignUpWithAccountCreator(ctx, a, phone, firstName, lastName, func(ctx context.Context, u domain.User) (domain.User, error) {
-		return s.passwords.CreateUserWithLoginPassword(ctx, u, password)
+		return s.accounts.CreateAccount(ctx, u, store.AccountExtras{LoginPassword: &password})
 	})
 }
 
