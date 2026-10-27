@@ -487,6 +487,8 @@ SELECT c.id,
 		m.read_outbox_max_id,
 		m.unread_mark,
 		m.slowmode_last_send_date,
+		m.restricted_by_user_id,
+		m.restricted_at,
 		bool_or(i.broadcast AND i.role IN ('creator', 'admin')) OVER ()
 FROM user_channel_member_index AS i
 JOIN channel_members AS m
@@ -1085,7 +1087,9 @@ SELECT c.id,
 		m.read_inbox_max_id,
 		m.read_outbox_max_id,
 		m.unread_mark,
-		m.slowmode_last_send_date
+		m.slowmode_last_send_date,
+		m.restricted_by_user_id,
+		m.restricted_at
 FROM channel_members m
 JOIN channels c ON c.id = m.channel_id AND NOT c.deleted
 LEFT JOIN channel_messages top_msg ON top_msg.channel_id = m.channel_id AND top_msg.id = c.top_message_id AND NOT top_msg.deleted
@@ -1272,7 +1276,8 @@ func (s *ChannelStore) leftChannelsByIDs(ctx context.Context, userID int64, ids 
 SELECT channel_id, user_id, inviter_user_id, role, status, joined_at, left_at,
        admin_rights::text, banned_rights::text, rank, available_min_id, available_min_pts,
        history_clear_anchor_id, history_clear_anchor_date,
-       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
+       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+       restricted_by_user_id, restricted_at
 FROM channel_members
 WHERE user_id = $1
   AND channel_id = ANY($2::bigint[])
@@ -1988,6 +1993,8 @@ type channelDialogProjectionValues struct {
 	memberReadInboxMaxID, memberReadOutboxMaxID               int
 	memberUnreadMark                                          bool
 	memberSlowmodeLastSendDate                                int
+	memberRestrictedBy                                        int64
+	memberRestrictedAt                                        int
 }
 
 func (v *channelDialogProjectionValues) scanDestinations() []any {
@@ -2005,6 +2012,7 @@ func (v *channelDialogProjectionValues) scanDestinations() []any {
 		&v.memberAvailableMinID, &v.memberAvailableMinPts,
 		&v.memberReadInboxMaxID, &v.memberReadOutboxMaxID,
 		&v.memberUnreadMark, &v.memberSlowmodeLastSendDate,
+		&v.memberRestrictedBy, &v.memberRestrictedAt,
 	}
 }
 
@@ -2051,6 +2059,8 @@ func (v *channelDialogProjectionValues) result() (int64, domain.Dialog, *domain.
 		ReadOutboxMaxID:        v.memberReadOutboxMaxID,
 		UnreadMark:             v.memberUnreadMark,
 		SlowmodeLastSendDate:   v.memberSlowmodeLastSendDate,
+		RestrictedBy:           v.memberRestrictedBy,
+		RestrictedAt:           v.memberRestrictedAt,
 	}
 	_ = json.Unmarshal([]byte(v.memberAdminRights), &member.AdminRights)
 	_ = json.Unmarshal([]byte(v.memberBannedRights), &member.BannedRights)

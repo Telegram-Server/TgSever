@@ -12,7 +12,7 @@ package domain
 //     入群，重新入群后限制保留；只有 IsKicked 的记录才阻止入群。
 
 // EffectiveAt 返回成员记录在 now 时刻实际生效的视图：期限已到（UntilDate > 0 且 <= now）
-// 的限制视为无限制；被踢出者到期视为已解封（left，可重新加入）；不在群里的受限者到期
+// 的限制视为无限制（执行人与限制时间随之清零）；被踢出者到期视为已解封（left，可重新加入）；不在群里的受限者到期
 // 视为普通的 left。now <= 0（调用方没有时钟）时原样返回。
 func (m ChannelMember) EffectiveAt(now int) ChannelMember {
 	until := m.BannedRights.UntilDate
@@ -20,6 +20,7 @@ func (m ChannelMember) EffectiveAt(now int) ChannelMember {
 		return m
 	}
 	m.BannedRights = ChannelBannedRights{}
+	m.RestrictedBy, m.RestrictedAt = 0, 0
 	if m.Status == ChannelMemberKicked || m.Status == ChannelMemberBanned {
 		m.Status = ChannelMemberLeft
 	}

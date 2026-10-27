@@ -84,7 +84,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 			ReadInboxMaxID:  channel.TopMessageID,
 		}
 		if existing, ok := existingMembers[userID]; ok {
-			member.BannedRights = rejoinBannedRights(existing, date)
+			carryRejoinRestriction(&member, existing, date)
 		}
 		members = append(members, member)
 		invitedIDs = append(invitedIDs, userID)

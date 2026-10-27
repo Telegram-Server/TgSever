@@ -425,11 +425,10 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 			return domain.EditChannelBannedResult{}, err
 		}
 		previous = domain.ChannelMember{
-			ChannelID:     req.ChannelID,
-			UserID:        req.Participant.ID,
-			InviterUserID: req.UserID,
-			Role:          domain.ChannelRoleMember,
-			Status:        domain.ChannelMemberLeft,
+			ChannelID: req.ChannelID,
+			UserID:    req.Participant.ID,
+			Role:      domain.ChannelRoleMember,
+			Status:    domain.ChannelMemberLeft,
 		}
 	}
 	if previous.Role == domain.ChannelRoleCreator {
@@ -441,12 +440,14 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	member := previous
 	member.BannedRights = req.BannedRights
 	member.Role = domain.ChannelRoleMember
+	// 执行人与限制时间单独记录，邀请人不动；解除限制时两项清零。
+	member.RestrictedBy, member.RestrictedAt = req.UserID, req.Date
 	switch {
 	case req.BannedRights.ViewMessages:
-		member.InviterUserID = req.UserID
 		member.Status = domain.ChannelMemberKicked
 		member.LeftAt = req.Date
 	case req.BannedRights.Empty():
+		member.RestrictedBy, member.RestrictedAt = 0, 0
 		if previous.Status == domain.ChannelMemberActive {
 			member.Status = domain.ChannelMemberActive
 		} else {
@@ -454,7 +455,6 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 		}
 		member.LeftAt = 0
 	default:
-		member.InviterUserID = req.UserID
 		if previous.Status == domain.ChannelMemberActive {
 			member.Status = domain.ChannelMemberActive
 		} else {

@@ -18,7 +18,7 @@ import (
 //
 // 结果只取决于成员记录和"是否本人"，不按查看者是否为管理员裁剪。
 func TestTgChannelParticipant(t *testing.T) {
-	const self, user, actor = int64(1), int64(42), int64(7)
+	const self, user, actor, inviter = int64(1), int64(42), int64(7), int64(5)
 	mute := domain.ChannelBannedRights{SendMessages: true, SendMedia: true, UntilDate: 900}
 	kick := domain.ChannelBannedRights{ViewMessages: true, SendMessages: true}
 	for _, tc := range []struct {
@@ -30,53 +30,60 @@ func TestTgChannelParticipant(t *testing.T) {
 		// 规则 1：被踢出。
 		{
 			name: "kicked member is banned with left=true",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberKicked, LeftAt: 400,
+			member: domain.ChannelMember{UserID: user, InviterUserID: inviter, RestrictedBy: actor, RestrictedAt: 390, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberKicked, LeftAt: 400,
 				BannedRights: kick},
-			want: &tg.ChannelParticipantBanned{Left: true, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: 400,
+			want: &tg.ChannelParticipantBanned{Left: true, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: 390,
 				BannedRights: tg.ChatBannedRights{ViewMessages: true, SendMessages: true}},
 		},
 		{
 			name: "kicked self is banned, not channelParticipantSelf",
-			member: domain.ChannelMember{UserID: self, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberKicked, LeftAt: 400,
+			member: domain.ChannelMember{UserID: self, InviterUserID: inviter, RestrictedBy: actor, RestrictedAt: 390, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberKicked, LeftAt: 400,
 				BannedRights: kick},
-			want: &tg.ChannelParticipantBanned{Left: true, Peer: &tg.PeerUser{UserID: self}, KickedBy: actor, Date: 400,
+			want: &tg.ChannelParticipantBanned{Left: true, Peer: &tg.PeerUser{UserID: self}, KickedBy: actor, Date: 390,
 				BannedRights: tg.ChatBannedRights{ViewMessages: true, SendMessages: true}},
 		},
 		{
 			name: "active record with view_messages ban is kicked: left=true",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
+			member: domain.ChannelMember{UserID: user, InviterUserID: inviter, RestrictedBy: actor, RestrictedAt: 380, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
 				BannedRights: domain.ChannelBannedRights{ViewMessages: true}},
-			want: &tg.ChannelParticipantBanned{Left: true, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor,
+			want: &tg.ChannelParticipantBanned{Left: true, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: 380,
 				BannedRights: tg.ChatBannedRights{ViewMessages: true}},
 		},
 		// 规则 2：不在群里但受限。
 		{
 			name: "restricted non-member is banned with left=true",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberBanned, LeftAt: 300,
+			member: domain.ChannelMember{UserID: user, InviterUserID: inviter, RestrictedBy: actor, RestrictedAt: 310, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberBanned, LeftAt: 300,
 				BannedRights: mute},
-			want: &tg.ChannelParticipantBanned{Left: true, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: 300,
+			want: &tg.ChannelParticipantBanned{Left: true, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: 310,
 				BannedRights: tg.ChatBannedRights{SendMessages: true, SendMedia: true, UntilDate: 900}},
 		},
 		// 规则 3：在群受限。
 		{
-			name: "active member with a partial restriction is banned with left=false",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
+			name: "restriction backfilled from before the actor columns has no date",
+			member: domain.ChannelMember{UserID: user, InviterUserID: actor, RestrictedBy: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
 				BannedRights: mute},
 			want: &tg.ChannelParticipantBanned{Left: false, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor,
+				BannedRights: tg.ChatBannedRights{SendMessages: true, SendMedia: true, UntilDate: 900}},
+		},
+		{
+			name: "active member with a partial restriction is banned with left=false",
+			member: domain.ChannelMember{UserID: user, InviterUserID: inviter, RestrictedBy: actor, RestrictedAt: 250, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
+				BannedRights: mute},
+			want: &tg.ChannelParticipantBanned{Left: false, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: 250,
 				BannedRights: tg.ChatBannedRights{SendMessages: true, SendMedia: true, UntilDate: 900}},
 		},
 		{
 			name: "restricted self is banned with left=false, not channelParticipantSelf",
-			member: domain.ChannelMember{UserID: self, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
+			member: domain.ChannelMember{UserID: self, InviterUserID: inviter, RestrictedBy: actor, RestrictedAt: 250, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
 				BannedRights: mute},
-			want: &tg.ChannelParticipantBanned{Left: false, Peer: &tg.PeerUser{UserID: self}, KickedBy: actor,
+			want: &tg.ChannelParticipantBanned{Left: false, Peer: &tg.PeerUser{UserID: self}, KickedBy: actor, Date: 250,
 				BannedRights: tg.ChatBannedRights{SendMessages: true, SendMedia: true, UntilDate: 900}},
 		},
 		{
 			name: "restriction that only carries an until date still counts as a restriction",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
+			member: domain.ChannelMember{UserID: user, InviterUserID: inviter, RestrictedBy: actor, RestrictedAt: 260, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
 				BannedRights: domain.ChannelBannedRights{UntilDate: 900}},
-			want: &tg.ChannelParticipantBanned{Left: false, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor,
+			want: &tg.ChannelParticipantBanned{Left: false, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: 260,
 				BannedRights: tg.ChatBannedRights{UntilDate: 900}},
 		},
 		// 规则 4：已离开。
@@ -170,9 +177,9 @@ func TestTgChannelParticipantAfterRestrictionExpiry(t *testing.T) {
 		},
 		{
 			name: "restriction not yet expired stays banned",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
+			member: domain.ChannelMember{UserID: user, RestrictedBy: actor, RestrictedAt: now - 10, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
 				BannedRights: domain.ChannelBannedRights{SendMessages: true, UntilDate: now + 1}},
-			want: &tg.ChannelParticipantBanned{Peer: &tg.PeerUser{UserID: user}, KickedBy: actor,
+			want: &tg.ChannelParticipantBanned{Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: now - 10,
 				BannedRights: tg.ChatBannedRights{SendMessages: true, UntilDate: now + 1}},
 		},
 	} {

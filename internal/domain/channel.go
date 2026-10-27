@@ -493,15 +493,20 @@ func (c Channel) MembersListAdminOnly() bool {
 
 // ChannelMember is one user's channel membership and read state.
 type ChannelMember struct {
-	ChannelID       int64
-	UserID          int64
-	InviterUserID   int64
-	Role            ChannelMemberRole
-	Status          ChannelMemberStatus
-	JoinedAt        int
-	LeftAt          int
-	AdminRights     ChannelAdminRights
-	BannedRights    ChannelBannedRights
+	ChannelID     int64
+	UserID        int64
+	InviterUserID int64
+	Role          ChannelMemberRole
+	Status        ChannelMemberStatus
+	JoinedAt      int
+	LeftAt        int
+	AdminRights   ChannelAdminRights
+	BannedRights  ChannelBannedRights
+	// RestrictedBy/RestrictedAt 记录当前限制（含踢出）由哪位管理员、在何时设置；限制为空时
+	// 两项为 0。它们与 InviterUserID 分开：限制一个在群成员不会覆盖他的邀请人。迁移前已有的
+	// 在群受限记录 RestrictedAt 为 0（当时没有记录限制时间）。
+	RestrictedBy    int64
+	RestrictedAt    int
 	Rank            string
 	AvailableMinID  int
 	AvailableMinPts int

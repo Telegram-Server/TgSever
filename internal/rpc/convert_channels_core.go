@@ -835,11 +835,10 @@ func tgChannelParticipantBanned(member domain.ChannelMember, left bool) *tg.Chan
 	}
 }
 
-// channelMemberRestrictionActor 返回封禁类型输出的执行人与时间。成员记录暂时没有专门的
-// 字段：限制写入时把执行的管理员记在邀请人字段，踢出/离开时间记在离开时间。专门字段
-// 由"记录限制人与限制时间"（#167）补上后只需改这一处。
+// channelMemberRestrictionActor 返回封禁类型输出的执行人与时间：设置限制（含踢出）时记下的
+// 管理员与时刻。
 func channelMemberRestrictionActor(member domain.ChannelMember) (kickedBy int64, date int) {
-	return member.InviterUserID, member.LeftAt
+	return member.RestrictedBy, member.RestrictedAt
 }
 
 func tgChannelAdminLogEvents(viewerUserID int64, events []domain.ChannelAdminLogEvent) []tg.ChannelAdminLogEvent {

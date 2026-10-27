@@ -199,7 +199,8 @@ func getChannelMemberByID(ctx context.Context, db sqlcgen.DBTX, channelID, userI
 SELECT channel_id, user_id, inviter_user_id, role, status, joined_at, left_at,
        admin_rights::text, banned_rights::text, rank, available_min_id, available_min_pts,
        history_clear_anchor_id, history_clear_anchor_date,
-       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
+       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+       restricted_by_user_id, restricted_at
 FROM channel_members
 WHERE channel_id = $1 AND user_id = $2`, channelID, userID)
 	member, err := scanChannelMember(row)
@@ -225,8 +226,9 @@ func upsertChannelMemberTx(ctx context.Context, tx pgx.Tx, channel domain.Channe
 INSERT INTO channel_members (
     channel_id, user_id, inviter_user_id, role, status, joined_at, left_at, admin_rights, banned_rights,
     rank, available_min_id, available_min_pts, history_clear_anchor_id, history_clear_anchor_date,
-    read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+    read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+    restricted_by_user_id, restricted_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 ON CONFLICT (channel_id, user_id) DO UPDATE SET
     inviter_user_id = EXCLUDED.inviter_user_id,
     role = EXCLUDED.role,
@@ -236,6 +238,8 @@ ON CONFLICT (channel_id, user_id) DO UPDATE SET
     admin_rights = EXCLUDED.admin_rights,
     banned_rights = EXCLUDED.banned_rights,
     rank = EXCLUDED.rank,
+    restricted_by_user_id = EXCLUDED.restricted_by_user_id,
+    restricted_at = EXCLUDED.restricted_at,
     available_min_id = GREATEST(channel_members.available_min_id, EXCLUDED.available_min_id),
     available_min_pts = GREATEST(channel_members.available_min_pts, EXCLUDED.available_min_pts),
     read_inbox_max_id = GREATEST(channel_members.read_inbox_max_id, EXCLUDED.read_inbox_max_id),
@@ -243,7 +247,8 @@ ON CONFLICT (channel_id, user_id) DO UPDATE SET
 		member.ChannelID, member.UserID, member.InviterUserID, string(member.Role), string(member.Status),
 		member.JoinedAt, member.LeftAt, adminRights, bannedRights, member.Rank, member.AvailableMinID,
 		member.AvailableMinPts, member.HistoryClearAnchorID, member.HistoryClearAnchorDate,
-		member.ReadInboxMaxID, member.ReadOutboxMaxID, member.UnreadMark, member.SlowmodeLastSendDate); err != nil {
+		member.ReadInboxMaxID, member.ReadOutboxMaxID, member.UnreadMark, member.SlowmodeLastSendDate,
+		member.RestrictedBy, member.RestrictedAt); err != nil {
 		return fmt.Errorf("upsert channel member: %w", err)
 	}
 	return upsertUserChannelMemberIndexTx(ctx, tx, channel, member)
@@ -350,6 +355,7 @@ func scanChannelWithMember(row rowScanner) (domain.Channel, domain.ChannelMember
 		&member.JoinedAt, &member.LeftAt, &adminRights, &bannedRights, &member.Rank,
 		&member.AvailableMinID, &member.AvailableMinPts, &member.HistoryClearAnchorID, &member.HistoryClearAnchorDate,
 		&member.ReadInboxMaxID, &member.ReadOutboxMaxID, &member.UnreadMark, &member.SlowmodeLastSendDate,
+		&member.RestrictedBy, &member.RestrictedAt,
 	)
 	if err := row.Scan(dest...); err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, err
@@ -386,6 +392,7 @@ func scanChannelMember(row rowScanner) (domain.ChannelMember, error) {
 		&member.JoinedAt, &member.LeftAt, &adminRights, &bannedRights, &member.Rank,
 		&member.AvailableMinID, &member.AvailableMinPts, &member.HistoryClearAnchorID, &member.HistoryClearAnchorDate,
 		&member.ReadInboxMaxID, &member.ReadOutboxMaxID, &member.UnreadMark, &member.SlowmodeLastSendDate,
+		&member.RestrictedBy, &member.RestrictedAt,
 	); err != nil {
 		return domain.ChannelMember{}, err
 	}
@@ -406,6 +413,7 @@ func scanChannelMemberWithCount(row rowScanner) (domain.ChannelMember, int, erro
 		&member.JoinedAt, &member.LeftAt, &adminRights, &bannedRights, &member.Rank,
 		&member.AvailableMinID, &member.AvailableMinPts, &member.HistoryClearAnchorID, &member.HistoryClearAnchorDate,
 		&member.ReadInboxMaxID, &member.ReadOutboxMaxID, &member.UnreadMark, &member.SlowmodeLastSendDate,
+		&member.RestrictedBy, &member.RestrictedAt,
 		&count,
 	); err != nil {
 		return domain.ChannelMember{}, 0, err
@@ -544,16 +552,20 @@ func zeroChannelAdminRights(rights domain.ChannelAdminRights) bool {
 	return rights == domain.ChannelAdminRights{}
 }
 
-// rejoinBannedRights 返回旧成员记录重新入群后应带的限制：退群不解除限制，
+// carryRejoinRestriction 把旧成员记录重新入群后应带的限制写进 member：退群不解除限制，
 // 否则"先退群再让人拉回来"就能绕过；不在群里时被限制的人（Status banned）同样带着限制入群。
 // 被踢出者（IsKicked）能重新入群只可能是被有封禁权的管理员拉回，等同解封。
 // 期限（UntilDate，0 为永久）在入群时刻 date 已过的限制视为无限制。
-func rejoinBannedRights(existing domain.ChannelMember, date int) domain.ChannelBannedRights {
+// 带回的限制连同执行人与限制时间一起带回；不带限制时两项为 0。
+func carryRejoinRestriction(member *domain.ChannelMember, existing domain.ChannelMember, date int) {
 	existing = existing.EffectiveAt(restrictionNow(date))
-	if existing.IsKicked() {
-		return domain.ChannelBannedRights{}
+	if existing.IsKicked() || existing.BannedRights.Empty() {
+		member.BannedRights = domain.ChannelBannedRights{}
+		member.RestrictedBy, member.RestrictedAt = 0, 0
+		return
 	}
-	return existing.BannedRights
+	member.BannedRights = existing.BannedRights
+	member.RestrictedBy, member.RestrictedAt = existing.RestrictedBy, existing.RestrictedAt
 }
 
 func creatorChannelMember(channelID, userID int64, date int) domain.ChannelMember {

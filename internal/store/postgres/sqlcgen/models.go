@@ -934,6 +934,8 @@ type ChannelMember struct {
 	UpdatedAt              pgtype.Timestamptz
 	HistoryClearAnchorID   int32
 	HistoryClearAnchorDate int32
+	RestrictedByUserID     int64
+	RestrictedAt           int32
 }
 
 type ChannelMessage struct {

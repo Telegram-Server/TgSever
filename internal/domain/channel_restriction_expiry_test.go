@@ -29,6 +29,18 @@ func TestChannelMemberEffectiveAt(t *testing.T) {
 			want:   ChannelMember{Status: ChannelMemberActive},
 		},
 		{
+			name:   "expired restriction drops its actor and date",
+			at:     now,
+			member: ChannelMember{Status: ChannelMemberActive, InviterUserID: 5, RestrictedBy: 7, RestrictedAt: now - 100, BannedRights: mute(now - 1)},
+			want:   ChannelMember{Status: ChannelMemberActive, InviterUserID: 5},
+		},
+		{
+			name:   "unexpired restriction keeps its actor and date",
+			at:     now,
+			member: ChannelMember{Status: ChannelMemberActive, InviterUserID: 5, RestrictedBy: 7, RestrictedAt: now - 100, BannedRights: mute(now + 1)},
+			want:   ChannelMember{Status: ChannelMemberActive, InviterUserID: 5, RestrictedBy: 7, RestrictedAt: now - 100, BannedRights: mute(now + 1)},
+		},
+		{
 			name:   "active restriction after expiry is lifted",
 			at:     now,
 			member: ChannelMember{Status: ChannelMemberActive, BannedRights: mute(now - 1)},
