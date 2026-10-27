@@ -128,8 +128,8 @@ type Service struct {
 	// codeLoginAllowed 是"是否允许验证码登录"的唯一来源，每次判断都实时调用（不缓存）。
 	// nil 表示允许（默认行为不变）。见 WithCodeLoginAllowed 与 CheckCodeLoginAllowed。
 	codeLoginAllowed CodeLoginAllowedFunc
-	// accounts 与 selfSignUpDefaults 见 self_signup_permissions.go（#163）。
-	accounts           store.AccountCreationStore
+	// accountCreation 与 selfSignUpDefaults 见 self_signup_permissions.go（#163）。
+	accountCreation    store.AccountCreationStore
 	selfSignUpDefaults PermissionDefaultsReader
 }
 

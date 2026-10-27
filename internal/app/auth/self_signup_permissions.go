@@ -23,9 +23,9 @@ type SignUpAccountFunc func(ctx context.Context, u domain.User, permissions *dom
 
 // WithAccountCreation 让验证码注册经原子建号操作建号，以便与默认权限快照一起写入。
 // 不设置时验证码注册退回普通建号（此时套用模板会失败，见 selfSignUpPermissions）。
-func WithAccountCreation(accounts store.AccountCreationStore) Option {
+func WithAccountCreation(accountCreation store.AccountCreationStore) Option {
 	return func(s *Service) {
-		s.accounts = accounts
+		s.accountCreation = accountCreation
 	}
 }
 
@@ -57,8 +57,8 @@ func (s *Service) selfSignUpPermissions(ctx context.Context) (*domain.AccountPer
 // createSelfSignUpUser 是验证码注册的建号：配置了原子建号操作时经它建号（带权限快照），
 // 否则普通建号。有权限快照却没有原子建号操作是装配错误，拒绝建号。
 func (s *Service) createSelfSignUpUser(ctx context.Context, u domain.User, permissions *domain.AccountPermissions) (domain.User, error) {
-	if s.accounts != nil {
-		return s.accounts.CreateAccount(ctx, u, store.AccountExtras{Permissions: permissions})
+	if s.accountCreation != nil {
+		return s.accountCreation.CreateAccount(ctx, u, store.AccountExtras{Permissions: permissions})
 	}
 	if permissions != nil {
 		return domain.User{}, errors.New("auth: permission defaults apply to sign up but no account creation store is configured")
