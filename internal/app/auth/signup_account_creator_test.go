@@ -18,7 +18,7 @@ func TestSignUpWithAccountCreatorRejectsUnbindableAuthKeyBeforeCreating(t *testi
 
 	created := false
 	_, err := s.SignUpWithAccountCreator(context.Background(), domain.Authorization{AuthKeyID: [8]byte{9, 9, 9}}, "15550310900", "Nobody", "",
-		func(ctx context.Context, u domain.User) (domain.User, error) {
+		func(ctx context.Context, u domain.User, _ *domain.AccountPermissions) (domain.User, error) {
 			created = true
 			return users.Create(ctx, u)
 		})

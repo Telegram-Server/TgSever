@@ -182,7 +182,9 @@ func TestCodeLoginDisabledLeavesNonCodeEntriesWorking(t *testing.T) {
 	// 密码注册。
 	key[0] = 0x95
 	created, err := f.svc.SignUpWithAccountCreator(ctx, domain.Authorization{AuthKeyID: key}, "15550009110", "Password", "",
-		func(ctx context.Context, u domain.User) (domain.User, error) { return f.users.Create(ctx, u) })
+		func(ctx context.Context, u domain.User, _ *domain.AccountPermissions) (domain.User, error) {
+			return f.users.Create(ctx, u)
+		})
 	if err != nil || created.ID == 0 {
 		t.Fatalf("SignUpWithAccountCreator user=%d err=%v", created.ID, err)
 	}
