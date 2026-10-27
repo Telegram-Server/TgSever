@@ -31,9 +31,10 @@ const challengeTTL = 5 * time.Minute
 var errNoAuthKey = errors.New("loginpassword: request has no raw auth key")
 
 // SignUpCompleter 是注册的后半段（auth.Service.SignUpWithAccountCreator）：按 auth.signUp 的
-// 规则校验号码和名字，用 create 建号，然后赠送会员、绑定授权、写欢迎消息。
+// 规则校验号码和名字，读默认权限模板，用 create 建号（带要套用的权限快照），然后赠送会员、
+// 绑定授权、写欢迎消息。
 type SignUpCompleter interface {
-	SignUpWithAccountCreator(ctx context.Context, a domain.Authorization, phone, firstName, lastName string, create auth.CreateAccountFunc) (domain.User, error)
+	SignUpWithAccountCreator(ctx context.Context, a domain.Authorization, phone, firstName, lastName string, create auth.SignUpAccountFunc) (domain.User, error)
 }
 
 // SignInCompleter 是登录的收尾（auth.Service.FinishVerifiedSignIn）：与验证码登录共用
@@ -313,8 +314,9 @@ func (s *Service) SignUp(ctx context.Context, a domain.Authorization, phone, fir
 	if s.accounts == nil {
 		return domain.User{}, fmt.Errorf("loginpassword: account creation store is not configured")
 	}
-	return s.flows.SignUpWithAccountCreator(ctx, a, phone, firstName, lastName, func(ctx context.Context, u domain.User) (domain.User, error) {
-		return s.accounts.CreateAccount(ctx, u, store.AccountExtras{LoginPassword: &password})
+	// permissions 是 auth 读到的自助注册默认权限快照（不套用时为 nil），与登录密码一起随账号写入。
+	return s.flows.SignUpWithAccountCreator(ctx, a, phone, firstName, lastName, func(ctx context.Context, u domain.User, permissions *domain.AccountPermissions) (domain.User, error) {
+		return s.accounts.CreateAccount(ctx, u, store.AccountExtras{LoginPassword: &password, Permissions: permissions})
 	})
 }
 

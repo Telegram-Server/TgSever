@@ -120,6 +120,8 @@ type loginPasswordServer struct {
 	// permissions 是服务端的员工权限模块（RPC 闸门与 appConfig 叠加层用的同一个），供后台设置
 	// 员工权限（admin.AccountPermissionsService）在进程内接上。
 	permissions *permissionsapp.Service
+	// accountPermissions 是权限模块底下的内存 store，也存默认权限模板，供测试直接写入模板（#163）。
+	accountPermissions *memory.AccountPermissionsStore
 }
 
 // tombstoningUserStore 在内存 UserStore 外面加一层"已注销"标记。内存 store 没有账号
@@ -182,12 +184,16 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	cloudPasswords := memory.NewPasswordStore()
 	activeSessions := NewSessionManager(zaptest.NewLogger(t).Named("sessions"))
 	authorizations := memory.NewAuthorizationStore()
+	// 员工权限与默认权限模板共用一个内存 store；验证码注册经原子建号操作套用模板（#163）。
+	accountPermissions := memory.NewAccountPermissionsStore(baseUsers)
 	authService := auth.NewService(userStore, authorizations, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), loginPasswordTestCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore)),
 		auth.WithPasswords(cloudPasswords),
 		auth.WithSignUpAllowed(auth.StaticSignUpAllowed(!opts.signUpDisabled)),
-		auth.WithCodeLoginAllowed(auth.StaticCodeLoginAllowed(!opts.codeLoginDisabled)))
+		auth.WithCodeLoginAllowed(auth.StaticCodeLoginAllowed(!opts.codeLoginDisabled)),
+		auth.WithAccountCreation(memory.NewAccountCreationStore(baseUsers, nil, accountPermissions)),
+		auth.WithSelfSignUpPermissionDefaults(accountPermissions))
 	limiter := newCountingRateLimiter()
 	loginPasswordStore := memory.NewLoginPasswordStore(baseUsers)
 	loginPasswords := loginpasswordapp.NewService(userStore, loginPasswordStore,
@@ -200,7 +206,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	lifecycle := memory.NewAccountLifecycleStore(baseUsers, loginPasswordStore,
 		memory.WithAccountLifecyclePasswords(cloudPasswords), memory.WithAccountLifecycleAuthorizations(authorizations))
 
-	permissionsService := permissionsapp.NewService(memory.NewAccountPermissionsStore(baseUsers), userStore)
+	permissionsService := permissionsapp.NewService(accountPermissions, userStore)
 	deps := rpc.Deps{
 		Permissions:   permissionsService,
 		Auth:          authService,
@@ -239,7 +245,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		}
 		<-outboxDone
 	})
-	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords, authorizations: authorizations, authKeys: authKeyStore, router: router, permissions: permissionsService}
+	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords, authorizations: authorizations, authKeys: authKeyStore, router: router, permissions: permissionsService, accountPermissions: accountPermissions}
 }
 
 // run 用一个全新的 auth key 连上服务端执行 fn。fn 里的断言失败要 return error，

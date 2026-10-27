@@ -1718,6 +1718,7 @@ func run(logger *zap.Logger) error {
 		dialogStore,
 		newTranslationOptions(cfg, rateLimiter, logger)...,
 	)
+	accountCreationStore := postgres.NewAccountCreationStore(pool)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyGetBatchStore, tempAuthKeyStore, cfg.DevAuthCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(messageStore),
@@ -1732,6 +1733,10 @@ func run(logger *zap.Logger) error {
 		}),
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
+		// 自助注册套用默认权限模板（#163）：验证码注册经原子建号操作建号，模板的"自助注册也套用"
+		// 开启时权限快照与账号同事务写入；模板每次注册现读。密码注册经 loginpassword 走同一读取。
+		auth.WithAccountCreation(accountCreationStore),
+		auth.WithSelfSignUpPermissionDefaults(accountPermissionsStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
 		// 注册开关：管理面板覆盖值（identity.json，每次现读）优先，未设置时跟随
 		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，

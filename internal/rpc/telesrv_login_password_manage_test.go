@@ -34,7 +34,7 @@ func (s *failingAuthorizationLookup) Authorization(context.Context, [8]byte) (do
 // unusedAuthFlows 满足 loginpassword.AuthFlows；已登录的管理方法不会走到登录/注册收尾。
 type unusedAuthFlows struct{}
 
-func (unusedAuthFlows) SignUpWithAccountCreator(context.Context, domain.Authorization, string, string, string, auth.CreateAccountFunc) (domain.User, error) {
+func (unusedAuthFlows) SignUpWithAccountCreator(context.Context, domain.Authorization, string, string, string, auth.SignUpAccountFunc) (domain.User, error) {
 	return domain.User{}, errors.New("unexpected sign-up")
 }
 

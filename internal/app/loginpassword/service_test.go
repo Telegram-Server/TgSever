@@ -38,8 +38,8 @@ func (f *fakeFlows) CheckSignUpAllowed(ctx context.Context) error {
 	return f.gate.CheckSignUpAllowed(ctx)
 }
 
-func (f *fakeFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create auth.CreateAccountFunc) (domain.User, error) {
-	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName})
+func (f *fakeFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create auth.SignUpAccountFunc) (domain.User, error) {
+	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName}, nil)
 }
 
 func (f *fakeFlows) FinishVerifiedSignIn(_ context.Context, _ domain.Authorization, u domain.User) (domain.User, error) {

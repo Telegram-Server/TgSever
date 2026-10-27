@@ -128,6 +128,9 @@ type Service struct {
 	// codeLoginAllowed 是"是否允许验证码登录"的唯一来源，每次判断都实时调用（不缓存）。
 	// nil 表示允许（默认行为不变）。见 WithCodeLoginAllowed 与 CheckCodeLoginAllowed。
 	codeLoginAllowed CodeLoginAllowedFunc
+	// accounts 与 selfSignUpDefaults 见 self_signup_permissions.go（#163）。
+	accounts           store.AccountCreationStore
+	selfSignUpDefaults PermissionDefaultsReader
 }
 
 type loginEmailStore interface {
@@ -1564,8 +1567,8 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 
-	create := func(ctx context.Context, newUser domain.User) (domain.User, error) {
-		u, err := s.users.Create(ctx, newUser)
+	create := func(ctx context.Context, newUser domain.User, permissions *domain.AccountPermissions) (domain.User, error) {
+		u, err := s.createSelfSignUpUser(ctx, newUser, permissions)
 		if err != nil {
 			return domain.User{}, err
 		}
@@ -1626,8 +1629,9 @@ func NormalizeSignUpName(firstName, lastName string) (string, string, error) {
 
 // SignUpWithAccountCreator 用调用方提供的建号步骤完成一次不经验证码的注册（密码注册），
 // 号码和名字按 auth.signUp 的规则校验。建号之后的流程与验证码注册完全一致：
-// 生成 access_hash、按配置赠送会员、绑定授权、写欢迎消息。
-func (s *Service) SignUpWithAccountCreator(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create CreateAccountFunc) (domain.User, error) {
+// 生成 access_hash、按配置赠送会员、绑定授权、写欢迎消息。默认权限模板对自助注册生效时，
+// 快照经 create 的 permissions 参数交给调用方，与账号一起写入。
+func (s *Service) SignUpWithAccountCreator(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create SignUpAccountFunc) (domain.User, error) {
 	if s == nil || create == nil {
 		return domain.User{}, errors.New("auth: sign up without account creator")
 	}
@@ -1654,12 +1658,17 @@ func (s *Service) SignUpWithAccountCreator(ctx context.Context, auth domain.Auth
 // signUpAccount 是各条注册路径共用的后半段：生成 access_hash、按配置赠送会员、经 create
 // 建号、绑定授权，然后（afterBind 成功后）写欢迎消息。phone 和名字必须已经校验过。
 // afterBind 用于验证码注册在欢迎消息之前写入的 bootstrap 登录码消息，可以为 nil。
-func (s *Service) signUpAccount(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create CreateAccountFunc, afterBind func(context.Context, domain.User) error) (domain.User, error) {
+// 建号前读一次默认权限模板（自助注册套用时把快照交给 create）；读取失败则不建号。
+func (s *Service) signUpAccount(ctx context.Context, auth domain.Authorization, phone, firstName, lastName string, create SignUpAccountFunc, afterBind func(context.Context, domain.User) error) (domain.User, error) {
 	newUser, err := s.newSignUpUser(phone, firstName, lastName)
 	if err != nil {
 		return domain.User{}, err
 	}
-	u, err := create(ctx, newUser)
+	permissions, err := s.selfSignUpPermissions(ctx)
+	if err != nil {
+		return domain.User{}, err
+	}
+	u, err := create(ctx, newUser, permissions)
 	if err != nil {
 		return domain.User{}, err
 	}
