@@ -292,6 +292,57 @@ func (r *readStore) Ping(ctx context.Context) error {
 
 // AccountUsername is one collectible (Fragment-style) username a peer holds.
 //
+// WhitelistMember 是发送白名单里的一个人在面板上的展示信息（#160）。Found=false 表示库里已没有
+// 这个账号，只剩 id：名单仍显示这一项，管理员可以移除它。
+type WhitelistMember struct {
+	ID        int64  `json:"id"`
+	Found     bool   `json:"found"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Username  string `json:"username"`
+	Phone     string `json:"phone"`
+	Bot       bool   `json:"bot"`
+}
+
+// WhitelistMembers 一次查询读出一组账号的展示信息，按 ids 的顺序返回，每个 id 一项。
+func (s *readStore) WhitelistMembers(ctx context.Context, ids []int64) ([]WhitelistMember, error) {
+	out := make([]WhitelistMember, len(ids))
+	for i, id := range ids {
+		out[i] = WhitelistMember{ID: id}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	// 手写 SQL 而非 sqlc：本文件的读库查询都是手写的面板只读投影，沿用同一形式。
+	// @用户名与账号列表一致：可编辑槽位优先，其次 peer_usernames 里的可编辑行。
+	rows, err := s.pool.Query(ctx, `
+SELECT u.id, u.first_name, u.last_name, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.phone, u.is_bot
+FROM users u
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
+WHERE u.id = ANY($1::bigint[])`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("whitelist members: %w", err)
+	}
+	defer rows.Close()
+	found := make(map[int64]WhitelistMember, len(ids))
+	for rows.Next() {
+		m := WhitelistMember{Found: true}
+		if err := rows.Scan(&m.ID, &m.FirstName, &m.LastName, &m.Username, &m.Phone, &m.Bot); err != nil {
+			return nil, err
+		}
+		found[m.ID] = m
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, id := range ids {
+		if m, ok := found[id]; ok {
+			out[i] = m
+		}
+	}
+	return out, nil
+}
+
 // Active mirrors the username#b4073647 flag: an inactive collectible is still
 // owned, it just does not resolve publicly, and an operator has to be able to
 // tell those two apart -- so the row is listed either way and carries the flag
@@ -318,6 +369,8 @@ type AccountRow struct {
 	Verified     bool
 	Scam         bool
 	Fake         bool
+	// Bot 是 users.is_bot。账号列表本就排除 bot，这里只有搜索结果和账号详情会是 true。
+	Bot          bool
 	PremiumUntil int64
 	LastActiveAt time.Time
 	DeviceCount  int
@@ -665,7 +718,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified, u.scam, u.fake,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), COALESCE(a.device_count, 0)::int,
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username, u.is_bot
 FROM matched m
 JOIN users u ON u.id = m.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
@@ -680,7 +733,7 @@ LIMIT $6`, id, phone, phoneRaw, username, namePattern, accountSearchLimit)
 	out := make([]AccountRow, 0)
 	for rows.Next() {
 		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username, &item.Bot); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -1118,6 +1171,7 @@ WHERE u.id = $1`, userID).Scan(
 	if err != nil {
 		return out, fmt.Errorf("get account: %w", err)
 	}
+	out.Account.Bot = out.Bot
 	if deviceLimit != nil {
 		n := int(*deviceLimit)
 		out.DeviceLimit = &n

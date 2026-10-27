@@ -748,27 +748,40 @@ func (s *server) proxyAdminJSONWithCache(
 	maxBytes int64,
 	cacheControl string,
 ) {
+	raw, ok := s.getAdminJSON(w, r, apiPath, maxBytes)
+	if !ok {
+		return
+	}
+	writeRawJSON(w, raw, cacheControl)
+}
+
+// getAdminJSON GET 服务端 admin API 并返回成功响应的原文；失败时已写好错误响应，返回 false。
+func (s *server) getAdminJSON(w http.ResponseWriter, r *http.Request, apiPath string, maxBytes int64) ([]byte, bool) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.cfg.AdminAPIURL+apiPath, nil)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, false
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		writeAPIError(w, http.StatusBadGateway, err.Error())
-		return
+		return nil, false
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil || int64(len(raw)) > maxBytes {
 		writeAPIError(w, http.StatusBadGateway, "invalid admin api response")
-		return
+		return nil, false
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		writeAPIError(w, resp.StatusCode, string(raw))
-		return
+		return nil, false
 	}
+	return raw, true
+}
+
+func writeRawJSON(w http.ResponseWriter, raw []byte, cacheControl string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", cacheControl)
 	w.WriteHeader(http.StatusOK)
@@ -984,13 +997,71 @@ func (s *server) handleDeviceBindingsAPI(w http.ResponseWriter, r *http.Request)
 }
 
 // handleAccountPermissionsAPI 代理账号的员工权限（#119）。不缓存：修改之后要立刻看到新设置。
+// 服务端只给发送白名单的 user_ids；面板在这里一次批量读库补出 send_whitelist.members（#160），
+// 名单才能显示名字、@用户名和 bot 标记。其余字段原样透传。
 func (s *server) handleAccountPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 	id, err := parseInt64(r.PathValue("id"))
 	if err != nil || id <= 0 {
 		writeAPIError(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
-	s.proxyAdminJSONNoStore(w, r, fmt.Sprintf("/v1/accounts/%d/permissions", id), 1<<20)
+	raw, ok := s.getAdminJSON(w, r, fmt.Sprintf("/v1/accounts/%d/permissions", id), 1<<20)
+	if !ok {
+		return
+	}
+	out, status, err := s.withWhitelistMembers(r.Context(), raw)
+	if err != nil {
+		writeAPIError(w, status, err.Error())
+		return
+	}
+	writeRawJSON(w, out, "no-store")
+}
+
+// withWhitelistMembers 给权限设置的 JSON 补上 send_whitelist.members（顺序同 user_ids），其余字段不动。
+// 失败时返回应回给浏览器的状态码。
+func (s *server) withWhitelistMembers(ctx context.Context, raw []byte) ([]byte, int, error) {
+	var setting map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &setting); err != nil {
+		return nil, http.StatusBadGateway, fmt.Errorf("invalid admin api response")
+	}
+	var whitelist map[string]json.RawMessage
+	if body, ok := setting["send_whitelist"]; ok && string(body) != "null" {
+		if err := json.Unmarshal(body, &whitelist); err != nil {
+			return nil, http.StatusBadGateway, fmt.Errorf("invalid admin api response")
+		}
+	}
+	if whitelist == nil {
+		whitelist = map[string]json.RawMessage{}
+	}
+	var ids []int64
+	if body, ok := whitelist["user_ids"]; ok {
+		if err := json.Unmarshal(body, &ids); err != nil {
+			return nil, http.StatusBadGateway, fmt.Errorf("invalid admin api response")
+		}
+	}
+	members := []WhitelistMember{}
+	if len(ids) > 0 {
+		if s.read == nil {
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("read store is not configured")
+		}
+		var err error
+		if members, err = s.read.WhitelistMembers(ctx, ids); err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+	}
+	encoded, err := json.Marshal(members)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	whitelist["members"] = encoded
+	if setting["send_whitelist"], err = json.Marshal(whitelist); err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	out, err := json.Marshal(setting)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return out, http.StatusOK, nil
 }
 
 func (s *server) handleChannelAvatarAPI(w http.ResponseWriter, r *http.Request) {

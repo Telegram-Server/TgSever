@@ -1,11 +1,13 @@
 import { Check, Loader2, Search, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api";
 import { useI18n } from "../i18n";
 import { channelKind, displayName, displayPhone, displayUsername } from "../lib/format";
 import type { AccountRow, BotRow, ChannelRow } from "../types";
 import { Badge } from "./ui";
 
+// UserPicker searches accounts and picks one. With a value it keeps that
+// selection (select mode). UserAdder below is the same search in add mode.
 export function UserPicker({
   label,
   value,
@@ -17,12 +19,79 @@ export function UserPicker({
   onChange: (row: AccountRow | null) => void;
   variant?: "panel" | "dropdown";
 }) {
+  return <UserSearch label={label} value={value} onPick={onChange} onClear={() => onChange(null)} variant={variant} />;
+}
+
+// UserAdder is the add mode of the user search: picking a row calls onAdd and
+// clears the search box, keeping the results open so several accounts can be
+// added in a row. It holds no selection. unavailable names the rows that cannot
+// be picked (the account itself, people already added): it returns the badge
+// shown in place of the row's status, or undefined for a pickable row.
+export function UserAdder({
+  label,
+  onAdd,
+  unavailable,
+  disabled = false,
+  placeholder
+}: {
+  label: string;
+  onAdd: (row: AccountRow) => void;
+  unavailable?: (row: AccountRow) => string | undefined;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <UserSearch
+      label={label}
+      value={null}
+      onPick={onAdd}
+      variant="dropdown"
+      addMode
+      unavailable={unavailable}
+      disabled={disabled}
+      placeholder={placeholder}
+    />
+  );
+}
+
+function UserSearch({
+  label,
+  value,
+  onPick,
+  onClear,
+  variant,
+  addMode = false,
+  unavailable,
+  disabled = false,
+  placeholder
+}: {
+  label: string;
+  value: AccountRow | null;
+  onPick: (row: AccountRow) => void;
+  onClear?: () => void;
+  variant: "panel" | "dropdown";
+  addMode?: boolean;
+  unavailable?: (row: AccountRow) => string | undefined;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<AccountRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function pick(row: AccountRow) {
+    onPick(row);
+    if (addMode) {
+      setQuery("");
+      inputRef.current?.focus();
+      return;
+    }
+    setOpen(false);
+  }
 
   async function search(showResults = false) {
     if (showResults && variant === "dropdown") {
@@ -59,8 +128,8 @@ export function UserPicker({
     >
       <div className="picker-head">
         <span>{label}</span>
-        {value ? (
-          <button className="link-button" type="button" onClick={() => { onChange(null); setOpen(true); }}>
+        {value && onClear ? (
+          <button className="link-button" type="button" onClick={() => { onClear(); setOpen(true); }}>
             <X size={13} /> {t("common.clear")}
           </button>
         ) : null}
@@ -78,7 +147,10 @@ export function UserPicker({
       {(!value || variant !== "dropdown") && <div className="picker-search">
         <Search size={15} />
         <input
+          ref={inputRef}
+          aria-label={label}
           value={query}
+          disabled={disabled}
           onChange={(event) => setQuery(event.target.value)}
           onFocus={() => { if (variant === "dropdown") setOpen(true); }}
           onKeyDown={(event) => {
@@ -87,27 +159,39 @@ export function UserPicker({
               void search(true);
             }
           }}
-          placeholder={t("picker.userPlaceholder")}
+          placeholder={placeholder ?? t("picker.userPlaceholder")}
         />
-        <button className="btn compact-btn" type="button" onClick={() => void search(true)} disabled={busy}>
+        <button className="btn compact-btn" type="button" onClick={() => void search(true)} disabled={busy || disabled}>
           {busy ? <Loader2 size={14} className="spin" /> : t("common.search")}
         </button>
       </div>}
       {error && <div className="picker-error">{error}</div>}
-      {(variant !== "dropdown" || open) && <div className="picker-results">
-        {rows.map((row) => (
-          <button
-            key={row.ID}
-            className={`picker-row ${value?.ID === row.ID ? "selected" : ""}`}
-            type="button"
-            onClick={() => { onChange(row); setOpen(false); }}
-          >
-            <span className="mono">{row.ID}</span>
-            <strong>{displayName(row)}</strong>
-            <span>{displayUsername(row.Username) || displayPhone(row.Phone) || "-"}</span>
-            {row.Verified ? <Badge tone="good">{t("picker.verified")}</Badge> : <Badge>{t("picker.regular")}</Badge>}
-          </button>
-        ))}
+      {(variant !== "dropdown" || open) && !disabled && <div className="picker-results">
+        {rows.map((row) => {
+          const blocked = unavailable?.(row);
+          return (
+            <button
+              key={row.ID}
+              className={`picker-row ${value?.ID === row.ID ? "selected" : ""} ${blocked ? "is-unavailable" : ""}`}
+              type="button"
+              disabled={blocked !== undefined}
+              onClick={() => pick(row)}
+            >
+              <span className="mono">{row.ID}</span>
+              <strong>{displayName(row)}</strong>
+              <span>{displayUsername(row.Username) || displayPhone(row.Phone) || "-"}</span>
+              {blocked !== undefined ? (
+                <Badge>{blocked}</Badge>
+              ) : row.Bot ? (
+                <Badge tone="warn">{t("common.bot")}</Badge>
+              ) : row.Verified ? (
+                <Badge tone="good">{t("picker.verified")}</Badge>
+              ) : (
+                <Badge>{t("picker.regular")}</Badge>
+              )}
+            </button>
+          );
+        })}
         {rows.length === 0 && !busy ? <div className="picker-empty">{t("common.noResults")}</div> : null}
       </div>}
     </div>

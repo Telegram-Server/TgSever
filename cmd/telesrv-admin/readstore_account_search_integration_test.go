@@ -98,3 +98,20 @@ func TestSearchAccountsRanksExactMatchesBeforeNameMatches(t *testing.T) {
 	// 带 @ 是明确的用户名搜索：名字里没有 “@” 的账号不会被名字匹配带出来。
 	assertSearchIDs(t, store, "@Kowalski", exactID)
 }
+
+// 搜索结果带 bot 标记：白名单按搜索添加成员时（#160），名单不用再读一次库就能标出 bot。
+func TestSearchAccountsMarksBots(t *testing.T) {
+	store, pool := isolatedReadStore(t)
+	seedSearchUser(t, pool, 4_100_000_101, "Quillfeather", "Person", "")
+	seedSearchUser(t, pool, 4_100_000_102, "Quillfeather", "Bot", "")
+	if _, err := pool.Exec(context.Background(), `UPDATE users SET is_bot = true WHERE id = 4100000102`); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.SearchAccounts(context.Background(), "quillfeather")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].ID != 4_100_000_101 || rows[0].Bot || rows[1].ID != 4_100_000_102 || !rows[1].Bot {
+		t.Fatalf("rows=%+v", rows)
+	}
+}

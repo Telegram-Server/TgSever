@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -97,9 +98,11 @@ func TestSetPermissionsAPIForwardsCommandAndRequiresAccountsManage(t *testing.T)
 }
 
 // TestAccountPermissionsAPIProxiesAndRequiresAccountsRead 账号的员工权限：代理到服务端
-// GET /v1/accounts/{id}/permissions，原样返回且不缓存；没有 accounts.read 的操作员被拒绝。
+// GET /v1/accounts/{id}/permissions，字段原样返回且不缓存；名单为空时 members 是空数组、
+// 不需要读库；没有 accounts.read 的操作员被拒绝。
 func TestAccountPermissionsAPIProxiesAndRequiresAccountsRead(t *testing.T) {
-	const body = `{"user_id":1001,"found":false,"enabled":false,"send":true}`
+	const body = `{"user_id":1001,"found":false,"enabled":false,"send":true,"send_whitelist":{"enabled":true,"user_ids":[]}}`
+	const want = `{"user_id":1001,"found":false,"enabled":false,"send":true,"send_whitelist":{"enabled":true,"user_ids":[],"members":[]}}`
 	var mu sync.Mutex
 	var paths []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +133,7 @@ func TestAccountPermissionsAPIProxiesAndRequiresAccountsRead(t *testing.T) {
 		t.Fatalf("bad id status=%d, want 400", rec.Code)
 	}
 	rec := get(srv, cookies, "/api/accounts/1001/permissions")
-	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != body || rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Code != http.StatusOK || !jsonEqual(t, rec.Body.String(), want) || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("get status=%d body=%s cache=%q", rec.Code, rec.Body.String(), rec.Header().Get("Cache-Control"))
 	}
 
@@ -145,4 +148,17 @@ func TestAccountPermissionsAPIProxiesAndRequiresAccountsRead(t *testing.T) {
 	if len(paths) != 1 || paths[0] != "/v1/accounts/1001/permissions" {
 		t.Fatalf("upstream paths=%v", paths)
 	}
+}
+
+// jsonEqual 比较两段 JSON 的值（不比较字段顺序和空白）。
+func jsonEqual(t *testing.T, got, want string) bool {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Fatalf("decode %s: %v", got, err)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("decode %s: %v", want, err)
+	}
+	return reflect.DeepEqual(g, w)
 }
