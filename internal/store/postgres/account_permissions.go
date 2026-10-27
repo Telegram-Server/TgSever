@@ -170,12 +170,15 @@ func accountPermissionsWriteErr(op string, err error) error {
 	return fmt.Errorf("%s: %w", op, err)
 }
 
-// deleteAccountPermissionsTx 在账号注销事务里删除该账号的权限设置（名单随外键级联）与别的账号
-// 白名单里指向它的条目，并通知失效受影响账号的权限视图。users 行是软删除，外键级联不会发生。
+// deleteAccountPermissionsTx 在账号注销事务里删除该账号的权限设置（名单随外键级联）、别的账号
+// 白名单与默认权限模板白名单（#161）里指向它的条目，并通知失效受影响账号的权限视图。users 行是软删除，外键级联不会发生。
 func deleteAccountPermissionsTx(ctx context.Context, tx pgx.Tx, userID int64) error {
 	q := sqlcgen.New(tx)
 	if err := q.DeleteAccountSendWhitelistByMember(ctx, userID); err != nil {
 		return fmt.Errorf("delete whitelist entries for deleted account: %w", err)
+	}
+	if err := q.DeletePermissionDefaultsWhitelistMember(ctx, userID); err != nil {
+		return fmt.Errorf("delete permission defaults whitelist entry for deleted account: %w", err)
 	}
 	if err := q.DeleteAccountPermissionsByUser(ctx, userID); err != nil {
 		return fmt.Errorf("delete deleted account permissions: %w", err)

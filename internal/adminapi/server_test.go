@@ -870,6 +870,14 @@ func (fakeService) AccountPermissions(_ context.Context, userID int64) (admin.Ac
 	return admin.AccountPermissionsResult{UserID: userID}, nil
 }
 
+func (fakeService) SetPermissionDefaults(_ context.Context, req admin.SetPermissionDefaultsRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) PermissionDefaults(context.Context) (admin.PermissionDefaultsResult, error) {
+	return admin.PermissionDefaultsResult{}, nil
+}
+
 func (fakeService) UnbindDevice(_ context.Context, req admin.UnbindDeviceRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }

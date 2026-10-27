@@ -93,7 +93,10 @@ export const navSections: NavSection[] = [
     tabs: [
       { path: "/accounts", labelKey: "layout.accounts", permission: permissionAccountsRead },
       { path: "/account-ratings", labelKey: "layout.accountRatings", permission: permissionRatingsRead },
-      { path: "/accounts/shared-devices", labelKey: "layout.sharedDevices", permission: permissionAccountsRead }
+      { path: "/accounts/shared-devices", labelKey: "layout.sharedDevices", permission: permissionAccountsRead },
+      // Saving the template needs accounts.manage, which widens this tab rather
+      // than gating a route of its own.
+      { path: "/accounts/permission-defaults", labelKey: "layout.permissionDefaults", permission: permissionAccountsRead }
     ]
   },
   {

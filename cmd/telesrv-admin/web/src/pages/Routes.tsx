@@ -36,6 +36,7 @@ import { PremiumPlansPage } from "./PremiumPlansPage";
 import { PricesPage } from "./PricesPage";
 import { ServerSettingsPage } from "./ServerSettingsPage";
 import { SharedDevicesPage } from "./SharedDevicesPage";
+import { PermissionDefaultsPage } from "./PermissionDefaultsPage";
 import { StarsDetailPage } from "./StarsDetailPage";
 import { StarsPage } from "./StarsPage";
 import { StickerSetsPage } from "./StickerSetsPage";
@@ -153,6 +154,9 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
   }
   if (route.path === "/accounts/shared-devices") {
     return <SharedDevicesPage navigate={navigate} />;
+  }
+  if (route.path === "/accounts/permission-defaults") {
+    return <PermissionDefaultsPage navigate={navigate} />;
   }
   if (route.path === "/channels") {
     return <ChannelsPage navigate={navigate} />;

@@ -1188,7 +1188,10 @@ func run(logger *zap.Logger) error {
 	accountLifecycleStore := postgres.NewAccountLifecycleStore(pool)
 	// 员工权限控制（#118）：权限视图在进程内缓存，写入时 bump read model "account_permissions"，
 	// 经 read model 监听器跨实例失效。
-	permissionsService := permissionsapp.NewService(postgres.NewAccountPermissionsStore(pool), userStore)
+	accountPermissionsStore := postgres.NewAccountPermissionsStore(pool)
+	permissionsService := permissionsapp.NewService(accountPermissionsStore, userStore)
+	// 默认权限模板（#161）：不缓存，建号时每次读一次。
+	permissionDefaultsService := permissionsapp.NewDefaultsService(accountPermissionsStore, userStore)
 	accountOptions := []account.ServiceOption{
 		account.WithReactionSettings(passwordStore),
 		account.WithAccountSettings(passwordStore),
@@ -2180,6 +2183,8 @@ func run(logger *zap.Logger) error {
 	// 后台设置员工权限（account.set_permissions，#119）：写入后由 Router 失效本实例缓存并向
 	// 该账号的在线会话推送 updateConfig。
 	adminService.Configure(adminapp.Dependencies{Permissions: permissionsService, PermissionsNotifier: router})
+	// 后台设置默认权限模板（permission_defaults.set，#161）：只影响之后新建的账号。
+	adminService.Configure(adminapp.Dependencies{PermissionDefaults: permissionDefaultsService})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
 	// visible to online viewers immediately.

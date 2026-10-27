@@ -211,17 +211,23 @@ func (s *Service) FlushAccountPermissions() {
 // validateWhitelist 去重并按 id 升序返回名单；超过上限、含账号自己、含不存在或已注销的账号时
 // 返回 domain.ErrPermissionWhitelistInvalid。
 func (s *Service) validateWhitelist(ctx context.Context, userID int64, ids []int64) ([]int64, error) {
+	return validateWhitelist(ctx, s.users, userID, ids)
+}
+
+// validateWhitelist 是账号权限与默认权限模板共用的白名单规则。selfID 为 0 时（模板没有自身 id）
+// 不做"含账号自己"的检查。
+func validateWhitelist(ctx context.Context, reader UserReader, selfID int64, ids []int64) ([]int64, error) {
 	out := domain.NormalizeSendWhitelist(ids)
 	if len(out) > domain.MaxSendWhitelistSize {
 		return nil, fmt.Errorf("%w: more than %d accounts", domain.ErrPermissionWhitelistInvalid, domain.MaxSendWhitelistSize)
 	}
-	if _, self := slices.BinarySearch(out, userID); self {
+	if _, self := slices.BinarySearch(out, selfID); selfID != 0 && self {
 		return nil, fmt.Errorf("%w: contains the account itself", domain.ErrPermissionWhitelistInvalid)
 	}
 	if len(out) == 0 {
 		return out, nil
 	}
-	users, err := s.users.ByIDs(ctx, out)
+	users, err := reader.ByIDs(ctx, out)
 	if err != nil {
 		return nil, fmt.Errorf("load whitelist accounts: %w", err)
 	}

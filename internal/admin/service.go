@@ -572,7 +572,9 @@ type Dependencies struct {
 	// updateConfig（见 permissions.go）。
 	Permissions         AccountPermissionsService
 	PermissionsNotifier AccountPermissionsNotifier
-	Now                 func() time.Time
+	// PermissionDefaults 是默认权限模板的业务模块（见 permission_defaults.go）。
+	PermissionDefaults PermissionDefaultsService
+	Now                func() time.Time
 }
 
 type Service struct {
@@ -626,6 +628,7 @@ type Service struct {
 	deviceLimits                DeviceLimitStore
 	permissions                 AccountPermissionsService
 	permissionsNotifier         AccountPermissionsNotifier
+	permissionDefaults          PermissionDefaultsService
 	now                         func() time.Time
 }
 
@@ -781,6 +784,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.PermissionsNotifier != nil {
 		s.permissionsNotifier = deps.PermissionsNotifier
+	}
+	if deps.PermissionDefaults != nil {
+		s.permissionDefaults = deps.PermissionDefaults
 	}
 	if deps.Now != nil {
 		s.now = deps.Now

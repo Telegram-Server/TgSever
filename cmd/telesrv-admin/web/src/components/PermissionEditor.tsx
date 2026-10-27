@@ -110,6 +110,9 @@ export type PermissionEditorProps = {
   selfID?: number;
   // Turns whitelist members into links to their account pages; omit for plain entries.
   navigate?: Navigate;
+  // Label of the master switch; defaults to the per-account wording. A template
+  // says it switches control on for new accounts instead.
+  enabledLabel?: string;
 };
 
 // PermissionEditor is the controlled 权限控制 form: the master switch, the
@@ -117,7 +120,7 @@ export type PermissionEditorProps = {
 // writes nothing itself — loading, saving and dirty tracking belong to the
 // owner. Whitelist entries are added by searching accounts; the search box is
 // its only local state, and remounting it (key) clears that box.
-export function PermissionEditor({ value: draft, onChange, editable, selfID, navigate }: PermissionEditorProps) {
+export function PermissionEditor({ value: draft, onChange, editable, selfID, navigate, enabledLabel }: PermissionEditorProps) {
   const { t } = useI18n();
 
   // With the master switch off nothing is enforced, so the flags grey out —
@@ -158,7 +161,7 @@ export function PermissionEditor({ value: draft, onChange, editable, selfID, nav
     <>
       <label className="checkline perm-master">
         <input type="checkbox" checked={draft.enabled} disabled={!editable} onChange={(e) => update({ enabled: e.target.checked })} />
-        <strong>{t("perm.enabled")}</strong>
+        <strong>{enabledLabel ?? t("perm.enabled")}</strong>
       </label>
       <p className="muted">{draft.enabled ? t("perm.enabledHint") : t("perm.disabledHint")}</p>
       <div className={`perm-grid ${draft.enabled ? "" : "is-off"}`}>
