@@ -2509,7 +2509,9 @@ func (s *Service) SetPhone(ctx context.Context, req SetPhoneRequest) (CommandRes
 //
 // Permissions (#162) are written in the same transaction: the given ones, or
 // else a snapshot of the default permissions template when there is one (see
-// create_account_permissions.go).
+// create_account_permissions.go). They are resolved before the command
+// channel, like account.set_permissions: an invalid whitelist leaves neither
+// an account nor a command record.
 func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (CommandResult, error) {
 	if s == nil || s.accountCreator == nil {
 		return CommandResult{}, fmt.Errorf("admin account creator dependency is not configured")
@@ -2527,6 +2529,15 @@ func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (
 		// 不同写法对应同一个账号、同一个指纹。
 		req.PasswordFingerprint = newAccountPasswordFingerprint(s.loginPasswordFingerprintKey, domain.NormalizePhone(req.Phone), req.Password)
 	}
+	// 与 SetPermissions 相同：已有记录的 command id 先按记录重放或报 COMMAND_ID_CONFLICT；新提交在
+	// 进入命令通道前解析权限、校验白名单，不合法时既不建号也不留命令记录。
+	if result, replayed, err := s.existingCommand(ctx, req.CommandMeta, ActionCreateAccount, req); replayed || err != nil {
+		return result, err
+	}
+	perms, source, err := s.newAccountPermissions(ctx, req)
+	if err != nil {
+		return CommandResult{}, err
+	}
 	return s.runCommand(ctx, req.CommandMeta, ActionCreateAccount, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		if req.DryRun {
 			pending, err := s.accountCreator.ValidateNewAccount(ctx, req.Phone, req.FirstName, req.LastName)
@@ -2538,20 +2549,15 @@ func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (
 					return CommandResult{}, setLoginPasswordError(err)
 				}
 			}
-			perms, source, err := s.newAccountPermissions(ctx, req)
-			if err != nil {
-				return CommandResult{}, err
-			}
 			details := createAccountDetails(pending, withPassword)
 			addCreateAccountPermissionDetails(details, perms, source)
 			return CommandResult{Message: "account creation validated", Details: details}, nil
 		}
-		// 先解析权限、算 verifier：白名单或密码不合规时还没有建号。
-		perms, source, err := s.newAccountPermissions(ctx, req)
-		if err != nil {
-			return CommandResult{}, err
-		}
-		var create auth.CreateAccountFunc
+		// 先算 verifier：密码不合规时还没有建号。
+		var (
+			create auth.CreateAccountFunc
+			err    error
+		)
 		if withPassword {
 			create, err = s.loginPasswords.AdminAccountCreator(req.Password, perms)
 			if err != nil {

@@ -150,8 +150,8 @@ func TestCreateAccountWithPasswordAlsoWritesPermissions(t *testing.T) {
 	}
 }
 
-// 白名单不合法时拒绝，不建号；试运行与真正执行一样。
-func TestCreateAccountRejectsInvalidWhitelistWithoutCreatingTheAccount(t *testing.T) {
+// 白名单不合法时在进入命令通道前拒绝：不建号，也不留命令记录；试运行与真正执行一样。
+func TestCreateAccountRejectsInvalidWhitelistWithoutAccountOrCommandRecord(t *testing.T) {
 	f := newCreateAccountPermissionsFixture(t)
 	ctx := context.Background()
 	gone := f.user(t, domain.User{Deleted: true})
@@ -173,13 +173,42 @@ func TestCreateAccountRejectsInvalidWhitelistWithoutCreatingTheAccount(t *testin
 			whitelist := ids
 			req.Permissions = &CreateAccountPermissions{Enabled: boolPtr(true), SendWhitelist: &PermissionsWhitelistRequest{UserIDs: &whitelist}}
 			res, err := f.svc.CreateAccount(ctx, req)
-			if !errors.Is(err, domain.ErrPermissionWhitelistInvalid) || res.Code != "PERMISSION_WHITELIST_INVALID" {
-				t.Fatalf("%s (dry=%v) = %+v, %v; want PERMISSION_WHITELIST_INVALID", name, dry, res, err)
+			if !errors.Is(err, domain.ErrPermissionWhitelistInvalid) || ErrorCode(err) != "PERMISSION_WHITELIST_INVALID" {
+				t.Fatalf("%s (dry=%v) = %+v, %v (code %q); want PERMISSION_WHITELIST_INVALID", name, dry, res, err, ErrorCode(err))
 			}
 			if _, found, _ := f.users.ByPhone(ctx, "15550170010"); found {
 				t.Fatalf("%s (dry=%v): a rejected creation left an account", name, dry)
 			}
+			if cmd, recorded := f.repo.items[req.CommandID]; recorded {
+				t.Fatalf("%s (dry=%v): a rejected creation left a command record: %+v", name, dry, cmd)
+			}
 		}
+	}
+}
+
+// 已有记录的 command id 先按记录重放，不再重新校验白名单（与 account.set_permissions 一致）。
+func TestCreateAccountReplaysARecordedCommandBeforeCheckingTheWhitelist(t *testing.T) {
+	f := newCreateAccountPermissionsFixture(t)
+	ctx := context.Background()
+	colleague := f.user(t, domain.User{})
+
+	whitelist := []int64{colleague.ID}
+	req := createAccountRequest("exec-create-perm-replay", "15550170020")
+	req.Permissions = &CreateAccountPermissions{Enabled: boolPtr(true), SendWhitelist: &PermissionsWhitelistRequest{UserIDs: &whitelist}}
+	first, err := f.svc.CreateAccount(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateAccount: %+v, %v", first, err)
+	}
+	f.deleteUser(t, colleague.ID)
+
+	again, err := f.svc.CreateAccount(ctx, req)
+	if err != nil || !again.AlreadyExecuted || again.Status != string(domain.AdminCommandCompleted) {
+		t.Fatalf("replay = %+v, %v; want the recorded result", again, err)
+	}
+	other := req
+	other.FirstName = "Sam"
+	if conflict, err := f.svc.CreateAccount(ctx, other); err == nil || conflict.Error != "COMMAND_ID_CONFLICT" {
+		t.Fatalf("conflict = %+v, %v; want COMMAND_ID_CONFLICT", conflict, err)
 	}
 }
 

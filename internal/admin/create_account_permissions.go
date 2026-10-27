@@ -15,8 +15,9 @@ import (
 //
 //   - 给出 permissions：字段与 account.set_permissions 一致，给出的替换不受控制的默认值（总开关
 //     关闭、各项允许、白名单关闭且为空），未给出的取默认值；白名单按设置权限的规则校验（存在、
-//     未注销、不超过 domain.MaxSendWhitelistSize），不合法时以 PERMISSION_WHITELIST_INVALID 拒绝，
-//     不建号。要一个不受控的账号就显式传 enabled=false。
+//     未注销、不超过 domain.MaxSendWhitelistSize），不合法时在进入命令通道之前以
+//     PERMISSION_WHITELIST_INVALID 拒绝：不建号，也不留命令记录（已有记录的 command id 照常重放）。
+//     要一个不受控的账号就显式传 enabled=false。
 //   - 不给：有默认权限模板就套用模板快照（domain.PermissionDefaults.Snapshot），没有模板就不写
 //     权限。这一路不看模板的"自助注册也套用"开关。
 //
