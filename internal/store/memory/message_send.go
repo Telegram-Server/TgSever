@@ -60,7 +60,11 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sendPrivateTextLocked(req, fingerprint, nil)
+	res, err := s.sendPrivateTextLocked(req, fingerprint, nil)
+	if err == nil && !res.Duplicate {
+		s.channels.countPostForward(req.ForwardedPost)
+	}
+	return res, err
 }
 
 // A prefix stages related state events before the message. apply is infallible

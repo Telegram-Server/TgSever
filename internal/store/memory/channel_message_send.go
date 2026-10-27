@@ -188,6 +188,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	}
 	s.messages[req.ChannelID] = append(s.messages[req.ChannelID], msg)
 	s.appendChannelEventLocked(event)
+	s.countPostForwardLocked(req.ForwardedPost)
 	if !channel.Broadcast || channel.Megagroup {
 		mentionTargets := req.MentionUserIDs
 		if msg.ReplyTo != nil && msg.ReplyTo.MessageID > 0 {

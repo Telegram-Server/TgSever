@@ -10,6 +10,7 @@ import (
 type channelMessageViewSummary struct {
 	ID         int
 	Views      int
+	Forwards   int
 	Post       bool
 	Discussion *domain.ChannelDiscussionRef
 	Sender     domain.Peer
@@ -98,10 +99,14 @@ LEFT JOIN updated u ON u.id = i.message_id`, args...)
 		return domain.ChannelMessageViewsResult{}, err
 	}
 	views := make(map[int]int, len(summaries))
+	forwards := make(map[int]int, len(summaries))
 	peers := make([]domain.Peer, 0, len(summaries))
 	peerSeen := make(map[domain.Peer]struct{}, len(summaries))
 	for _, summary := range summaries {
 		views[summary.ID] = summary.Views
+		if summary.Post {
+			forwards[summary.ID] = summary.Forwards
+		}
 		if summary.Sender.ID != 0 {
 			if _, ok := peerSeen[summary.Sender]; !ok {
 				peerSeen[summary.Sender] = struct{}{}
@@ -114,10 +119,11 @@ LEFT JOIN updated u ON u.id = i.message_id`, args...)
 		return domain.ChannelMessageViewsResult{}, err
 	}
 	return domain.ChannelMessageViewsResult{
-		Channel: channel,
-		Views:   views,
-		Replies: replies,
-		Peers:   peers,
+		Channel:  channel,
+		Views:    views,
+		Forwards: forwards,
+		Replies:  replies,
+		Peers:    peers,
 	}, nil
 }
 
@@ -133,7 +139,7 @@ func (s *ChannelStore) listChannelMessageViewSummaries(ctx context.Context, view
 		where += fmt.Sprintf(" AND saved_peer_type = $%d AND saved_peer_id = $%d", len(args)-1, len(args))
 	}
 	rows, err := s.db.Query(ctx, `
-SELECT id, views_count, post, discussion_channel_id, discussion_message_id, sender_user_id, from_peer_type, from_peer_id
+SELECT id, views_count, forwards_count, post, discussion_channel_id, discussion_message_id, sender_user_id, from_peer_type, from_peer_id
 FROM channel_messages
 WHERE `+where, args...)
 	if err != nil {
@@ -148,7 +154,7 @@ WHERE `+where, args...)
 		var senderUserID int64
 		var fromPeerType string
 		var fromPeerID int64
-		if err := rows.Scan(&summary.ID, &summary.Views, &summary.Post, &discussionChannelID, &discussionMessageID, &senderUserID, &fromPeerType, &fromPeerID); err != nil {
+		if err := rows.Scan(&summary.ID, &summary.Views, &summary.Forwards, &summary.Post, &discussionChannelID, &discussionMessageID, &senderUserID, &fromPeerType, &fromPeerID); err != nil {
 			return nil, err
 		}
 		if discussionChannelID != 0 && discussionMessageID != 0 {

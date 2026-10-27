@@ -96,6 +96,9 @@ func (r *Router) onMessagesGetMessagesViews(ctx context.Context, req *tg.Message
 			if count, ok := viewCounters.Views[id]; ok {
 				views[i].SetViews(count)
 			}
+			if count, ok := viewCounters.Forwards[id]; ok {
+				views[i].SetForwards(count)
+			}
 			if replies := tgChannelMessageReplies(viewCounters.Replies[id]); replies != nil {
 				views[i].SetReplies(*replies)
 			}

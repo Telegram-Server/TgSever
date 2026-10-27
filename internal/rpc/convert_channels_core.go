@@ -216,6 +216,8 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 			views = 1
 		}
 		msg.SetViews(views)
+		// TL 中 views 与 forwards 共用 flags.10：帖子必须同时带上真实的转发数。
+		msg.SetForwards(m.ForwardsCount)
 		if m.PostAuthor != "" {
 			msg.SetPostAuthor(m.PostAuthor)
 		}

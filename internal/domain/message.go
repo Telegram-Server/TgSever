@@ -330,6 +330,9 @@ type SendPrivateTextRequest struct {
 	NoForwards      bool
 	ReplyTo         *MessageReply
 	Forward         *MessageForward
+	// ForwardedPost 见 SendChannelMessageRequest.ForwardedPost：把频道帖子转发进私聊时，
+	// 与私聊写入同一事务给源帖子的转发数加一。
+	ForwardedPost   *ChannelPostRef
 	Date            int
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64
