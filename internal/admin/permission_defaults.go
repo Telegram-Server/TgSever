@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"time"
 
 	"telesrv/internal/app/permissions"
 	"telesrv/internal/domain"
@@ -29,75 +28,31 @@ type PermissionDefaultsService interface {
 // 一致，另加 apply_to_self_signup。nil = 沿用当前值。
 type SetPermissionDefaultsRequest struct {
 	CommandMeta
-	Enabled           *bool                        `json:"enabled,omitempty"`
-	Send              *bool                        `json:"send,omitempty"`
-	Delete            *bool                        `json:"delete,omitempty"`
-	Edit              *bool                        `json:"edit,omitempty"`
-	ClearHistory      *bool                        `json:"clear_history,omitempty"`
-	CreateGroup       *bool                        `json:"create_group,omitempty"`
-	CreateChannel     *bool                        `json:"create_channel,omitempty"`
-	JoinGroup         *bool                        `json:"join_group,omitempty"`
-	JoinChannel       *bool                        `json:"join_channel,omitempty"`
-	LeaveGroup        *bool                        `json:"leave_group,omitempty"`
-	LeaveChannel      *bool                        `json:"leave_channel,omitempty"`
-	AddContact        *bool                        `json:"add_contact,omitempty"`
-	SendWhitelist     *PermissionsWhitelistRequest `json:"send_whitelist,omitempty"`
-	ApplyToSelfSignup *bool                        `json:"apply_to_self_signup,omitempty"`
+	PermissionsRequest
+	ApplyToSelfSignup *bool `json:"apply_to_self_signup,omitempty"`
 }
 
 func (req SetPermissionDefaultsRequest) update() permissions.DefaultsUpdate {
-	return permissions.DefaultsUpdate{
-		Update: SetPermissionsRequest{
-			Enabled: req.Enabled,
-			Send:    req.Send, Delete: req.Delete, Edit: req.Edit, ClearHistory: req.ClearHistory,
-			CreateGroup: req.CreateGroup, CreateChannel: req.CreateChannel,
-			JoinGroup: req.JoinGroup, JoinChannel: req.JoinChannel,
-			LeaveGroup: req.LeaveGroup, LeaveChannel: req.LeaveChannel,
-			AddContact:    req.AddContact,
-			SendWhitelist: req.SendWhitelist,
-		}.update(),
-		ApplyToSelfSignup: req.ApplyToSelfSignup,
-	}
+	return permissions.DefaultsUpdate{Update: req.PermissionsRequest.update(), ApplyToSelfSignup: req.ApplyToSelfSignup}
 }
 
 // PermissionDefaultsResult 是默认权限模板；Found=false 表示没有模板（新账号不受控制）。
 type PermissionDefaultsResult struct {
-	Found             bool                 `json:"found"`
-	Enabled           bool                 `json:"enabled"`
-	Send              bool                 `json:"send"`
-	Delete            bool                 `json:"delete"`
-	Edit              bool                 `json:"edit"`
-	ClearHistory      bool                 `json:"clear_history"`
-	CreateGroup       bool                 `json:"create_group"`
-	CreateChannel     bool                 `json:"create_channel"`
-	JoinGroup         bool                 `json:"join_group"`
-	JoinChannel       bool                 `json:"join_channel"`
-	LeaveGroup        bool                 `json:"leave_group"`
-	LeaveChannel      bool                 `json:"leave_channel"`
-	AddContact        bool                 `json:"add_contact"`
-	SendWhitelist     PermissionsWhitelist `json:"send_whitelist"`
-	ApplyToSelfSignup bool                 `json:"apply_to_self_signup"`
-	UpdatedAt         string               `json:"updated_at,omitempty"`
-	CommandID         string               `json:"command_id,omitempty"`
+	Found bool `json:"found"`
+	PermissionsSettings
+	ApplyToSelfSignup bool   `json:"apply_to_self_signup"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
+	CommandID         string `json:"command_id,omitempty"`
 }
 
 func permissionDefaultsResult(d domain.PermissionDefaults, found bool) PermissionDefaultsResult {
-	f := d.Flags
-	out := PermissionDefaultsResult{
-		Found: found, Enabled: d.Enabled,
-		Send: f.Send, Delete: f.Delete, Edit: f.Edit, ClearHistory: f.ClearHistory,
-		CreateGroup: f.CreateGroup, CreateChannel: f.CreateChannel,
-		JoinGroup: f.JoinGroup, JoinChannel: f.JoinChannel,
-		LeaveGroup: f.LeaveGroup, LeaveChannel: f.LeaveChannel,
-		AddContact:        f.AddContact,
-		SendWhitelist:     PermissionsWhitelist{Enabled: d.SendWhitelistEnabled, UserIDs: domain.NormalizeSendWhitelist(d.SendWhitelist)},
-		ApplyToSelfSignup: d.ApplyToSelfSignup,
-		CommandID:         d.CommandID,
+	return PermissionDefaultsResult{
+		Found:               found,
+		PermissionsSettings: permissionsSettings(d.Enabled, d.Flags, d.SendWhitelistEnabled, d.SendWhitelist),
+		ApplyToSelfSignup:   d.ApplyToSelfSignup,
+		UpdatedAt:           formatUpdatedAt(d.UpdatedAt),
+		CommandID:           d.CommandID,
 	}
-	if !d.UpdatedAt.IsZero() {
-		out.UpdatedAt = d.UpdatedAt.UTC().Format(time.RFC3339)
-	}
-	return out
 }
 
 // PermissionDefaults 读取默认权限模板；没有模板时返回 found=false 与不受控制的默认值。
@@ -121,27 +76,27 @@ func (s *Service) SetPermissionDefaults(ctx context.Context, req SetPermissionDe
 	if result, replayed, err := s.existingCommand(ctx, req.CommandMeta, ActionSetPermissionDefaults, req); replayed || err != nil {
 		return result, err
 	}
-	prev, had, next, err := s.permissionDefaults.ResolveDefaults(ctx, req.update())
+	prev, prevFound, next, err := s.permissionDefaults.ResolveDefaults(ctx, req.update())
 	if err != nil {
 		return CommandResult{}, permissionsError(err)
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetPermissionDefaults, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		resolved := next.Defaults()
 		details := map[string]any{
-			"previous_defaults": permissionDefaultsResult(prev, had),
+			"previous_defaults": permissionDefaultsResult(prev, prevFound),
 			"defaults":          permissionDefaultsResult(resolved, true),
-			"would_change":      !had || !sameDefaults(prev, resolved),
+			"would_change":      !prevFound || !sameDefaults(prev, resolved),
 		}
 		if req.DryRun {
 			return CommandResult{Message: "dry-run completed", Details: details}, nil
 		}
-		prev, had, written, err := s.permissionDefaults.SetDefaults(ctx, next, req.CommandID)
+		prev, prevFound, written, err := s.permissionDefaults.SetDefaults(ctx, next, req.CommandID)
 		if err != nil {
 			return CommandResult{Details: details}, permissionsError(err)
 		}
-		details["previous_defaults"] = permissionDefaultsResult(prev, had)
+		details["previous_defaults"] = permissionDefaultsResult(prev, prevFound)
 		details["defaults"] = permissionDefaultsResult(written, true)
-		details["would_change"] = !had || !sameDefaults(prev, written)
+		details["would_change"] = !prevFound || !sameDefaults(prev, written)
 		return CommandResult{Message: "permission defaults updated", Details: details}, nil
 	})
 }

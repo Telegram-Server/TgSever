@@ -81,7 +81,7 @@ func TestCreateAccountWritesGivenPermissions(t *testing.T) {
 
 	whitelist := []int64{colleague.ID, colleague.ID}
 	req := createAccountRequest("exec-create-perm-1", "15550170001")
-	req.Permissions = &CreateAccountPermissions{
+	req.Permissions = &PermissionsRequest{
 		Enabled:       boolPtr(true),
 		Delete:        boolPtr(false),
 		SendWhitelist: &PermissionsWhitelistRequest{Enabled: boolPtr(true), UserIDs: &whitelist},
@@ -136,7 +136,7 @@ func TestCreateAccountWithPasswordAlsoWritesPermissions(t *testing.T) {
 
 	req := createAccountRequest("exec-create-perm-6", "15550170006")
 	req.Password = "first day"
-	req.Permissions = &CreateAccountPermissions{Enabled: boolPtr(true), AddContact: boolPtr(false)}
+	req.Permissions = &PermissionsRequest{Enabled: boolPtr(true), AddContact: boolPtr(false)}
 	res, err := f.svc.CreateAccount(ctx, req)
 	if err != nil || res.Details["login_password"] != true || res.Details["permissions_source"] != "request" {
 		t.Fatalf("CreateAccount = %+v, %v", res, err)
@@ -171,7 +171,7 @@ func TestCreateAccountRejectsInvalidWhitelistWithoutAccountOrCommandRecord(t *te
 			req := createAccountRequest(fmt.Sprintf("exec-create-perm-bad-%d", n), "15550170010")
 			req.DryRun = dry
 			whitelist := ids
-			req.Permissions = &CreateAccountPermissions{Enabled: boolPtr(true), SendWhitelist: &PermissionsWhitelistRequest{UserIDs: &whitelist}}
+			req.Permissions = &PermissionsRequest{Enabled: boolPtr(true), SendWhitelist: &PermissionsWhitelistRequest{UserIDs: &whitelist}}
 			res, err := f.svc.CreateAccount(ctx, req)
 			if !errors.Is(err, domain.ErrPermissionWhitelistInvalid) || ErrorCode(err) != "PERMISSION_WHITELIST_INVALID" {
 				t.Fatalf("%s (dry=%v) = %+v, %v (code %q); want PERMISSION_WHITELIST_INVALID", name, dry, res, err, ErrorCode(err))
@@ -194,7 +194,7 @@ func TestCreateAccountReplaysARecordedCommandBeforeCheckingTheWhitelist(t *testi
 
 	whitelist := []int64{colleague.ID}
 	req := createAccountRequest("exec-create-perm-replay", "15550170020")
-	req.Permissions = &CreateAccountPermissions{Enabled: boolPtr(true), SendWhitelist: &PermissionsWhitelistRequest{UserIDs: &whitelist}}
+	req.Permissions = &PermissionsRequest{Enabled: boolPtr(true), SendWhitelist: &PermissionsWhitelistRequest{UserIDs: &whitelist}}
 	first, err := f.svc.CreateAccount(ctx, req)
 	if err != nil {
 		t.Fatalf("CreateAccount: %+v, %v", first, err)
@@ -220,7 +220,7 @@ func TestCreateAccountDryRunValidatesPermissionsAndWritesNothing(t *testing.T) {
 	whitelist := []int64{colleague.ID}
 	req := createAccountRequest("dry-create-perm-4", "15550170004")
 	req.DryRun = true
-	req.Permissions = &CreateAccountPermissions{Enabled: boolPtr(true), Edit: boolPtr(false), SendWhitelist: &PermissionsWhitelistRequest{UserIDs: &whitelist}}
+	req.Permissions = &PermissionsRequest{Enabled: boolPtr(true), Edit: boolPtr(false), SendWhitelist: &PermissionsWhitelistRequest{UserIDs: &whitelist}}
 	res, err := f.svc.CreateAccount(ctx, req)
 	if err != nil || !res.DryRun {
 		t.Fatalf("dry run = %+v, %v", res, err)

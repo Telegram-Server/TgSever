@@ -1217,7 +1217,7 @@ type createAccountAPIRequest struct {
 	Password  string `json:"password"`
 	// Permissions 是新账号的员工权限（#162），字段与 set-permissions 一致；不给时服务端有默认
 	// 权限模板就套用模板。
-	Permissions *admin.CreateAccountPermissions `json:"permissions"`
+	Permissions *admin.PermissionsRequest `json:"permissions"`
 }
 
 // createAccountUpstreamRequest 是转发给服务端 POST /v1/accounts/create 的请求体。
@@ -1230,7 +1230,7 @@ type createAccountUpstreamRequest struct {
 	LastName  string `json:"last_name,omitempty"`
 	Password  string `json:"password,omitempty"`
 	// Permissions 不给时省略，服务端按默认权限模板处理。
-	Permissions *admin.CreateAccountPermissions `json:"permissions,omitempty"`
+	Permissions *admin.PermissionsRequest `json:"permissions,omitempty"`
 }
 
 // handleCreateAccountAPI creates a regular user account (phone, first name,
@@ -1316,23 +1316,11 @@ func (s *server) handleSetDeviceLimitAPI(w http.ResponseWriter, r *http.Request)
 }
 
 type setPermissionsAPIRequest struct {
-	CommandID     string                             `json:"command_id"`
-	Reason        string                             `json:"reason"`
-	Confirm       bool                               `json:"confirm"`
-	UserID        int64                              `json:"user_id"`
-	Enabled       *bool                              `json:"enabled"`
-	Send          *bool                              `json:"send"`
-	Delete        *bool                              `json:"delete"`
-	Edit          *bool                              `json:"edit"`
-	ClearHistory  *bool                              `json:"clear_history"`
-	CreateGroup   *bool                              `json:"create_group"`
-	CreateChannel *bool                              `json:"create_channel"`
-	JoinGroup     *bool                              `json:"join_group"`
-	JoinChannel   *bool                              `json:"join_channel"`
-	LeaveGroup    *bool                              `json:"leave_group"`
-	LeaveChannel  *bool                              `json:"leave_channel"`
-	AddContact    *bool                              `json:"add_contact"`
-	SendWhitelist *admin.PermissionsWhitelistRequest `json:"send_whitelist"`
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	admin.PermissionsRequest
 }
 
 // handleSetPermissionsAPI 设置账号的员工权限（总开关、11 项、发送白名单），转发给服务端
@@ -1343,44 +1331,20 @@ func (s *server) handleSetPermissionsAPI(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	req := admin.SetPermissionsRequest{
-		CommandMeta:   s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-permissions"),
-		UserID:        body.UserID,
-		Enabled:       body.Enabled,
-		Send:          body.Send,
-		Delete:        body.Delete,
-		Edit:          body.Edit,
-		ClearHistory:  body.ClearHistory,
-		CreateGroup:   body.CreateGroup,
-		CreateChannel: body.CreateChannel,
-		JoinGroup:     body.JoinGroup,
-		JoinChannel:   body.JoinChannel,
-		LeaveGroup:    body.LeaveGroup,
-		LeaveChannel:  body.LeaveChannel,
-		AddContact:    body.AddContact,
-		SendWhitelist: body.SendWhitelist,
+		CommandMeta:        s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-permissions"),
+		UserID:             body.UserID,
+		PermissionsRequest: body.PermissionsRequest,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-permissions", req)
 	writeCommandResultAPI(w, result, err)
 }
 
 type setPermissionDefaultsAPIRequest struct {
-	CommandID         string                             `json:"command_id"`
-	Reason            string                             `json:"reason"`
-	Confirm           bool                               `json:"confirm"`
-	Enabled           *bool                              `json:"enabled"`
-	Send              *bool                              `json:"send"`
-	Delete            *bool                              `json:"delete"`
-	Edit              *bool                              `json:"edit"`
-	ClearHistory      *bool                              `json:"clear_history"`
-	CreateGroup       *bool                              `json:"create_group"`
-	CreateChannel     *bool                              `json:"create_channel"`
-	JoinGroup         *bool                              `json:"join_group"`
-	JoinChannel       *bool                              `json:"join_channel"`
-	LeaveGroup        *bool                              `json:"leave_group"`
-	LeaveChannel      *bool                              `json:"leave_channel"`
-	AddContact        *bool                              `json:"add_contact"`
-	SendWhitelist     *admin.PermissionsWhitelistRequest `json:"send_whitelist"`
-	ApplyToSelfSignup *bool                              `json:"apply_to_self_signup"`
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	admin.PermissionsRequest
+	ApplyToSelfSignup *bool `json:"apply_to_self_signup"`
 }
 
 // handleSetPermissionDefaultsAPI 设置默认权限模板（#161），转发给服务端
@@ -1391,21 +1355,9 @@ func (s *server) handleSetPermissionDefaultsAPI(w http.ResponseWriter, r *http.R
 		return
 	}
 	req := admin.SetPermissionDefaultsRequest{
-		CommandMeta:       s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-permission-defaults"),
-		Enabled:           body.Enabled,
-		Send:              body.Send,
-		Delete:            body.Delete,
-		Edit:              body.Edit,
-		ClearHistory:      body.ClearHistory,
-		CreateGroup:       body.CreateGroup,
-		CreateChannel:     body.CreateChannel,
-		JoinGroup:         body.JoinGroup,
-		JoinChannel:       body.JoinChannel,
-		LeaveGroup:        body.LeaveGroup,
-		LeaveChannel:      body.LeaveChannel,
-		AddContact:        body.AddContact,
-		SendWhitelist:     body.SendWhitelist,
-		ApplyToSelfSignup: body.ApplyToSelfSignup,
+		CommandMeta:        s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-permission-defaults"),
+		PermissionsRequest: body.PermissionsRequest,
+		ApplyToSelfSignup:  body.ApplyToSelfSignup,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/permission-defaults/set", req)
 	writeCommandResultAPI(w, result, err)

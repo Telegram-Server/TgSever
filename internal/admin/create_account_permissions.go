@@ -29,43 +29,13 @@ const (
 	createAccountPermissionsFromDefaults = "defaults"
 )
 
-// CreateAccountPermissions 是 account.create 的 permissions 字段；字段名与 account.set_permissions
-// 一致。nil = 取不受控制的默认值。
-type CreateAccountPermissions struct {
-	Enabled       *bool                        `json:"enabled,omitempty"`
-	Send          *bool                        `json:"send,omitempty"`
-	Delete        *bool                        `json:"delete,omitempty"`
-	Edit          *bool                        `json:"edit,omitempty"`
-	ClearHistory  *bool                        `json:"clear_history,omitempty"`
-	CreateGroup   *bool                        `json:"create_group,omitempty"`
-	CreateChannel *bool                        `json:"create_channel,omitempty"`
-	JoinGroup     *bool                        `json:"join_group,omitempty"`
-	JoinChannel   *bool                        `json:"join_channel,omitempty"`
-	LeaveGroup    *bool                        `json:"leave_group,omitempty"`
-	LeaveChannel  *bool                        `json:"leave_channel,omitempty"`
-	AddContact    *bool                        `json:"add_contact,omitempty"`
-	SendWhitelist *PermissionsWhitelistRequest `json:"send_whitelist,omitempty"`
-}
-
-func (p CreateAccountPermissions) setRequest() SetPermissionsRequest {
-	return SetPermissionsRequest{
-		Enabled: p.Enabled,
-		Send:    p.Send, Delete: p.Delete, Edit: p.Edit, ClearHistory: p.ClearHistory,
-		CreateGroup: p.CreateGroup, CreateChannel: p.CreateChannel,
-		JoinGroup: p.JoinGroup, JoinChannel: p.JoinChannel,
-		LeaveGroup: p.LeaveGroup, LeaveChannel: p.LeaveChannel,
-		AddContact:    p.AddContact,
-		SendWhitelist: p.SendWhitelist,
-	}
-}
-
 // newAccountPermissions 算出新账号要写入的权限与来源；返回 nil 表示不写权限。只读。
 func (s *Service) newAccountPermissions(ctx context.Context, req CreateAccountRequest) (*domain.AccountPermissions, string, error) {
 	if req.Permissions != nil {
 		if s.permissions == nil {
 			return nil, "", fmt.Errorf("admin permissions dependency is not configured")
 		}
-		p, err := s.permissions.ResolveNewAccount(ctx, req.Permissions.setRequest().update())
+		p, err := s.permissions.ResolveNewAccount(ctx, req.Permissions.update())
 		if err != nil {
 			return nil, "", permissionsError(err)
 		}

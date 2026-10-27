@@ -84,7 +84,7 @@ func TestAdminPermissionsEndToEnd(t *testing.T) {
 			return fmt.Errorf("telesrv_permissions before setting = %v err=%v, want absent", perms, err)
 		}
 
-		if err := setPermissions("e2e-permissions-on", admin.SetPermissionsRequest{UserID: self.ID, Enabled: flag(true), Edit: flag(false)}); err != nil {
+		if err := setPermissions("e2e-permissions-on", admin.SetPermissionsRequest{UserID: self.ID, PermissionsRequest: admin.PermissionsRequest{Enabled: flag(true), Edit: flag(false)}}); err != nil {
 			return err
 		}
 		if err := waitConfig(ctx); err != nil {
@@ -102,7 +102,7 @@ func TestAdminPermissionsEndToEnd(t *testing.T) {
 			return fmt.Errorf("editMessage err=%v, want 403 TELESRV_PERMISSION_EDIT", err)
 		}
 
-		if err := setPermissions("e2e-permissions-off", admin.SetPermissionsRequest{UserID: self.ID, Enabled: flag(false)}); err != nil {
+		if err := setPermissions("e2e-permissions-off", admin.SetPermissionsRequest{UserID: self.ID, PermissionsRequest: admin.PermissionsRequest{Enabled: flag(false)}}); err != nil {
 			return err
 		}
 		if err := waitConfig(ctx); err != nil {

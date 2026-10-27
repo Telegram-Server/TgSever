@@ -42,11 +42,11 @@ type PermissionsWhitelistRequest struct {
 	UserIDs *[]int64 `json:"user_ids,omitempty"`
 }
 
-// SetPermissionsRequest 是 account.set_permissions 的参数；字段名与 appConfig 的
-// telesrv_permissions 一致。nil = 沿用当前值。
-type SetPermissionsRequest struct {
-	CommandMeta
-	UserID        int64                        `json:"user_id"`
+// PermissionsRequest 是提交的员工权限：总开关、11 项与发送白名单，字段名与 appConfig 的
+// telesrv_permissions 一致；nil = 不改（沿用当前值，或取各命令自己的默认值）。
+// account.set_permissions、account.create 的 permissions 与 permission_defaults.set 共用；嵌入
+// 时字段平铺在外层 JSON 里。
+type PermissionsRequest struct {
 	Enabled       *bool                        `json:"enabled,omitempty"`
 	Send          *bool                        `json:"send,omitempty"`
 	Delete        *bool                        `json:"delete,omitempty"`
@@ -62,7 +62,7 @@ type SetPermissionsRequest struct {
 	SendWhitelist *PermissionsWhitelistRequest `json:"send_whitelist,omitempty"`
 }
 
-func (req SetPermissionsRequest) update() permissions.Update {
+func (req PermissionsRequest) update() permissions.Update {
 	up := permissions.Update{
 		Enabled: req.Enabled,
 		Flags: permissions.FlagsUpdate{
@@ -80,16 +80,22 @@ func (req SetPermissionsRequest) update() permissions.Update {
 	return up
 }
 
+// SetPermissionsRequest 是 account.set_permissions 的参数。nil = 沿用当前值。
+type SetPermissionsRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id"`
+	PermissionsRequest
+}
+
 // PermissionsWhitelist 是读出的发送白名单（user_ids 按 id 升序，没有时为空数组）。
 type PermissionsWhitelist struct {
 	Enabled bool    `json:"enabled"`
 	UserIDs []int64 `json:"user_ids"`
 }
 
-// AccountPermissionsResult 是账号的权限设置；Found=false 表示没有记录（总开关关闭、各项默认值）。
-type AccountPermissionsResult struct {
-	UserID        int64                `json:"user_id"`
-	Found         bool                 `json:"found"`
+// PermissionsSettings 是读出的员工权限：总开关、11 项与发送白名单。账号权限与默认权限模板的
+// 读出结果共用；嵌入时字段平铺在外层 JSON 里。
+type PermissionsSettings struct {
 	Enabled       bool                 `json:"enabled"`
 	Send          bool                 `json:"send"`
 	Delete        bool                 `json:"delete"`
@@ -103,27 +109,44 @@ type AccountPermissionsResult struct {
 	LeaveChannel  bool                 `json:"leave_channel"`
 	AddContact    bool                 `json:"add_contact"`
 	SendWhitelist PermissionsWhitelist `json:"send_whitelist"`
-	UpdatedAt     string               `json:"updated_at,omitempty"`
-	CommandID     string               `json:"command_id,omitempty"`
 }
 
-func accountPermissionsResult(p domain.AccountPermissions, found bool) AccountPermissionsResult {
-	ids := domain.NormalizeSendWhitelist(p.SendWhitelist)
-	f := p.Flags
-	out := AccountPermissionsResult{
-		UserID: p.UserID, Found: found, Enabled: p.Enabled,
-		Send: f.Send, Delete: f.Delete, Edit: f.Edit, ClearHistory: f.ClearHistory,
+func permissionsSettings(enabled bool, f domain.AccountPermissionFlags, whitelistEnabled bool, whitelist []int64) PermissionsSettings {
+	return PermissionsSettings{
+		Enabled: enabled,
+		Send:    f.Send, Delete: f.Delete, Edit: f.Edit, ClearHistory: f.ClearHistory,
 		CreateGroup: f.CreateGroup, CreateChannel: f.CreateChannel,
 		JoinGroup: f.JoinGroup, JoinChannel: f.JoinChannel,
 		LeaveGroup: f.LeaveGroup, LeaveChannel: f.LeaveChannel,
 		AddContact:    f.AddContact,
-		SendWhitelist: PermissionsWhitelist{Enabled: p.SendWhitelistEnabled, UserIDs: ids},
-		CommandID:     p.CommandID,
+		SendWhitelist: PermissionsWhitelist{Enabled: whitelistEnabled, UserIDs: domain.NormalizeSendWhitelist(whitelist)},
 	}
-	if !p.UpdatedAt.IsZero() {
-		out.UpdatedAt = p.UpdatedAt.UTC().Format(time.RFC3339)
+}
+
+// formatUpdatedAt 是读出结果的 updated_at：RFC 3339（UTC），没有时为空串（JSON 里省略）。
+func formatUpdatedAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
 	}
-	return out
+	return t.UTC().Format(time.RFC3339)
+}
+
+// AccountPermissionsResult 是账号的权限设置；Found=false 表示没有记录（总开关关闭、各项默认值）。
+type AccountPermissionsResult struct {
+	UserID int64 `json:"user_id"`
+	Found  bool  `json:"found"`
+	PermissionsSettings
+	UpdatedAt string `json:"updated_at,omitempty"`
+	CommandID string `json:"command_id,omitempty"`
+}
+
+func accountPermissionsResult(p domain.AccountPermissions, found bool) AccountPermissionsResult {
+	return AccountPermissionsResult{
+		UserID: p.UserID, Found: found,
+		PermissionsSettings: permissionsSettings(p.Enabled, p.Flags, p.SendWhitelistEnabled, p.SendWhitelist),
+		UpdatedAt:           formatUpdatedAt(p.UpdatedAt),
+		CommandID:           p.CommandID,
+	}
 }
 
 // AccountPermissions 读取账号当前的权限设置；没有记录时返回总开关关闭与默认值。

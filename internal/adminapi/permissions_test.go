@@ -25,7 +25,7 @@ func (s *capturePermissionsService) SetPermissions(_ context.Context, req admin.
 
 func (s *capturePermissionsService) AccountPermissions(_ context.Context, userID int64) (admin.AccountPermissionsResult, error) {
 	s.reads = append(s.reads, userID)
-	return admin.AccountPermissionsResult{UserID: userID, Send: true, SendWhitelist: admin.PermissionsWhitelist{UserIDs: []int64{}}}, nil
+	return admin.AccountPermissionsResult{UserID: userID, PermissionsSettings: admin.PermissionsSettings{Send: true, SendWhitelist: admin.PermissionsWhitelist{UserIDs: []int64{}}}}, nil
 }
 
 // TestAdminAPIPermissions 读写账号的员工权限（#119）：与设备上限一样只有 master token 能调。
@@ -94,7 +94,7 @@ func (s *capturePermissionDefaultsService) SetPermissionDefaults(_ context.Conte
 
 func (s *capturePermissionDefaultsService) PermissionDefaults(context.Context) (admin.PermissionDefaultsResult, error) {
 	s.reads++
-	return admin.PermissionDefaultsResult{Found: true, Send: true, ApplyToSelfSignup: true, SendWhitelist: admin.PermissionsWhitelist{UserIDs: []int64{}}}, nil
+	return admin.PermissionDefaultsResult{Found: true, PermissionsSettings: admin.PermissionsSettings{Send: true, SendWhitelist: admin.PermissionsWhitelist{UserIDs: []int64{}}}, ApplyToSelfSignup: true}, nil
 }
 
 // TestAdminAPIPermissionDefaults 读写默认权限模板（#161）：与账号权限一样只有 master token 能调。

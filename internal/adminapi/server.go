@@ -746,7 +746,7 @@ type createAccountWire struct {
 	Password  string `json:"password,omitempty"`
 	// Permissions 是新账号的员工权限（#162），字段与 /v1/accounts/set-permissions 一致；不给时
 	// 有默认权限模板就套用模板。
-	Permissions *admin.CreateAccountPermissions `json:"permissions,omitempty"`
+	Permissions *admin.PermissionsRequest `json:"permissions,omitempty"`
 }
 
 func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {

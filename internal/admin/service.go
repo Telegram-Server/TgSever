@@ -1246,7 +1246,7 @@ type CreateAccountRequest struct {
 	PasswordFingerprint string `json:"password_fingerprint,omitempty"`
 	// Permissions 是新账号的员工权限（#162），字段与 account.set_permissions 一致；不给时有默认
 	// 权限模板就套用模板快照，没有模板就不写权限。见 create_account_permissions.go。
-	Permissions *CreateAccountPermissions `json:"permissions,omitempty"`
+	Permissions *PermissionsRequest `json:"permissions,omitempty"`
 }
 
 // ResolveUserByPhoneRequest is a read-only account lookup used by the
