@@ -712,7 +712,7 @@ func adminLogBanType(previous, next domain.ChannelMember) domain.ChannelAdminLog
 	if previous.Status == domain.ChannelMemberKicked || previous.BannedRights.ViewMessages {
 		return domain.ChannelAdminLogParticipantUnkick
 	}
-	if !zeroChannelBannedRights(next.BannedRights) {
+	if !next.BannedRights.Empty() {
 		return domain.ChannelAdminLogParticipantBan
 	}
 	return domain.ChannelAdminLogParticipantUnban
@@ -759,7 +759,7 @@ func (s *ChannelStore) refreshChannelCountsLocked(channelID int64) {
 		if member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin {
 			admins++
 		}
-		if !zeroChannelBannedRights(member.BannedRights) {
+		if !member.BannedRights.Empty() {
 			banned++
 		}
 	}

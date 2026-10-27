@@ -446,7 +446,7 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 		member.InviterUserID = req.UserID
 		member.Status = domain.ChannelMemberKicked
 		member.LeftAt = req.Date
-	case zeroChannelBannedRights(req.BannedRights):
+	case req.BannedRights.Empty():
 		if previous.Status == domain.ChannelMemberActive {
 			member.Status = domain.ChannelMemberActive
 		} else {

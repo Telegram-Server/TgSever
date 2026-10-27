@@ -600,7 +600,7 @@ func (s *ChannelStore) editChannelBanned(req domain.EditChannelBannedRequest) (d
 		member.InviterUserID = req.UserID
 		member.Status = domain.ChannelMemberKicked
 		member.LeftAt = req.Date
-	case zeroChannelBannedRights(req.BannedRights):
+	case req.BannedRights.Empty():
 		if previous.Status == domain.ChannelMemberActive {
 			member.Status = domain.ChannelMemberActive
 		} else {
@@ -1273,7 +1273,7 @@ func channelParticipantMatchesFilter(member domain.ChannelMember, kind domain.Ch
 	case domain.ChannelParticipantsKicked:
 		return member.Status == domain.ChannelMemberKicked || member.BannedRights.ViewMessages
 	case domain.ChannelParticipantsBanned:
-		return member.Status != domain.ChannelMemberKicked && !zeroChannelBannedRights(member.BannedRights)
+		return member.Status != domain.ChannelMemberKicked && !member.BannedRights.Empty()
 	case domain.ChannelParticipantsBots:
 		return false
 	default:
@@ -1299,10 +1299,6 @@ func canBanChannelUsers(member domain.ChannelMember) bool {
 
 func zeroChannelAdminRights(rights domain.ChannelAdminRights) bool {
 	return rights == domain.ChannelAdminRights{}
-}
-
-func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
-	return rights == domain.ChannelBannedRights{}
 }
 
 // rejoinBannedRights 返回旧成员记录重新入群后应带的限制：退群不解除限制，

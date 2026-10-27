@@ -1056,7 +1056,7 @@ func adminLogBanType(previous, next domain.ChannelMember) domain.ChannelAdminLog
 	if previous.Status == domain.ChannelMemberKicked || previous.BannedRights.ViewMessages {
 		return domain.ChannelAdminLogParticipantUnkick
 	}
-	if !zeroChannelBannedRights(next.BannedRights) {
+	if !next.BannedRights.Empty() {
 		return domain.ChannelAdminLogParticipantBan
 	}
 	return domain.ChannelAdminLogParticipantUnban

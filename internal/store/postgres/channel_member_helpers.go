@@ -544,10 +544,6 @@ func zeroChannelAdminRights(rights domain.ChannelAdminRights) bool {
 	return rights == domain.ChannelAdminRights{}
 }
 
-func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
-	return rights == domain.ChannelBannedRights{}
-}
-
 // rejoinBannedRights 返回旧成员记录重新入群后应带的限制：退群不解除限制，
 // 否则"先退群再让人拉回来"就能绕过；不在群里时被限制的人（Status banned）同样带着限制入群。
 // 被踢出者（IsKicked）能重新入群只可能是被有封禁权的管理员拉回，等同解封。

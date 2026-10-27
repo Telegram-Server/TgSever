@@ -535,3 +535,66 @@ func TestTDLibBotContractQtsDifferenceAfterOffline(t *testing.T) {
 		t.Fatalf("difference chats %+v lack channel %d", diff.Chats, created.Channel.ID)
 	}
 }
+
+// TestTDLibBotContractKickedMemberIsBanned：Bot API 的 getChatMember 经 TDLib 发
+// channels.getParticipant（td/td/telegram/DialogParticipantManager.cpp GetChannelParticipantQuery），
+// 被踢出的用户必须是带 view_messages 禁令的 channelParticipantBanned left=true，TDLib 才把它映射成
+// Bot API 的 "kicked"（td/td/telegram/DialogParticipant.cpp：channelParticipantBanned 带 view_messages
+// 禁令为 Banned，否则为 Restricted，is_member 取 !left）；返回 channelParticipantLeft 时 Bot API
+// 只会给出 "left"。各类成员的映射
+// 由 rpc 层 TestTgChannelParticipant 覆盖，这里只证明经线上协议拿到的是被踢出状态。
+func TestTDLibBotContractKickedMemberIsBanned(t *testing.T) {
+	t.Parallel()
+	srv := startTDLibContractServer(t)
+	ctx := context.Background()
+	now := int(time.Now().Unix())
+	owner, err := srv.users.Create(ctx, domain.User{AccessHash: 9003, Phone: "+15550143003", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	kicked, err := srv.users.Create(ctx, domain.User{AccessHash: 9004, Phone: "+15550143004", FirstName: "Kicked"})
+	if err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	botUser, token, err := srv.bots.CreateBot(ctx, owner.ID, "TDLib Kick Bot", "tdlib_kick_bot")
+	if err != nil {
+		t.Fatalf("create bot: %v", err)
+	}
+	created, err := srv.channels.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{Title: "TDLib Kick Group", Megagroup: true, Date: now})
+	if err != nil {
+		t.Fatalf("create megagroup: %v", err)
+	}
+	channel := created.Channel
+	if _, err := srv.channels.InviteToChannel(ctx, owner.ID, channel.ID, []int64{botUser.ID, kicked.ID}, now); err != nil {
+		t.Fatalf("invite: %v", err)
+	}
+	if _, err := srv.channels.EditAdmin(ctx, owner.ID, domain.EditChannelAdminRequest{
+		ChannelID: channel.ID, MemberID: botUser.ID, AdminRights: domain.ChannelAdminRights{BanUsers: true}, Date: now,
+	}); err != nil {
+		t.Fatalf("promote bot: %v", err)
+	}
+	if _, err := srv.channels.EditBanned(ctx, owner.ID, domain.EditChannelBannedRequest{
+		ChannelID: channel.ID, Participant: domain.Peer{Type: domain.PeerTypeUser, ID: kicked.ID},
+		BannedRights: domain.ChannelBannedRights{ViewMessages: true}, Date: now,
+	}); err != nil {
+		t.Fatalf("kick member: %v", err)
+	}
+
+	bot := dialTDLibBot(t, srv.addr, srv.dc, srv.pub)
+	bot.mustCall("invokeWithLayer(initConnection(help.getConfig))", tdlibInitConnection(&tg.HelpGetConfigRequest{}))
+	bot.mustCall("auth.importBotAuthorization", &tg.AuthImportBotAuthorizationRequest{
+		APIID: 94575, APIHash: "0123456789abcdef0123456789abcdef", BotAuthToken: token,
+	})
+	raw := bot.mustCall("channels.getParticipant", &tg.ChannelsGetParticipantRequest{
+		Channel:     &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+		Participant: &tg.InputPeerUser{UserID: kicked.ID, AccessHash: kicked.AccessHash},
+	})
+	got := decodeInto[tg.ChannelsChannelParticipant](t, "channels.getParticipant", raw)
+	banned, ok := got.Participant.(*tg.ChannelParticipantBanned)
+	if !ok {
+		t.Fatalf("channels.getParticipant(kicked) = %T, want channelParticipantBanned", got.Participant)
+	}
+	if !banned.Left || !banned.BannedRights.ViewMessages {
+		t.Fatalf("kicked participant = %+v, want left=true with view_messages", banned)
+	}
+}

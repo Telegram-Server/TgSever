@@ -118,3 +118,24 @@ func TestChannelMemberIsKicked(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelBannedRightsEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rights ChannelBannedRights
+		want   bool
+	}{
+		{name: "zero value", rights: ChannelBannedRights{}, want: true},
+		{name: "single flag", rights: ChannelBannedRights{SendMedia: true}, want: false},
+		{name: "view messages", rights: ChannelBannedRights{ViewMessages: true}, want: false},
+		{name: "default-restriction flag", rights: ChannelBannedRights{ManageLinkedPeers: true}, want: false},
+		// 只带期限、不带任何限制项的记录不算空：与存储层原有的整值比较保持一致。
+		{name: "until date only", rights: ChannelBannedRights{UntilDate: 100}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.rights.Empty(); got != tc.want {
+				t.Fatalf("Empty() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

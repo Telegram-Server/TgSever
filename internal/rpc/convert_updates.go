@@ -565,21 +565,11 @@ func channelChatID(chat tg.ChatClass) (int64, bool) {
 	}
 }
 
+// tgChannelParticipantForUpdate 是推送路径（updateChannelParticipant、bot 的 chat_member、
+// admin log）的成员转换：与列表共用 tgChannelParticipant，只多一条"用户 id 为 0 时不输出"。
 func tgChannelParticipantForUpdate(selfUserID int64, member domain.ChannelMember) tg.ChannelParticipantClass {
 	if member.UserID == 0 {
 		return nil
-	}
-	if member.Status == domain.ChannelMemberKicked || member.Status == domain.ChannelMemberBanned || member.BannedRights.ViewMessages {
-		return &tg.ChannelParticipantBanned{
-			Left:         member.Status != domain.ChannelMemberActive,
-			Peer:         &tg.PeerUser{UserID: member.UserID},
-			KickedBy:     member.InviterUserID,
-			Date:         member.LeftAt,
-			BannedRights: tgChatBannedRights(member.BannedRights),
-		}
-	}
-	if member.Status == domain.ChannelMemberLeft {
-		return &tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: member.UserID}}
 	}
 	return tgChannelParticipant(selfUserID, member)
 }

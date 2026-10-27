@@ -594,7 +594,7 @@ WHERE channel_id = $1`, channel.ID)
 		if member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin {
 			admins++
 		}
-		if !zeroChannelBannedRights(member.BannedRights) {
+		if !member.BannedRights.Empty() {
 			banned++
 		}
 	}

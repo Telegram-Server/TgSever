@@ -26,6 +26,12 @@ func (m ChannelMember) EffectiveAt(now int) ChannelMember {
 	return m
 }
 
+// Empty 报告限制记录是否为空：没有任何限制项，也没有期限。转换层判断"在群受限"、两个
+// store 判断"解除限制"都用它。
+func (r ChannelBannedRights) Empty() bool {
+	return r == ChannelBannedRights{}
+}
+
 // IsKicked 报告记录是否表示被踢出/封禁（view_messages 禁令）：这样的用户看不到频道、
 // 不能自行加入，也不能被没有封禁权的管理员拉回。只有部分限制的记录（含 Status banned，
 // 即不在群里但带着限制）不算。调用方应先用 EffectiveAt 换算期限。
