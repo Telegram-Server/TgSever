@@ -34,8 +34,8 @@ type loginPasswordFlows struct{}
 
 func (loginPasswordFlows) CheckSignUpAllowed(context.Context) error { return nil }
 
-func (loginPasswordFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create authapp.CreateAccountFunc) (domain.User, error) {
-	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName})
+func (loginPasswordFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create authapp.SignUpAccountFunc) (domain.User, error) {
+	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName}, nil)
 }
 
 func (loginPasswordFlows) FinishVerifiedSignIn(_ context.Context, _ domain.Authorization, u domain.User) (domain.User, error) {
@@ -85,9 +85,10 @@ func newLoginPasswordFixture(t *testing.T) *loginPasswordFixture {
 	}
 	f.passwords = memory.NewLoginPasswordStore(f.users)
 	challenges := memory.NewLoginPasswordChallengeStore(time.Now)
-	admin := loginpassword.NewService(f.users, f.passwords, challenges, loginPasswordFlows{},
+	accounts := memory.NewAccountCreationStore(f.users, f.passwords, nil)
+	admin := loginpassword.NewService(f.users, f.passwords, accounts, challenges, loginPasswordFlows{},
 		loginpassword.WithChangeNotices(f.notices, nil))
-	f.login = loginpassword.NewService(f.users, f.passwords, challenges, loginPasswordFlows{},
+	f.login = loginpassword.NewService(f.users, f.passwords, accounts, challenges, loginPasswordFlows{},
 		loginpassword.WithEnabled(true))
 	f.svc = NewService(Dependencies{
 		Commands:                    f.repo,

@@ -225,6 +225,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Accounts | Accounts | `/accounts` | `accounts.read` |
 | Accounts | Account Rating | `/account-ratings` | `ratings.read` |
 | Accounts | Shared devices | `/accounts/shared-devices` | `accounts.read` |
+| Accounts | Default permissions | `/accounts/permission-defaults` | `accounts.read` |
 | Groups / Channels | Groups / Channels | `/channels` | `channels.read` |
 | Bots | Bots | `/bots` | `bots.read` |
 | Verification | Official | `/verification` | `verification.review` |
@@ -327,7 +328,8 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | GET | `/api/accounts/{id}/avatar` | Аватар аккаунта (файл). |
 | GET | `/api/accounts/{id}/device-bindings` | Устройства, привязанные к аккаунту (см. `set-device-limit`), от самой ранней привязки. Ответ: `user_id`, `bindings` (пустой массив, если привязок нет) с полями `device_id`, `device_model`, `platform`, `app_version` (на момент привязки), `bound_at`, `last_used_at` (RFC 3339). Проксируется в Admin API `/v1/accounts/{id}/device-bindings`, не кэшируется. |
 | GET | `/api/accounts/shared-devices` | Группы аккаунтов, входивших с одного устройства (модель, версия системы, платформа, IP). Параметры: `offset` (int), `limit` (int). Ответ: `rows` (у каждой `DeviceModel`, `SystemVersion`, `Platform`, `IP`, `AccountCount`, `LastActiveAt`, `Accounts`), `limit`, `offset`, `has_more`, `next_offset`. |
-| GET | `/api/accounts/{id}/permissions` | Управление правами сотрудника для аккаунта (см. `set-permissions`). Ответ: `user_id`, `enabled`, одиннадцать флагов (`send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact`, `true` = разрешено), `send_whitelist` (`enabled`, `user_ids`), `updated_at`. Аккаунт, который ни разу не настраивали, читается как `enabled: false` со всеми флагами разрешёнными. Проксируется из Admin API `/v1/accounts/{id}/permissions`, не кешируется. |
+| GET | `/api/accounts/{id}/permissions` | Управление правами сотрудника для аккаунта (см. `set-permissions`). Ответ: `user_id`, `enabled`, одиннадцать флагов (`send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact`, `true` = разрешено), `send_whitelist` (`enabled`, `user_ids`, `members`), `updated_at`. `members` добавляет сервер панели одним пакетным чтением, в порядке `user_ids`: `id`, `found`, `first_name`, `last_name`, `username`, `phone`, `bot`; для id, чей аккаунт больше не существует, остаётся запись с `found: false`. Аккаунт, который ни разу не настраивали, читается как `enabled: false` со всеми флагами разрешёнными. Проксируется из Admin API `/v1/accounts/{id}/permissions`, не кешируется. |
+| GET | `/api/permission-defaults` | Шаблон прав по умолчанию, с которым создаются новые аккаунты (см. `set-permission-defaults`). Ответ: `found`, `enabled`, одиннадцать флагов, `send_whitelist` (`enabled`, `user_ids`, `members`, заполняется так же, как для аккаунта), `apply_to_self_signup`, `updated_at`. `found: false` значит, что шаблона ещё нет: новые аккаунты не подпадают под управление правами, а поля читаются как `enabled: false` со всеми флагами разрешёнными. Проксируется из Admin API `/v1/permission-defaults`, не кешируется. |
 | GET | `/api/account-ratings` | Параметры: `q`, `min_level` (int), `user_id` (int64), `before_id` (int64), `limit` (int). Ответ: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/account-ratings/{user_id}` | Ответ: `rating`, `events`. |
 
@@ -556,7 +558,7 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 | `set-account-username` | `user_id` (int64), `username` (string) | `accounts.manage` |
 | `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | `accounts.manage` |
 | `set-account-phone` | `user_id` (int64), `phone` (string) | `accounts.manage` |
-| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, необязательно), `password` (string, необязательно, 1..256 байт UTF-8); создаёт обычный аккаунт без сессии, работает и при закрытой регистрации; занятый номер даёт `PHONE_NUMBER_OCCUPIED`; с `password` аккаунт и пароль для входа создаются вместе — см. ниже | `accounts.manage` |
+| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, необязательно), `password` (string, необязательно, 1..256 байт UTF-8), `permissions` (object, необязательно, поля `set-permissions` без `user_id`); создаёт обычный аккаунт без сессии, работает и при закрытой регистрации; занятый номер даёт `PHONE_NUMBER_OCCUPIED`; с `password` аккаунт и пароль для входа создаются вместе; без `permissions` применяется шаблон прав по умолчанию — см. ниже | `accounts.manage` |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | `accounts.manage` |
 | `set-login-password` | `user_id` (int64), `password` (string, 1..256 байт UTF-8), `revoke_sessions` (bool, опц.); задаёт или сбрасывает пароль для входа без старого пароля — см. ниже | `accounts.manage` |
 | `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100 или `null`, чтобы снять); ограничивает число устройств, на которых можно пользоваться аккаунтом. Устройство (`device_id`, который клиент сообщает в `initConnection.params`) привязывается к аккаунту при первом завершённом входе, и лимит считает привязанные устройства; выход из аккаунта или отзыв сессии привязку не снимает, это делает только `unbind-device`. Когда лимит исчерпан, войти могут только привязанные устройства: новое устройство получает `AUTHORIZATIONS_TOO_MUCH`, клиент без `device_id` — `DEVICE_ID_REQUIRED`. Уже вошедшие устройства остаются, а снижение или снятие лимита сохраняет список привязок. При установке лимита уже вошедшие устройства, сообщившие `device_id`, привязываются в порядке входа, пока лимит не заполнится; остальные остаются в аккаунте без привязки. `details.backfilled_devices` — сколько устройств привязано (в пробном запуске — сколько было бы привязано). Вошедшее устройство, сообщившее `device_id` позже, привязывается, если есть свободное место, иначе ничего не меняется. Системные аккаунты, боты, удалённые и несуществующие аккаунты дают `USER_INVALID`, значение вне 1..100 — `DEVICE_LIMIT_INVALID` | `accounts.manage` |
@@ -564,6 +566,7 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 | `delete-account` | `user_id` (int64); удаляет аккаунт так же, как процедура удаления аккаунта (надгробие), и сбрасывает его живые сессии. Отклоняется, пока этот процесс не может достать до сессий, чтобы привязанная сессия не сохранила удалённого пользователя | `accounts.manage` |
 | `grant-stars-all` | `amount` (int64, 1..1000000000); начисляет `amount` Stars каждому реальному аккаунту в одной транзакции. Пробный запуск только считает аккаунты. Клиенты по одному не уведомляются | `premium.manage` |
 | `set-permissions` | `user_id` (int64), `enabled` (bool), одиннадцать флагов `send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact` (bool, `true` = разрешено), `send_whitelist` (`enabled` (bool), `user_ids` ([]int64, весь список)); управление правами сотрудника. Не переданное поле сохраняет текущее значение: слияние выполняется при записи под блокировкой настроек аккаунта, поэтому если два оператора одновременно меняют разные пункты, сохраняются оба изменения. Аккаунт, настраиваемый впервые, начинает со всего разрешённого. При выключенном `enabled` ничего не применяется, настройки сохраняются. `clear_history` действует только на личные чаты и «Избранное»: очистка истории группы или канала не запрещается. Запрещённые операции отвечают `403 TELESRV_PERMISSION_*`; сессии аккаунта получают `updateConfig` и читают настройки из `help.getAppConfig` (`telesrv_permissions`). Системные аккаунты, боты, удалённые и несуществующие аккаунты — `USER_INVALID`; белый список длиннее 1000 записей, с несуществующим или удалённым аккаунтом или с самим аккаунтом — `PERMISSION_WHITELIST_INVALID` (дубликаты отбрасываются) | `accounts.manage` |
+| `set-permission-defaults` | поля `set-permissions` без `user_id`, плюс `apply_to_self_signup` (bool); шаблон прав по умолчанию (команда `permission_defaults.set`). Не переданное поле сохраняет текущее значение, слияние выполняется под блокировкой шаблона; первое сохранение начинает со всего разрешённого при выключенном управлении. Шаблон — снимок, который копируется в аккаунт при его создании, поэтому его сохранение не меняет существующие аккаунты. `apply_to_self_signup` решает, получают ли его аккаунты, которые люди сами регистрируют в клиенте; аккаунты, созданные из консоли, получают его всегда. Белый список длиннее 1000 записей или с несуществующим или удалённым аккаунтом — `PERMISSION_WHITELIST_INVALID`; аккаунт, удалённый позже, убирается из белого списка шаблона | `accounts.manage` |
 | `set-account-avatar` | **multipart**: поле `metadata` (JSON с общими полями + `user_id` (int64)) и файл в поле `file` | `accounts.manage` |
 | `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | `accounts.manage` |
 | `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, секунды) | `accounts.manage` |
@@ -641,6 +644,33 @@ X-CSRF-Token: <csrf из /api/session>
   `command_id` с другим паролем или без пароля отклоняется с `COMMAND_ID_CONFLICT`.
   Пробный запуск проверяет номер и пароль и ничего не записывает. Сообщение от 777000
   не отправляется: у нового аккаунта ещё нет сеансов.
+
+### Создание аккаунта с правами сотрудника
+
+`create-account` принимает необязательный объект `permissions` с полями
+`set-permissions` (`enabled`, одиннадцать флагов, `send_whitelist`) без `user_id`.
+Аккаунт находится под контролем прав с момента появления: аккаунт и его права
+записываются в одной транзакции, вместе с паролем для входа, если он задан.
+
+- **Заданы:** указанные поля заменяют значения без контроля (общий переключатель
+  выключен, все действия разрешены, белый список выключен и пуст), не указанные
+  берут эти значения. Чтобы явно создать аккаунт без контроля, передайте
+  `"enabled": false`. Белый список проверяется по правилам `set-permissions`
+  (аккаунты существуют и не удалены, не больше 1000, повторы отбрасываются);
+  недопустимый отклоняется с `PERMISSION_WHITELIST_INVALID`, аккаунт не создаётся.
+- **Не заданы:** если есть шаблон прав по умолчанию (Аккаунты → Права по
+  умолчанию), записывается его снимок; без шаблона права не записываются. Это не
+  зависит от переключателя шаблона «Применять и к самостоятельной регистрации»:
+  он касается только самостоятельной регистрации.
+- **Пробный запуск** проверяет и права и ничего не записывает.
+- **Записи:** детали команды и аудит содержат окончательно записанные права
+  (`permissions`) и их источник (`permissions_source`: `request` или `defaults`);
+  без прав обоих ключей нет.
+- **Где:** Аккаунты → **Создать аккаунт** → сворачиваемый раздел **Права
+  сотрудника**. При раскрытии общий редактор прав заполняется по шаблону (или
+  значениями без контроля, если шаблона нет), и показанное отправляется как
+  `permissions`. Если раздел не раскрывать, ничего не отправляется и сервер
+  применяет шаблон.
 
 ## API: программный поиск аккаунта (v1)
 

@@ -15,6 +15,7 @@ import (
 	"telesrv/internal/app/loginpassword"
 	"telesrv/internal/domain"
 	"telesrv/internal/srp"
+	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
 
@@ -37,8 +38,8 @@ func (f *fakeFlows) CheckSignUpAllowed(ctx context.Context) error {
 	return f.gate.CheckSignUpAllowed(ctx)
 }
 
-func (f *fakeFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create auth.CreateAccountFunc) (domain.User, error) {
-	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName})
+func (f *fakeFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create auth.SignUpAccountFunc) (domain.User, error) {
+	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName}, nil)
 }
 
 func (f *fakeFlows) FinishVerifiedSignIn(_ context.Context, _ domain.Authorization, u domain.User) (domain.User, error) {
@@ -58,6 +59,7 @@ type fixture struct {
 	svc       *loginpassword.Service
 	users     *memory.UserStore
 	passwords *memory.LoginPasswordStore
+	accounts  *memory.AccountCreationStore
 	flows     *fakeFlows
 	now       time.Time
 	mu        sync.Mutex
@@ -67,7 +69,8 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{users: memory.NewUserStore(), flows: &fakeFlows{}, now: time.Unix(1_800_000_000, 0)}
 	f.passwords = memory.NewLoginPasswordStore(f.users)
-	f.svc = loginpassword.NewService(f.users, f.passwords, memory.NewLoginPasswordChallengeStore(f.clock), f.flows,
+	f.accounts = memory.NewAccountCreationStore(f.users, f.passwords, nil)
+	f.svc = loginpassword.NewService(f.users, f.passwords, f.accounts, memory.NewLoginPasswordChallengeStore(f.clock), f.flows,
 		loginpassword.WithEnabled(true), loginpassword.WithClock(f.clock))
 	return f
 }
@@ -116,7 +119,8 @@ func proof(t *testing.T, settings domain.PasswordSettings, password string) doma
 
 func (f *fixture) account(t *testing.T, u domain.User, password string) domain.User {
 	t.Helper()
-	created, err := f.passwords.CreateUserWithLoginPassword(context.Background(), u, newPassword(t, password))
+	pw := newPassword(t, password)
+	created, err := f.accounts.CreateAccount(context.Background(), u, store.AccountExtras{LoginPassword: &pw})
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
@@ -194,7 +198,7 @@ func TestGetLoginPasswordChallengeCarriesTheStoredSalts(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	stored := newPassword(t, "salts")
-	if _, err := f.passwords.CreateUserWithLoginPassword(ctx, domain.User{Phone: "15550320004", FirstName: "Salt"}, stored); err != nil {
+	if _, err := f.accounts.CreateAccount(ctx, domain.User{Phone: "15550320004", FirstName: "Salt"}, store.AccountExtras{LoginPassword: &stored}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	settings, err := f.svc.GetLoginPassword(ctx, testAuthKey, "+15550320004")

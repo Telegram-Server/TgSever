@@ -19,9 +19,19 @@ type AccountPermissionsStore struct {
 	byUser map[int64]domain.AccountPermissions
 	// writes 是每个账号的写入次数，UpdateAccountPermissions 用它确认锁外合并期间没有别的写入。
 	writes map[int64]uint64
+
+	// defaults 是默认权限模板（#161），hasDefaults=false 表示没有模板。defaultsWrites 是模板的
+	// 写入次数，任何账号注销也让它加一：UpdatePermissionDefaults 锁外校验成员之后如果有账号被注销，
+	// 就重新校验，不会把刚注销的账号写回模板。
+	defaults       domain.PermissionDefaults
+	hasDefaults    bool
+	defaultsWrites uint64
 }
 
-var _ store.AccountPermissionsStore = (*AccountPermissionsStore)(nil)
+var (
+	_ store.AccountPermissionsStore = (*AccountPermissionsStore)(nil)
+	_ store.PermissionDefaultsStore = (*AccountPermissionsStore)(nil)
+)
 
 // NewAccountPermissionsStore 创建与 users 共享账号数据的内存权限设置 store。
 func NewAccountPermissionsStore(users *UserStore) *AccountPermissionsStore {
@@ -99,12 +109,17 @@ func (s *AccountPermissionsStore) writeLocked(p domain.AccountPermissions) domai
 	return p
 }
 
-// DeleteAccountPermissions 删除被注销账号的权限设置，以及别的账号白名单里指向它的条目。
+// DeleteAccountPermissions 删除被注销账号的权限设置，以及别的账号白名单与默认权限模板白名单里
+// 指向它的条目。
 func (s *AccountPermissionsStore) DeleteAccountPermissions(_ context.Context, userID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.byUser, userID)
 	s.writes[userID]++
+	s.defaultsWrites++
+	if i := slices.Index(s.defaults.SendWhitelist, userID); i >= 0 {
+		s.defaults.SendWhitelist = slices.Delete(slices.Clone(s.defaults.SendWhitelist), i, i+1)
+	}
 	for owner, p := range s.byUser {
 		if i := slices.Index(p.SendWhitelist, userID); i >= 0 {
 			p.SendWhitelist = slices.Delete(slices.Clone(p.SendWhitelist), i, i+1)

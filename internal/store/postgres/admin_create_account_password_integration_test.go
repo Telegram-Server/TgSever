@@ -26,23 +26,27 @@ type signedInFlows struct{}
 
 func (signedInFlows) CheckSignUpAllowed(context.Context) error { return nil }
 
-func (signedInFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create appauth.CreateAccountFunc) (domain.User, error) {
-	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName})
+func (signedInFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create appauth.SignUpAccountFunc) (domain.User, error) {
+	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName}, nil)
 }
 
 func (signedInFlows) FinishVerifiedSignIn(_ context.Context, _ domain.Authorization, u domain.User) (domain.User, error) {
 	return u, nil
 }
 
-// brokenPasswordStore 把要写入的登录密码弄坏（去掉 verifier），让真实存储在建号事务里写密码
+// brokenPasswordAccounts 把要写入的登录密码弄坏（去掉 verifier），让真实存储在建号事务里写密码
 // 这一步失败，用来验证事务回滚之后账号也不在。
-type brokenPasswordStore struct {
-	*LoginPasswordStore
+type brokenPasswordAccounts struct {
+	*AccountCreationStore
 }
 
-func (s brokenPasswordStore) CreateUserWithLoginPassword(ctx context.Context, u domain.User, password domain.LoginPassword) (domain.User, error) {
-	password.Verifier = nil
-	return s.LoginPasswordStore.CreateUserWithLoginPassword(ctx, u, password)
+func (s brokenPasswordAccounts) CreateAccount(ctx context.Context, u domain.User, extras store.AccountExtras) (domain.User, error) {
+	if extras.LoginPassword != nil {
+		broken := *extras.LoginPassword
+		broken.Verifier = nil
+		extras.LoginPassword = &broken
+	}
+	return s.AccountCreationStore.CreateAccount(ctx, u, extras)
 }
 
 // TestAdminCreateAccountWithPasswordPostgres 后台建号带登录密码在真实存储上：建好的账号马上能用
@@ -56,16 +60,17 @@ func TestAdminCreateAccountWithPasswordPostgres(t *testing.T) {
 	challenges := memory.NewLoginPasswordChallengeStore(time.Now)
 	authSvc := appauth.NewService(users, NewAuthorizationStore(pool), memory.NewCodeStore(), nil, nil, "12345",
 		appauth.WithSignUpAllowed(appauth.StaticSignUpAllowed(false)))
-	newAdmin := func(passwords store.LoginPasswordStore) *admin.Service {
+	accountCreation := NewAccountCreationStore(pool)
+	newAdmin := func(accounts store.AccountCreationStore) *admin.Service {
 		return admin.NewService(admin.Dependencies{
 			Commands:                    NewAdminStore(pool),
 			AccountCreator:              authSvc,
-			LoginPasswords:              loginpassword.NewService(users, passwords, challenges, nil),
+			LoginPasswords:              loginpassword.NewService(users, passwords, accounts, challenges, nil),
 			LoginPasswordFingerprintKey: admin.DeriveLoginPasswordFingerprintKey("pg-admin-token"),
 		})
 	}
-	svc := newAdmin(passwords)
-	login := loginpassword.NewService(users, passwords, challenges, signedInFlows{}, loginpassword.WithEnabled(true))
+	svc := newAdmin(accountCreation)
+	login := loginpassword.NewService(users, passwords, accountCreation, challenges, signedInFlows{}, loginpassword.WithEnabled(true))
 	const phone = "15550090041"
 	const password = "pg-create-plaintext-marker-2c8d"
 
@@ -110,7 +115,7 @@ func TestAdminCreateAccountWithPasswordPostgres(t *testing.T) {
 
 	// 写密码失败：整个事务回滚，号码上没有账号。
 	const brokenPhone = "15550090042"
-	broken := newAdmin(brokenPasswordStore{passwords})
+	broken := newAdmin(brokenPasswordAccounts{accountCreation})
 	if res, err := broken.CreateAccount(ctx, admin.CreateAccountRequest{
 		CommandMeta: admin.CommandMeta{CommandID: "broken-pg-create-account-pw", Actor: "ops", Reason: "new hire"},
 		Phone:       brokenPhone, FirstName: "Half", Password: password,

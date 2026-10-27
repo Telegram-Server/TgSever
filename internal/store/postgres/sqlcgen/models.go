@@ -101,6 +101,30 @@ type AccountPermission struct {
 	CommandID            string
 }
 
+type AccountPermissionDefault struct {
+	Singleton            bool
+	Enabled              bool
+	AllowSend            bool
+	AllowDelete          bool
+	AllowEdit            bool
+	AllowClearHistory    bool
+	AllowCreateGroup     bool
+	AllowCreateChannel   bool
+	AllowJoinGroup       bool
+	AllowJoinChannel     bool
+	AllowLeaveGroup      bool
+	AllowLeaveChannel    bool
+	AllowAddContact      bool
+	SendWhitelistEnabled bool
+	ApplyToSelfSignup    bool
+	UpdatedAt            pgtype.Timestamptz
+	CommandID            string
+}
+
+type AccountPermissionDefaultsWhitelist struct {
+	MemberUserID int64
+}
+
 type AccountPrivacyRule struct {
 	OwnerUserID int64
 	PrivacyKey  string

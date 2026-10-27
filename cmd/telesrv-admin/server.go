@@ -95,6 +95,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/accounts/{id}/avatar", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountAvatarAPI)))
 	mux.Handle("GET /api/accounts/{id}/device-bindings", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleDeviceBindingsAPI)))
 	mux.Handle("GET /api/accounts/{id}/permissions", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountPermissionsAPI)))
+	mux.Handle("GET /api/permission-defaults", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handlePermissionDefaultsAPI)))
 	mux.Handle("GET /api/channels", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelDetailAPI)))
 	mux.Handle("GET /api/channels/{id}/avatar", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelAvatarAPI)))
@@ -169,6 +170,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-login-password", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginPasswordAPI)))
 	mux.Handle("POST /api/actions/set-device-limit", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetDeviceLimitAPI)))
 	mux.Handle("POST /api/actions/set-permissions", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPermissionsAPI)))
+	mux.Handle("POST /api/actions/set-permission-defaults", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPermissionDefaultsAPI)))
 	mux.Handle("POST /api/actions/unbind-device", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleUnbindDeviceAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
@@ -748,27 +750,40 @@ func (s *server) proxyAdminJSONWithCache(
 	maxBytes int64,
 	cacheControl string,
 ) {
+	raw, ok := s.getAdminJSON(w, r, apiPath, maxBytes)
+	if !ok {
+		return
+	}
+	writeRawJSON(w, raw, cacheControl)
+}
+
+// getAdminJSON GET 服务端 admin API 并返回成功响应的原文；失败时已写好错误响应，返回 false。
+func (s *server) getAdminJSON(w http.ResponseWriter, r *http.Request, apiPath string, maxBytes int64) ([]byte, bool) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.cfg.AdminAPIURL+apiPath, nil)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, false
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		writeAPIError(w, http.StatusBadGateway, err.Error())
-		return
+		return nil, false
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil || int64(len(raw)) > maxBytes {
 		writeAPIError(w, http.StatusBadGateway, "invalid admin api response")
-		return
+		return nil, false
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		writeAPIError(w, resp.StatusCode, string(raw))
-		return
+		return nil, false
 	}
+	return raw, true
+}
+
+func writeRawJSON(w http.ResponseWriter, raw []byte, cacheControl string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", cacheControl)
 	w.WriteHeader(http.StatusOK)
@@ -984,13 +999,83 @@ func (s *server) handleDeviceBindingsAPI(w http.ResponseWriter, r *http.Request)
 }
 
 // handleAccountPermissionsAPI 代理账号的员工权限（#119）。不缓存：修改之后要立刻看到新设置。
+// 服务端只给发送白名单的 user_ids；面板在这里一次批量读库补出 send_whitelist.members（#160），
+// 名单才能显示名字、@用户名和 bot 标记。其余字段原样透传。
 func (s *server) handleAccountPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 	id, err := parseInt64(r.PathValue("id"))
 	if err != nil || id <= 0 {
 		writeAPIError(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
-	s.proxyAdminJSONNoStore(w, r, fmt.Sprintf("/v1/accounts/%d/permissions", id), 1<<20)
+	s.proxyPermissionsWithWhitelistMembers(w, r, fmt.Sprintf("/v1/accounts/%d/permissions", id))
+}
+
+// handlePermissionDefaultsAPI 代理默认权限模板（#161），与账号权限一样补上 send_whitelist.members，
+// 不缓存。
+func (s *server) handlePermissionDefaultsAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyPermissionsWithWhitelistMembers(w, r, "/v1/permission-defaults")
+}
+
+// proxyPermissionsWithWhitelistMembers 读取 admin API 上 path 处的一份权限设置，补上
+// send_whitelist.members 后不缓存地回给浏览器。
+func (s *server) proxyPermissionsWithWhitelistMembers(w http.ResponseWriter, r *http.Request, path string) {
+	raw, ok := s.getAdminJSON(w, r, path, 1<<20)
+	if !ok {
+		return
+	}
+	out, status, err := s.withWhitelistMembers(r.Context(), raw)
+	if err != nil {
+		writeAPIError(w, status, err.Error())
+		return
+	}
+	writeRawJSON(w, out, "no-store")
+}
+
+// withWhitelistMembers 给权限设置的 JSON 补上 send_whitelist.members（顺序同 user_ids），其余字段不动。
+// 失败时返回应回给浏览器的状态码。
+func (s *server) withWhitelistMembers(ctx context.Context, raw []byte) ([]byte, int, error) {
+	var setting map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &setting); err != nil {
+		return nil, http.StatusBadGateway, fmt.Errorf("invalid admin api response")
+	}
+	var whitelist map[string]json.RawMessage
+	if body, ok := setting["send_whitelist"]; ok && string(body) != "null" {
+		if err := json.Unmarshal(body, &whitelist); err != nil {
+			return nil, http.StatusBadGateway, fmt.Errorf("invalid admin api response")
+		}
+	}
+	if whitelist == nil {
+		whitelist = map[string]json.RawMessage{}
+	}
+	var ids []int64
+	if body, ok := whitelist["user_ids"]; ok {
+		if err := json.Unmarshal(body, &ids); err != nil {
+			return nil, http.StatusBadGateway, fmt.Errorf("invalid admin api response")
+		}
+	}
+	members := []WhitelistMember{}
+	if len(ids) > 0 {
+		if s.read == nil {
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("read store is not configured")
+		}
+		var err error
+		if members, err = s.read.WhitelistMembers(ctx, ids); err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+	}
+	encoded, err := json.Marshal(members)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	whitelist["members"] = encoded
+	if setting["send_whitelist"], err = json.Marshal(whitelist); err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	out, err := json.Marshal(setting)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return out, http.StatusOK, nil
 }
 
 func (s *server) handleChannelAvatarAPI(w http.ResponseWriter, r *http.Request) {
@@ -1130,6 +1215,9 @@ type createAccountAPIRequest struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Password  string `json:"password"`
+	// Permissions 是新账号的员工权限（#162），字段与 set-permissions 一致；不给时服务端有默认
+	// 权限模板就套用模板。
+	Permissions *admin.PermissionsRequest `json:"permissions"`
 }
 
 // createAccountUpstreamRequest 是转发给服务端 POST /v1/accounts/create 的请求体。
@@ -1141,6 +1229,8 @@ type createAccountUpstreamRequest struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name,omitempty"`
 	Password  string `json:"password,omitempty"`
+	// Permissions 不给时省略，服务端按默认权限模板处理。
+	Permissions *admin.PermissionsRequest `json:"permissions,omitempty"`
 }
 
 // handleCreateAccountAPI creates a regular user account (phone, first name,
@@ -1159,6 +1249,7 @@ func (s *server) handleCreateAccountAPI(w http.ResponseWriter, r *http.Request) 
 		FirstName:   body.FirstName,
 		LastName:    body.LastName,
 		Password:    body.Password,
+		Permissions: body.Permissions,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/create", req)
 	writeCommandResultAPI(w, result, err)
@@ -1225,23 +1316,11 @@ func (s *server) handleSetDeviceLimitAPI(w http.ResponseWriter, r *http.Request)
 }
 
 type setPermissionsAPIRequest struct {
-	CommandID     string                             `json:"command_id"`
-	Reason        string                             `json:"reason"`
-	Confirm       bool                               `json:"confirm"`
-	UserID        int64                              `json:"user_id"`
-	Enabled       *bool                              `json:"enabled"`
-	Send          *bool                              `json:"send"`
-	Delete        *bool                              `json:"delete"`
-	Edit          *bool                              `json:"edit"`
-	ClearHistory  *bool                              `json:"clear_history"`
-	CreateGroup   *bool                              `json:"create_group"`
-	CreateChannel *bool                              `json:"create_channel"`
-	JoinGroup     *bool                              `json:"join_group"`
-	JoinChannel   *bool                              `json:"join_channel"`
-	LeaveGroup    *bool                              `json:"leave_group"`
-	LeaveChannel  *bool                              `json:"leave_channel"`
-	AddContact    *bool                              `json:"add_contact"`
-	SendWhitelist *admin.PermissionsWhitelistRequest `json:"send_whitelist"`
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	admin.PermissionsRequest
 }
 
 // handleSetPermissionsAPI 设置账号的员工权限（总开关、11 项、发送白名单），转发给服务端
@@ -1252,23 +1331,35 @@ func (s *server) handleSetPermissionsAPI(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	req := admin.SetPermissionsRequest{
-		CommandMeta:   s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-permissions"),
-		UserID:        body.UserID,
-		Enabled:       body.Enabled,
-		Send:          body.Send,
-		Delete:        body.Delete,
-		Edit:          body.Edit,
-		ClearHistory:  body.ClearHistory,
-		CreateGroup:   body.CreateGroup,
-		CreateChannel: body.CreateChannel,
-		JoinGroup:     body.JoinGroup,
-		JoinChannel:   body.JoinChannel,
-		LeaveGroup:    body.LeaveGroup,
-		LeaveChannel:  body.LeaveChannel,
-		AddContact:    body.AddContact,
-		SendWhitelist: body.SendWhitelist,
+		CommandMeta:        s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-permissions"),
+		UserID:             body.UserID,
+		PermissionsRequest: body.PermissionsRequest,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-permissions", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setPermissionDefaultsAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	admin.PermissionsRequest
+	ApplyToSelfSignup *bool `json:"apply_to_self_signup"`
+}
+
+// handleSetPermissionDefaultsAPI 设置默认权限模板（#161），转发给服务端
+// POST /v1/permission-defaults/set。给出的字段整体替换，未给出的沿用当前值；只影响之后新建的账号。
+func (s *server) handleSetPermissionDefaultsAPI(w http.ResponseWriter, r *http.Request) {
+	var body setPermissionDefaultsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetPermissionDefaultsRequest{
+		CommandMeta:        s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-permission-defaults"),
+		PermissionsRequest: body.PermissionsRequest,
+		ApplyToSelfSignup:  body.ApplyToSelfSignup,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/permission-defaults/set", req)
 	writeCommandResultAPI(w, result, err)
 }
 

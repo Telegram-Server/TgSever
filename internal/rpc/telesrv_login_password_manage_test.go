@@ -34,7 +34,7 @@ func (s *failingAuthorizationLookup) Authorization(context.Context, [8]byte) (do
 // unusedAuthFlows 满足 loginpassword.AuthFlows；已登录的管理方法不会走到登录/注册收尾。
 type unusedAuthFlows struct{}
 
-func (unusedAuthFlows) SignUpWithAccountCreator(context.Context, domain.Authorization, string, string, string, auth.CreateAccountFunc) (domain.User, error) {
+func (unusedAuthFlows) SignUpWithAccountCreator(context.Context, domain.Authorization, string, string, string, auth.SignUpAccountFunc) (domain.User, error) {
 	return domain.User{}, errors.New("unexpected sign-up")
 }
 
@@ -67,7 +67,7 @@ func TestTelesrvUpdateLoginPasswordReadsTheAuthorizationOnlyForAReset(t *testing
 		t.Fatalf("create user: %v", err)
 	}
 	authSvc := &failingAuthorizationLookup{captureAuthService: &captureAuthService{}}
-	svc := loginpassword.NewService(users, memory.NewLoginPasswordStore(users), memory.NewLoginPasswordChallengeStore(time.Now), unusedAuthFlows{},
+	svc := loginpassword.NewService(users, memory.NewLoginPasswordStore(users), nil, memory.NewLoginPasswordChallengeStore(time.Now), unusedAuthFlows{},
 		loginpassword.WithEnabled(true), loginpassword.WithResetWindow(10*time.Minute))
 	router := New(Config{}, Deps{Auth: authSvc, LoginPassword: svc}, zaptest.NewLogger(t), clock.System)
 	authKey := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}

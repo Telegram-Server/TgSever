@@ -268,7 +268,7 @@ func TestSignUpDisabledSignUpWithAccountCreatorCreatesNoAccount(t *testing.T) {
 	f.sw.set(false)
 	created := false
 	_, err := f.svc.SignUpWithAccountCreator(context.Background(), domain.Authorization{}, "+15550007560", "New", "",
-		func(ctx context.Context, u domain.User) (domain.User, error) {
+		func(ctx context.Context, u domain.User, _ *domain.AccountPermissions) (domain.User, error) {
 			created = true
 			return f.users.Create(ctx, u)
 		})

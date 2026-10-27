@@ -206,6 +206,7 @@ and the old URL still lands there rather than 404ing on a bookmark.
 | Accounts | Accounts | `/accounts` | `accounts.read` |
 | Accounts | Account Rating | `/account-ratings` | `ratings.read` |
 | Accounts | Shared devices | `/accounts/shared-devices` | `accounts.read` |
+| Accounts | Default permissions | `/accounts/permission-defaults` | `accounts.read` |
 | Groups / Channels | Groups / Channels | `/channels` | `channels.read` |
 | Bots | Bots | `/bots` | `bots.read` |
 | Verification | Official | `/verification` | `verification.review` |
@@ -303,7 +304,8 @@ Every mutating request carries in its body:
 | GET | `/api/accounts/{id}/avatar` | Account avatar (file). |
 | GET | `/api/accounts/{id}/device-bindings` | Devices bound to the account (see `set-device-limit`), oldest binding first. Response: `user_id`, `bindings` (empty array when none) of `device_id`, `device_model`, `platform`, `app_version` (as reported at binding time), `bound_at`, `last_used_at` (RFC 3339). Proxied from Admin API `/v1/accounts/{id}/device-bindings`, not cached. |
 | GET | `/api/accounts/shared-devices` | Groups of accounts signed in from the same device (model, system version, platform, IP). Params: `offset` (int), `limit` (int). Response: `rows` (each with `DeviceModel`, `SystemVersion`, `Platform`, `IP`, `AccountCount`, `LastActiveAt`, `Accounts`), `limit`, `offset`, `has_more`, `next_offset`. |
-| GET | `/api/accounts/{id}/permissions` | The account's staff permission control (see `set-permissions`). Response: `user_id`, `enabled`, the eleven flags (`send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact`, `true` = allowed), `send_whitelist` (`enabled`, `user_ids`), `updated_at`. An account that was never configured reads as `enabled: false` with every flag allowed. Proxied from Admin API `/v1/accounts/{id}/permissions`, not cached. |
+| GET | `/api/accounts/{id}/permissions` | The account's staff permission control (see `set-permissions`). Response: `user_id`, `enabled`, the eleven flags (`send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact`, `true` = allowed), `send_whitelist` (`enabled`, `user_ids`, `members`), `updated_at`. `members` is added by the panel server with one batch read, in `user_ids` order: `id`, `found`, `first_name`, `last_name`, `username`, `phone`, `bot`; an id whose account no longer exists keeps an entry with `found: false`. An account that was never configured reads as `enabled: false` with every flag allowed. Proxied from Admin API `/v1/accounts/{id}/permissions`, not cached. |
+| GET | `/api/permission-defaults` | The default permission template new accounts are created with (see `set-permission-defaults`). Response: `found`, `enabled`, the eleven flags, `send_whitelist` (`enabled`, `user_ids`, `members`, filled in the same way as for an account), `apply_to_self_signup`, `updated_at`. `found: false` means there is no template yet: new accounts are not under permission control, and the fields read as `enabled: false` with every flag allowed. Proxied from Admin API `/v1/permission-defaults`, not cached. |
 | GET | `/api/account-ratings` | Params: `q`, `min_level` (int), `user_id` (int64), `before_id` (int64), `limit` (int). Response: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/account-ratings/{user_id}` | Response: `rating`, `events`. |
 
@@ -532,7 +534,7 @@ body always contains the **common command fields** (`command_id`, `reason`,
 | `set-account-username` | `user_id` (int64), `username` (string) | `accounts.manage` |
 | `set-account-profile` | `user_id` (int64), `first_name` (string), `last_name` (string) | `accounts.manage` |
 | `set-account-phone` | `user_id` (int64), `phone` (string) | `accounts.manage` |
-| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.), `password` (string, opt., 1..256 UTF-8 bytes); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED`; with `password` the account and its login password are created together — see below | `accounts.manage` |
+| `create-account` | `phone` (string), `first_name` (string), `last_name` (string, opt.), `password` (string, opt., 1..256 UTF-8 bytes), `permissions` (object, opt., the fields of `set-permissions` without `user_id`); creates a regular account without a session, works while sign-up is closed; an occupied number fails with `PHONE_NUMBER_OCCUPIED`; with `password` the account and its login password are created together; without `permissions` the default permissions template is applied — see below | `accounts.manage` |
 | `set-account-login-email` | `user_id` (int64), `email` (string) | `accounts.manage` |
 | `set-login-password` | `user_id` (int64), `password` (string, 1..256 UTF-8 bytes), `revoke_sessions` (bool, opt.); sets or resets the login password without the old one — see below | `accounts.manage` |
 | `set-device-limit` | `user_id` (int64), `device_limit` (int 1..100, or `null` to clear); caps how many devices the account may be used on. A device (the `device_id` the client reports in `initConnection.params`) is bound to the account the first time it completes a login, and the cap counts bound devices; logging out or revoking a session does not unbind it, only `unbind-device` does. Once the cap is reached only bound devices can log in: a new device is refused with `AUTHORIZATIONS_TOO_MUCH`, a client that reports no `device_id` with `DEVICE_ID_REQUIRED`. Devices already signed in stay, and lowering or clearing the cap keeps the bound list. Setting the cap binds the account's devices that are already signed in and have reported a `device_id`, oldest login first, until the cap is filled; the rest stay signed in unbound. `details.backfilled_devices` gives how many were bound (in a dry run, how many would be). A signed-in device that reports its `device_id` later is bound if a slot is free, and left alone otherwise. System accounts, bots, deleted and missing accounts fail with `USER_INVALID`, a value outside 1..100 with `DEVICE_LIMIT_INVALID` | `accounts.manage` |
@@ -540,6 +542,7 @@ body always contains the **common command fields** (`command_id`, `reason`,
 | `delete-account` | `user_id` (int64); deletes the account the way the account-deletion flow does (tombstone) and drops its live sessions. Refused while this process cannot reach the sessions, so a bound session never keeps a deleted user | `accounts.manage` |
 | `grant-stars-all` | `amount` (int64, 1..1000000000); credits every real account with `amount` Stars in one transaction. A dry run only counts the accounts. Clients are not notified one by one | `premium.manage` |
 | `set-permissions` | `user_id` (int64), `enabled` (bool), the eleven flags `send`, `delete`, `edit`, `clear_history`, `create_group`, `create_channel`, `join_group`, `join_channel`, `leave_group`, `leave_channel`, `add_contact` (bool, `true` = allowed), `send_whitelist` (`enabled` (bool), `user_ids` ([]int64, the whole list)); staff permission control. A field left out keeps its current value: the merge happens at write time under a lock on the account's settings, so two operators changing different items at once both keep their change. An account configured for the first time starts with everything allowed. With `enabled` off nothing is enforced and the settings are kept. `clear_history` covers private chats and Saved Messages only: clearing a group or channel is never refused. Refused operations answer `403 TELESRV_PERMISSION_*`; the account's sessions get `updateConfig` and read the settings from `help.getAppConfig` (`telesrv_permissions`). System accounts, bots, deleted and missing accounts fail with `USER_INVALID`; a whitelist over 1000 entries, with a missing or deleted account, or with the account itself fails with `PERMISSION_WHITELIST_INVALID` (duplicates are dropped) | `accounts.manage` |
+| `set-permission-defaults` | the fields of `set-permissions` without `user_id`, plus `apply_to_self_signup` (bool); the default permission template (command `permission_defaults.set`). A field left out keeps its current value, merged under a lock on the template; the first save starts from everything allowed with control off. The template is a snapshot copied to an account when it is created, so saving it never changes existing accounts. `apply_to_self_signup` decides whether accounts people register themselves in the client get it too; accounts created from the console always do. A whitelist over 1000 entries or with a missing or deleted account fails with `PERMISSION_WHITELIST_INVALID`; an account deleted later is removed from the template's whitelist | `accounts.manage` |
 | `set-account-avatar` | **multipart**: `metadata` field (JSON with common fields + `user_id` (int64)) and a file in `file` | `accounts.manage` |
 | `set-account-color` | `user_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | `accounts.manage` |
 | `set-account-emoji-status` | `user_id` (int64), `document_id` (int64), `until` (int, seconds) | `accounts.manage` |
@@ -626,6 +629,35 @@ transaction, so the member can sign in with phone number + password
   without one — is rejected with `COMMAND_ID_CONFLICT`. The dry run validates
   the number and the password and writes nothing. No 777000 message is sent: the
   new account has no sessions yet.
+
+### Creating an account with staff permissions
+
+`create-account` takes an optional `permissions` object with the fields of
+`set-permissions` (`enabled`, the eleven flags, `send_whitelist`) minus
+`user_id`. The account is under permission control from the moment it exists:
+the account and its permissions are written in one transaction, together with
+the login password when one is given.
+
+- **Given:** the fields given replace the uncontrolled defaults (master switch
+  off, every action allowed, whitelist off and empty); fields left out take those
+  defaults. For an account that is explicitly not controlled, send
+  `"enabled": false`. The whitelist follows the `set-permissions` rules (accounts
+  exist and are not deleted, at most 1000, duplicates dropped); an invalid one is
+  rejected with `PERMISSION_WHITELIST_INVALID` and no account is created.
+- **Not given:** when there is a default permissions template (Accounts →
+  Default permissions) a snapshot of it is written; without a template no
+  permissions are written. This holds whatever the template's "Also apply to self
+  sign-ups" switch says: that switch only concerns self sign-ups.
+- **Dry run** validates the permissions too and writes nothing.
+- **Records:** the command details and the audit trail carry the permissions
+  finally written (`permissions`) and where they came from
+  (`permissions_source`: `request` or `defaults`); without permissions neither
+  key is present.
+- **Where:** Accounts → **Create account** → the collapsible **Staff
+  permissions** section. Opening it prefills the shared permission editor from
+  the template (or the uncontrolled defaults when there is none), and what it
+  then shows is sent as `permissions`. Left unopened, nothing is sent and the
+  server applies the template.
 
 ## API: machine account lookup (v1)
 

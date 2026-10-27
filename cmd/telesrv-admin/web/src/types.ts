@@ -21,6 +21,8 @@ export type AccountRow = {
   Verified: boolean;
   Scam: boolean;
   Fake: boolean;
+  // users.is_bot; the account list excludes bots, so only search results set it.
+  Bot: boolean;
   PremiumUntil: number;
   LastActiveAt: string;
   DeviceCount: number;
@@ -87,9 +89,31 @@ export type AccountPermissions = {
   leave_group: boolean;
   leave_channel: boolean;
   add_contact: boolean;
-  send_whitelist: { enabled: boolean; user_ids: number[] };
+  // members is filled in by the panel server (one batch read, #160) in user_ids
+  // order; it is absent from responses that do not carry it.
+  send_whitelist: { enabled: boolean; user_ids: number[]; members?: WhitelistMember[] };
   updated_at?: string;
   command_id?: string;
+};
+
+// PermissionDefaults mirrors admin.PermissionDefaultsResult: the default
+// permission template new accounts are created with (#161). It has the shape of
+// AccountPermissions without user_id, plus apply_to_self_signup. found=false
+// means there is no template: new accounts are not under control.
+export type PermissionDefaults = Omit<AccountPermissions, "user_id"> & {
+  apply_to_self_signup: boolean;
+};
+
+// WhitelistMember mirrors the panel's WhitelistMember: how one send-whitelist
+// entry is shown. found=false means the account no longer exists; only id is set.
+export type WhitelistMember = {
+  id: number;
+  found: boolean;
+  first_name: string;
+  last_name: string;
+  username: string;
+  phone: string;
+  bot: boolean;
 };
 
 // SharedDeviceAccount is one account whose authorizations matched a

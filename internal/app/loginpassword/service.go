@@ -31,9 +31,10 @@ const challengeTTL = 5 * time.Minute
 var errNoAuthKey = errors.New("loginpassword: request has no raw auth key")
 
 // SignUpCompleter 是注册的后半段（auth.Service.SignUpWithAccountCreator）：按 auth.signUp 的
-// 规则校验号码和名字，用 create 建号，然后赠送会员、绑定授权、写欢迎消息。
+// 规则校验号码和名字，读默认权限模板，用 create 建号（带要套用的权限快照），然后赠送会员、
+// 绑定授权、写欢迎消息。
 type SignUpCompleter interface {
-	SignUpWithAccountCreator(ctx context.Context, a domain.Authorization, phone, firstName, lastName string, create auth.CreateAccountFunc) (domain.User, error)
+	SignUpWithAccountCreator(ctx context.Context, a domain.Authorization, phone, firstName, lastName string, create auth.SignUpAccountFunc) (domain.User, error)
 }
 
 // SignInCompleter 是登录的收尾（auth.Service.FinishVerifiedSignIn）：与验证码登录共用
@@ -60,6 +61,7 @@ type Service struct {
 	enabled    bool
 	users      store.UserStore
 	passwords  store.LoginPasswordStore
+	accounts   store.AccountCreationStore
 	challenges store.LoginPasswordChallengeStore
 	flows      AuthFlows
 	now        func() time.Time
@@ -90,10 +92,11 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-// NewService 创建登录密码服务。users 用来按号码查账号，passwords 保存登录密码，
-// challenges 暂存密码登录的 SRP challenge，flows 提供与验证码登录/注册共用的收尾。
-func NewService(users store.UserStore, passwords store.LoginPasswordStore, challenges store.LoginPasswordChallengeStore, flows AuthFlows, opts ...Option) *Service {
-	s := &Service{users: users, passwords: passwords, challenges: challenges, flows: flows, now: time.Now}
+// NewService 创建登录密码服务。users 用来按号码查账号，passwords 保存登录密码，accounts 在
+// 同一个事务里建号并写入登录密码（密码注册、后台建号带密码），challenges 暂存密码登录的 SRP
+// challenge，flows 提供与验证码登录/注册共用的收尾。
+func NewService(users store.UserStore, passwords store.LoginPasswordStore, accounts store.AccountCreationStore, challenges store.LoginPasswordChallengeStore, flows AuthFlows, opts ...Option) *Service {
+	s := &Service{users: users, passwords: passwords, accounts: accounts, challenges: challenges, flows: flows, now: time.Now}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(s)
@@ -308,8 +311,12 @@ func (s *Service) SignUp(ctx context.Context, a domain.Authorization, phone, fir
 	if err != nil {
 		return domain.User{}, err
 	}
-	return s.flows.SignUpWithAccountCreator(ctx, a, phone, firstName, lastName, func(ctx context.Context, u domain.User) (domain.User, error) {
-		return s.passwords.CreateUserWithLoginPassword(ctx, u, password)
+	if s.accounts == nil {
+		return domain.User{}, fmt.Errorf("loginpassword: account creation store is not configured")
+	}
+	// permissions 是 auth 读到的自助注册默认权限快照（不套用时为 nil），与登录密码一起随账号写入。
+	return s.flows.SignUpWithAccountCreator(ctx, a, phone, firstName, lastName, func(ctx context.Context, u domain.User, permissions *domain.AccountPermissions) (domain.User, error) {
+		return s.accounts.CreateAccount(ctx, u, store.AccountExtras{LoginPassword: &password, Permissions: permissions})
 	})
 }
 

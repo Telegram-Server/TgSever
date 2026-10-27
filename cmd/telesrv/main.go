@@ -1188,7 +1188,10 @@ func run(logger *zap.Logger) error {
 	accountLifecycleStore := postgres.NewAccountLifecycleStore(pool)
 	// 员工权限控制（#118）：权限视图在进程内缓存，写入时 bump read model "account_permissions"，
 	// 经 read model 监听器跨实例失效。
-	permissionsService := permissionsapp.NewService(postgres.NewAccountPermissionsStore(pool), userStore)
+	accountPermissionsStore := postgres.NewAccountPermissionsStore(pool)
+	permissionsService := permissionsapp.NewService(accountPermissionsStore, userStore)
+	// 默认权限模板（#161）：不缓存，建号时每次读一次。
+	permissionDefaultsService := permissionsapp.NewDefaultsService(accountPermissionsStore, userStore)
 	accountOptions := []account.ServiceOption{
 		account.WithReactionSettings(passwordStore),
 		account.WithAccountSettings(passwordStore),
@@ -1715,6 +1718,7 @@ func run(logger *zap.Logger) error {
 		dialogStore,
 		newTranslationOptions(cfg, rateLimiter, logger)...,
 	)
+	accountCreationStore := postgres.NewAccountCreationStore(pool)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyGetBatchStore, tempAuthKeyStore, cfg.DevAuthCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(messageStore),
@@ -1729,6 +1733,10 @@ func run(logger *zap.Logger) error {
 		}),
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
+		// 自助注册套用默认权限模板（#163）：验证码注册经原子建号操作建号，模板的"自助注册也套用"
+		// 开启时权限快照与账号同事务写入；模板每次注册现读。密码注册经 loginpassword 走同一读取。
+		auth.WithAccountCreation(accountCreationStore),
+		auth.WithSelfSignUpPermissionDefaults(accountPermissionsStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
 		// 注册开关：管理面板覆盖值（identity.json，每次现读）优先，未设置时跟随
 		// TELESRV_SIGN_UP_ENABLED；auth.SignUpAllowed 是全服唯一的判断点，
@@ -1773,7 +1781,7 @@ func run(logger *zap.Logger) error {
 	// 密码登录的 SRP challenge 只存进程内存（与 passkey 挑战、QR 登录 token 相同，单体
 	// 部署不跨实例），不写进用户记录。
 	loginPasswordService := loginpasswordapp.NewService(userStore, postgres.NewLoginPasswordStore(pool),
-		memory.NewLoginPasswordChallengeStore(nil), authService,
+		accountCreationStore, memory.NewLoginPasswordChallengeStore(nil), authService,
 		loginpasswordapp.WithEnabled(cfg.PasswordLoginEnabled),
 		loginpasswordapp.WithUserRateLimit(rateLimiter, cfg.PasswordLoginUserRateLimit, cfg.PasswordLoginUserRateWindow),
 		// 设置、修改、删除登录密码后由 777000 通知该账号：消息与 outbox 同事务落库，再推给所有在线会话。
@@ -2180,6 +2188,10 @@ func run(logger *zap.Logger) error {
 	// 后台设置员工权限（account.set_permissions，#119）：写入后由 Router 失效本实例缓存并向
 	// 该账号的在线会话推送 updateConfig。
 	adminService.Configure(adminapp.Dependencies{Permissions: permissionsService, PermissionsNotifier: router})
+	// 后台设置默认权限模板（permission_defaults.set，#161）：只影响之后新建的账号。
+	adminService.Configure(adminapp.Dependencies{PermissionDefaults: permissionDefaultsService})
+	// 后台建号（account.create，#162）：给出的权限或模板快照与账号在同一个事务里写入。
+	adminService.Configure(adminapp.Dependencies{AccountCreation: accountCreationStore})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
 	// visible to online viewers immediately.

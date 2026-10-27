@@ -64,6 +64,8 @@ type Service interface {
 	UnbindDevice(ctx context.Context, req admin.UnbindDeviceRequest) (admin.CommandResult, error)
 	SetPermissions(ctx context.Context, req admin.SetPermissionsRequest) (admin.CommandResult, error)
 	AccountPermissions(ctx context.Context, userID int64) (admin.AccountPermissionsResult, error)
+	SetPermissionDefaults(ctx context.Context, req admin.SetPermissionDefaultsRequest) (admin.CommandResult, error)
+	PermissionDefaults(ctx context.Context) (admin.PermissionDefaultsResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
@@ -299,6 +301,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/unbind-device", s.authenticated(s.handleUnbindDevice))
 	mux.HandleFunc("POST /v1/accounts/set-permissions", s.authenticated(s.handleSetPermissions))
 	mux.HandleFunc("GET /v1/accounts/{id}/permissions", s.authenticated(s.handleAccountPermissions))
+	mux.HandleFunc("POST /v1/permission-defaults/set", s.authenticated(s.handleSetPermissionDefaults))
+	mux.HandleFunc("GET /v1/permission-defaults", s.authenticated(s.handlePermissionDefaults))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
@@ -740,6 +744,9 @@ type createAccountWire struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name,omitempty"`
 	Password  string `json:"password,omitempty"`
+	// Permissions 是新账号的员工权限（#162），字段与 /v1/accounts/set-permissions 一致；不给时
+	// 有默认权限模板就套用模板。
+	Permissions *admin.PermissionsRequest `json:"permissions,omitempty"`
 }
 
 func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
@@ -753,6 +760,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		FirstName:   body.FirstName,
 		LastName:    body.LastName,
 		Password:    body.Password,
+		Permissions: body.Permissions,
 	})
 	writeCommandResult(w, result, err)
 }
@@ -823,6 +831,27 @@ func (s *Server) handleAccountPermissions(w http.ResponseWriter, r *http.Request
 		return
 	}
 	result, err := s.svc.AccountPermissions(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleSetPermissionDefaults 设置默认权限模板（#161，permission_defaults.set）：给出的字段整体替换，
+// 未给出的沿用当前值。
+func (s *Server) handleSetPermissionDefaults(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetPermissionDefaultsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetPermissionDefaults(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// handlePermissionDefaults 读取默认权限模板；没有模板时返回 found=false 与不受控制的默认值。
+func (s *Server) handlePermissionDefaults(w http.ResponseWriter, r *http.Request) {
+	result, err := s.svc.PermissionDefaults(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

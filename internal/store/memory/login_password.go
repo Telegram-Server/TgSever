@@ -10,9 +10,9 @@ import (
 )
 
 // LoginPasswordStore 是 store.LoginPasswordStore 的内存实现。它和传入的 UserStore 共享账号：
-// 写入前确认账号存在，建号并写密码时在同一次持锁中完成。
+// 写入前确认账号存在；建号并写密码由 AccountCreationStore 在同一次持锁中完成。
 //
-// 加锁顺序固定为 users.mu → s.mu。只需要账号信息的路径（Set、Create）先拿 users.mu，
+// 加锁顺序固定为 users.mu → s.mu。需要账号信息的路径（Set、AccountCreationStore）先拿 users.mu，
 // 只读写密码的路径（Get、Delete）只拿 s.mu，从不反向嵌套，所以不会死锁。
 type LoginPasswordStore struct {
 	users *UserStore
@@ -62,25 +62,6 @@ func (s *LoginPasswordStore) DeleteLoginPassword(_ context.Context, userID int64
 	}
 	delete(s.byUser, userID)
 	return true, nil
-}
-
-// CreateUserWithLoginPassword 持有 users.mu 写锁和 s.mu 写锁完成建号和写密码。密码材料在
-// 建号之前校验，createLocked 失败时不改动任何状态，写密码这一步本身不会失败，所以不会出现
-// 有账号没密码的中间态；号码唯一性检查和插入在同一把 users.mu 里，并发注册恰好一个成功。
-func (s *LoginPasswordStore) CreateUserWithLoginPassword(_ context.Context, u domain.User, password domain.LoginPassword) (domain.User, error) {
-	if !loginPasswordComplete(password) {
-		return domain.User{}, store.ErrLoginPasswordInvalid
-	}
-	s.users.mu.Lock()
-	defer s.users.mu.Unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	created, err := s.users.createLocked(u)
-	if err != nil {
-		return domain.User{}, err
-	}
-	s.putLocked(created.ID, password, time.Now().UTC())
-	return created, nil
 }
 
 // putLocked 写入或替换密码，保留首次设置的 CreatedAt。调用方持有 s.mu 写锁。

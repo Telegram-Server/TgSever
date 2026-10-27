@@ -95,3 +95,13 @@ WITH deleted AS (
 )
 SELECT telesrv_bump_read_model_version('account_permissions', 0, 'user', owners.user_id)
 FROM (SELECT DISTINCT user_id FROM deleted) AS owners;
+
+-- name: LockSendWhitelistMembers :many
+-- 建号时写入权限快照（#159）：锁住白名单里的账号行并报告哪些已注销。FOR SHARE 让并发的注销
+-- （软删除是对 users 行的 UPDATE）等到建号事务提交，它随后删除指向自己的白名单条目时就能
+-- 看到新写入的那几行；先提交的注销则在这里读到 deleted=true，成员被排除。
+SELECT id, (deleted_at IS NOT NULL)::boolean AS deleted
+FROM users
+WHERE id = ANY(@member_user_ids::bigint[])
+ORDER BY id
+FOR SHARE;

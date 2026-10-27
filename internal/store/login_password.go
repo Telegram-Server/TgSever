@@ -59,8 +59,7 @@ type LoginPasswordStore interface {
 	SetLoginPassword(ctx context.Context, userID int64, password domain.LoginPassword) error
 	// DeleteLoginPassword 删除账号的登录密码，deleted 表示删除前确实存在。
 	DeleteLoginPassword(ctx context.Context, userID int64) (deleted bool, err error)
-	// CreateUserWithLoginPassword 在同一个事务里建号并写入登录密码：要么两者都生效，
-	// 要么都不生效，不会出现"有账号没密码"的状态。号码已被占用返回
-	// domain.ErrPhoneNumberOccupied，密码材料不完整返回 ErrLoginPasswordInvalid。
-	CreateUserWithLoginPassword(ctx context.Context, u domain.User, password domain.LoginPassword) (domain.User, error)
 }
+
+// 建号时一起写入登录密码走 AccountCreationStore.CreateAccount（AccountExtras.LoginPassword），
+// 建号和写密码在同一个事务里。

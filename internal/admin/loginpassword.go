@@ -33,8 +33,8 @@ type LoginPasswordSetter interface {
 	// ValidateAdminLoginPassword 是建号带密码（account.create）的试运行：只校验明文密码。
 	ValidateAdminLoginPassword(password string) error
 	// AdminAccountCreator 算出 verifier，返回"建号并写入登录密码"的单事务建号步骤，
-	// 交给 AccountCreator.CreateAccountWith。
-	AdminAccountCreator(password string) (auth.CreateAccountFunc, error)
+	// 交给 AccountCreator.CreateAccountWith。permissions 非 nil 时同一个事务里一起写入权限（#162）。
+	AdminAccountCreator(password string, permissions *domain.AccountPermissions) (auth.CreateAccountFunc, error)
 }
 
 // SetLoginPasswordRequest 设置或重设 UserID 的登录密码。RevokeSessions 为 true 时，设置成功后

@@ -1998,6 +1998,21 @@ td.evidence-message-cell {
   color: var(--heading);
 }
 
+/* Create account form: the collapsible staff permissions section (#162). */
+.create-account-permissions {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.create-account-permissions > summary {
+  color: var(--heading);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .perm-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -2019,37 +2034,54 @@ td.evidence-message-cell {
   opacity: 0.55;
 }
 
-.perm-whitelist-ids {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.perm-whitelist-id {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px 2px 10px;
-  background: var(--panel-subtle);
+.perm-whitelist-members {
+  display: grid;
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
 }
 
-.perm-whitelist-id .icon-btn {
+.perm-whitelist-member {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.perm-whitelist-member:last-child {
+  border-bottom: 0;
+}
+
+.perm-whitelist-member > .link-button,
+.perm-whitelist-member > strong,
+.perm-whitelist-member > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perm-whitelist-member .icon-btn {
   width: 22px;
   height: 22px;
+  margin-left: auto;
   border-radius: 999px;
 }
 
 .perm-whitelist-add {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  max-width: 620px;
 }
 
-.perm-whitelist-add input {
-  flex: 1 1 160px;
-  max-width: 240px;
+.picker-row.is-unavailable,
+.picker-row:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .perm-actions {
