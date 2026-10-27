@@ -705,19 +705,6 @@ func checkEditMemberRank(channel domain.Channel, actor, target domain.ChannelMem
 	return nil
 }
 
-func adminLogBanType(previous, next domain.ChannelMember) domain.ChannelAdminLogEventType {
-	if next.Status == domain.ChannelMemberKicked || next.BannedRights.ViewMessages {
-		return domain.ChannelAdminLogParticipantKick
-	}
-	if previous.Status == domain.ChannelMemberKicked || previous.BannedRights.ViewMessages {
-		return domain.ChannelAdminLogParticipantUnkick
-	}
-	if !zeroChannelBannedRights(next.BannedRights) {
-		return domain.ChannelAdminLogParticipantBan
-	}
-	return domain.ChannelAdminLogParticipantUnban
-}
-
 func adminLogSearchText(event domain.ChannelAdminLogEvent) string {
 	parts := []string{
 		event.Query,
@@ -759,7 +746,7 @@ func (s *ChannelStore) refreshChannelCountsLocked(channelID int64) {
 		if member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin {
 			admins++
 		}
-		if !zeroChannelBannedRights(member.BannedRights) {
+		if !member.BannedRights.Empty() {
 			banned++
 		}
 	}

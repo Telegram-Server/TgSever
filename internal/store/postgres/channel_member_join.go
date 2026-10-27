@@ -74,7 +74,7 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 		previous = map[int64]domain.ChannelMember{userID: existing}
 		// 重进是全新 participant，但部分限制名单独立于在群与否、重进后仍生效（期限已过的除外）；
 		// 只有 channel 当前 owner 仍是该账号时，才保留 creator 身份。
-		member.BannedRights = rejoinBannedRights(existing, date)
+		member.CarryRejoinRestriction(existing, restrictionNow(date))
 		if existing.Role == domain.ChannelRoleCreator && channel.CreatorUserID == userID {
 			member.Role = domain.ChannelRoleCreator
 			member.AdminRights = existing.AdminRights
@@ -296,7 +296,8 @@ func (s *ChannelStore) futureCreatorAfterLeave(ctx context.Context, db sqlcgen.D
 SELECT channel_id, user_id, inviter_user_id, role, status, joined_at, left_at,
        admin_rights::text, banned_rights::text, rank, available_min_id, available_min_pts,
        history_clear_anchor_id, history_clear_anchor_date,
-       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
+       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+       restricted_by_user_id, restricted_at
 FROM channel_members
 WHERE channel_id = $1
   AND user_id <> $2

@@ -172,7 +172,7 @@ func (s *ChannelStore) joinChannel(channelID, userID int64, date int) (domain.Cr
 		member = existing
 		member.Status = domain.ChannelMemberActive
 		member.LeftAt = 0
-		member.BannedRights = rejoinBannedRights(existing, date)
+		member.CarryRejoinRestriction(existing, restrictionNow(date))
 		// 重进是全新 participant：不保留旧的角色/管理权/Tag；inviter 重置为本人（自加入）。
 		// 只有 channel 当前 owner 仍是该账号时，才保留 creator 身份。
 		if existing.Role != domain.ChannelRoleCreator || channel.CreatorUserID != userID {
@@ -592,38 +592,14 @@ func (s *ChannelStore) editChannelBanned(req domain.EditChannelBannedRequest) (d
 	if err := domain.CheckManageChannelAdmin(actor, previous); err != nil {
 		return domain.EditChannelBannedResult{}, err
 	}
-	member := previous
-	member.Role = domain.ChannelRoleMember
-	member.BannedRights = req.BannedRights
-	switch {
-	case req.BannedRights.ViewMessages:
-		member.InviterUserID = req.UserID
-		member.Status = domain.ChannelMemberKicked
-		member.LeftAt = req.Date
-	case zeroChannelBannedRights(req.BannedRights):
-		if previous.Status == domain.ChannelMemberActive {
-			member.Status = domain.ChannelMemberActive
-		} else {
-			member.Status = domain.ChannelMemberLeft
-		}
-		member.LeftAt = 0
-	default:
-		member.InviterUserID = req.UserID
-		if previous.Status == domain.ChannelMemberActive {
-			member.Status = domain.ChannelMemberActive
-		} else {
-			member.Status = domain.ChannelMemberBanned
-		}
-	}
-	if member.JoinedAt == 0 && member.Status == domain.ChannelMemberActive {
-		member.JoinedAt = req.Date
-	}
+	// 限制写入（含执行人与时间、只带到期时间算解除）见 domain.ChannelMember.ApplyBannedRights。
+	member := previous.ApplyBannedRights(req.BannedRights, req.UserID, req.Date)
 	s.members[req.ChannelID][req.Participant.ID] = member
 	s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
 		ChannelID:       req.ChannelID,
 		UserID:          req.UserID,
 		Date:            req.Date,
-		Type:            adminLogBanType(previous, member),
+		Type:            domain.ChannelAdminLogBanType(previous, member),
 		PrevParticipant: ptrChannelMember(previous),
 		NewParticipant:  ptrChannelMember(member),
 	})
@@ -1271,9 +1247,9 @@ func channelParticipantMatchesFilter(member domain.ChannelMember, kind domain.Ch
 		// （含 rank）灌进 badge 缓存，因此带成员 Tag 的普通成员也必须返回。
 		return member.Status == domain.ChannelMemberActive && (isChannelAdmin(member) || member.Rank != "")
 	case domain.ChannelParticipantsKicked:
-		return member.Status == domain.ChannelMemberKicked || member.BannedRights.ViewMessages
+		return member.Standing() == domain.ChannelStandingKicked
 	case domain.ChannelParticipantsBanned:
-		return member.Status != domain.ChannelMemberKicked && !zeroChannelBannedRights(member.BannedRights)
+		return member.Standing().IsRestricted()
 	case domain.ChannelParticipantsBots:
 		return false
 	default:
@@ -1299,22 +1275,6 @@ func canBanChannelUsers(member domain.ChannelMember) bool {
 
 func zeroChannelAdminRights(rights domain.ChannelAdminRights) bool {
 	return rights == domain.ChannelAdminRights{}
-}
-
-func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
-	return rights == domain.ChannelBannedRights{}
-}
-
-// rejoinBannedRights 返回旧成员记录重新入群后应带的限制：退群不解除限制，
-// 否则"先退群再让人拉回来"就能绕过；不在群里时被限制的人（Status banned）同样带着限制入群。
-// 被踢出者（IsKicked）能重新入群只可能是被有封禁权的管理员拉回，等同解封。
-// 期限（UntilDate，0 为永久）在入群时刻 date 已过的限制视为无限制。
-func rejoinBannedRights(existing domain.ChannelMember, date int) domain.ChannelBannedRights {
-	existing = existing.EffectiveAt(restrictionNow(date))
-	if existing.IsKicked() {
-		return domain.ChannelBannedRights{}
-	}
-	return existing.BannedRights
 }
 
 func creatorChannelAdminRights() domain.ChannelAdminRights {

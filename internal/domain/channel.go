@@ -493,15 +493,20 @@ func (c Channel) MembersListAdminOnly() bool {
 
 // ChannelMember is one user's channel membership and read state.
 type ChannelMember struct {
-	ChannelID       int64
-	UserID          int64
-	InviterUserID   int64
-	Role            ChannelMemberRole
-	Status          ChannelMemberStatus
-	JoinedAt        int
-	LeftAt          int
-	AdminRights     ChannelAdminRights
-	BannedRights    ChannelBannedRights
+	ChannelID     int64
+	UserID        int64
+	InviterUserID int64
+	Role          ChannelMemberRole
+	Status        ChannelMemberStatus
+	JoinedAt      int
+	LeftAt        int
+	AdminRights   ChannelAdminRights
+	BannedRights  ChannelBannedRights
+	// RestrictedBy/RestrictedAt 记录当前限制（含踢出）由哪位管理员、在何时设置；限制为空时
+	// 两项为 0。它们与 InviterUserID 分开：限制一个在群成员不会覆盖他的邀请人。迁移前已有的
+	// 在群受限记录 RestrictedAt 为 0（当时没有记录限制时间）。
+	RestrictedBy    int64
+	RestrictedAt    int
 	Rank            string
 	AvailableMinID  int
 	AvailableMinPts int
@@ -749,9 +754,17 @@ type ChannelMessage struct {
 	// Views 是 broadcast post 的浏览数聚合；PostAuthor 是 signatures
 	// 开启时的作者展示名快照。
 	ViewsCount int
-	PostAuthor string
-	Pts        int
-	Deleted    bool
+	// ForwardsCount 是 broadcast post 被转发的次数，只在帖子上计数。
+	ForwardsCount int
+	PostAuthor    string
+	Pts           int
+	Deleted       bool
+}
+
+// ChannelPostRef 指向一条频道消息（帖子转发计数的源）。
+type ChannelPostRef struct {
+	ChannelID int64
+	MessageID int
 }
 
 // LinkedDiscussionRootMatches verifies the exact source-post/root pair for a
@@ -1690,7 +1703,10 @@ type SendChannelMessageRequest struct {
 	NoForwards bool
 	ReplyTo    *MessageReply
 	Forward    *MessageForward
-	ViaBotID   int64
+	// ForwardedPost 非 nil 时，这次写入是对该频道帖子的一次转发：写入成功（非重放）时，
+	// 在同一事务里把它的转发数原子加一；源消息不是帖子则不计。不参与幂等指纹。
+	ForwardedPost *ChannelPostRef
+	ViaBotID      int64
 	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
@@ -1719,6 +1735,9 @@ type SendMonoforumMessageRequest struct {
 	Silent                 bool
 	NoForwards             bool
 	SuggestedPost          *SuggestedPost
+	// ForwardedPost 与 SendChannelMessageRequest.ForwardedPost 相同：非 nil 时这次写入是对该频道
+	// 帖子的一次转发，写入成功（非重放）时在同一事务里给它的转发数加一。不参与幂等指纹。
+	ForwardedPost *ChannelPostRef
 	// GroupedID 是相册分组 id：同一次 sendMultiMedia 或同一源相册转发的各条共享一个非零值；
 	// 单条发送恒 0。
 	GroupedID int64
@@ -1865,8 +1884,10 @@ type ChannelMessageViewsRequest struct {
 type ChannelMessageViewsResult struct {
 	Channel Channel
 	Views   map[int]int
-	Replies map[int]*ChannelMessageReplies
-	Peers   []Peer
+	// Forwards 是帖子的转发数，只含 broadcast post。
+	Forwards map[int]int
+	Replies  map[int]*ChannelMessageReplies
+	Peers    []Peer
 }
 
 // ReadChannelMessageContentsRequest marks channel/supergroup content-read hints for one viewer.

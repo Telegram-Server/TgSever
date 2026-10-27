@@ -75,4 +75,6 @@ type forwardSource struct {
 	noForward bool
 	// groupedID 是源消息的相册分组 id（非相册为 0）；转发时据此分配新的分组。
 	groupedID int64
+	// post 非 nil 表示源消息是频道帖子，转发写入时给它计一次转发。
+	post *domain.ChannelPostRef
 }

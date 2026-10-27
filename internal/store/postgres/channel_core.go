@@ -356,7 +356,8 @@ SELECT `+channelColumns+`,
        m.channel_id, m.user_id, m.inviter_user_id, m.role, m.status, m.joined_at, m.left_at,
        m.admin_rights::text, m.banned_rights::text, m.rank, m.available_min_id, m.available_min_pts,
        m.history_clear_anchor_id, m.history_clear_anchor_date,
-       m.read_inbox_max_id, m.read_outbox_max_id, m.unread_mark, m.slowmode_last_send_date
+       m.read_inbox_max_id, m.read_outbox_max_id, m.unread_mark, m.slowmode_last_send_date,
+       m.restricted_by_user_id, m.restricted_at
 FROM channels c
 JOIN channel_members m ON m.channel_id = c.id AND m.user_id = $1
 WHERE c.id = ANY($2::bigint[]) AND NOT c.deleted`, viewerUserID, ids)
@@ -570,7 +571,8 @@ func refreshChannelCountsTx(ctx context.Context, tx pgx.Tx, channel domain.Chann
 	rows, err := tx.Query(ctx, `
 SELECT channel_id, user_id, inviter_user_id, role, status, joined_at, left_at, admin_rights::text, banned_rights::text,
        rank, available_min_id, available_min_pts, history_clear_anchor_id, history_clear_anchor_date,
-       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
+       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+       restricted_by_user_id, restricted_at
 FROM channel_members
 WHERE channel_id = $1`, channel.ID)
 	if err != nil {
@@ -594,7 +596,7 @@ WHERE channel_id = $1`, channel.ID)
 		if member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin {
 			admins++
 		}
-		if !zeroChannelBannedRights(member.BannedRights) {
+		if !member.BannedRights.Empty() {
 			banned++
 		}
 	}

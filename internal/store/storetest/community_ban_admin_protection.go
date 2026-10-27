@@ -99,29 +99,46 @@ func CommunityBanAdminProtection(t *testing.T, communities store.CommunityStore,
 		t.Fatalf("rejected ban kicked T from the community: %v", err)
 	}
 
-	kicked := func(step string, user int64, channelIDs ...int64) {
+	inviters := func(user int64, channelIDs ...int64) map[int64]int64 {
+		t.Helper()
+		out := make(map[int64]int64, len(channelIDs))
+		for _, channelID := range channelIDs {
+			out[channelID] = member(channelID, user).InviterUserID
+		}
+		return out
+	}
+	// 社区封禁也是踢出：执行人与时间写进专门字段，邀请人不变。
+	kicked := func(step string, actor, user int64, before map[int64]int64, channelIDs ...int64) {
 		t.Helper()
 		for _, channelID := range channelIDs {
-			if m := member(channelID, user); m.Status != domain.ChannelMemberKicked || m.Role != domain.ChannelRoleMember {
+			m := member(channelID, user)
+			if m.Status != domain.ChannelMemberKicked || m.Role != domain.ChannelRoleMember {
 				t.Fatalf("%s: %d in %d = %+v, want kicked member", step, user, channelID, m)
+			}
+			if m.RestrictedBy != actor || m.RestrictedAt != date || m.InviterUserID != before[channelID] {
+				t.Fatalf("%s: %d in %d restricted_by=%d restricted_at=%d inviter=%d, want %d, %d, inviter %d unchanged",
+					step, user, channelID, m.RestrictedBy, m.RestrictedAt, m.InviterUserID, actor, date, before[channelID])
 			}
 		}
 	}
 	// 提拔人可以封禁自己提拔的管理员。
+	before := inviters(p, x, y)
 	if res, err := communities.ToggleCommunityParticipantBanned(ctx, a, id, p, false, date); err != nil || len(res.ChannelBans) != 2 {
 		t.Fatalf("promoter community ban = %+v, %v, want two channel bans", res, err)
 	}
-	kicked("promoter ban", p, x, y)
+	kicked("promoter ban", a, p, before, x, y)
 	// 普通成员照常封禁。
+	before = inviters(b, x, y)
 	if res, err := communities.ToggleCommunityParticipantBanned(ctx, a, id, b, false, date); err != nil || len(res.ChannelBans) != 2 {
 		t.Fatalf("member community ban = %+v, %v, want two channel bans", res, err)
 	}
-	kicked("member ban", b, x, y)
+	kicked("member ban", a, b, before, x, y)
 	// 群主可以封禁任何管理员；T 自建的 Z 解除关联。
+	before = inviters(target, x, y)
 	if res, err := communities.ToggleCommunityParticipantBanned(ctx, owner, id, target, false, date); err != nil || len(res.ChannelBans) != 2 || len(res.RemovedLinks) != 1 {
 		t.Fatalf("owner community ban = %+v, %v, want two channel bans and Z unlinked", res, err)
 	}
-	kicked("owner ban", target, x, y)
+	kicked("owner ban", owner, target, before, x, y)
 	// 解封不受管理员保护限制。
 	if res, err := communities.ToggleCommunityParticipantBanned(ctx, a, id, target, true, date); err != nil || !res.Changed {
 		t.Fatalf("unban by community admin = %+v, %v, want changed", res, err)

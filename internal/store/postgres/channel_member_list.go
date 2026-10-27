@@ -68,30 +68,10 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
 		if !isChannelAdmin(viewer) {
 			return domain.ChannelParticipantList{Channel: channel, Count: channel.BannedCount}, nil
 		}
-		where = append(where, "m.status <> 'kicked'", activeRestriction(), `(
-    m.status = 'banned' OR
-    (m.banned_rights->>'SendMessages')::boolean IS TRUE OR
-    (m.banned_rights->>'SendMedia')::boolean IS TRUE OR
-    (m.banned_rights->>'SendStickers')::boolean IS TRUE OR
-    (m.banned_rights->>'SendGifs')::boolean IS TRUE OR
-    (m.banned_rights->>'SendGames')::boolean IS TRUE OR
-    (m.banned_rights->>'SendInline')::boolean IS TRUE OR
-    (m.banned_rights->>'EmbedLinks')::boolean IS TRUE OR
-    (m.banned_rights->>'SendPolls')::boolean IS TRUE OR
-    (m.banned_rights->>'ChangeInfo')::boolean IS TRUE OR
-    (m.banned_rights->>'InviteUsers')::boolean IS TRUE OR
-    (m.banned_rights->>'PinMessages')::boolean IS TRUE OR
-    (m.banned_rights->>'ManageTopics')::boolean IS TRUE OR
-    (m.banned_rights->>'SendPhotos')::boolean IS TRUE OR
-    (m.banned_rights->>'SendVideos')::boolean IS TRUE OR
-    (m.banned_rights->>'SendRoundvideos')::boolean IS TRUE OR
-    (m.banned_rights->>'SendAudios')::boolean IS TRUE OR
-    (m.banned_rights->>'SendVoices')::boolean IS TRUE OR
-    (m.banned_rights->>'SendDocs')::boolean IS TRUE OR
-    (m.banned_rights->>'SendPlain')::boolean IS TRUE OR
-    (m.banned_rights->>'EditRank')::boolean IS TRUE OR
-    (m.banned_rights->>'SendReactions')::boolean IS TRUE
-)`)
+		// 与 memory 同口径（domain.ChannelMember.Standing 的受限两类）：被踢出（含 view_messages 禁令）
+		// 不算受限；不在群里但受限（banned），或有任一限制项。
+		where = append(where, "m.status <> 'kicked'", "(m.banned_rights->>'ViewMessages')::boolean IS NOT TRUE", activeRestriction(),
+			"(m.status = 'banned' OR "+channelRestrictionAnySQL("m")+")")
 	case domain.ChannelParticipantsSearch:
 		where = append(where, "m.status = 'active'")
 		count = 0
@@ -136,7 +116,8 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
 	rows, err := s.db.Query(ctx, `
 SELECT channel_id, user_id, inviter_user_id, role, status, joined_at, left_at, admin_rights::text, banned_rights::text,
        rank, available_min_id, available_min_pts, history_clear_anchor_id, history_clear_anchor_date,
-       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
+       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+       restricted_by_user_id, restricted_at
 `+from+`
 WHERE `+strings.Join(where, " AND ")+`
 ORDER BY CASE role WHEN 'creator' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, user_id
@@ -231,7 +212,8 @@ func (s *ChannelStore) ListActiveChannelMembers(ctx context.Context, viewerUserI
 	rows, err := s.db.Query(ctx, `
 SELECT channel_id, user_id, inviter_user_id, role, status, joined_at, left_at, admin_rights::text, banned_rights::text,
        rank, available_min_id, available_min_pts, history_clear_anchor_id, history_clear_anchor_date,
-       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
+       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+       restricted_by_user_id, restricted_at
 FROM channel_members
 WHERE channel_id = $1 AND status = 'active'
 ORDER BY user_id
@@ -276,6 +258,7 @@ SELECT m.channel_id, m.user_id, m.inviter_user_id, m.role, m.status, m.joined_at
        m.admin_rights::text, m.banned_rights::text, m.rank, m.available_min_id, m.available_min_pts,
        m.history_clear_anchor_id, m.history_clear_anchor_date,
        m.read_inbox_max_id, m.read_outbox_max_id, m.unread_mark, m.slowmode_last_send_date,
+       m.restricted_by_user_id, m.restricted_at,
        COUNT(*) OVER()::int
 FROM bots b
 JOIN channel_members m ON m.user_id = b.bot_user_id
@@ -485,4 +468,25 @@ ORDER BY candidate.user_id`, channelID, candidates[start:end], nowUnix())
 		rows.Close()
 	}
 	return out, nil
+}
+
+// channelRestrictionRightKeys 是 banned_rights（domain.ChannelBannedRights 按字段名序列化）里的
+// 全部限制项，不含 ViewMessages（踢出，另走 kicked 名单）与 UntilDate（期限不是限制项）。
+// 必须与 domain.ChannelBannedRights 的字段一一对应（TestChannelRestrictionRightKeysMatchDomain），
+// 漏一项受限名单就漏掉只带这一项限制的成员。
+var channelRestrictionRightKeys = []string{
+	"SendMessages", "SendMedia", "SendStickers", "SendGifs", "SendGames", "SendInline",
+	"EmbedLinks", "SendPolls", "ChangeInfo", "InviteUsers", "PinMessages", "ManageTopics",
+	"SendPhotos", "SendVideos", "SendRoundvideos", "SendAudios", "SendVoices", "SendDocs",
+	"SendPlain", "EditRank", "SendReactions", "ManageLinkedPeers",
+}
+
+// channelRestrictionAnySQL 是 SQL 侧的 !BannedRights.Empty()（不含 ViewMessages）：alias 行有任一
+// 限制项为真。
+func channelRestrictionAnySQL(alias string) string {
+	terms := make([]string, len(channelRestrictionRightKeys))
+	for i, key := range channelRestrictionRightKeys {
+		terms[i] = "(" + alias + ".banned_rights->>'" + key + "')::boolean IS TRUE"
+	}
+	return "(" + strings.Join(terms, " OR ") + ")"
 }

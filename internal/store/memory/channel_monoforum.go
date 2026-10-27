@@ -154,6 +154,7 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		s.sendFingerprints[replayKey] = append([]byte(nil), fingerprint...)
 	}
 	s.appendChannelEventLocked(event)
+	s.countPostForwardLocked(req.ForwardedPost)
 	channel.TopMessageID = msgID
 	channel.Pts = pts
 	s.channels[req.MonoforumID] = channel

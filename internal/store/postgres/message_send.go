@@ -648,6 +648,9 @@ WHERE sender_user_id = $1
 		SenderEvent:      eventFromMessage(sender),
 		RecipientEvent:   eventFromMessage(recipient),
 	}
+	if err := countChannelPostForwardTx(ctx, tx, req.ForwardedPost); err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
 	if hooks.after != nil {
 		if err := hooks.after(ctx, tx, result); err != nil {
 			return domain.SendPrivateTextResult{}, err

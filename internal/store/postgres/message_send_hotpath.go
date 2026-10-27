@@ -16,7 +16,7 @@ import (
 func plainPrivateSendHotPath(req domain.SendPrivateTextRequest, hooks privateSendTxHooks) bool {
 	return hooks.before == nil && hooks.projectMedia == nil && hooks.afterAllocate == nil && hooks.after == nil &&
 		len(req.Entities) == 0 && req.Media.IsZero() && req.ReplyMarkup.IsZero() && req.RichMessage.IsZero() &&
-		req.ReplyTo == nil && req.Forward == nil && !req.Silent && !req.NoForwards &&
+		req.ReplyTo == nil && req.Forward == nil && req.ForwardedPost == nil && !req.Silent && !req.NoForwards &&
 		req.ViaBotID == 0 && req.GroupedID == 0 && req.Effect == 0 && req.BusinessAutomationKind == ""
 }
 

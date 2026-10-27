@@ -65,8 +65,10 @@ func newScheduledFixture(t *testing.T) scheduledFixture {
 		t.Fatalf("create friend: %v", err)
 	}
 	dialogStore := memory.NewDialogStore()
-	messages := appmessages.NewService(memory.NewMessageStore(dialogStore), dialogStore)
 	channelStore := memory.NewChannelStore()
+	messageStore := memory.NewMessageStore(dialogStore)
+	messageStore.AttachChannelStore(channelStore)
+	messages := appmessages.NewService(messageStore, dialogStore)
 	clk := &scheduledTestClock{now: time.Now()}
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
 		Users:    appusers.NewService(userStore),

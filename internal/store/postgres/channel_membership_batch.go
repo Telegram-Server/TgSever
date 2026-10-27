@@ -15,7 +15,8 @@ func channelMembersForUpdateBatchTx(ctx context.Context, tx pgx.Tx, channelID in
 SELECT channel_id, user_id, inviter_user_id, role, status, joined_at, left_at,
        admin_rights::text, banned_rights::text, rank, available_min_id, available_min_pts,
        history_clear_anchor_id, history_clear_anchor_date,
-       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
+       read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+       restricted_by_user_id, restricted_at
 FROM channel_members
 WHERE channel_id = $1 AND user_id = ANY($2::bigint[])
 ORDER BY user_id
@@ -55,9 +56,13 @@ func upsertChannelMembersBatchTx(ctx context.Context, tx pgx.Tx, channel domain.
 	availableMinIDs := make([]int32, len(members))
 	availableMinPts := make([]int32, len(members))
 	readInboxMaxIDs := make([]int32, len(members))
-	// 重新入群的被限制成员带着原限制回来（见 rejoinBannedRights），所以 banned_rights 逐行写入。
+	// 重新入群的被限制成员带着原限制及其执行人、时间回来（见 domain.ChannelMember.CarryRejoinRestriction），所以逐行写入。
 	bannedRights := make([]string, len(members))
+	restrictedBy := make([]int64, len(members))
+	restrictedAt := make([]int32, len(members))
 	for i, member := range members {
+		restrictedBy[i] = member.RestrictedBy
+		restrictedAt[i] = int32(member.RestrictedAt)
 		userIDs[i] = member.UserID
 		inviterIDs[i] = member.InviterUserID
 		joinedAt[i] = int32(member.JoinedAt)
@@ -73,19 +78,24 @@ func upsertChannelMembersBatchTx(ctx context.Context, tx pgx.Tx, channel domain.
 	// 手写 SQL：多参数 unnest 是 sqlc 解析不了的语法。
 	if _, err := tx.Exec(ctx, `
 WITH input AS MATERIALIZED (
-    SELECT user_id, inviter_user_id, joined_at, available_min_id, available_min_pts, read_inbox_max_id, banned_rights
+    SELECT user_id, inviter_user_id, joined_at, available_min_id, available_min_pts, read_inbox_max_id, banned_rights,
+           restricted_by_user_id, restricted_at
     FROM unnest(
-        $2::bigint[], $3::bigint[], $4::integer[], $5::integer[], $6::integer[], $7::integer[], $8::text[]
-    ) AS value(user_id, inviter_user_id, joined_at, available_min_id, available_min_pts, read_inbox_max_id, banned_rights)
+        $2::bigint[], $3::bigint[], $4::integer[], $5::integer[], $6::integer[], $7::integer[], $8::text[],
+        $9::bigint[], $10::integer[]
+    ) AS value(user_id, inviter_user_id, joined_at, available_min_id, available_min_pts, read_inbox_max_id, banned_rights,
+               restricted_by_user_id, restricted_at)
 )
 INSERT INTO channel_members (
     channel_id, user_id, inviter_user_id, role, status, joined_at, left_at,
     admin_rights, banned_rights, rank, available_min_id, available_min_pts,
-    read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date
+    read_inbox_max_id, read_outbox_max_id, unread_mark, slowmode_last_send_date,
+    restricted_by_user_id, restricted_at
 )
 SELECT $1, user_id, inviter_user_id, 'member', 'active', joined_at, 0,
        '{}'::jsonb, banned_rights::jsonb, '', available_min_id, available_min_pts,
-       read_inbox_max_id, 0, false, 0
+       read_inbox_max_id, 0, false, 0,
+       restricted_by_user_id, restricted_at
 FROM input
 ORDER BY user_id
 ON CONFLICT (channel_id, user_id) DO UPDATE SET
@@ -96,11 +106,13 @@ ON CONFLICT (channel_id, user_id) DO UPDATE SET
     left_at = EXCLUDED.left_at,
     admin_rights = EXCLUDED.admin_rights,
     banned_rights = EXCLUDED.banned_rights,
+    restricted_by_user_id = EXCLUDED.restricted_by_user_id,
+    restricted_at = EXCLUDED.restricted_at,
     rank = EXCLUDED.rank,
     available_min_id = GREATEST(channel_members.available_min_id, EXCLUDED.available_min_id),
     available_min_pts = GREATEST(channel_members.available_min_pts, EXCLUDED.available_min_pts),
     read_inbox_max_id = GREATEST(channel_members.read_inbox_max_id, EXCLUDED.read_inbox_max_id),
-    updated_at = now()`, channel.ID, userIDs, inviterIDs, joinedAt, availableMinIDs, availableMinPts, readInboxMaxIDs, bannedRights); err != nil {
+    updated_at = now()`, channel.ID, userIDs, inviterIDs, joinedAt, availableMinIDs, availableMinPts, readInboxMaxIDs, bannedRights, restrictedBy, restrictedAt); err != nil {
 		return fmt.Errorf("batch upsert channel members: %w", err)
 	}
 

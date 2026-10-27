@@ -36,6 +36,13 @@ type MessageStore struct {
 	scheduled scheduledMessageQueue
 	// reactionBots 让私聊反应写 bot qts 记录（#150，message_bot_reactions.go）。
 	reactionBots privateReactionBotUpdates
+	// channels 让频道帖子转发进私聊时给源帖子计转发数；nil 时不计。
+	channels *ChannelStore
+}
+
+// AttachChannelStore 注入频道存储，用于私聊写入里给被转发的频道帖子计数。
+func (s *MessageStore) AttachChannelStore(channels *ChannelStore) {
+	s.channels = channels
 }
 
 // AttachDeletionStore 注入删除记录（与 ChannelStore 共用同一实例）。

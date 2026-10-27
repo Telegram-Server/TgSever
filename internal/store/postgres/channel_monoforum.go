@@ -261,6 +261,9 @@ ORDER BY user_id`, parent.ID)
 		return domain.SendChannelMessageResult{}, err
 	}
 	rows.Close()
+	if err := countChannelPostForwardTx(ctx, tx, req.ForwardedPost); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("commit send monoforum: %w", err)
 	}

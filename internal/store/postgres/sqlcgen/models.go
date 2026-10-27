@@ -934,6 +934,8 @@ type ChannelMember struct {
 	UpdatedAt              pgtype.Timestamptz
 	HistoryClearAnchorID   int32
 	HistoryClearAnchorDate int32
+	RestrictedByUserID     int64
+	RestrictedAt           int32
 }
 
 type ChannelMessage struct {
@@ -988,6 +990,7 @@ type ChannelMessage struct {
 	PaidMessageStars    int64
 	ShowMessageSender   bool
 	Factcheck           []byte
+	ForwardsCount       int32
 }
 
 type ChannelMessageMedium struct {
@@ -2366,44 +2369,46 @@ type SavedMusic struct {
 }
 
 type ScheduledMessage struct {
-	OwnerUserID          int64
-	ScheduledID          int32
-	PeerType             string
-	PeerID               int64
-	RandomID             int64
-	MessageDate          int32
-	Body                 string
-	Entities             []byte
-	Media                []byte
-	RichMessage          []byte
-	Silent               bool
-	Noforwards           bool
-	ReplyToMsgID         int32
-	ReplyToPeerType      string
-	ReplyToPeerID        int64
-	ReplyToTopID         int32
-	QuoteText            string
-	QuoteEntities        []byte
-	QuoteOffset          int32
-	FwdFromPeerType      string
-	FwdFromPeerID        int64
-	FwdFromName          string
-	FwdDate              int32
-	SendAsPeerType       string
-	SendAsPeerID         int64
-	ScheduleDate         int32
-	ScheduleRepeatPeriod int32
-	State                string
-	LeaseUntil           int32
-	SentMessageID        int32
-	LastError            string
-	CreatedAt            int32
-	UpdatedAt            int32
-	GroupedID            int64
-	FwdChannelPost       int32
-	FwdSavedFromPeerType string
-	FwdSavedFromPeerID   int64
-	FwdSavedFromMsgID    int32
+	OwnerUserID            int64
+	ScheduledID            int32
+	PeerType               string
+	PeerID                 int64
+	RandomID               int64
+	MessageDate            int32
+	Body                   string
+	Entities               []byte
+	Media                  []byte
+	RichMessage            []byte
+	Silent                 bool
+	Noforwards             bool
+	ReplyToMsgID           int32
+	ReplyToPeerType        string
+	ReplyToPeerID          int64
+	ReplyToTopID           int32
+	QuoteText              string
+	QuoteEntities          []byte
+	QuoteOffset            int32
+	FwdFromPeerType        string
+	FwdFromPeerID          int64
+	FwdFromName            string
+	FwdDate                int32
+	SendAsPeerType         string
+	SendAsPeerID           int64
+	ScheduleDate           int32
+	ScheduleRepeatPeriod   int32
+	State                  string
+	LeaseUntil             int32
+	SentMessageID          int32
+	LastError              string
+	CreatedAt              int32
+	UpdatedAt              int32
+	GroupedID              int64
+	FwdChannelPost         int32
+	FwdSavedFromPeerType   string
+	FwdSavedFromPeerID     int64
+	FwdSavedFromMsgID      int32
+	ForwardedPostChannelID int64
+	ForwardedPostMessageID int32
 }
 
 type SecretChat struct {
