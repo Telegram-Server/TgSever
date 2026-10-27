@@ -918,7 +918,7 @@ func (s *CommunityStore) banCommunityParticipantFromChannelTx(ctx context.Contex
 		return domain.EditChannelBannedResult{}, false, err
 	}
 	member := previous
-	member.RestrictedBy, member.RestrictedAt = actorUserID, date
+	member.SetRestriction(actorUserID, date)
 	member.Role = domain.ChannelRoleMember
 	member.Status = domain.ChannelMemberKicked
 	member.LeftAt = date

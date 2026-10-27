@@ -758,7 +758,7 @@ func tgPeerColor(color domain.ChannelPeerColor) tg.PeerColorClass {
 
 // tgChannelParticipant 是 domain 成员 → TL 成员的唯一转换：成员列表、单个成员查询、社区成员、
 // 成员变更推送（含 bot 的 chat_member）都走这里。member 应是已按当前时间换算过期限的视图
-// （ChannelMember.EffectiveAt），到期的限制视为无限制。判断顺序：
+// （ChannelMember.EffectiveAt），到期的限制视为无限制。按 ChannelMember.Standing 分类：
 //  1. 被踢出或带 view_messages 禁令 → channelParticipantBanned left=true；
 //  2. 不在群里但受限 → channelParticipantBanned left=true；
 //  3. 在群且限制不为空 → channelParticipantBanned left=false（本人也一样）；
@@ -768,12 +768,12 @@ func tgPeerColor(color domain.ChannelPeerColor) tg.PeerColorClass {
 // creator、admin 不会带限制（限制操作会把角色改成普通成员），所以 1-3 放在角色之前。
 // 结果只取决于成员记录与"是否本人"，不按查看者身份裁剪。
 func tgChannelParticipant(selfUserID int64, member domain.ChannelMember) tg.ChannelParticipantClass {
-	switch {
-	case member.IsKicked(), member.Status == domain.ChannelMemberBanned:
+	switch member.Standing() {
+	case domain.ChannelStandingKicked, domain.ChannelStandingRestrictedOutside:
 		return tgChannelParticipantBanned(member, true)
-	case member.Status == domain.ChannelMemberActive && !member.BannedRights.Empty():
+	case domain.ChannelStandingRestricted:
 		return tgChannelParticipantBanned(member, false)
-	case member.Status == domain.ChannelMemberLeft:
+	case domain.ChannelStandingLeft:
 		return &tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: member.UserID}}
 	}
 	switch member.Role {
@@ -824,21 +824,15 @@ func tgChannelParticipant(selfUserID int64, member domain.ChannelMember) tg.Chan
 	}
 }
 
+// tgChannelParticipantBanned 输出封禁类型成员：执行人与时间是设置限制（含踢出）时记下的管理员与时刻。
 func tgChannelParticipantBanned(member domain.ChannelMember, left bool) *tg.ChannelParticipantBanned {
-	kickedBy, date := channelMemberRestrictionActor(member)
 	return &tg.ChannelParticipantBanned{
 		Left:         left,
 		Peer:         &tg.PeerUser{UserID: member.UserID},
-		KickedBy:     kickedBy,
-		Date:         date,
+		KickedBy:     member.RestrictedBy,
+		Date:         member.RestrictedAt,
 		BannedRights: tgChatBannedRights(member.BannedRights),
 	}
-}
-
-// channelMemberRestrictionActor 返回封禁类型输出的执行人与时间：设置限制（含踢出）时记下的
-// 管理员与时刻。
-func channelMemberRestrictionActor(member domain.ChannelMember) (kickedBy int64, date int) {
-	return member.RestrictedBy, member.RestrictedAt
 }
 
 func tgChannelAdminLogEvents(viewerUserID int64, events []domain.ChannelAdminLogEvent) []tg.ChannelAdminLogEvent {

@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -116,5 +117,65 @@ func ChannelRestrictionActor(t *testing.T, s store.ChannelStore, users [4]int64)
 	}
 	if got := participant(k); got.RestrictedBy != 0 || got.RestrictedAt != 0 || !got.BannedRights.Empty() {
 		t.Fatalf("kicked user invited back: %+v, want no restriction, actor or date", got)
+	}
+
+	// 7. 只带到期时间、不带任何限制项的请求是解除限制：不写执行人，不留受限记录。
+	restrict(a, m, mute, now+110)
+	lifted := restrict(a, m, domain.ChannelBannedRights{UntilDate: now + 100_000}, now+120)
+	expect("until-only lift result", lifted, inviterM, 0, 0)
+	if got := participant(m); got.BannedRights != (domain.ChannelBannedRights{}) || got.Status != domain.ChannelMemberActive || got.RestrictedBy != 0 || got.RestrictedAt != 0 {
+		t.Fatalf("until-only lift participant: %+v, want active with no restriction record", got)
+	}
+	page, err := s.GetParticipants(ctx, owner, id, domain.ChannelParticipantsFilter{Kind: domain.ChannelParticipantsBanned}, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range page.Participants {
+		if p.UserID == m {
+			t.Fatalf("until-only lift: member still listed as restricted: %+v", p)
+		}
+	}
+}
+
+// ChannelBannedFilterEachRight 校验受限名单（ChannelParticipantsBanned）对每一个限制项都一致：
+// 只带某一项限制（view_messages 与期限之外，用反射枚举 domain.ChannelBannedRights 的全部字段，
+// 以后加字段也覆盖到）的在群成员必须出现在受限名单里。users：群主与一名成员。
+func ChannelBannedFilterEachRight(t *testing.T, s store.ChannelStore, users [2]int64) {
+	t.Helper()
+	ctx := context.Background()
+	owner, member := users[0], users[1]
+	now := baseNow()
+	created, err := s.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: "Banned filter rights", Megagroup: true, MemberUserIDs: []int64{member}, Date: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.Channel.ID
+	rightsType := reflect.TypeOf(domain.ChannelBannedRights{})
+	checked := 0
+	for i := 0; i < rightsType.NumField(); i++ {
+		field := rightsType.Field(i)
+		if field.Name == "ViewMessages" || field.Name == "UntilDate" {
+			continue
+		}
+		if field.Type.Kind() != reflect.Bool {
+			t.Fatalf("ChannelBannedRights.%s is %s; this contract only knows boolean restriction flags", field.Name, field.Type)
+		}
+		name := field.Name
+		checked++
+		rights := domain.ChannelBannedRights{}
+		reflect.ValueOf(&rights).Elem().Field(i).SetBool(true)
+		if _, err := s.EditChannelBanned(ctx, domain.EditChannelBannedRequest{UserID: owner, ChannelID: id, Participant: domain.Peer{Type: domain.PeerTypeUser, ID: member}, BannedRights: rights, Date: now + i + 1}); err != nil {
+			t.Fatalf("%s: EditChannelBanned: %v", name, err)
+		}
+		page, err := s.GetParticipants(ctx, owner, id, domain.ChannelParticipantsFilter{Kind: domain.ChannelParticipantsBanned}, 0, 100)
+		if err != nil {
+			t.Fatalf("%s: GetParticipants: %v", name, err)
+		}
+		if ids := participantIDs(page.Participants); len(ids) != 1 || ids[0] != member {
+			t.Fatalf("%s: banned participants = %v, want [%d]", name, ids, member)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no restriction flags enumerated")
 	}
 }

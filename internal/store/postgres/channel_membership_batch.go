@@ -56,7 +56,7 @@ func upsertChannelMembersBatchTx(ctx context.Context, tx pgx.Tx, channel domain.
 	availableMinIDs := make([]int32, len(members))
 	availableMinPts := make([]int32, len(members))
 	readInboxMaxIDs := make([]int32, len(members))
-	// 重新入群的被限制成员带着原限制及其执行人、时间回来（见 carryRejoinRestriction），所以逐行写入。
+	// 重新入群的被限制成员带着原限制及其执行人、时间回来（见 domain.ChannelMember.CarryRejoinRestriction），所以逐行写入。
 	bannedRights := make([]string, len(members))
 	restrictedBy := make([]int64, len(members))
 	restrictedAt := make([]int32, len(members))

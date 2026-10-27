@@ -437,33 +437,8 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	if err := domain.CheckManageChannelAdmin(actor, previous); err != nil {
 		return domain.EditChannelBannedResult{}, err
 	}
-	member := previous
-	member.BannedRights = req.BannedRights
-	member.Role = domain.ChannelRoleMember
-	// 执行人与限制时间单独记录，邀请人不动；解除限制时两项清零。
-	member.RestrictedBy, member.RestrictedAt = req.UserID, req.Date
-	switch {
-	case req.BannedRights.ViewMessages:
-		member.Status = domain.ChannelMemberKicked
-		member.LeftAt = req.Date
-	case req.BannedRights.Empty():
-		member.RestrictedBy, member.RestrictedAt = 0, 0
-		if previous.Status == domain.ChannelMemberActive {
-			member.Status = domain.ChannelMemberActive
-		} else {
-			member.Status = domain.ChannelMemberLeft
-		}
-		member.LeftAt = 0
-	default:
-		if previous.Status == domain.ChannelMemberActive {
-			member.Status = domain.ChannelMemberActive
-		} else {
-			member.Status = domain.ChannelMemberBanned
-		}
-	}
-	if member.JoinedAt == 0 && member.Status == domain.ChannelMemberActive {
-		member.JoinedAt = req.Date
-	}
+	// 限制写入（含执行人与时间、只带到期时间算解除）见 domain.ChannelMember.ApplyBannedRights。
+	member := previous.ApplyBannedRights(req.BannedRights, req.UserID, req.Date)
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.EditChannelBannedResult{}, err
 	}
@@ -477,7 +452,7 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 		ChannelID:       req.ChannelID,
 		UserID:          req.UserID,
 		Date:            req.Date,
-		Type:            adminLogBanType(previous, member),
+		Type:            domain.ChannelAdminLogBanType(previous, member),
 		PrevParticipant: &previous,
 		NewParticipant:  &member,
 	}); err != nil {

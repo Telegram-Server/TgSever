@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -14,8 +15,8 @@ import (
 
 // TestChannelMemberRestrictionActorBackfillMigrationPostgres 守护 #167 的回填：升级前限制写入时把
 // 执行的管理员记在 inviter_user_id，没有限制时间。回填后被踢出、不在群里但受限的记录执行人取
-// 邀请人字段、时间取离开时间；在群受限的执行人取邀请人字段、时间保持 0；没有限制的记录两列
-// 保持 0。重复执行幂等。
+// 邀请人字段、时间取离开时间；在群受限的执行人取邀请人字段、时间保持 0；没有限制的记录（含只带
+// 到期时间、没有任何限制项的记录）两列保持 0。重复执行幂等。
 func TestChannelMemberRestrictionActorBackfillMigrationPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -57,8 +58,17 @@ UPDATE channel_members
 SET restricted_by_user_id = 0,
     restricted_at = 0,
     inviter_user_id = CASE WHEN user_id = ANY($2::bigint[]) THEN $3 ELSE inviter_user_id END
-WHERE channel_id = $1`, id, []int64{muted, kicked, outsider}, admin); err != nil {
+WHERE channel_id = $1`, id, []int64{muted, kicked, outsider, plain}, admin); err != nil {
 		t.Fatalf("simulate legacy rows: %v", err)
+	}
+	// 升级前"只带到期时间、没有任何限制项"的请求也按受限写入（改写了邀请人）；它没有限制任何事，
+	// 回填不把它当作受限。
+	untilOnly, err := json.Marshal(domain.ChannelBannedRights{UntilDate: now + 1_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE channel_members SET banned_rights = $3::jsonb WHERE channel_id = $1 AND user_id = $2`, id, plain, string(untilOnly)); err != nil {
+		t.Fatalf("simulate legacy until-only row: %v", err)
 	}
 
 	raw, err := deploy.Migrations.ReadFile("migrations/20261101030000_channel_member_restriction_actor.up.sql")

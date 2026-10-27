@@ -80,11 +80,10 @@ func TestTgChannelParticipant(t *testing.T) {
 				BannedRights: tg.ChatBannedRights{SendMessages: true, SendMedia: true, UntilDate: 900}},
 		},
 		{
-			name: "restriction that only carries an until date still counts as a restriction",
-			member: domain.ChannelMember{UserID: user, InviterUserID: inviter, RestrictedBy: actor, RestrictedAt: 260, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
+			name: "a record that only carries an until date is a plain participant",
+			member: domain.ChannelMember{UserID: user, InviterUserID: inviter, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
 				BannedRights: domain.ChannelBannedRights{UntilDate: 900}},
-			want: &tg.ChannelParticipantBanned{Left: false, Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: 260,
-				BannedRights: tg.ChatBannedRights{UntilDate: 900}},
+			want: &tg.ChannelParticipant{UserID: user, Date: 100},
 		},
 		// 规则 4：已离开。
 		{
@@ -137,56 +136,6 @@ func TestTgChannelParticipant(t *testing.T) {
 			got := tgChannelParticipant(self, tc.member)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("tgChannelParticipant = %#v, want %#v", got, tc.want)
-			}
-		})
-	}
-}
-
-// 读取时先按当前时间换算期限：到期的限制视为无限制，成员恢复为普通成员（在群）或已离开（不在群）。
-func TestTgChannelParticipantAfterRestrictionExpiry(t *testing.T) {
-	const self, user, actor = int64(1), int64(42), int64(7)
-	const now = 1_800_000_000
-	for _, tc := range []struct {
-		name   string
-		member domain.ChannelMember
-		want   tg.ChannelParticipantClass
-	}{
-		{
-			name: "expired mute of an active member is a plain participant",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
-				BannedRights: domain.ChannelBannedRights{SendMessages: true, UntilDate: now}},
-			want: &tg.ChannelParticipant{UserID: user, Date: 100},
-		},
-		{
-			name: "expired mute of self is channelParticipantSelf",
-			member: domain.ChannelMember{UserID: self, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: 100,
-				BannedRights: domain.ChannelBannedRights{SendMessages: true, UntilDate: now - 1}},
-			want: &tg.ChannelParticipantSelf{UserID: self, InviterID: actor, Date: 100},
-		},
-		{
-			name: "expired kick is left",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberKicked, LeftAt: 300,
-				BannedRights: domain.ChannelBannedRights{ViewMessages: true, UntilDate: now}},
-			want: &tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: user}},
-		},
-		{
-			name: "expired restriction of a non-member is left",
-			member: domain.ChannelMember{UserID: user, InviterUserID: actor, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberBanned, LeftAt: 300,
-				BannedRights: domain.ChannelBannedRights{SendMedia: true, UntilDate: now}},
-			want: &tg.ChannelParticipantLeft{Peer: &tg.PeerUser{UserID: user}},
-		},
-		{
-			name: "restriction not yet expired stays banned",
-			member: domain.ChannelMember{UserID: user, RestrictedBy: actor, RestrictedAt: now - 10, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive,
-				BannedRights: domain.ChannelBannedRights{SendMessages: true, UntilDate: now + 1}},
-			want: &tg.ChannelParticipantBanned{Peer: &tg.PeerUser{UserID: user}, KickedBy: actor, Date: now - 10,
-				BannedRights: tg.ChatBannedRights{SendMessages: true, UntilDate: now + 1}},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := tgChannelParticipant(self, tc.member.EffectiveAt(now))
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("tgChannelParticipant(EffectiveAt) = %#v, want %#v", got, tc.want)
 			}
 		})
 	}

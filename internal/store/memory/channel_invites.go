@@ -71,7 +71,7 @@ func (s *ChannelStore) inviteToChannel(channelID, inviterUserID int64, userIDs [
 		}
 		if hadRecord {
 			previous[userID] = existing
-			carryRejoinRestriction(&member, existing, date)
+			member.CarryRejoinRestriction(existing, restrictionNow(date))
 		}
 		s.members[channelID][userID] = member
 		members = append(members, member)
@@ -757,7 +757,7 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 		ReadInboxMaxID:  maxInt(minID, preJoinTopID),
 	}
 	if existing, ok := previous[userID]; ok {
-		carryRejoinRestriction(&member, existing, date)
+		member.CarryRejoinRestriction(existing, restrictionNow(date))
 	}
 	// 通过邀请链接重新入群同样要归还 prehistory 读边界(只增不减,不显式归零则永久空频道)。
 	if !channel.PreHistoryHidden && member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {

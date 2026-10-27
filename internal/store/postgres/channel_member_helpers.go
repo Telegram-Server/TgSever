@@ -552,22 +552,6 @@ func zeroChannelAdminRights(rights domain.ChannelAdminRights) bool {
 	return rights == domain.ChannelAdminRights{}
 }
 
-// carryRejoinRestriction 把旧成员记录重新入群后应带的限制写进 member：退群不解除限制，
-// 否则"先退群再让人拉回来"就能绕过；不在群里时被限制的人（Status banned）同样带着限制入群。
-// 被踢出者（IsKicked）能重新入群只可能是被有封禁权的管理员拉回，等同解封。
-// 期限（UntilDate，0 为永久）在入群时刻 date 已过的限制视为无限制。
-// 带回的限制连同执行人与限制时间一起带回；不带限制时两项为 0。
-func carryRejoinRestriction(member *domain.ChannelMember, existing domain.ChannelMember, date int) {
-	existing = existing.EffectiveAt(restrictionNow(date))
-	if existing.IsKicked() || existing.BannedRights.Empty() {
-		member.BannedRights = domain.ChannelBannedRights{}
-		member.RestrictedBy, member.RestrictedAt = 0, 0
-		return
-	}
-	member.BannedRights = existing.BannedRights
-	member.RestrictedBy, member.RestrictedAt = existing.RestrictedBy, existing.RestrictedAt
-}
-
 func creatorChannelMember(channelID, userID int64, date int) domain.ChannelMember {
 	return domain.ChannelMember{
 		ChannelID:   channelID,

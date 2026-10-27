@@ -131,7 +131,7 @@ func (s *ChannelStore) approveInviteImporterTx(ctx context.Context, tx pgx.Tx, c
 		ReadInboxMaxID:  maxInt(minID, preJoinTopID),
 	}
 	if existing, ok := previous[userID]; ok {
-		carryRejoinRestriction(&member, existing, date)
+		member.CarryRejoinRestriction(existing, restrictionNow(date))
 	}
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.CreateChannelResult{}, err

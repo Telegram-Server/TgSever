@@ -74,7 +74,7 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 		previous = map[int64]domain.ChannelMember{userID: existing}
 		// 重进是全新 participant，但部分限制名单独立于在群与否、重进后仍生效（期限已过的除外）；
 		// 只有 channel 当前 owner 仍是该账号时，才保留 creator 身份。
-		carryRejoinRestriction(&member, existing, date)
+		member.CarryRejoinRestriction(existing, restrictionNow(date))
 		if existing.Role == domain.ChannelRoleCreator && channel.CreatorUserID == userID {
 			member.Role = domain.ChannelRoleCreator
 			member.AdminRights = existing.AdminRights

@@ -793,7 +793,7 @@ func (s *CommunityStore) banCommunityParticipantFromChannelsLocked(id, actor, pa
 		previous := cm
 		cm.Status = domain.ChannelMemberKicked
 		cm.Role = domain.ChannelRoleMember
-		cm.RestrictedBy, cm.RestrictedAt = actor, date
+		cm.SetRestriction(actor, date)
 		cm.LeftAt = date
 		cm.BannedRights = domain.ChannelBannedRights{ViewMessages: true}
 		s.channels.members[p.ID][participant] = cm
