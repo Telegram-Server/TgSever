@@ -749,9 +749,17 @@ type ChannelMessage struct {
 	// Views 是 broadcast post 的浏览数聚合；PostAuthor 是 signatures
 	// 开启时的作者展示名快照。
 	ViewsCount int
-	PostAuthor string
-	Pts        int
-	Deleted    bool
+	// ForwardsCount 是 broadcast post 被转发的次数，只在帖子上计数。
+	ForwardsCount int
+	PostAuthor    string
+	Pts           int
+	Deleted       bool
+}
+
+// ChannelPostRef 指向一条频道消息（帖子转发计数的源）。
+type ChannelPostRef struct {
+	ChannelID int64
+	MessageID int
 }
 
 // LinkedDiscussionRootMatches verifies the exact source-post/root pair for a
@@ -1690,7 +1698,10 @@ type SendChannelMessageRequest struct {
 	NoForwards bool
 	ReplyTo    *MessageReply
 	Forward    *MessageForward
-	ViaBotID   int64
+	// ForwardedPost 非 nil 时，这次写入是对该频道帖子的一次转发：写入成功（非重放）时，
+	// 在同一事务里把它的转发数原子加一；源消息不是帖子则不计。不参与幂等指纹。
+	ForwardedPost *ChannelPostRef
+	ViaBotID      int64
 	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
@@ -1865,8 +1876,10 @@ type ChannelMessageViewsRequest struct {
 type ChannelMessageViewsResult struct {
 	Channel Channel
 	Views   map[int]int
-	Replies map[int]*ChannelMessageReplies
-	Peers   []Peer
+	// Forwards 是帖子的转发数，只含 broadcast post。
+	Forwards map[int]int
+	Replies  map[int]*ChannelMessageReplies
+	Peers    []Peer
 }
 
 // ReadChannelMessageContentsRequest marks channel/supergroup content-read hints for one viewer.

@@ -988,6 +988,7 @@ type ChannelMessage struct {
 	PaidMessageStars    int64
 	ShowMessageSender   bool
 	Factcheck           []byte
+	ForwardsCount       int32
 }
 
 type ChannelMessageMedium struct {

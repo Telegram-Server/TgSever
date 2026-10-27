@@ -220,6 +220,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 		extraUserIDs := make([]int64, 0, len(sources))
 		fanoutResults := make([]domain.SendChannelMessageResult, 0, len(sources))
 		fanoutExtraUserIDs := make([]int64, 0, len(sources))
+		postForwards := forwardPostCounter{}
 		for i, source := range sources {
 			if replays[i].found {
 				results = append(results, replays[i].channel)
@@ -244,6 +245,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				NoForwards:             req.Noforwards,
 				ReplyTo:                replyTo,
 				Forward:                forward,
+				ForwardedPost:          postForwards.pending(source.post),
 				GroupedID:              groupedIDs[i],
 				SendAs:                 sendAs,
 				Date:                   int(r.clock.Now().Unix()),
@@ -251,6 +253,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			if err != nil {
 				return nil, channelInvalidErr(err)
 			}
+			postForwards.written(source.post, res.Duplicate)
 			results = append(results, res)
 			sourceUserID := source.userID()
 			if sourceUserID != 0 {
@@ -299,6 +302,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 		sessionID, _ := SessionIDFrom(ctx)
 		authKeyID := rawAuthKeyIDForOrigin(ctx)
 		res := domain.ForwardPrivateMessagesResult{OwnerUserID: userID}
+		postForwards := forwardPostCounter{}
 		for i, source := range sources {
 			if replays[i].found {
 				sent := replays[i].private
@@ -331,6 +335,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				NoForwards:             req.Noforwards,
 				ReplyTo:                replyTo,
 				Forward:                forward,
+				ForwardedPost:          postForwards.pending(source.post),
 				GroupedID:              groupedIDs[i],
 				Date:                   int(r.clock.Now().Unix()),
 				OriginAuthKeyID:        authKeyID,
@@ -342,6 +347,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			if err != nil {
 				return nil, messageForwardErr(err)
 			}
+			postForwards.written(source.post, sent.Duplicate)
 			res.SenderMessages = append(res.SenderMessages, sent.SenderMessage)
 			res.RecipientMessages = append(res.RecipientMessages, sent.RecipientMessage)
 			res.SenderEvents = append(res.SenderEvents, sent.SenderEvent)
@@ -515,6 +521,36 @@ func forwardMediaHasCaption(media *domain.MessageMedia) bool {
 		return true
 	}
 	return false
+}
+
+// channelPostRefFor 返回需要计转发数的源帖子；只有频道帖子带转发数。
+func channelPostRefFor(msg domain.ChannelMessage) *domain.ChannelPostRef {
+	if !msg.Post || msg.ChannelID == 0 || msg.ID <= 0 {
+		return nil
+	}
+	return &domain.ChannelPostRef{ChannelID: msg.ChannelID, MessageID: msg.ID}
+}
+
+// forwardPostCounter 保证一次转发请求里同一条源帖子只计一次转发：计数随第一条真正写入
+// （非重放）的转发进同一个事务，之后同一源帖子的转发不再带计数。
+type forwardPostCounter map[domain.ChannelPostRef]struct{}
+
+// pending 返回这条转发要计数的源帖子；本请求已计过或源不是帖子时为 nil。
+func (c forwardPostCounter) pending(post *domain.ChannelPostRef) *domain.ChannelPostRef {
+	if post == nil {
+		return nil
+	}
+	if _, done := c[*post]; done {
+		return nil
+	}
+	return post
+}
+
+// written 记下一条转发已写入；重放不计数，所以同一源帖子的下一条转发仍要带上计数。
+func (c forwardPostCounter) written(post *domain.ChannelPostRef, duplicate bool) {
+	if post != nil && !duplicate {
+		c[*post] = struct{}{}
+	}
 }
 
 func normalizeForwardMessageVectors(ids []int, randomIDs []int64) ([]int, []int64, bool) {
@@ -813,6 +849,7 @@ func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer doma
 				from:      from,
 				date:      msg.Date,
 				groupedID: msg.GroupedID,
+				post:      channelPostRefFor(msg),
 			})
 		}
 		return out, nil

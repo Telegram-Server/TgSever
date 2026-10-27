@@ -70,6 +70,7 @@ func (s *ChannelStore) GetChannelMessageViews(_ context.Context, req domain.Chan
 	replies := make(map[int]*domain.ChannelMessageReplies, len(visible))
 	peerSeen := make(map[domain.Peer]struct{}, len(visible))
 	peers := make([]domain.Peer, 0, len(visible))
+	forwards := make(map[int]int, len(visible))
 	for id := range visible {
 		out[id] = s.msgViews[req.ChannelID][id]
 	}
@@ -87,9 +88,12 @@ func (s *ChannelStore) GetChannelMessageViews(_ context.Context, req domain.Chan
 				peers = append(peers, peer)
 			}
 		}
+		if msg.Post {
+			forwards[msg.ID] = msg.ForwardsCount
+		}
 		if reply := s.channelMessageRepliesLocked(req.UserID, req.ChannelID, msg); reply != nil {
 			replies[msg.ID] = reply
 		}
 	}
-	return domain.ChannelMessageViewsResult{Channel: channel, Views: out, Replies: replies, Peers: peers}, nil
+	return domain.ChannelMessageViewsResult{Channel: channel, Views: out, Forwards: forwards, Replies: replies, Peers: peers}, nil
 }

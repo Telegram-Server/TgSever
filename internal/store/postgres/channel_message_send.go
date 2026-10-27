@@ -348,6 +348,9 @@ WHERE channel_id = $1 AND user_id = $2 AND unread_mark`, req.ChannelID, req.User
 			return domain.SendChannelMessageResult{}, err
 		}
 	}
+	if err := countChannelPostForwardTx(ctx, tx, req.ForwardedPost); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
 	txResult := domain.SendChannelMessageResult{
 		Channel: channel, Message: msg, Event: event, Discussion: discussion,
 		MentionUserIDs:      append([]int64(nil), req.MentionUserIDs...),
