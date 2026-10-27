@@ -835,20 +835,23 @@ type UnpinAllPrivateMessagesRequest struct {
 // ScheduledMessage is a pending account-owned message that has not entered
 // normal peer history yet.
 type ScheduledMessage struct {
-	OwnerUserID          int64
-	ID                   int
-	Peer                 Peer
-	RandomID             int64
-	Message              string
-	Entities             []MessageEntity
-	Media                *MessageMedia
-	RichMessage          *MessageRichMessage
-	Silent               bool
-	NoForwards           bool
-	ReplyTo              *MessageReply
-	Forward              *MessageForward
-	SendAs               *Peer
-	GroupedID            int64 // 相册分组 id：同组共享非零值，列表投影与到点发出都沿用；单条恒 0
+	OwnerUserID int64
+	ID          int
+	Peer        Peer
+	RandomID    int64
+	Message     string
+	Entities    []MessageEntity
+	Media       *MessageMedia
+	RichMessage *MessageRichMessage
+	Silent      bool
+	NoForwards  bool
+	ReplyTo     *MessageReply
+	Forward     *MessageForward
+	SendAs      *Peer
+	GroupedID   int64 // 相册分组 id：同组共享非零值，列表投影与到点发出都沿用；单条恒 0
+	// ForwardedPost 是定时转发的源频道帖子：到点发出时作为 ForwardedPost 交给发送，在发送事务里
+	// 计转发数（排程时不计，取消的定时转发不计）。不是转发频道帖子时为 nil。
+	ForwardedPost        *ChannelPostRef
 	ScheduleDate         int
 	ScheduleRepeatPeriod int
 	CreatedAt            int
@@ -878,7 +881,8 @@ type ScheduleMessageRequest struct {
 	ReplyTo              *MessageReply
 	Forward              *MessageForward
 	SendAs               *Peer
-	GroupedID            int64 // 相册分组 id（定时 sendMultiMedia / 定时转发相册）；单条恒 0
+	GroupedID            int64           // 相册分组 id（定时 sendMultiMedia / 定时转发相册）；单条恒 0
+	ForwardedPost        *ChannelPostRef // 定时转发的源频道帖子（见 ScheduledMessage.ForwardedPost）
 	ScheduleDate         int
 	ScheduleRepeatPeriod int
 	Date                 int

@@ -48,6 +48,8 @@ type outgoingSend struct {
 	// forward 是转发头：仅定时转发到点发出时非 nil（排程时已按源消息与 drop_author 定好），
 	// 立即转发走 messages.forwardMessages 自己的发送路径。
 	forward *domain.MessageForward
+	// forwardedPost 是定时转发的源频道帖子（同样只在到点发出时非 nil）：发送写入时给它计转发数。
+	forwardedPost *domain.ChannelPostRef
 	// effect 是消息特效 id（私聊专属，0 表无特效）。调用方已对 catalog 校验合法性；
 	// 频道侧忽略（官方群/频道不渲染特效）。
 	effect         int64
@@ -97,6 +99,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			NoForwards:             p.noforwards,
 			ReplyTo:                replyTo,
 			Forward:                p.forward,
+			ForwardedPost:          p.forwardedPost,
 			ViaBotID:               p.viaBotID,
 			GroupedID:              p.groupedID,
 			ReplyMarkup:            p.replyMarkup,
@@ -183,6 +186,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		NoForwards:             p.noforwards,
 		ReplyTo:                replyTo,
 		Forward:                p.forward,
+		ForwardedPost:          p.forwardedPost,
 		Date:                   int(r.clock.Now().Unix()),
 		OriginAuthKeyID:        authKeyID,
 		OriginSessionID:        sessionID,

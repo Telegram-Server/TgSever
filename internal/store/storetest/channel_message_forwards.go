@@ -220,6 +220,67 @@ func ChannelMessageForwards(t *testing.T, newFixture func(t *testing.T) ChannelM
 		}
 	})
 
+	t.Run("a scheduled forward is counted when it is sent, a cancelled one never", func(t *testing.T) {
+		f := newFixture(t)
+		scheduled, ok := f.Messages.(store.ScheduledMessageStore)
+		if !ok {
+			t.Fatalf("%T does not store scheduled messages", f.Messages)
+		}
+		source := createChannel(t, f, true)
+		post := sendSource(t, f, source, channelMessageForwardsRandomBase+51)
+		peer := domain.Peer{Type: domain.PeerTypeUser, ID: f.Owner}
+		schedule := func(random int64) domain.ScheduledMessage {
+			t.Helper()
+			msg, err := scheduled.CreateScheduledMessage(ctx, domain.ScheduleMessageRequest{
+				OwnerUserID:   f.Reader,
+				Peer:          peer,
+				RandomID:      random,
+				Message:       post.Body,
+				Forward:       forwardHeader(post),
+				ForwardedPost: ref(post),
+				ScheduleDate:  now + 3600,
+				Date:          now,
+			})
+			if err != nil {
+				t.Fatalf("CreateScheduledMessage: %v", err)
+			}
+			return msg
+		}
+		kept := schedule(channelMessageForwardsRandomBase + 52)
+		cancelled := schedule(channelMessageForwardsRandomBase + 53)
+		if kept.ForwardedPost == nil || *kept.ForwardedPost != *ref(post) {
+			t.Fatalf("scheduled ForwardedPost = %+v, want %+v", kept.ForwardedPost, ref(post))
+		}
+		if got := storedForwards(t, f, post); got != 0 {
+			t.Fatalf("forwards after scheduling = %d, want 0 (counted only when sent)", got)
+		}
+		if _, err := scheduled.DeleteScheduledMessages(ctx, domain.ScheduledMessageFilter{OwnerUserID: f.Reader, Peer: peer, IDs: []int{cancelled.ID}}, now+1); err != nil {
+			t.Fatalf("DeleteScheduledMessages: %v", err)
+		}
+		claimed, err := scheduled.ClaimScheduledMessages(ctx, domain.ScheduledMessageClaim{OwnerUserID: f.Reader, Peer: peer, IDs: []int{kept.ID, cancelled.ID}, Now: now + 3600, Limit: 10, LeaseUntil: now + 3700})
+		if err != nil {
+			t.Fatalf("ClaimScheduledMessages: %v", err)
+		}
+		if len(claimed) != 1 || claimed[0].ID != kept.ID || claimed[0].ForwardedPost == nil || *claimed[0].ForwardedPost != *ref(post) {
+			t.Fatalf("claimed = %+v, want only the kept forward with its source post", claimed)
+		}
+		// 派发：按定时行上持久化的源帖子引用发出（rpc 的 sendScheduledMessage 同样这么做）。
+		if _, err := f.Messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+			SenderUserID:    f.Reader,
+			RecipientUserID: f.Owner,
+			RandomID:        claimed[0].RandomID,
+			Message:         claimed[0].Message,
+			Forward:         claimed[0].Forward,
+			ForwardedPost:   claimed[0].ForwardedPost,
+			Date:            now + 3600,
+		}); err != nil {
+			t.Fatalf("SendPrivateText scheduled forward: %v", err)
+		}
+		if got := storedForwards(t, f, post); got != 1 {
+			t.Fatalf("forwards after dispatch = %d, want 1", got)
+		}
+	})
+
 	t.Run("a message that is not a post is not counted", func(t *testing.T) {
 		f := newFixture(t)
 		group := createChannel(t, f, false)

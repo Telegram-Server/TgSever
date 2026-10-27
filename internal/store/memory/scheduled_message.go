@@ -106,6 +106,7 @@ func (s *MessageStore) CreateScheduledMessage(_ context.Context, req domain.Sche
 		Forward:              storedScheduledForward(req.Forward),
 		SendAs:               storedScheduledSendAs(req.SendAs),
 		GroupedID:            req.GroupedID,
+		ForwardedPost:        storedScheduledForwardedPost(req.ForwardedPost),
 		ScheduleDate:         req.ScheduleDate,
 		ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
 		CreatedAt:            req.Date,
@@ -468,5 +469,15 @@ func cloneScheduledMessage(msg domain.ScheduledMessage) domain.ScheduledMessage 
 		sendAs := *msg.SendAs
 		msg.SendAs = &sendAs
 	}
+	msg.ForwardedPost = storedScheduledForwardedPost(msg.ForwardedPost)
 	return msg
+}
+
+// storedScheduledForwardedPost 复制源帖子引用，存储与调用方互不共享指针；空引用存成 nil。
+func storedScheduledForwardedPost(ref *domain.ChannelPostRef) *domain.ChannelPostRef {
+	if ref == nil || ref.ChannelID == 0 || ref.MessageID <= 0 {
+		return nil
+	}
+	out := *ref
+	return &out
 }

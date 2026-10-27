@@ -97,39 +97,45 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 	if req.Forward != nil {
 		fwdChannelPost = int32(req.Forward.ChannelPost)
 	}
+	forwardedPostChannelID, forwardedPostMessageID := int64(0), int32(0)
+	if ref := req.ForwardedPost; ref != nil && ref.ChannelID != 0 && ref.MessageID > 0 && ref.MessageID <= domain.MaxMessageBoxID {
+		forwardedPostChannelID, forwardedPostMessageID = ref.ChannelID, int32(ref.MessageID)
+	}
 	row, err := q.InsertScheduledMessage(ctx, sqlcgen.InsertScheduledMessageParams{
-		OwnerUserID:          req.OwnerUserID,
-		ScheduledID:          int32(nextID),
-		PeerType:             string(req.Peer.Type),
-		PeerID:               req.Peer.ID,
-		RandomID:             req.RandomID,
-		MessageDate:          int32(req.Date),
-		Body:                 req.Message,
-		Entities:             entities,
-		Media:                media,
-		RichMessage:          richMessage,
-		Silent:               req.Silent,
-		Noforwards:           req.NoForwards,
-		ReplyToMsgID:         meta.ReplyToMsgID,
-		ReplyToPeerType:      meta.ReplyToPeerType,
-		ReplyToPeerID:        meta.ReplyToPeerID,
-		ReplyToTopID:         meta.ReplyToTopID,
-		QuoteText:            meta.QuoteText,
-		QuoteEntities:        meta.QuoteEntitiesJSON,
-		QuoteOffset:          meta.QuoteOffset,
-		FwdFromPeerType:      meta.FwdFromPeerType,
-		FwdFromPeerID:        meta.FwdFromPeerID,
-		FwdFromName:          meta.FwdFromName,
-		FwdDate:              meta.FwdDate,
-		FwdChannelPost:       fwdChannelPost,
-		FwdSavedFromPeerType: meta.FwdSavedFromPeerType,
-		FwdSavedFromPeerID:   meta.FwdSavedFromPeerID,
-		FwdSavedFromMsgID:    meta.FwdSavedFromMsgID,
-		SendAsPeerType:       sendAsType,
-		SendAsPeerID:         sendAsID,
-		GroupedID:            req.GroupedID,
-		ScheduleDate:         int32(req.ScheduleDate),
-		ScheduleRepeatPeriod: int32(req.ScheduleRepeatPeriod),
+		OwnerUserID:            req.OwnerUserID,
+		ScheduledID:            int32(nextID),
+		PeerType:               string(req.Peer.Type),
+		PeerID:                 req.Peer.ID,
+		RandomID:               req.RandomID,
+		MessageDate:            int32(req.Date),
+		Body:                   req.Message,
+		Entities:               entities,
+		Media:                  media,
+		RichMessage:            richMessage,
+		Silent:                 req.Silent,
+		Noforwards:             req.NoForwards,
+		ReplyToMsgID:           meta.ReplyToMsgID,
+		ReplyToPeerType:        meta.ReplyToPeerType,
+		ReplyToPeerID:          meta.ReplyToPeerID,
+		ReplyToTopID:           meta.ReplyToTopID,
+		QuoteText:              meta.QuoteText,
+		QuoteEntities:          meta.QuoteEntitiesJSON,
+		QuoteOffset:            meta.QuoteOffset,
+		FwdFromPeerType:        meta.FwdFromPeerType,
+		FwdFromPeerID:          meta.FwdFromPeerID,
+		FwdFromName:            meta.FwdFromName,
+		FwdDate:                meta.FwdDate,
+		FwdChannelPost:         fwdChannelPost,
+		FwdSavedFromPeerType:   meta.FwdSavedFromPeerType,
+		FwdSavedFromPeerID:     meta.FwdSavedFromPeerID,
+		FwdSavedFromMsgID:      meta.FwdSavedFromMsgID,
+		SendAsPeerType:         sendAsType,
+		SendAsPeerID:           sendAsID,
+		GroupedID:              req.GroupedID,
+		ForwardedPostChannelID: forwardedPostChannelID,
+		ForwardedPostMessageID: forwardedPostMessageID,
+		ScheduleDate:           int32(req.ScheduleDate),
+		ScheduleRepeatPeriod:   int32(req.ScheduleRepeatPeriod),
 	})
 	if err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("insert scheduled message: %w", err)
@@ -486,6 +492,9 @@ func scheduledMessageFromRow(row sqlcgen.ScheduledMessage) (domain.ScheduledMess
 		UpdatedAt:            int(row.UpdatedAt),
 		State:                row.State,
 		SentMessageID:        int(row.SentMessageID),
+	}
+	if row.ForwardedPostChannelID != 0 && row.ForwardedPostMessageID > 0 {
+		msg.ForwardedPost = &domain.ChannelPostRef{ChannelID: row.ForwardedPostChannelID, MessageID: int(row.ForwardedPostMessageID)}
 	}
 	entities, err := decodeMessageEntities(string(row.Entities))
 	if err != nil {

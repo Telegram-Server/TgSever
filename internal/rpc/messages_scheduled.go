@@ -299,6 +299,8 @@ func (r *Router) sendScheduledMessage(ctx context.Context, userID int64, schedul
 		sendAs:       sendAs,
 		sendAsReady:  true,
 		forward:      scheduled.Forward,
+		// 定时转发的源帖子在这次发送的事务里计转发数。
+		forwardedPost: scheduled.ForwardedPost,
 		// 同组定时消息无论一次还是分批发出，都沿用排程时持久化的同一 grouped_id。
 		groupedID: scheduled.GroupedID,
 	}
@@ -436,6 +438,9 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 	// 定时转发不查重放，sources 与 req.ID 一一对应；同一源相册得到同一个新 grouped_id，
 	// 持久化在定时行上，到点发出时原样沿用。
 	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources, nil)
+	// 源帖子引用持久化在定时行上，到点发出时在发送事务里计转发数；同一请求里同一帖子只有
+	// 第一份带上引用。
+	postForwards := forwardPostCounter{}
 	for i, source := range sources {
 		forward := source.forward
 		if req.DropAuthor {
@@ -461,6 +466,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 			Forward:              forward,
 			SendAs:               sendAs,
 			GroupedID:            groupedIDs[i],
+			ForwardedPost:        postForwards.pending(source.post),
 			ScheduleDate:         req.ScheduleDate,
 			ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
 			Date:                 date,
@@ -468,6 +474,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 		if err != nil {
 			return nil, messageForwardErr(err)
 		}
+		postForwards.written(source.post, false)
 		domainMsg := scheduledMessageAsDomainMessage(msg, userID)
 		domainMessages = append(domainMessages, domainMsg)
 		if req.RandomID[i] != 0 {
