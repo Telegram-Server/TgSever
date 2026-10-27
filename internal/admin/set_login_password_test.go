@@ -34,8 +34,8 @@ type loginPasswordFlows struct{}
 
 func (loginPasswordFlows) CheckSignUpAllowed(context.Context) error { return nil }
 
-func (loginPasswordFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create authapp.CreateAccountFunc) (domain.User, error) {
-	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName})
+func (loginPasswordFlows) SignUpWithAccountCreator(ctx context.Context, _ domain.Authorization, phone, firstName, lastName string, create authapp.SignUpAccountFunc) (domain.User, error) {
+	return create(ctx, domain.User{Phone: phone, FirstName: firstName, LastName: lastName}, nil)
 }
 
 func (loginPasswordFlows) FinishVerifiedSignIn(_ context.Context, _ domain.Authorization, u domain.User) (domain.User, error) {
