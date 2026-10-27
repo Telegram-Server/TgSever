@@ -387,18 +387,25 @@ func (r *Router) monoforumMessageReplyFromInput(ctx context.Context, userID int6
 // sendMonoforumMessage 处理向频道私信(monoforum)发送:订阅者发到自己的子会话,管理员回复到目标订阅者。
 // saved_peer 对订阅者由调用者推导、对管理员来自 reply_to;管理员可写任意订阅者子会话,订阅者只能写自己的。
 func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer domain.Peer, mono domain.Channel, isAdmin bool, req domain.SendMonoforumMessageRequest) (tg.UpdatesClass, error) {
+	updates, _, err := r.sendMonoforumMessageReportingReplay(ctx, userID, peer, mono, isAdmin, req)
+	return updates, err
+}
+
+// sendMonoforumMessageReportingReplay 与 sendMonoforumMessage 相同，另外报告这次写入是否为重放
+// （转发据此决定同一源帖子的下一条转发是否还要计数）。
+func (r *Router) sendMonoforumMessageReportingReplay(ctx context.Context, userID int64, peer domain.Peer, mono domain.Channel, isAdmin bool, req domain.SendMonoforumMessageRequest) (tg.UpdatesClass, bool, error) {
 	if r.deps.Channels == nil {
-		return nil, notImplementedErr()
+		return nil, false, notImplementedErr()
 	}
 	if peer.Type != domain.PeerTypeChannel || peer.ID == 0 {
-		return nil, peerIDInvalidErr()
+		return nil, false, peerIDInvalidErr()
 	}
 	if mono.ID != peer.ID || !mono.Monoforum || req.SavedPeer.Type != domain.PeerTypeUser || req.SavedPeer.ID == 0 {
-		return nil, replyToMonoforumPeerInvalidErr()
+		return nil, false, replyToMonoforumPeerInvalidErr()
 	}
 	if !isAdmin && req.SavedPeer.ID != userID {
 		// 普通订阅者只能写自己的子会话,不能写他人的。
-		return nil, replyToMonoforumPeerInvalidErr()
+		return nil, false, replyToMonoforumPeerInvalidErr()
 	}
 	req.MonoforumID = mono.ID
 	req.SenderUserID = userID
@@ -407,7 +414,7 @@ func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer do
 	}
 	res, err := r.deps.Channels.SendMonoforumMessage(ctx, req)
 	if err != nil {
-		return nil, messageSendErr(err)
+		return nil, false, messageSendErr(err)
 	}
 	if req.ClearDraft {
 		r.clearDraftAfterSend(ctx, userID, peer, req.ReplyTo)
@@ -415,7 +422,8 @@ func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer do
 	if !res.Duplicate {
 		r.enqueueMonoforumMessageFanout(ctx, userID, mono, req.SavedPeer, res)
 	}
-	return r.monoforumSendUpdatesStrict(ctx, userID, mono, req.SavedPeer, res)
+	updates, err := r.monoforumSendUpdatesStrict(ctx, userID, mono, req.SavedPeer, res)
+	return updates, res.Duplicate, err
 }
 
 // monoforumSendUpdates 给发送者构造回声 Updates:updateMessageID(关联 random_id)+ updateNewChannelMessage

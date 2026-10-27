@@ -461,6 +461,7 @@ func (r *Router) forwardMessagesToMonoforum(
 	groupedIDs := forwardGroupedIDs(userID, req.RandomID, sources, inherited)
 
 	results := make([]tg.UpdatesClass, 0, len(req.ID))
+	postForwards := forwardPostCounter{}
 	for i, source := range sources {
 		if replays[i].found {
 			updates, err := r.monoforumSendUpdatesStrict(ctx, userID, mono, savedPeer, replays[i].channel)
@@ -474,7 +475,7 @@ func (r *Router) forwardMessagesToMonoforum(
 		if req.DropAuthor {
 			forward = nil
 		}
-		updates, err := r.sendMonoforumMessage(ctx, userID, checkedPeer, mono, monoforumAdmin, domain.SendMonoforumMessageRequest{
+		updates, duplicate, err := r.sendMonoforumMessageReportingReplay(ctx, userID, checkedPeer, mono, monoforumAdmin, domain.SendMonoforumMessageRequest{
 			SavedPeer:              savedPeer,
 			RandomID:               req.RandomID[i],
 			IdempotencyFingerprint: idempotencyFingerprints[i],
@@ -484,6 +485,7 @@ func (r *Router) forwardMessagesToMonoforum(
 			Media:                  source.media,
 			ReplyTo:                replyTo,
 			Forward:                forward,
+			ForwardedPost:          postForwards.pending(source.post),
 			Silent:                 req.Silent,
 			NoForwards:             req.Noforwards,
 			SuggestedPost:          suggestedPost,
@@ -493,6 +495,7 @@ func (r *Router) forwardMessagesToMonoforum(
 		if err != nil {
 			return nil, err
 		}
+		postForwards.written(source.post, duplicate)
 		results = append(results, updates)
 	}
 	return combineSendUpdates(results), nil

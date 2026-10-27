@@ -182,6 +182,44 @@ func ChannelMessageForwards(t *testing.T, newFixture func(t *testing.T) ChannelM
 		}
 	})
 
+	t.Run("forwarding a post to channel direct messages counts it once", func(t *testing.T) {
+		f := newFixture(t)
+		source := createChannel(t, f, true)
+		post := sendSource(t, f, source, channelMessageForwardsRandomBase+41)
+		dm, err := f.Channels.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: f.Owner, Title: "Forwards DM", Broadcast: true, Date: now})
+		if err != nil {
+			t.Fatalf("CreateChannel DM parent: %v", err)
+		}
+		enabled, err := f.Channels.SetPaidMessagesPrice(ctx, f.Owner, dm.Channel.ID, 0, true)
+		if err != nil || enabled.Channel.LinkedMonoforumID == 0 {
+			t.Fatalf("enable direct messages: %+v, %v", enabled.Channel, err)
+		}
+		forwardToMonoforum := func(random int64) domain.SendChannelMessageResult {
+			t.Helper()
+			res, err := f.Channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{
+				MonoforumID:   enabled.Channel.LinkedMonoforumID,
+				SenderUserID:  f.Reader,
+				SavedPeer:     domain.Peer{Type: domain.PeerTypeUser, ID: f.Reader},
+				RandomID:      random,
+				Message:       post.Body,
+				Forward:       forwardHeader(post),
+				ForwardedPost: ref(post),
+				Date:          now,
+			})
+			if err != nil {
+				t.Fatalf("SendMonoforumMessage forward: %v", err)
+			}
+			return res
+		}
+		forwardToMonoforum(channelMessageForwardsRandomBase + 42)
+		if replay := forwardToMonoforum(channelMessageForwardsRandomBase + 42); !replay.Duplicate {
+			t.Fatalf("monoforum replay Duplicate = false, want true")
+		}
+		if got := storedForwards(t, f, post); got != 1 {
+			t.Fatalf("stored forwards = %d, want 1", got)
+		}
+	})
+
 	t.Run("a message that is not a post is not counted", func(t *testing.T) {
 		f := newFixture(t)
 		group := createChannel(t, f, false)

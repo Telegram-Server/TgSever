@@ -1735,6 +1735,9 @@ type SendMonoforumMessageRequest struct {
 	Silent                 bool
 	NoForwards             bool
 	SuggestedPost          *SuggestedPost
+	// ForwardedPost 与 SendChannelMessageRequest.ForwardedPost 相同：非 nil 时这次写入是对该频道
+	// 帖子的一次转发，写入成功（非重放）时在同一事务里给它的转发数加一。不参与幂等指纹。
+	ForwardedPost *ChannelPostRef
 	// GroupedID 是相册分组 id：同一次 sendMultiMedia 或同一源相册转发的各条共享一个非零值；
 	// 单条发送恒 0。
 	GroupedID int64
