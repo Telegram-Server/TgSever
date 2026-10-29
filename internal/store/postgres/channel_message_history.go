@@ -992,24 +992,50 @@ WHERE id = $1`, req.ChannelID, req.UserID, maxID); err != nil {
 			return domain.ReadChannelHistoryResult{}, fmt.Errorf("advance channel read watermarks: %w", err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-UPDATE channel_members
-SET read_inbox_date = CASE WHEN read_inbox_max_id < $3 THEN $4 ELSE read_inbox_date END,
-    read_inbox_max_id = GREATEST(read_inbox_max_id, $3),
-    unread_mark = false,
-    updated_at = now()
-WHERE channel_id = $1 AND user_id = $2`, req.ChannelID, req.UserID, maxID, req.Date); err != nil {
-		return domain.ReadChannelHistoryResult{}, fmt.Errorf("update channel member read: %w", err)
-	}
 	msg, _ := s.getChannelMessage(ctx, tx, req.ChannelID, channel.TopMessageID)
+	topDate := msg.Date
+	if topDate == 0 {
+		topDate = channel.Date
+	}
+	unread, err := countChannelUnreadMessages(ctx, tx, req.UserID, channel.ID, maxID, channel.TopMessageID)
+	if err != nil {
+		return domain.ReadChannelHistoryResult{}, err
+	}
+	// channel_members(u) 与 channel_dialogs(u) 必须在同一条语句里写：两张表的
+	// telesrv_bump_dialog_light 触发器都在语句末拿 advisory(u)，而一个事务里
+	// advisory(u) 必须是 u 名下最后一把锁。分成两条时，第一条末尾就拿到了
+	// advisory(u)，再去等 dialog(u) 行；readMessageContents 先锁 dialog(u) 行再等
+	// advisory(u)，两边成环（40P01）。合并后两行的行锁都在 advisory(u) 之前拿到。
+	// 也不能把 dialog upsert 单独挪到 members UPDATE 前面：别的读者推进 u 的
+	// read_outbox 是 members(u) 行 → advisory(u)，与 dialog(u) → members(u) 又成环。
+	// 推进发送者 read_outbox（锁别人的 members 行）放在这条语句之后。
+	// INSERT 从 m 取行，保证先更新 members 行再写 dialog 行。
+	// 手写 SQL：ON CONFLICT 子句与 upsertChannelDialogTx 共用、运行时拼出
+	// （unread 上限来自 domain.MaxDialogUnreadCount），sqlc 无法表达。
+	if _, err := tx.Exec(ctx, `
+WITH m AS (
+    UPDATE channel_members
+    SET read_inbox_date = CASE WHEN read_inbox_max_id < $3 THEN $4 ELSE read_inbox_date END,
+        read_inbox_max_id = GREATEST(read_inbox_max_id, $3),
+        unread_mark = false,
+        updated_at = now()
+    WHERE channel_id = $1 AND user_id = $2
+    RETURNING user_id, channel_id
+)
+INSERT INTO channel_dialogs (
+    user_id, channel_id, top_message_id, top_message_date, read_inbox_max_id, read_outbox_max_id, unread_count, unread_mark
+)
+SELECT m.user_id, m.channel_id, $5, $6, $3, 0, $7, false
+FROM m
+`+channelDialogUpsertConflictSQL(),
+		req.ChannelID, req.UserID, maxID, req.Date, channel.TopMessageID, topDate, unread); err != nil {
+		return domain.ReadChannelHistoryResult{}, fmt.Errorf("update channel member read and dialog: %w", err)
+	}
 	if changed {
 		outboxUpdates, err = advanceChannelReadOutboxTx(ctx, tx, channel.ID, req.UserID, previous, maxID)
 		if err != nil {
 			return domain.ReadChannelHistoryResult{}, err
 		}
-	}
-	if err := upsertChannelDialogTx(ctx, tx, req.UserID, channel, msg, maxID, 0); err != nil {
-		return domain.ReadChannelHistoryResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ReadChannelHistoryResult{}, fmt.Errorf("commit read channel history: %w", err)

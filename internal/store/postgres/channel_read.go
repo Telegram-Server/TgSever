@@ -138,6 +138,10 @@ LIMIT 500`, userID)
 }
 
 func (s *ChannelStore) ReadChannelMessageContents(ctx context.Context, req domain.ReadChannelMessageContentsRequest) (domain.ReadChannelMessageContentsResult, error) {
+	return s.readChannelMessageContentsOnce(ctx, req)
+}
+
+func (s *ChannelStore) readChannelMessageContentsOnce(ctx context.Context, req domain.ReadChannelMessageContentsRequest) (domain.ReadChannelMessageContentsResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.ReadChannelMessageContentsResult{}, domain.ErrChannelInvalid
 	}

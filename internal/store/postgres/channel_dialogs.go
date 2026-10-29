@@ -1868,27 +1868,34 @@ func upsertChannelDialogTx(ctx context.Context, tx pgx.Tx, userID int64, channel
 	if err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO channel_dialogs (
+    user_id, channel_id, top_message_id, top_message_date, read_inbox_max_id, read_outbox_max_id, unread_count, unread_mark
+) VALUES ($1,$2,$3,$4,$5,$6,$7,false)
+`+channelDialogUpsertConflictSQL(),
+		userID, channel.ID, channel.TopMessageID, topDate, readInboxMaxID, readOutboxMaxID, unread); err != nil {
+		return fmt.Errorf("upsert channel dialog: %w", err)
+	}
+	return nil
+}
+
+// channelDialogUpsertConflictSQL 是 channel_dialogs upsert 的 ON CONFLICT 子句：
+// 水位只进不退，unread 在冲突时按合并后的水位重算（capped）。
+// upsertChannelDialogTx 与 readHistory 的合并语句共用它。
+func channelDialogUpsertConflictSQL() string {
 	conflictUnread := cappedChannelUnreadCount(`WHERE msg.channel_id = channel_dialogs.channel_id
           AND msg.id > GREATEST(channel_dialogs.read_inbox_max_id, EXCLUDED.read_inbox_max_id)
           AND msg.id <= GREATEST(channel_dialogs.top_message_id, EXCLUDED.top_message_id)
           AND NOT msg.deleted
           AND msg.sender_user_id <> channel_dialogs.user_id`)
-	if _, err := tx.Exec(ctx, fmt.Sprintf(`
-INSERT INTO channel_dialogs (
-    user_id, channel_id, top_message_id, top_message_date, read_inbox_max_id, read_outbox_max_id, unread_count, unread_mark
-) VALUES ($1,$2,$3,$4,$5,$6,$7,false)
-ON CONFLICT (user_id, channel_id) DO UPDATE SET
+	return fmt.Sprintf(`ON CONFLICT (user_id, channel_id) DO UPDATE SET
     top_message_id = GREATEST(channel_dialogs.top_message_id, EXCLUDED.top_message_id),
     top_message_date = GREATEST(channel_dialogs.top_message_date, EXCLUDED.top_message_date),
     read_inbox_max_id = GREATEST(channel_dialogs.read_inbox_max_id, EXCLUDED.read_inbox_max_id),
     read_outbox_max_id = GREATEST(channel_dialogs.read_outbox_max_id, EXCLUDED.read_outbox_max_id),
     unread_count = %s,
     unread_mark = false,
-    updated_at = now()`, conflictUnread),
-		userID, channel.ID, channel.TopMessageID, topDate, readInboxMaxID, readOutboxMaxID, unread); err != nil {
-		return fmt.Errorf("upsert channel dialog: %w", err)
-	}
-	return nil
+    updated_at = now()`, conflictUnread)
 }
 
 // upsertChannelDialogsForMessageTx 在发送事务内处理消息的收件人侧读边界副作用。
