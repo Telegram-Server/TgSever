@@ -137,8 +137,19 @@ LIMIT 500`, userID)
 	return out, nil
 }
 
+// ReadChannelMessageContents 在 40P01/40001 时整笔重试：它锁 channel_unread_*
+// 与 channel_dialogs(u) 行后在语句末拿 advisory(u)，与同用户其它写路径交错时
+// 可能被选为死锁牺牲者。
 func (s *ChannelStore) ReadChannelMessageContents(ctx context.Context, req domain.ReadChannelMessageContentsRequest) (domain.ReadChannelMessageContentsResult, error) {
-	return s.readChannelMessageContentsOnce(ctx, req)
+	var lastErr error
+	for attempt := 0; attempt < retryableChannelTxAttempts; attempt++ {
+		res, err := s.readChannelMessageContentsOnce(ctx, req)
+		if err == nil || !isRetryablePostgresTxError(err) || ctx.Err() != nil {
+			return res, err
+		}
+		lastErr = err
+	}
+	return domain.ReadChannelMessageContentsResult{}, lastErr
 }
 
 func (s *ChannelStore) readChannelMessageContentsOnce(ctx context.Context, req domain.ReadChannelMessageContentsRequest) (domain.ReadChannelMessageContentsResult, error) {
@@ -303,7 +314,20 @@ func (s *ChannelStore) ListChannelUnreadMentions(ctx context.Context, viewerUser
 	return domain.ChannelHistory{Channel: channel, Messages: messages, Count: count}, nil
 }
 
+// ReadChannelMentions 在 40P01/40001 时整笔重试，理由同 ReadChannelMessageContents。
 func (s *ChannelStore) ReadChannelMentions(ctx context.Context, req domain.ReadChannelMentionsRequest) (domain.ReadChannelMentionsResult, error) {
+	var lastErr error
+	for attempt := 0; attempt < retryableChannelTxAttempts; attempt++ {
+		res, err := s.readChannelMentionsOnce(ctx, req)
+		if err == nil || !isRetryablePostgresTxError(err) || ctx.Err() != nil {
+			return res, err
+		}
+		lastErr = err
+	}
+	return domain.ReadChannelMentionsResult{}, lastErr
+}
+
+func (s *ChannelStore) readChannelMentionsOnce(ctx context.Context, req domain.ReadChannelMentionsRequest) (domain.ReadChannelMentionsResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.ReadChannelMentionsResult{}, domain.ErrChannelInvalid
 	}

@@ -35,7 +35,22 @@ func (s *ChannelStore) ListChannelUnreadReactions(ctx context.Context, viewerUse
 	return domain.ChannelHistory{Channel: channel, Messages: messages, Count: count}, nil
 }
 
+// ReadChannelReactions 在 40P01/40001 时整笔重试：它锁 channel_unread_reactions
+// 与 channel_dialogs(u) 行后在语句末拿 advisory(u)，与同用户其它写路径交错时
+// 可能被选为死锁牺牲者。
 func (s *ChannelStore) ReadChannelReactions(ctx context.Context, req domain.ReadChannelReactionsRequest) (domain.ReadChannelReactionsResult, error) {
+	var lastErr error
+	for attempt := 0; attempt < retryableChannelTxAttempts; attempt++ {
+		res, err := s.readChannelReactionsOnce(ctx, req)
+		if err == nil || !isRetryablePostgresTxError(err) || ctx.Err() != nil {
+			return res, err
+		}
+		lastErr = err
+	}
+	return domain.ReadChannelReactionsResult{}, lastErr
+}
+
+func (s *ChannelStore) readChannelReactionsOnce(ctx context.Context, req domain.ReadChannelReactionsRequest) (domain.ReadChannelReactionsResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.ReadChannelReactionsResult{}, domain.ErrChannelInvalid
 	}
