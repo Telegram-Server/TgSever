@@ -7,7 +7,7 @@ import { Avatar } from "../components/Avatar";
 import { useI18n } from "../i18n";
 import { channelKind, displayUsername, formatDate } from "../lib/format";
 import { channelMetrics } from "../lib/metrics";
-import { permissionChannelsManage, usePermissions } from "../permissions";
+import { permissionChannelsCreate, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import type { ChannelListResponse } from "../types";
 import { CreateGroupsModal } from "./CreateGroupsModal";
@@ -83,7 +83,7 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
       eyebrow={data?.listing === false ? t("account.queryResults") : t("channel.recentUpdated")}
       actions={
         <div className="toolbar">
-          {can(permissionChannelsManage) && (
+          {can(permissionChannelsCreate) && (
             <button className="btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={15} /> {t("groups.createTitle")}</button>
           )}
           <button className="btn" type="button" onClick={() => loadPage(cursor)} disabled={busy}>

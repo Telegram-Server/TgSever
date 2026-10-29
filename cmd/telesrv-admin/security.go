@@ -79,6 +79,10 @@ const (
 	permissionAccountsManage = "accounts.manage"
 	permissionChannelsRead   = "channels.read"
 	permissionChannelsManage = "channels.manage"
+	// permissionChannelsCreate gates creating supergroups as a chosen account.
+	// Deliberately NOT implied by channels.manage: it bypasses that account's
+	// own create-group permission, a far stronger power than editing settings.
+	permissionChannelsCreate = "channels.create"
 	permissionBotsRead       = "bots.read"
 	permissionBotsManage     = "bots.manage"
 	permissionMessagesRead   = "messages.read"
@@ -149,6 +153,7 @@ func assignablePermissions() []string {
 		permissionAccountsManage,
 		permissionChannelsRead,
 		permissionChannelsManage,
+		permissionChannelsCreate,
 		permissionBotsRead,
 		permissionBotsManage,
 		permissionMessagesRead,

@@ -181,7 +181,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-channel-color", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleSetChannelColorAPI)))
 	mux.Handle("POST /api/actions/set-channel-emoji-status", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleSetChannelEmojiStatusAPI)))
 	mux.Handle("POST /api/actions/set-channel-avatar", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleSetChannelAvatarAPI)))
-	mux.Handle("POST /api/actions/create-group", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleCreateGroupAPI)))
+	mux.Handle("POST /api/actions/create-group", s.scopedRoute(permissionChannelsCreate, http.HandlerFunc(s.handleCreateGroupAPI)))
 	mux.Handle("POST /api/actions/create-bot", s.scopedRoute(permissionBotsManage, http.HandlerFunc(s.handleCreateBotAPI)))
 	mux.Handle("POST /api/actions/create-broadcast", s.scopedRoute(permissionBroadcastsSend, http.HandlerFunc(s.handleCreateBroadcastAPI)))
 	mux.Handle("POST /api/actions/set-sticker-set-archived", s.scopedRoute(permissionContentManage, http.HandlerFunc(s.handleSetStickerSetArchivedAPI)))
