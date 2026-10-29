@@ -25,6 +25,8 @@ const (
 	MaxChannelParticipantsOffset = 10000
 	// MaxChannelParticipantsQueryLength bounds member search strings before LIKE scans.
 	MaxChannelParticipantsQueryLength = 128
+	// MaxChannelTitleLength 是频道/群标题按字符（rune）计数的长度上限。
+	MaxChannelTitleLength = 128
 	// MaxChannelInviteUsers limits a single inviteToChannel/createChat member batch.
 	MaxChannelInviteUsers = 200
 	// MaxChannelRealtimeFanout caps best-effort realtime channel pushes until a presence/subscription index exists.
@@ -1451,6 +1453,13 @@ type CreateChannelRequest struct {
 	Date          int
 }
 
+// ValidChannelTitle 是频道/群标题的唯一规则：非空，按字符计数不超过 MaxChannelTitleLength。
+// 不做去空白；需要规整的调用方先自行 TrimSpace。
+func ValidChannelTitle(title string) bool {
+	n := utf8.RuneCountInString(title)
+	return n > 0 && n <= MaxChannelTitleLength
+}
+
 // CreateChannelResult is returned by channel creation paths.
 type CreateChannelResult struct {
 	Channel Channel
@@ -1463,6 +1472,9 @@ type CreateChannelResult struct {
 	Recipients []int64
 	// BotUpdates 是与成员变化同一事务写入的 bot qts 记录（带已分配的 qts），提交后在线推送。
 	BotUpdates []BotUpdate
+	// PermanentInvite 只在建群结果里出现：创建者的永久主邀请。尽力而为，生成失败时为 nil，
+	// 建群本身照常成功（ListExportedInvites 首页自愈会补上）。
+	PermanentInvite *ChannelInvite
 }
 
 // MergeJoined 把批量批准入群中的一次结果并入累计结果：Channel/Message/Event/Recipients 取

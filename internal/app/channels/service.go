@@ -139,9 +139,11 @@ func (s *Service) CreateChannel(ctx context.Context, userID int64, req domain.Cr
 	s.invalidateActiveChannelIDs(activeMembershipUserIDsFromMembers(userID, res.Members)...)
 	// 官方语义：创建即生成创建者的永久主链接（DrKLO 建频道后立刻
 	// getExportedChatInvites 取 invites[0]）。失败不阻断创建——
-	// ListExportedInvites 首页自愈会兜底补上。
+	// ListExportedInvites 首页自愈会兜底补上；成功则随结果带出。
 	if res.Channel.ID != 0 {
-		_, _ = s.channels.EnsurePermanentInvite(ctx, res.Channel.ID, userID, req.Date)
+		if invite, err := s.channels.EnsurePermanentInvite(ctx, res.Channel.ID, userID, req.Date); err == nil {
+			res.PermanentInvite = &invite
+		}
 	}
 	return res, nil
 }

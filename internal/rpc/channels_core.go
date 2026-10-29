@@ -17,7 +17,7 @@ func (r *Router) onChannelsCreateChannel(ctx context.Context, req *tg.ChannelsCr
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
 	}
-	if !validChannelTitle(req.Title) || utf8.RuneCountInString(req.About) > maxChannelAboutLength {
+	if !domain.ValidChannelTitle(req.Title) || utf8.RuneCountInString(req.About) > maxChannelAboutLength {
 		return nil, channelInvalidErr(domain.ErrChannelTitleInvalid)
 	}
 	userID, _, err := r.currentUserID(ctx)
@@ -41,15 +41,24 @@ func (r *Router) onChannelsCreateChannel(ctx context.Context, req *tg.ChannelsCr
 	if err != nil {
 		return nil, channelInvalidErr(err)
 	}
-	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
 	updates, err := r.channelCreationResponseUpdates(ctx, userID, res)
 	if err != nil {
 		return nil, err
 	}
-	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
+	r.announceCreatedChannel(ctx, userID, res)
+	return updates, nil
+}
+
+// announceCreatedChannel 是建群/建频道成功后的共用收尾：把新成员登记进在线会话的频道
+// 成员关系，再向成员扇出频道更新，让创建者其他在线客户端立刻看到新频道。客户端
+// channels.createChannel 和后台以账号身份建群的钩子都走这里，两条路径不会各走各的。
+// 只需要创建者 id 和业务层的建群结果；ctx 里带调用会话时，该会话由 RPC 响应覆盖，
+// 不重复推送，没有会话（后台钩子）时推给创建者的全部在线会话。
+func (r *Router) announceCreatedChannel(ctx context.Context, creatorUserID int64, res domain.CreateChannelResult) {
+	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
+	r.pushChannelUpdates(ctx, creatorUserID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
-	return updates, nil
 }
 
 // channelCreationResponseUpdates adds the response-only message mapping TDLib

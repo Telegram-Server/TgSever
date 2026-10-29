@@ -6,7 +6,6 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"strings"
 	"telesrv/internal/domain"
-	"unicode/utf8"
 )
 
 func (r *Router) onChannelsCheckUsername(ctx context.Context, req *tg.ChannelsCheckUsernameRequest) (bool, error) {
@@ -363,7 +362,7 @@ func (r *Router) onChannelsEditTitle(ctx context.Context, req *tg.ChannelsEditTi
 	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return nil, notImplementedErr()
 	}
-	if !validChannelTitle(req.Title) {
+	if !domain.ValidChannelTitle(req.Title) {
 		return nil, channelInvalidErr(domain.ErrChannelTitleInvalid)
 	}
 	userID, _, err := r.currentUserID(ctx)
@@ -499,11 +498,6 @@ func (r *Router) channelPhotoUpdates(ctx context.Context, viewerUserID int64, re
 		Date:    int(r.clock.Now().Unix()),
 		Seq:     0,
 	}
-}
-
-func validChannelTitle(title string) bool {
-	n := utf8.RuneCountInString(title)
-	return n > 0 && n <= maxChannelTitleLength
 }
 
 func validChannelManagementUsername(username string) bool {
