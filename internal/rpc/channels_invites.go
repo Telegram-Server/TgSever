@@ -413,7 +413,7 @@ func tgExportedChannelInvite(invite domain.ChannelInvite, publicBaseURL string) 
 		Revoked:       invite.Revoked,
 		Permanent:     invite.Permanent,
 		RequestNeeded: invite.RequestNeeded,
-		Link:          publicLinkWithBaseURL(publicBaseURL, "+"+invite.Hash),
+		Link:          channelInviteLinkWithBaseURL(publicBaseURL, invite.Hash),
 		AdminID:       invite.AdminUserID,
 		Date:          invite.Date,
 	}

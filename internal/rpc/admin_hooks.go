@@ -74,8 +74,9 @@ func (r *Router) NotifyAccountFreezeChanged(_ context.Context, freeze domain.Acc
 }
 
 // AdminCreateGroup 是后台“以账号身份建群”的钩子：以 ownerID 的身份建一个超级群，效果与该
-// 账号在客户端里 channels.createChannel(megagroup) 相同——走同一个业务入口和同一段建群后
-// 收尾（announceCreatedChannel），ctx 里没有调用会话，所以推给群主的全部在线会话。
+// 账号在客户端里 channels.createChannel(megagroup) 相同——走同一个业务入口，建成后同样先
+// 登记在线成员关系、再由 announceCreatedChannel 扇出更新；ctx 里没有调用会话，所以推给
+// 群主的全部在线会话。
 // 账号权限闸门只在 RPC 入口，这里不拦截；但仍为群主求一次建群闸门结果，闸门本会拒绝
 // （包括读权限视图失败时的 fail closed）就报告绕过，供审计记录。永久邀请按服务器公开
 // 基础 URL 拼成完整链接，生成失败时为空，不影响建群。
@@ -99,10 +100,11 @@ func (r *Router) AdminCreateGroup(ctx context.Context, ownerID int64, title stri
 	if err != nil {
 		return domain.AdminCreatedGroup{}, err
 	}
+	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
 	r.announceCreatedChannel(ctx, ownerID, res)
 	out := domain.AdminCreatedGroup{Channel: res.Channel, AccountPermissionBypassed: bypassed}
 	if res.PermanentInvite != nil && res.PermanentInvite.Hash != "" {
-		out.InviteLink = r.publicLink("+" + res.PermanentInvite.Hash)
+		out.InviteLink = channelInviteLinkWithBaseURL(r.cfg.PublicBaseURL, res.PermanentInvite.Hash)
 	}
 	return out, nil
 }
