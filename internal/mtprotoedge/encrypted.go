@@ -1578,6 +1578,8 @@ const (
 	clientMessageContentRequired clientMessageContentPolicy = iota + 1
 	clientMessageContentForbidden
 	clientMessageContentOptional
+	// clientMessageContentNever 接收任意奇偶的 seq_no，但始终按非内容消息处理。
+	clientMessageContentNever
 )
 
 // clientMessageContentPolicyFor classifies the client envelope, not merely the
@@ -1586,10 +1588,17 @@ const (
 // but clients may mark the other service constructors as either. TDLib uses
 // even sequence numbers for its reconnect state/resend/cancel service batch,
 // while gotd and DrKLO use odd sequence numbers for some of the same requests.
+//
+// msgs_ack is the one deliberate leniency: mtcute 0.32.7 marks it content-related
+// (odd seq_no) and packs it with requests, so rejecting it would drop the whole
+// container (code 64) and loop the client through reconnects. An ack never needs
+// acknowledging, so it is accepted with either parity and never treated as content.
+// Containers and msg_copy stay strict.
 func clientMessageContentPolicyFor(typeID uint32) clientMessageContentPolicy {
 	switch typeID {
+	case mt.MsgsAckTypeID:
+		return clientMessageContentNever
 	case proto.MessageContainerTypeID,
-		mt.MsgsAckTypeID,
 		mt.MsgCopyTypeID:
 		return clientMessageContentForbidden
 	case mt.PingRequestTypeID,

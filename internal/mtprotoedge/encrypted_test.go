@@ -77,7 +77,7 @@ func TestClientMessageContentPolicy(t *testing.T) {
 	}{
 		{name: "api_rpc", typeID: tg.HelpGetConfigRequestTypeID, want: clientMessageContentRequired},
 		{name: "container", typeID: proto.MessageContainerTypeID, want: clientMessageContentForbidden},
-		{name: "msgs_ack", typeID: mt.MsgsAckTypeID, want: clientMessageContentForbidden},
+		{name: "msgs_ack", typeID: mt.MsgsAckTypeID, want: clientMessageContentNever},
 		{name: "msg_copy", typeID: mt.MsgCopyTypeID, want: clientMessageContentForbidden},
 		{name: "bad_msg_notification", typeID: mt.BadMsgNotificationTypeID, want: clientMessageContentOptional},
 		{name: "bad_server_salt", typeID: mt.BadServerSaltTypeID, want: clientMessageContentOptional},
@@ -130,6 +130,13 @@ func TestClientMessageContentPolicy(t *testing.T) {
 				}
 				if clientMessageIsContentRelated(test.typeID, 8) || !clientMessageIsContentRelated(test.typeID, 9) {
 					t.Fatal("optional service content bit was not derived from seq_no parity")
+				}
+			case clientMessageContentNever:
+				if evenCode != 0 || oddCode != 0 {
+					t.Fatalf("never-content parity codes = even:%d odd:%d", evenCode, oddCode)
+				}
+				if clientMessageIsContentRelated(test.typeID, 8) || clientMessageIsContentRelated(test.typeID, 9) {
+					t.Fatal("never-content service became content-related")
 				}
 			}
 		})
@@ -523,6 +530,42 @@ func TestHTTPWaitInContainerDoesNotNeedAck(t *testing.T) {
 	}
 }
 
+// TestOddSeqMsgsAckInContainerAccepted：mtcute 0.32.7 把 msgs_ack 标成内容消息（奇数
+// seq_no）和请求打进同一个 container。规范要求 ack 用偶数，但拒掉会连带丢弃同 container
+// 的请求（code 64）。ack 按奇偶都接收、始终当非内容消息：请求照常应答，ack 本身不被确认。
+func TestOddSeqMsgsAckInContainerAccepted(t *testing.T) {
+	const dc = 2
+	addr, pub, _ := startTestServer(t, Options{DC: dc})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+	clientMsgID := proto.NewMessageIDGen(time.Now)
+	ackMsgID := clientMsgID.New(proto.MessageFromClient)
+	pingMsgID := clientMsgID.New(proto.MessageFromClient)
+	containerMsgID := clientMsgID.New(proto.MessageFromClient)
+	ackBody := mustEncodeTL(t, &mt.MsgsAck{MsgIDs: []int64{12345}})
+	pingBody := mustEncodeTL(t, &mt.PingRequest{PingID: 9})
+	sendEncrypted(t, conn, cipher, auth, containerMsgID, &proto.MessageContainer{
+		Messages: []proto.Message{
+			{ID: ackMsgID, SeqNo: 1, Bytes: len(ackBody), Body: ackBody},
+			{ID: pingMsgID, SeqNo: 3, Bytes: len(pingBody), Body: pingBody},
+		},
+	})
+
+	replies := collectReplies(t, conn, cipher, auth.AuthKey, mt.MsgsAckTypeID)
+	if _, bad := replies[mt.BadMsgNotificationTypeID]; bad {
+		t.Fatal("odd seq_no msgs_ack was rejected with bad_msg_notification")
+	}
+	mustHave(t, replies, mt.PongTypeID, "pong")
+	ackBuf := mustHave(t, replies, mt.MsgsAckTypeID, "msgs_ack")
+	var ack mt.MsgsAck
+	if err := ack.Decode(ackBuf); err != nil {
+		t.Fatalf("decode msgs_ack: %v", err)
+	}
+	if len(ack.MsgIDs) != 1 || ack.MsgIDs[0] != pingMsgID {
+		t.Fatalf("msgs_ack = %+v, want only ping msg_id %d (the client's ack is never acknowledged)", ack.MsgIDs, pingMsgID)
+	}
+}
+
 // TestOldMessageInFreshContainerAccepted verifies TDesktop's bad_msg recovery
 // path: an old request can be resent inside a fresh container msg_id.
 func TestOldMessageInFreshContainerAccepted(t *testing.T) {
@@ -912,9 +955,15 @@ func TestBadMsgSeqEvenExpected(t *testing.T) {
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
+	// msgs_ack 已放宽为奇偶都收（见 TestOddSeqMsgsAckInContainerAccepted），container
+	// 仍必须是非内容消息，用它守住 code 34。
 	clientMsgID := proto.NewMessageIDGen(time.Now)
+	pingMsgID := clientMsgID.New(proto.MessageFromClient)
 	reqMsgID := clientMsgID.New(proto.MessageFromClient)
-	sendEncryptedWithSeq(t, conn, cipher, auth, reqMsgID, 1, &mt.MsgsAck{MsgIDs: []int64{reqMsgID}})
+	pingBody := mustEncodeTL(t, &mt.PingRequest{PingID: 1})
+	sendEncryptedWithSeq(t, conn, cipher, auth, reqMsgID, 1, &proto.MessageContainer{
+		Messages: []proto.Message{{ID: pingMsgID, SeqNo: 1, Bytes: len(pingBody), Body: pingBody}},
+	})
 
 	bad := readBadMsgNotification(t, conn, cipher, auth.AuthKey)
 	if bad.BadMsgID != reqMsgID || bad.BadMsgSeqno != 1 || bad.ErrorCode != badMsgSeqNotEven {
