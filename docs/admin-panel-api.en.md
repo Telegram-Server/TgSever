@@ -706,6 +706,7 @@ Content-Type: application/json
 | `set-channel-color` | `channel_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | `channels.manage` |
 | `set-channel-emoji-status` | `channel_id` (int64), `document_id` (int64), `until` (int) | `channels.manage` |
 | `set-channel-avatar` | **multipart**: `metadata` (JSON with common fields + `channel_id` (int64)) and a file `file` | `channels.manage` |
+| `create-group` | `owner_user_id` (int64), `title` (string, trimmed; 1–128 characters). Creates one supergroup owned by that account, bypassing its own create-group permission; result `details`: `owner_user_id`, `title`, `channel_id`, `invite_link`, `account_permission_bypassed` | `channels.manage` |
 | `set-channel-verified` | `channel_id` (int64), `verified` (bool) | `verification.review` |
 
 ## API: bot actions

@@ -181,6 +181,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-channel-color", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleSetChannelColorAPI)))
 	mux.Handle("POST /api/actions/set-channel-emoji-status", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleSetChannelEmojiStatusAPI)))
 	mux.Handle("POST /api/actions/set-channel-avatar", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleSetChannelAvatarAPI)))
+	mux.Handle("POST /api/actions/create-group", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleCreateGroupAPI)))
 	mux.Handle("POST /api/actions/create-bot", s.scopedRoute(permissionBotsManage, http.HandlerFunc(s.handleCreateBotAPI)))
 	mux.Handle("POST /api/actions/create-broadcast", s.scopedRoute(permissionBroadcastsSend, http.HandlerFunc(s.handleCreateBroadcastAPI)))
 	mux.Handle("POST /api/actions/set-sticker-set-archived", s.scopedRoute(permissionContentManage, http.HandlerFunc(s.handleSetStickerSetArchivedAPI)))
@@ -1384,6 +1385,29 @@ func (s *server) handleUnbindDeviceAPI(w http.ResponseWriter, r *http.Request) {
 		DeviceID:    body.DeviceID,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/unbind-device", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type createGroupAPIRequest struct {
+	CommandID   string `json:"command_id"`
+	Reason      string `json:"reason"`
+	Confirm     bool   `json:"confirm"`
+	OwnerUserID int64  `json:"owner_user_id"`
+	Title       string `json:"title"`
+}
+
+// handleCreateGroupAPI 以指定账号身份建一个超级群；批量由前端逐行调用，每行一个命令。
+func (s *server) handleCreateGroupAPI(w http.ResponseWriter, r *http.Request) {
+	var body createGroupAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.CreateGroupRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-group"),
+		OwnerUserID: body.OwnerUserID,
+		Title:       body.Title,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/create-group", req)
 	writeCommandResultAPI(w, result, err)
 }
 

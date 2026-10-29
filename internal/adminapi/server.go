@@ -50,6 +50,7 @@ type Service interface {
 	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
 	SetChannelFlags(ctx context.Context, req admin.SetChannelFlagsRequest) (admin.CommandResult, error)
+	CreateGroup(ctx context.Context, req admin.CreateGroupRequest) (admin.CommandResult, error)
 	CreateBot(ctx context.Context, req admin.CreateBotRequest) (admin.CommandResult, error)
 	DeleteBot(ctx context.Context, req admin.DeleteBotRequest) (admin.CommandResult, error)
 	ExportBotToken(ctx context.Context, req admin.ExportBotTokenRequest) (admin.CommandResult, error)
@@ -316,6 +317,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/channels/set-emoji-status", s.authenticated(s.handleSetChannelEmojiStatus))
 	mux.HandleFunc("GET /v1/channels/{id}/avatar", s.authenticated(s.handleChannelAvatar))
 	mux.HandleFunc("POST /v1/channels/set-avatar", s.authenticated(s.handleSetChannelAvatar))
+	mux.HandleFunc("POST /v1/channels/create-group", s.authenticated(s.handleCreateGroup))
 	mux.HandleFunc("POST /v1/bots/create", s.authenticated(s.handleCreateBot))
 	mux.HandleFunc("POST /v1/broadcasts/create", s.authenticated(s.handleCreateBroadcast))
 	mux.HandleFunc("POST /v1/bots/delete", s.authenticated(s.handleDeleteBot))
@@ -1034,6 +1036,16 @@ func (s *Server) handleSetChannelEmojiStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	result, err := s.svc.SetChannelEmojiStatus(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// handleCreateGroup 以指定账号身份建一个超级群（channel.create_group）。
+func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
+	var req admin.CreateGroupRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.CreateGroup(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

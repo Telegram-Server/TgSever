@@ -720,6 +720,7 @@ Content-Type: application/json
 | `set-channel-color` | `channel_id` (int64), `for_profile` (bool), `has_color` (bool), `color` (int), `background_emoji_id` (int64) | `channels.manage` |
 | `set-channel-emoji-status` | `channel_id` (int64), `document_id` (int64), `until` (int) | `channels.manage` |
 | `set-channel-avatar` | **multipart**: `metadata` (JSON с общими полями + `channel_id` (int64)) и файл `file` | `channels.manage` |
+| `create-group` | `owner_user_id` (int64), `title` (string, без пробелов по краям; 1–128 символов). Создаёт одну супергруппу от имени этого аккаунта в обход его собственного права на создание групп; `details` результата: `owner_user_id`, `title`, `channel_id`, `invite_link`, `account_permission_bypassed` | `channels.manage` |
 | `set-channel-verified` | `channel_id` (int64), `verified` (bool) | `verification.review` |
 
 ## API: действия над ботами
