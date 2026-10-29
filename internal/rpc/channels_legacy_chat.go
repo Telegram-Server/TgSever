@@ -15,7 +15,7 @@ func (r *Router) onMessagesCreateChat(ctx context.Context, req *tg.MessagesCreat
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
 	}
-	if !validChannelTitle(req.Title) || len(req.Users) > domain.MaxChannelInviteUsers {
+	if !domain.ValidChannelTitle(req.Title) || len(req.Users) > domain.MaxChannelInviteUsers {
 		return nil, channelInvalidErr(domain.ErrChannelTitleInvalid)
 	}
 	if req.TTLPeriod < 0 {

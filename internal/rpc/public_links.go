@@ -30,6 +30,12 @@ func publicLinkWithBaseURL(baseURL, path string) string {
 	return links.Build(baseURL, path, nil)
 }
 
+// channelInviteLinkWithBaseURL 拼出频道/群邀请链接 <base>/+<hash>。客户端导出的邀请和
+// 后台建群返回的永久邀请都用它，两处链接格式保持一致。
+func channelInviteLinkWithBaseURL(baseURL, hash string) string {
+	return publicLinkWithBaseURL(baseURL, "+"+hash)
+}
+
 func publicLinkQueryWithBaseURL(baseURL, path string, query url.Values) string {
 	return links.Build(baseURL, path, query)
 }

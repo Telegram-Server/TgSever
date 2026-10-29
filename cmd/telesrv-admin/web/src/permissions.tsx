@@ -32,6 +32,9 @@ export const permissionAccountsRead = "accounts.read";
 export const permissionAccountsManage = "accounts.manage";
 export const permissionChannelsRead = "channels.read";
 export const permissionChannelsManage = "channels.manage";
+// Creating groups as a chosen account bypasses that account's own permission,
+// so it is its own right rather than part of channels.manage.
+export const permissionChannelsCreate = "channels.create";
 export const permissionBotsRead = "bots.read";
 export const permissionBotsManage = "bots.manage";
 export const permissionMessagesRead = "messages.read";
@@ -142,6 +145,7 @@ const permissionLabels: Record<string, { title: string; hint: string }> = {
   "accounts.manage": { title: "Edit accounts", hint: "Change profiles, usernames, freeze and revoke sessions" },
   "channels.read": { title: "View groups and channels", hint: "Browse supergroups and channels" },
   "channels.manage": { title: "Edit groups and channels", hint: "Change settings, usernames and avatars" },
+  "channels.create": { title: "Create groups as an account", hint: "Create supergroups owned by any account, even one barred from creating groups" },
   "bots.read": { title: "View bots", hint: "Browse the bot list and their details" },
   "bots.manage": { title: "Create and delete bots", hint: "Add new bots and remove existing ones" },
   "bots.token.read": { title: "Reveal bot tokens", hint: "Export a bot's live credential" },
@@ -198,7 +202,7 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   {
     title: "People and chats",
     hint: "Users, groups and their message history",
-    permissions: ["accounts.read", "accounts.manage", "channels.read", "channels.manage", "messages.read", "messages.manage", "messages.deletions.read"]
+    permissions: ["accounts.read", "accounts.manage", "channels.read", "channels.manage", "channels.create", "messages.read", "messages.manage", "messages.deletions.read"]
   },
   {
     title: "Moderation and verification",

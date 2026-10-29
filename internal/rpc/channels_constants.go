@@ -1,7 +1,6 @@
 package rpc
 
 const (
-	maxChannelTitleLength                 = 128
 	maxChannelAboutLength                 = 255
 	maxChannelUsernameOrder               = 32
 	maxChannelReportMessageIDs            = 100

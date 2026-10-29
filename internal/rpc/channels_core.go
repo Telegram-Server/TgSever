@@ -17,7 +17,7 @@ func (r *Router) onChannelsCreateChannel(ctx context.Context, req *tg.ChannelsCr
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
 	}
-	if !validChannelTitle(req.Title) || utf8.RuneCountInString(req.About) > maxChannelAboutLength {
+	if !domain.ValidChannelTitle(req.Title) || utf8.RuneCountInString(req.About) > maxChannelAboutLength {
 		return nil, channelInvalidErr(domain.ErrChannelTitleInvalid)
 	}
 	userID, _, err := r.currentUserID(ctx)
@@ -41,15 +41,27 @@ func (r *Router) onChannelsCreateChannel(ctx context.Context, req *tg.ChannelsCr
 	if err != nil {
 		return nil, channelInvalidErr(err)
 	}
+	// 群已落库：先登记在线成员关系，即使下面构造响应失败，成员会话也能收到该群后续更新。
 	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
 	updates, err := r.channelCreationResponseUpdates(ctx, userID, res)
 	if err != nil {
 		return nil, err
 	}
-	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
+	r.announceCreatedChannel(ctx, userID, res)
+	return updates, nil
+}
+
+// announceCreatedChannel 向新群成员扇出建群的频道更新，让创建者其他在线客户端立刻看到
+// 新频道。调用方须在此之前已用 addOnlineChannelMemberships 登记成员关系（建成后立即登记，
+// 不依赖后续步骤是否成功）。使用者是 channels.createChannel 和后台以账号身份建群的钩子
+// AdminCreateGroup；messages.createChat 不走这里，它建群后还要邀请成员，并把建群与邀请
+// 两次结果合并成一份响应和推送（见 channels_legacy_chat.go），收尾自成一套。
+// ctx 里带调用会话时，该会话由 RPC 响应覆盖，不重复推送；没有会话（后台钩子）时推给
+// 创建者的全部在线会话。
+func (r *Router) announceCreatedChannel(ctx context.Context, creatorUserID int64, res domain.CreateChannelResult) {
+	r.pushChannelUpdates(ctx, creatorUserID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
-	return updates, nil
 }
 
 // channelCreationResponseUpdates adds the response-only message mapping TDLib
