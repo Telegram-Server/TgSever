@@ -1477,6 +1477,14 @@ type CreateChannelResult struct {
 	PermanentInvite *ChannelInvite
 }
 
+// AdminCreatedGroup 是后台以账号身份建群的结果：建出的超级群、创建者永久邀请的完整链接
+// （生成失败时为空），以及群主账号自身的建群权限闸门是否本会拒绝（后台照样建成，供审计）。
+type AdminCreatedGroup struct {
+	Channel                   Channel
+	InviteLink                string
+	AccountPermissionBypassed bool
+}
+
 // MergeJoined 把批量批准入群中的一次结果并入累计结果：Channel/Message/Event/Recipients 取
 // 最新一次，Members 与 Previous 累加，保证每个被批准的人都出现在结果里。
 func (r CreateChannelResult) MergeJoined(next CreateChannelResult) CreateChannelResult {

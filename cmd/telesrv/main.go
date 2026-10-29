@@ -2156,6 +2156,7 @@ func run(logger *zap.Logger) error {
 		AccountDeletionNotifier: router,
 		Channels:                channelsService,
 		ChannelNotifier:         router,
+		GroupCreator:            router,
 		Messages:                messagesService,
 		Gifts:                   giftsService,
 		GiftGranter:             router,

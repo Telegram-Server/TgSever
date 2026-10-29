@@ -530,6 +530,7 @@ type Dependencies struct {
 	AccountDeletionNotifier AccountDeletionNotifier
 	Channels                ChannelsService
 	ChannelNotifier         ChannelNotifier
+	GroupCreator            GroupCreator
 	Messages                MessagesService
 	Gifts                   GiftsService
 	GiftGranter             GiftGranter
@@ -603,6 +604,7 @@ type Service struct {
 	accountDeletionNotifier AccountDeletionNotifier
 	channels                ChannelsService
 	channelNotifier         ChannelNotifier
+	groupCreator            GroupCreator
 	messages                MessagesService
 	gifts                   GiftsService
 	giftGranter             GiftGranter
@@ -703,6 +705,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.ChannelNotifier != nil {
 		s.channelNotifier = deps.ChannelNotifier
+	}
+	if deps.GroupCreator != nil {
+		s.groupCreator = deps.GroupCreator
 	}
 	if deps.Messages != nil {
 		s.messages = deps.Messages
