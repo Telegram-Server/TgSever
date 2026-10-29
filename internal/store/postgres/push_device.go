@@ -43,6 +43,8 @@ func (s *PushDeviceStore) RegisterPushDevice(ctx context.Context, device domain.
 		NoMuted:    device.NoMuted,
 		OtherUids:  otherUIDs,
 		LangCode:   device.LangCode,
+		// 只在插入新登记时生效，重新登记保留已存的开关（见 UpsertPushDevice）。
+		PushEnabled: device.PushEnabled,
 	})
 	if err == nil {
 		return nil
@@ -92,6 +94,7 @@ func pushDeviceFromRow(row sqlcgen.PushDevice, authorizationUserID int64) domain
 		NoMuted:             row.NoMuted,
 		OtherUIDs:           row.OtherUids,
 		LangCode:            row.LangCode,
+		PushEnabled:         row.PushEnabled,
 		CreatedAt:           row.CreatedAt.Time,
 		AuthorizationUserID: authorizationUserID,
 	}
@@ -120,4 +123,16 @@ func (s *PushDeviceStore) DeleteStalePushDevice(ctx context.Context, device doma
 		return false, fmt.Errorf("delete stale push device: %w", err)
 	}
 	return n > 0, nil
+}
+
+func (s *PushDeviceStore) SetPushDevicesEnabled(ctx context.Context, userID int64, authKeyID [8]byte, enabled bool) (int, error) {
+	n, err := s.q.SetPushDevicesEnabled(ctx, sqlcgen.SetPushDevicesEnabledParams{
+		PushEnabled: enabled,
+		AuthKeyID:   authKeyIDToInt64(authKeyID),
+		UserID:      userID,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("set push devices enabled: %w", err)
+	}
+	return int(n), nil
 }

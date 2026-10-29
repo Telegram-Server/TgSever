@@ -2299,16 +2299,17 @@ type ProfilePhoto struct {
 }
 
 type PushDevice struct {
-	AuthKeyID  int64
-	TokenType  int32
-	Token      string
-	UserID     int64
-	AppSandbox bool
-	Secret     []byte
-	NoMuted    bool
-	OtherUids  []int64
-	LangCode   string
-	CreatedAt  pgtype.Timestamptz
+	AuthKeyID   int64
+	TokenType   int32
+	Token       string
+	UserID      int64
+	AppSandbox  bool
+	Secret      []byte
+	NoMuted     bool
+	OtherUids   []int64
+	LangCode    string
+	CreatedAt   pgtype.Timestamptz
+	PushEnabled bool
 }
 
 type QuickReply struct {

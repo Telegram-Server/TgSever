@@ -159,7 +159,7 @@ func TestIncomingCallSkipsDeviceWhereCallerIsAlsoLoggedIn(t *testing.T) {
 		if err := f.auths.Bind(ctx, domain.Authorization{AuthKeyID: d.key, UserID: bobID, Hash: int64(d.key[0])}); err != nil {
 			t.Fatal(err)
 		}
-		if err := f.devices.RegisterPushDevice(ctx, domain.PushDevice{AuthKeyID: d.key, UserID: bobID, TokenType: domain.PushTokenVoIP, Token: d.token, Secret: testSecret(), OtherUIDs: d.others}); err != nil {
+		if err := f.devices.RegisterPushDevice(ctx, domain.PushDevice{PushEnabled: true, AuthKeyID: d.key, UserID: bobID, TokenType: domain.PushTokenVoIP, Token: d.token, Secret: testSecret(), OtherUIDs: d.others}); err != nil {
 			t.Fatal(err)
 		}
 	}

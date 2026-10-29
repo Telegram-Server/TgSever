@@ -53,7 +53,7 @@ func TestServiceReportsMetricsThroughSink(t *testing.T) {
 	if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: [8]byte{2}, UserID: bobID, Hash: 2}); err != nil {
 		t.Fatal(err)
 	}
-	if err := devices.RegisterPushDevice(ctx, domain.PushDevice{AuthKeyID: [8]byte{2}, UserID: bobID, TokenType: domain.PushTokenAPNs, Token: "tok-bob"}); err != nil {
+	if err := devices.RegisterPushDevice(ctx, domain.PushDevice{PushEnabled: true, AuthKeyID: [8]byte{2}, UserID: bobID, TokenType: domain.PushTokenAPNs, Token: "tok-bob"}); err != nil {
 		t.Fatal(err)
 	}
 	sender := newRecordingSender()
@@ -106,7 +106,7 @@ func TestServiceCountsRemovedRegistrations(t *testing.T) {
 		if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: d.key, UserID: bobID, Hash: int64(d.key[0])}); err != nil {
 			t.Fatal(err)
 		}
-		if err := devices.RegisterPushDevice(ctx, domain.PushDevice{AuthKeyID: d.key, UserID: bobID, TokenType: domain.PushTokenAPNs, Token: d.token}); err != nil {
+		if err := devices.RegisterPushDevice(ctx, domain.PushDevice{PushEnabled: true, AuthKeyID: d.key, UserID: bobID, TokenType: domain.PushTokenAPNs, Token: d.token}); err != nil {
 			t.Fatal(err)
 		}
 	}

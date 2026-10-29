@@ -444,11 +444,11 @@ func (s *Service) deliverMessageTo(ctx context.Context, recipient int64, msg New
 }
 
 // messageTargets 过滤出收件人该收这条消息推送的设备：APNs 普通登记、仍属于收件人、
-// 发送者不在 other_uids 里、不在前台。
+// 后台未关闭推送、发送者不在 other_uids 里、不在前台。
 func (s *Service) messageTargets(recipient int64, devices []domain.PushDevice, msg NewMessage) []domain.PushDevice {
 	targets := devices[:0:0]
 	for _, device := range devices {
-		if device.TokenType != domain.PushTokenAPNs || device.UserID != recipient {
+		if device.TokenType != domain.PushTokenAPNs || device.UserID != recipient || !device.PushEnabled {
 			continue
 		}
 		// 多账号去重：发送者也登录在这台设备上（other_uids），两个账号都在用户手里，不推。

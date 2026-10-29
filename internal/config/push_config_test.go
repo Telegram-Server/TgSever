@@ -21,6 +21,7 @@ var pushKeys = []string{
 	"TELESRV_PUSH_WORKERS",
 	"TELESRV_PUSH_SEND_TIMEOUT",
 	"TELESRV_PUSH_MAX_RETRIES",
+	"TELESRV_PUSH_NEW_DEVICE_ENABLED",
 }
 
 func TestLoadPushConfigDefaults(t *testing.T) {
@@ -35,6 +36,10 @@ func TestLoadPushConfigDefaults(t *testing.T) {
 	if cfg.PushQueueSize != 4096 || cfg.PushWorkers != 4 || cfg.PushSendTimeout != 10*time.Second || cfg.PushMaxRetries != 3 {
 		t.Fatalf("push defaults = queue %d workers %d timeout %v retries %d", cfg.PushQueueSize, cfg.PushWorkers, cfg.PushSendTimeout, cfg.PushMaxRetries)
 	}
+	// 新注册的设备默认关闭推送（大多是开发包），由后台逐台打开。
+	if cfg.PushNewDeviceEnabled {
+		t.Fatal("PushNewDeviceEnabled default = true, want false")
+	}
 }
 
 func TestLoadPushConfigOverrides(t *testing.T) {
@@ -48,6 +53,7 @@ func TestLoadPushConfigOverrides(t *testing.T) {
 	t.Setenv("TELESRV_PUSH_WORKERS", "16")
 	t.Setenv("TELESRV_PUSH_SEND_TIMEOUT", "3s")
 	t.Setenv("TELESRV_PUSH_MAX_RETRIES", "0")
+	t.Setenv("TELESRV_PUSH_NEW_DEVICE_ENABLED", "true")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -57,6 +63,9 @@ func TestLoadPushConfigOverrides(t *testing.T) {
 	}
 	if cfg.PushQueueSize != 100 || cfg.PushWorkers != 16 || cfg.PushSendTimeout != 3*time.Second || cfg.PushMaxRetries != 0 {
 		t.Fatalf("push tunables = queue %d workers %d timeout %v retries %d", cfg.PushQueueSize, cfg.PushWorkers, cfg.PushSendTimeout, cfg.PushMaxRetries)
+	}
+	if !cfg.PushNewDeviceEnabled {
+		t.Fatal("PushNewDeviceEnabled = false, want true from TELESRV_PUSH_NEW_DEVICE_ENABLED")
 	}
 }
 

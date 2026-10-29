@@ -89,6 +89,71 @@ func PushDeviceContract(t *testing.T, newFixture func(t *testing.T) PushDeviceFi
 		assertPushDevice(t, got[0], replaced)
 	})
 
+	t.Run("new registration stores the given push state and re-register keeps it", func(t *testing.T) {
+		f := newFixture(t)
+		off := testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01")
+		off.PushEnabled = false
+		registerPushDevice(t, f, off)
+		if got := listPushDevices(t, f, f.UserA); len(got) != 1 || got[0].PushEnabled {
+			t.Fatalf("devices = %+v, want one registration with push disabled", got)
+		}
+		if n, err := f.Devices.SetPushDevicesEnabled(ctx, f.UserA, f.AuthA1, true); err != nil || n != 1 {
+			t.Fatalf("enable updated=%d err=%v, want 1", n, err)
+		}
+		// 重新登记（app 重启、token 轮换）带的是新登记的默认值，不覆盖已存的状态。
+		rotated := testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa02")
+		rotated.PushEnabled = false
+		registerPushDevice(t, f, rotated)
+		got := listPushDevices(t, f, f.UserA)
+		if len(got) != 1 || got[0].Token != "aa02" || !got[0].PushEnabled {
+			t.Fatalf("devices after re-register = %+v, want token aa02 still enabled", got)
+		}
+		batch, err := f.Devices.ListPushDevicesByUsers(ctx, []int64{f.UserA})
+		if err != nil || len(batch) != 1 || !batch[0].PushEnabled {
+			t.Fatalf("batch list = %+v err=%v, want the enabled registration", batch, err)
+		}
+		// 授权删除后重新登录是一条新登记，回到新登记的默认值。
+		if err := f.Auths.Delete(ctx, f.AuthA1); err != nil {
+			t.Fatal(err)
+		}
+		registerPushDevice(t, f, testPushDevice(f.AuthA2, f.UserA, domain.PushTokenAPNs, "aa03"))
+		if got := listPushDevices(t, f, f.UserA); len(got) != 1 || got[0].AuthKeyID != f.AuthA2 || !got[0].PushEnabled {
+			t.Fatalf("devices of the new authorization = %+v, want its own enabled state", got)
+		}
+	})
+
+	t.Run("set push enabled touches only that user's authorization", func(t *testing.T) {
+		f := newFixture(t)
+		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01"))
+		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenVoIP, "bb01"))
+		registerPushDevice(t, f, testPushDevice(f.AuthA2, f.UserA, domain.PushTokenAPNs, "aa02"))
+		registerPushDevice(t, f, testPushDevice(f.AuthB, f.UserB, domain.PushTokenAPNs, "cc01"))
+		if n, err := f.Devices.SetPushDevicesEnabled(ctx, f.UserA, f.AuthA1, false); err != nil || n != 2 {
+			t.Fatalf("disable A1 updated=%d err=%v, want both of its registrations", n, err)
+		}
+		got := listPushDevices(t, f, f.UserA)
+		if len(got) != 3 || got[0].PushEnabled || got[1].PushEnabled || !got[2].PushEnabled {
+			t.Fatalf("devices of A = %+v, want A1 APNs and VoIP disabled, A2 enabled", got)
+		}
+		// 别人的授权、不存在的授权：一条都不改。
+		if n, err := f.Devices.SetPushDevicesEnabled(ctx, f.UserA, f.AuthB, false); err != nil || n != 0 {
+			t.Fatalf("disable B's authorization as A updated=%d err=%v, want 0", n, err)
+		}
+		missing := [8]byte{0xde, 0xad, 0xbe, 0xef, 0x09}
+		if n, err := f.Devices.SetPushDevicesEnabled(ctx, f.UserA, missing, false); err != nil || n != 0 {
+			t.Fatalf("disable a missing authorization updated=%d err=%v, want 0", n, err)
+		}
+		if b := listPushDevices(t, f, f.UserB); len(b) != 1 || !b[0].PushEnabled {
+			t.Fatalf("devices of B = %+v, want untouched", b)
+		}
+		if n, err := f.Devices.SetPushDevicesEnabled(ctx, f.UserA, f.AuthA1, true); err != nil || n != 2 {
+			t.Fatalf("re-enable A1 updated=%d err=%v, want 2", n, err)
+		}
+		if got := listPushDevices(t, f, f.UserA); !got[0].PushEnabled || !got[1].PushEnabled {
+			t.Fatalf("devices of A after re-enable = %+v", got)
+		}
+	})
+
 	t.Run("list by several users at once", func(t *testing.T) {
 		f := newFixture(t)
 		registerPushDevice(t, f, testPushDevice(f.AuthA1, f.UserA, domain.PushTokenAPNs, "aa01"))
@@ -329,6 +394,8 @@ func testPushDevice(authKeyID [8]byte, userID int64, tokenType int, token string
 		NoMuted:    true,
 		OtherUIDs:  []int64{userID + 1000, userID + 2000},
 		LangCode:   "zh-hans",
+		// 契约里的登记默认开启推送；新登记取什么默认值由调用方（RPC 层按配置）决定。
+		PushEnabled: true,
 	}
 }
 

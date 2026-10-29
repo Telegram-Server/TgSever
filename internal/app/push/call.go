@@ -79,7 +79,8 @@ func (s *Service) deliverIncomingCall(ctx context.Context, call IncomingCall) {
 		return
 	}
 	for _, device := range devices {
-		if device.TokenType != domain.PushTokenVoIP || device.UserID != call.CalleeID {
+		// 后台关闭了推送的设备不请求 APNs。
+		if device.TokenType != domain.PushTokenVoIP || device.UserID != call.CalleeID || !device.PushEnabled {
 			continue
 		}
 		// 多账号去重：主叫也登录在这台设备上（other_uids），不让同一台手机给自己响铃。

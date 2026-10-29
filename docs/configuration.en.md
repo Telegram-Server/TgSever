@@ -108,6 +108,7 @@ Retained typed graphs remain charged to the RPC scheduler budget above.
 | `TELESRV_PUSH_WORKERS` | int `1..256` / `4` | Fixed number of push workers. |
 | `TELESRV_PUSH_SEND_TIMEOUT` | duration `1s..2m` / `10s` | Timeout of one send to one device. |
 | `TELESRV_PUSH_MAX_RETRIES` | int `0..10` / `3` | Retries (after the first attempt) for 429, 5xx and timeouts. |
+| `TELESRV_PUSH_NEW_DEVICE_ENABLED` | bool / `false` | Push switch of a newly registered device. Off by default (most new iOS installs are development builds); an operator holding `push.manage` turns it on per device in the admin panel's account device list. Re-registering the same session (app restart, token rotation) keeps the stored switch; a new login starts from this default. |
 | `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `telesrv` | Automatic app-open scheme on landing pages. Must match patched client registration. `tg`, `http`, and `https` are rejected. |
 | `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / empty | Optional host-based root for multi-server clients, for example `owpg://example.com`. When set, links use `owpg://example.com/oauth`, `owpg://example.com/<username>`, and equivalent route paths. Only exact `<custom-scheme>://<host>` values are accepted; ports, paths, queries, and fragments are rejected. `TELESRV_PUBLIC_APP_SCHEME` remains an accepted legacy input. |
 | `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://weba.telesrv.net` | Web-client root used by public username pages. Same URL validation as `TELESRV_PUBLIC_BASE_URL`. |

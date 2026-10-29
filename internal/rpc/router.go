@@ -105,6 +105,10 @@ type Config struct {
 	// the telesrv_dev checkout path rejects, so production never mints Stars or
 	// Premium without a real XTR payment.
 	AllowDevPayments bool
+	// PushNewDeviceEnabled（TELESRV_PUSH_NEW_DEVICE_ENABLED）是 account.registerDevice 新登记的
+	// 推送开关默认值；默认 false：新注册的 iOS 设备大多是开发包，由后台（push.manage）逐台打开。
+	// 同一授权重新登记保留已存的开关，不取这个默认值。
+	PushNewDeviceEnabled bool
 	// UpdatePublicURL is advertised as help.getConfig.autoupdate_url_prefix.
 	// Empty keeps the native desktop updater disabled.
 	UpdatePublicURL string

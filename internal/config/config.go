@@ -150,6 +150,10 @@ type Config struct {
 	PushSendTimeout time.Duration
 	// PushMaxRetries（TELESRV_PUSH_MAX_RETRIES）是可重试错误（429、5xx、超时）的最大重试次数，不含首次发送。
 	PushMaxRetries int
+	// PushNewDeviceEnabled（TELESRV_PUSH_NEW_DEVICE_ENABLED）是新登记设备的推送开关默认值。
+	// 默认 false：新注册的 iOS 设备大多是开发包，由后台（push.manage）逐台打开；
+	// 同一授权重新登记（app 重启、token 轮换）保留已有开关。
+	PushNewDeviceEnabled bool
 	// PublicAppScheme 是公开落地页自动唤起自建客户端时使用的 URL scheme。
 	// 必须与 TDesktop/Android 客户端构建时注册的 scheme 一致，且不能占用 tg/http/https。
 	PublicAppScheme string
@@ -1115,6 +1119,7 @@ func Load() (Config, error) {
 		PushWorkers:                           envIntOr("TELESRV_PUSH_WORKERS", 4),
 		PushSendTimeout:                       envDurationOr("TELESRV_PUSH_SEND_TIMEOUT", 10*time.Second),
 		PushMaxRetries:                        envIntOr("TELESRV_PUSH_MAX_RETRIES", 3),
+		PushNewDeviceEnabled:                  envBoolOr("TELESRV_PUSH_NEW_DEVICE_ENABLED", false),
 		PublicAppScheme:                       publicAppScheme,
 		PublicAppLinkBase:                     publicAppLinkBase,
 		PublicWebBaseURL:                      publicWebBaseURL,

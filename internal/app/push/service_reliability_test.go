@@ -111,7 +111,7 @@ func TestFullQueueDropsAndCountsWithoutBlocking(t *testing.T) {
 	if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: [8]byte{2}, UserID: bobID, Hash: 2}); err != nil {
 		t.Fatal(err)
 	}
-	if err := devices.RegisterPushDevice(ctx, domain.PushDevice{AuthKeyID: [8]byte{2}, UserID: bobID, TokenType: domain.PushTokenAPNs, Token: "tok-bob"}); err != nil {
+	if err := devices.RegisterPushDevice(ctx, domain.PushDevice{PushEnabled: true, AuthKeyID: [8]byte{2}, UserID: bobID, TokenType: domain.PushTokenAPNs, Token: "tok-bob"}); err != nil {
 		t.Fatal(err)
 	}
 	runCtx, cancel := context.WithCancel(ctx)

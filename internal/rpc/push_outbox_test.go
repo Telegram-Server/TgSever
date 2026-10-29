@@ -54,7 +54,7 @@ func TestRegisteredDeviceReceivesPushForIncomingPrivateText(t *testing.T) {
 	if err := authorizations.Bind(ctx, domain.Authorization{AuthKeyID: authKeyID, UserID: bob.ID, Hash: 9501}); err != nil {
 		t.Fatal(err)
 	}
-	r := New(Config{}, Deps{
+	r := New(Config{PushNewDeviceEnabled: true}, Deps{
 		Auth:        appauth.NewService(users, authorizations, nil, authKeys, nil, "12345"),
 		PushDevices: devices,
 	}, zaptest.NewLogger(t), clock.System)

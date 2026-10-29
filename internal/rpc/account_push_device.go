@@ -61,6 +61,8 @@ func (r *Router) onAccountRegisterDevice(ctx context.Context, req *tg.AccountReg
 		NoMuted:    req.NoMuted,
 		OtherUIDs:  req.OtherUIDs,
 		LangCode:   info.LangCode,
+		// 只对新登记生效：同一授权重新登记时存储保留后台设置的推送开关。
+		PushEnabled: r.cfg.PushNewDeviceEnabled,
 	})
 	if errors.Is(err, store.ErrPushDeviceAuthorizationNotFound) {
 		return false, authKeyUnregisteredErr()

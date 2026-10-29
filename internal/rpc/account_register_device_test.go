@@ -145,3 +145,41 @@ func TestAccountUnregisterDeviceWithOldTokenKeepsRotatedRegistration(t *testing.
 		t.Fatalf("devices after unregistering the old token = %+v, want new-token kept", list)
 	}
 }
+
+// 接线：新登记的推送开关取 Config.PushNewDeviceEnabled（TELESRV_PUSH_NEW_DEVICE_ENABLED）。
+func TestAccountRegisterDeviceUsesConfiguredPushDefault(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		ctx := context.Background()
+		authKeyID := [8]byte{0x94, 0x03}
+		authKeys := memory.NewAuthKeyStore()
+		authorizations := memory.NewAuthorizationStore()
+		authorizations.LinkAuthKeyAuthority(authKeys)
+		devices := memory.NewPushDeviceStore(authorizations)
+		users := memory.NewUserStore()
+		user, err := users.Create(ctx, domain.User{Phone: "15550009496", FirstName: "Push"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := authKeys.Save(ctx, store.AuthKeyData{ID: authKeyID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := authorizations.Bind(ctx, domain.Authorization{AuthKeyID: authKeyID, UserID: user.ID, Hash: 9496}); err != nil {
+			t.Fatal(err)
+		}
+		r := New(Config{PushNewDeviceEnabled: enabled}, Deps{
+			Auth:        appauth.NewService(users, authorizations, nil, authKeys, nil, "12345"),
+			PushDevices: devices,
+		}, zaptest.NewLogger(t), clock.System)
+		var buf bin.Buffer
+		if err := (&tg.AccountRegisterDeviceRequest{TokenType: domain.PushTokenAPNs, Token: "tok"}).Encode(&buf); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.Dispatch(ctx, authKeyID, 1, &buf); err != nil {
+			t.Fatalf("registerDevice: %v", err)
+		}
+		list, err := devices.ListPushDevicesByUser(ctx, user.ID)
+		if err != nil || len(list) != 1 || list[0].PushEnabled != enabled {
+			t.Fatalf("default %v: devices = %+v err=%v, want one registration with push_enabled=%v", enabled, list, err, enabled)
+		}
+	}
+}

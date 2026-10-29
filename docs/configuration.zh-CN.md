@@ -107,6 +107,7 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | `TELESRV_PUSH_WORKERS` | int `1..256` / `4` | 固定的推送 worker 数。 |
 | `TELESRV_PUSH_SEND_TIMEOUT` | duration `1s..2m` / `10s` | 单次发送（一台设备）的超时。 |
 | `TELESRV_PUSH_MAX_RETRIES` | int `0..10` / `3` | 429、5xx、超时的重试次数（不含首次发送）。 |
+| `TELESRV_PUSH_NEW_DEVICE_ENABLED` | bool / `false` | 新登记设备的推送开关默认值。默认关（新注册的 iOS 设备大多是开发包），由持有 `push.manage` 的操作员在后台账号设备列表里逐台打开；同一会话重新登记（app 重启、token 轮换）保留已有开关，重新登录取此默认值。 |
 | `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `telesrv` | 落地页自动唤起客户端的 scheme，必须与 patched 客户端注册值一致；禁止 `tg`、`http`、`https`。 |
 | `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / 空 | 多服务客户端可选的 host-based 根，例如 `owpg://example.com`。配置后生成 `owpg://example.com/oauth`、`owpg://example.com/<username>` 等；只允许精确 `<custom-scheme>://<host>`，禁止端口、path、query、fragment。`TELESRV_PUBLIC_APP_SCHEME` 仍作为旧链接输入兼容。 |
 | `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://weba.telesrv.net` | username 页面 Web 客户端入口，校验规则同 `TELESRV_PUBLIC_BASE_URL`。 |

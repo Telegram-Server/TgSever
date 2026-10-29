@@ -15,6 +15,7 @@ var ErrPushDeviceAuthorizationNotFound = errors.New("push device authorization n
 // 都会带走该授权下的登记。
 type PushDeviceStore interface {
 	// RegisterPushDevice 写入或覆盖 (AuthKeyID, TokenType) 对应的登记，CreatedAt 取当前时间。
+	// PushEnabled 只在插入新登记时写入；覆盖已有登记时保留已存的推送开关。
 	// 授权不存在返回 ErrPushDeviceAuthorizationNotFound。
 	RegisterPushDevice(ctx context.Context, device domain.PushDevice) error
 	// ListPushDevicesByUser 返回登记时属于 userID 的全部登记（顺序不保证）。
@@ -29,4 +30,8 @@ type PushDeviceStore interface {
 	// 只有 (AuthKeyID, TokenType) 下的登记仍是 device 读到时的 Token 与 UserID 才删除，
 	// 读到之后客户端重新登记的新登记保留。deleted 表示确实删除了。
 	DeleteStalePushDevice(ctx context.Context, device domain.PushDevice) (deleted bool, err error)
+	// SetPushDevicesEnabled 设置 userID 在授权 authKeyID 下全部登记（各 token 类型）的推送开关
+	// （后台 push.set_device_enabled）。只改登记时属于 userID 的登记；updated 是改到的条数，
+	// 0 表示该授权下没有 userID 的登记。
+	SetPushDevicesEnabled(ctx context.Context, userID int64, authKeyID [8]byte, enabled bool) (updated int, err error)
 }

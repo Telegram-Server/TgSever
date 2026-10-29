@@ -45,7 +45,7 @@ func TestGroupMemberDeviceReceivesPushForGroupMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	usersService := appusers.NewService(users)
-	r := New(Config{}, Deps{
+	r := New(Config{PushNewDeviceEnabled: true}, Deps{
 		Auth:        appauth.NewService(users, authorizations, nil, authKeys, nil, "12345"),
 		Users:       usersService,
 		Channels:    appchannels.NewService(channelStore),

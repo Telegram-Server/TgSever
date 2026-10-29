@@ -13,6 +13,7 @@ Push is **off by default** (`TELESRV_APNS_ENABLED=false`). This guide covers:
 - [Certificate setup](#certificate-setup)
 - [`.p8` token setup](#p8-token-setup)
 - [Docker](#docker)
+- [Per-device push switch](#per-device-push-switch)
 - [What startup checks](#what-startup-checks)
 - [Tuning](#tuning)
 - [Metrics](#metrics)
@@ -102,6 +103,26 @@ and recreate the server container: `docker compose up -d server`. The
 directory content other than `.gitkeep` is git-ignored; never commit
 credentials.
 
+## Per-device push switch
+
+Every registration carries a push switch. While it is off the server sends that
+device nothing — no message, call (VoIP), read-sync or delete-sync push — and
+never contacts APNs for it; turning it back on restores the normal behaviour.
+
+- A **new registration** takes `TELESRV_PUSH_NEW_DEVICE_ENABLED`, `false` by
+  default: most freshly registered iOS installs are development builds whose
+  tokens the production gateway rejects.
+- **Re-registering** the same session (app restart, token rotation) keeps the
+  stored switch. Logging in again creates a new session, which starts from the
+  default.
+- Registrations that existed before the switch was introduced stay **on**.
+
+Operators holding the `push.manage` right see the switch next to each iOS
+session in the account's device list in the admin panel and can flip it there
+(`POST /api/actions/set-push-device-enabled`, an audited command). The switch
+covers every registration of that session (APNs and VoIP together). Sessions
+without that right do not receive the switch state at all.
+
 ## What startup checks
 
 With `TELESRV_APNS_ENABLED=true`, startup **fails** with a message naming the
@@ -147,6 +168,7 @@ member pages, for at most 5 seconds.
 | `TELESRV_PUSH_WORKERS` | `4` | 1–256 | Worker count (both lanes, urgent first), besides the 2 urgent-only workers |
 | `TELESRV_PUSH_SEND_TIMEOUT` | `10s` | 1s–2m | Timeout of one send to one device |
 | `TELESRV_PUSH_MAX_RETRIES` | `3` | 0–10 | Retries after the first attempt for 429, 5xx and timeouts |
+| `TELESRV_PUSH_NEW_DEVICE_ENABLED` | `false` | bool | Push switch of a new registration; see [Per-device push switch](#per-device-push-switch) |
 
 Raise workers before the queue: the queue only absorbs bursts, workers set the
 sustained rate. A large channel post fans out to many devices.
@@ -241,4 +263,4 @@ same time, so this server can push independently with the same certificate:
 | Startup fails with `permission denied` | Container user 10001 cannot read the file; fix owner and mode |
 | `apns certificate expired; push disabled` | Renew the certificate and restart |
 | `result="invalid_token"` growing | Users reinstalled the app or logged out; the registrations are removed automatically |
-| No pushes, `telesrv_push_sent_total` not growing | The device is in the foreground, the chat is muted, or the device never registered |
+| No pushes, `telesrv_push_sent_total` not growing | The device is in the foreground, the chat is muted, the device never registered, or its push switch is off (admin panel, account devices) |

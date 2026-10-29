@@ -167,7 +167,7 @@ func (s *Service) DeleteMessages(d DeletedMessages) bool {
 	})
 }
 
-// deliverSync 把同步推送发给 userID 所有不在前台的 APNs 设备。
+// deliverSync 把同步推送发给 userID 所有不在前台、未被后台关闭推送的 APNs 设备。
 // 不查通知设置：静音的会话同样有通知要清（同步不是新提醒，也不发声音）。
 func (s *Service) deliverSync(ctx context.Context, kind string, userID int64, pushes []SyncPush) {
 	devices, err := s.devices.ListPushDevicesByUser(ctx, userID)
@@ -177,7 +177,8 @@ func (s *Service) deliverSync(ctx context.Context, kind string, userID int64, pu
 	}
 	render := newJobRenderer(s.render)
 	for _, device := range devices {
-		if device.TokenType != domain.PushTokenAPNs || device.UserID != userID {
+		// 后台关闭了推送的设备不请求 APNs。
+		if device.TokenType != domain.PushTokenAPNs || device.UserID != userID || !device.PushEnabled {
 			continue
 		}
 		if len(device.Secret) != SecretSize {

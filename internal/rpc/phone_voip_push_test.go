@@ -206,7 +206,7 @@ func TestRequestCallSendsVoIPPushToBackgroundCallee(t *testing.T) {
 	if err := auth.UpdateAuthKeyClientInfo(ctx, calleeKey, domain.AuthKeyClientInfo{Layer: 227}); err != nil {
 		t.Fatal(err)
 	}
-	r := New(Config{}, Deps{
+	r := New(Config{PushNewDeviceEnabled: true}, Deps{
 		Auth:        auth,
 		Users:       appusers.NewService(userStore),
 		Privacy:     stubPrivacy{},

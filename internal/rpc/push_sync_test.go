@@ -121,7 +121,7 @@ func newPushSyncFixture(t *testing.T, stores pushSyncStores) *pushSyncFixture {
 		}
 	}
 	sessions := &captureSessions{}
-	r := New(Config{}, Deps{
+	r := New(Config{PushNewDeviceEnabled: true}, Deps{
 		Auth:        appauth.NewService(userStore, authorizations, nil, authKeys, nil, "12345"),
 		Users:       appusers.NewService(userStore),
 		Updates:     appupdates.NewService(stores.states, events),

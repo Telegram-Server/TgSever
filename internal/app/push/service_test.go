@@ -151,7 +151,7 @@ func (f *serviceFixture) register(authKeyID [8]byte, userID int64, tokenType int
 	if err := f.auths.Bind(ctx, domain.Authorization{AuthKeyID: authKeyID, UserID: userID, Hash: int64(authKeyID[0])}); err != nil {
 		f.t.Fatal(err)
 	}
-	if err := f.devices.RegisterPushDevice(ctx, domain.PushDevice{AuthKeyID: authKeyID, UserID: userID, TokenType: tokenType, Token: token, Secret: secret}); err != nil {
+	if err := f.devices.RegisterPushDevice(ctx, domain.PushDevice{PushEnabled: true, AuthKeyID: authKeyID, UserID: userID, TokenType: tokenType, Token: token, Secret: secret}); err != nil {
 		f.t.Fatal(err)
 	}
 	f.presence.states[authKeyID] = state

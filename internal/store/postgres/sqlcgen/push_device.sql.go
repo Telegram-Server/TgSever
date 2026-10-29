@@ -9,6 +9,48 @@ import (
 	"context"
 )
 
+const adminPushDeviceStatesByUser = `-- name: AdminPushDeviceStatesByUser :many
+SELECT push_devices.auth_key_id, bool_and(push_devices.push_enabled)::boolean AS push_enabled
+FROM push_devices
+JOIN authorizations ON authorizations.auth_key_id = push_devices.auth_key_id
+WHERE push_devices.user_id = $1
+  AND authorizations.user_id = $1
+  AND push_devices.token_type = ANY($2::integer[])
+GROUP BY push_devices.auth_key_id
+`
+
+type AdminPushDeviceStatesByUserParams struct {
+	UserID     int64
+	TokenTypes []int32
+}
+
+type AdminPushDeviceStatesByUserRow struct {
+	AuthKeyID   int64
+	PushEnabled bool
+}
+
+// 后台账号详情的推送开关：用户每个授权下的 APNs/VoIP 登记是否全部开启（有一条关闭即算关闭）。
+// 只算登记时与授权当前都属于该用户的登记，与推送服务的发送判定一致。
+func (q *Queries) AdminPushDeviceStatesByUser(ctx context.Context, arg AdminPushDeviceStatesByUserParams) ([]AdminPushDeviceStatesByUserRow, error) {
+	rows, err := q.db.Query(ctx, adminPushDeviceStatesByUser, arg.UserID, arg.TokenTypes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminPushDeviceStatesByUserRow
+	for rows.Next() {
+		var i AdminPushDeviceStatesByUserRow
+		if err := rows.Scan(&i.AuthKeyID, &i.PushEnabled); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deletePushDevice = `-- name: DeletePushDevice :execrows
 DELETE FROM push_devices WHERE auth_key_id = $1 AND token_type = $2 AND token = $3
 `
@@ -53,7 +95,7 @@ func (q *Queries) DeleteStalePushDevice(ctx context.Context, arg DeleteStalePush
 }
 
 const listPushDevicesByUser = `-- name: ListPushDevicesByUser :many
-SELECT push_devices.auth_key_id, push_devices.token_type, push_devices.token, push_devices.user_id, push_devices.app_sandbox, push_devices.secret, push_devices.no_muted, push_devices.other_uids, push_devices.lang_code, push_devices.created_at, authorizations.user_id AS authorization_user_id
+SELECT push_devices.auth_key_id, push_devices.token_type, push_devices.token, push_devices.user_id, push_devices.app_sandbox, push_devices.secret, push_devices.no_muted, push_devices.other_uids, push_devices.lang_code, push_devices.created_at, push_devices.push_enabled, authorizations.user_id AS authorization_user_id
 FROM push_devices
 JOIN authorizations ON authorizations.auth_key_id = push_devices.auth_key_id
 WHERE push_devices.user_id = $1
@@ -85,6 +127,7 @@ func (q *Queries) ListPushDevicesByUser(ctx context.Context, userID int64) ([]Li
 			&i.PushDevice.OtherUids,
 			&i.PushDevice.LangCode,
 			&i.PushDevice.CreatedAt,
+			&i.PushDevice.PushEnabled,
 			&i.AuthorizationUserID,
 		); err != nil {
 			return nil, err
@@ -98,7 +141,7 @@ func (q *Queries) ListPushDevicesByUser(ctx context.Context, userID int64) ([]Li
 }
 
 const listPushDevicesByUsers = `-- name: ListPushDevicesByUsers :many
-SELECT push_devices.auth_key_id, push_devices.token_type, push_devices.token, push_devices.user_id, push_devices.app_sandbox, push_devices.secret, push_devices.no_muted, push_devices.other_uids, push_devices.lang_code, push_devices.created_at, authorizations.user_id AS authorization_user_id
+SELECT push_devices.auth_key_id, push_devices.token_type, push_devices.token, push_devices.user_id, push_devices.app_sandbox, push_devices.secret, push_devices.no_muted, push_devices.other_uids, push_devices.lang_code, push_devices.created_at, push_devices.push_enabled, authorizations.user_id AS authorization_user_id
 FROM push_devices
 JOIN authorizations ON authorizations.auth_key_id = push_devices.auth_key_id
 WHERE push_devices.user_id = ANY($1::bigint[])
@@ -129,6 +172,7 @@ func (q *Queries) ListPushDevicesByUsers(ctx context.Context, userIds []int64) (
 			&i.PushDevice.OtherUids,
 			&i.PushDevice.LangCode,
 			&i.PushDevice.CreatedAt,
+			&i.PushDevice.PushEnabled,
 			&i.AuthorizationUserID,
 		); err != nil {
 			return nil, err
@@ -141,9 +185,29 @@ func (q *Queries) ListPushDevicesByUsers(ctx context.Context, userIds []int64) (
 	return items, nil
 }
 
+const setPushDevicesEnabled = `-- name: SetPushDevicesEnabled :execrows
+UPDATE push_devices SET push_enabled = $1
+WHERE auth_key_id = $2 AND user_id = $3
+`
+
+type SetPushDevicesEnabledParams struct {
+	PushEnabled bool
+	AuthKeyID   int64
+	UserID      int64
+}
+
+// 后台推送开关：一个授权下该用户的全部登记（APNs 与 VoIP）一起开关。
+func (q *Queries) SetPushDevicesEnabled(ctx context.Context, arg SetPushDevicesEnabledParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPushDevicesEnabled, arg.PushEnabled, arg.AuthKeyID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertPushDevice = `-- name: UpsertPushDevice :exec
-INSERT INTO push_devices (auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO push_devices (auth_key_id, token_type, token, user_id, app_sandbox, secret, no_muted, other_uids, lang_code, push_enabled)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (auth_key_id, token_type) DO UPDATE
 SET token = EXCLUDED.token,
     user_id = EXCLUDED.user_id,
@@ -156,17 +220,20 @@ SET token = EXCLUDED.token,
 `
 
 type UpsertPushDeviceParams struct {
-	AuthKeyID  int64
-	TokenType  int32
-	Token      string
-	UserID     int64
-	AppSandbox bool
-	Secret     []byte
-	NoMuted    bool
-	OtherUids  []int64
-	LangCode   string
+	AuthKeyID   int64
+	TokenType   int32
+	Token       string
+	UserID      int64
+	AppSandbox  bool
+	Secret      []byte
+	NoMuted     bool
+	OtherUids   []int64
+	LangCode    string
+	PushEnabled bool
 }
 
+// push_enabled 只在插入新登记时写入；重新登记（app 重启、token 轮换）保留后台设置的开关，
+// 所以不在 DO UPDATE 的更新集合里。
 func (q *Queries) UpsertPushDevice(ctx context.Context, arg UpsertPushDeviceParams) error {
 	_, err := q.db.Exec(ctx, upsertPushDevice,
 		arg.AuthKeyID,
@@ -178,6 +245,7 @@ func (q *Queries) UpsertPushDevice(ctx context.Context, arg UpsertPushDevicePara
 		arg.NoMuted,
 		arg.OtherUids,
 		arg.LangCode,
+		arg.PushEnabled,
 	)
 	return err
 }

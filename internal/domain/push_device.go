@@ -31,6 +31,10 @@ type PushDevice struct {
 	OtherUIDs []int64
 	// LangCode 是登记时客户端的语言代码，服务端按它渲染推送文案；为空时由调用方回落到 en。
 	LangCode string
+	// PushEnabled 是后台推送开关：为假时推送服务不向这条登记发送任何推送（消息、来电、同步）。
+	// 新登记写入调用方给的值（RPC 层取 TELESRV_PUSH_NEW_DEVICE_ENABLED）；同一 (AuthKeyID,
+	// TokenType) 重新登记时保留已存的值，只有后台命令能改它。
+	PushEnabled bool
 	// AuthorizationUserID 是读出登记时授权当前的 user（List* 与登记一起读出，写入时忽略）。
 	// 推送服务用它核对 UserID，不必逐台再查授权；0 表示存储没有提供。
 	AuthorizationUserID int64

@@ -38,6 +38,10 @@ func (s *PushDeviceStore) RegisterPushDevice(_ context.Context, device domain.Pu
 		byType = make(map[int]domain.PushDevice)
 		s.auths.pushDevices[device.AuthKeyID] = byType
 	}
+	// 覆盖已有登记时保留已存的推送开关（对应 postgres 的 ON CONFLICT 不更新 push_enabled）。
+	if current, ok := byType[device.TokenType]; ok {
+		device.PushEnabled = current.PushEnabled
+	}
 	byType[device.TokenType] = device
 	return nil
 }
@@ -101,6 +105,21 @@ func (s *PushDeviceStore) DeleteStalePushDevice(_ context.Context, device domain
 		delete(s.auths.pushDevices, device.AuthKeyID)
 	}
 	return true, nil
+}
+
+func (s *PushDeviceStore) SetPushDevicesEnabled(_ context.Context, userID int64, authKeyID [8]byte, enabled bool) (int, error) {
+	s.auths.mu.Lock()
+	defer s.auths.mu.Unlock()
+	updated := 0
+	for tokenType, device := range s.auths.pushDevices[authKeyID] {
+		if device.UserID != userID {
+			continue
+		}
+		device.PushEnabled = enabled
+		s.auths.pushDevices[authKeyID][tokenType] = device
+		updated++
+	}
+	return updated, nil
 }
 
 // withAuthorizationUserLocked 返回登记的副本，带上授权当前的 user（调用方持有 auths.mu）。
