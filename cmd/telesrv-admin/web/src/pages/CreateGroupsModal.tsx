@@ -18,6 +18,11 @@ import type { AccountRow, CommandResult } from "../types";
 // exec-create-group-<批次>-<行号>-<次数>，确认与重试都用它。中途断网、结果未知的行重试时
 // 用同一个 id，已成功的会作为 already_executed 返回原来的群，不会重复建群；服务器明确记下
 // 失败（status=failed）的行，同一个 id 重放只会拿回那次失败，所以下次重试换下一个次数。
+// 只有 status=completed 才算建成；重放拿到 running（命令仍在执行）也归为结果未知。
+//
+// 试跑失败的行可以单独重试试跑（临时错误如断网、5xx 不该让该行永远进不了执行集），
+// 通过后照常参与执行。仍有结果未知或执行失败的行时关闭弹窗会丢掉批次 id，重开后再提交
+// 会重复建群，所以关闭前要求确认。
 
 const path = "/api/actions/create-group";
 
@@ -100,6 +105,14 @@ export function CreateGroupsModal({ onClose, onCreated }: { onClose: () => void;
   const created = rows?.filter((row) => row.exec === "ok") ?? [];
   const remaining = execRows.filter((row) => row.exec !== "ok");
   const allCreated = execStarted && remaining.length === 0;
+  const dryFailed = rows?.filter((row) => row.dry === "failed") ?? [];
+  const unsettled = rows?.filter((row) => row.exec === "unknown" || row.exec === "failed") ?? [];
+
+  // close 在仍有结果未知或执行失败的行时先要求确认：关闭后批次 id 丢失，重开再提交会重复建群。
+  function close() {
+    if (unsettled.length > 0 && !window.confirm(t("groups.closeUnsettled", { count: unsettled.length }))) return;
+    onClose();
+  }
 
   function updateRow(line: number, patch: Partial<GroupRow>) {
     setRows((current) => current?.map((row) => (row.line === line ? { ...row, ...patch } : row)) ?? current);
@@ -125,10 +138,21 @@ export function CreateGroupsModal({ onClose, onCreated }: { onClose: () => void;
       attempt: 1
     }));
     setRows(snapshot);
+    await runDry(snapshot);
+  }
+
+  // retryDryFailed 只对试跑失败的行重新试跑；通过的行随后可参与执行。
+  async function retryDryFailed() {
+    if (dryFailed.length === 0) return;
+    await runDry(dryFailed);
+  }
+
+  async function runDry(targets: GroupRow[]) {
+    if (!owner) return;
     setError("");
     setBusy(true);
     try {
-      for (const row of snapshot) {
+      for (const row of targets) {
         updateRow(row.line, { dry: "running" });
         try {
           const result = await api.action(path, { owner_user_id: owner.ID, title: row.title, reason, confirm: false });
@@ -171,7 +195,7 @@ export function CreateGroupsModal({ onClose, onCreated }: { onClose: () => void;
           result = carriedResult(err);
           failure = errorMessage(err);
         }
-        if (result && !result.error && result.status !== "failed" && !failure) {
+        if (result && !failure && !result.error && result.status === "completed") {
           const details = result.details ?? {};
           updateRow(row.line, {
             exec: "ok",
@@ -184,7 +208,7 @@ export function CreateGroupsModal({ onClose, onCreated }: { onClose: () => void;
           // 服务器记下了这次失败：同一个 id 重放只会拿回它，下次重试换个 id。
           updateRow(row.line, { exec: "failed", attempt: row.attempt + 1, error: failureText(t, result, failure || t("groups.failed")) });
         } else {
-          // 结果未知（断网、超时、命令仍在执行）：保留 id，重试时幂等地取回结果。
+          // 结果未知（断网、超时、命令仍在执行即 status=running）：保留 id，重试时幂等地取回结果。
           updateRow(row.line, { exec: "unknown", error: failureText(t, result, failure || t("groups.unknown")) });
         }
       }
@@ -225,7 +249,7 @@ export function CreateGroupsModal({ onClose, onCreated }: { onClose: () => void;
             <h2>{t("groups.createTitle")}</h2>
             <p className="bot-create-note">{t("groups.createHint")}</p>
           </div>
-          <button className="icon-btn" type="button" onClick={onClose} disabled={busy} aria-label={t("common.close")}><X size={15} /></button>
+          <button className="icon-btn" type="button" onClick={close} disabled={busy} aria-label={t("common.close")}><X size={15} /></button>
         </div>
         <div className="command-body">
           <div className="command-steps">
@@ -290,7 +314,7 @@ export function CreateGroupsModal({ onClose, onCreated }: { onClose: () => void;
           )}
         </div>
         <div className="modal-actions">
-          <button className="btn" type="button" onClick={onClose} disabled={busy}>{t("common.close")}</button>
+          <button className="btn" type="button" onClick={close} disabled={busy}>{t("common.close")}</button>
           {locked && !execStarted && (
             <button className="btn icon-text" type="button" onClick={editAgain} disabled={busy}>
               <Pencil size={15} /> {t("groups.editAgain")}
@@ -309,6 +333,11 @@ export function CreateGroupsModal({ onClose, onCreated }: { onClose: () => void;
               disabled={busy || !owner || submittable.length === 0 || batch.overLimit}
             >
               {busy ? <Loader2 size={15} className="spin" /> : <Play size={15} />} {t("action.runDry")}
+            </button>
+          )}
+          {dryDone && dryFailed.length > 0 && (
+            <button className="btn icon-text" type="button" onClick={() => void retryDryFailed()} disabled={busy}>
+              {busy ? <Loader2 size={15} className="spin" /> : <RotateCcw size={15} />} {t("groups.retryDry", { count: dryFailed.length })}
             </button>
           )}
           {locked && !execStarted && (
