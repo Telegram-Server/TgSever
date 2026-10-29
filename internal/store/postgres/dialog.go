@@ -410,6 +410,36 @@ LIMIT $2`, userID, dialogListSnapshotLimit+1)
 	return domain.DialogList{Dialogs: dialogs, Count: len(dialogs)}, nil
 }
 
+// HasPrivateDialog 报告 ownerUserID 名下是否有与 peerUserID 的私聊对话行（主键点查）。
+func (s *DialogStore) HasPrivateDialog(ctx context.Context, ownerUserID, peerUserID int64) (bool, error) {
+	if ownerUserID == 0 || peerUserID == 0 {
+		return false, nil
+	}
+	ok, err := s.q.HasPrivateDialog(ctx, sqlcgen.HasPrivateDialogParams{
+		OwnerUserID: ownerUserID,
+		PeerUserID:  peerUserID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("has private dialog: %w", err)
+	}
+	return ok, nil
+}
+
+// ListPrivateDialogOwners 返回 ownerUserIDs 中名下有与 peerUserID 私聊的 owner。
+func (s *DialogStore) ListPrivateDialogOwners(ctx context.Context, ownerUserIDs []int64, peerUserID int64) ([]int64, error) {
+	if len(ownerUserIDs) == 0 || peerUserID == 0 {
+		return nil, nil
+	}
+	owners, err := s.q.ListPrivateDialogOwners(ctx, sqlcgen.ListPrivateDialogOwnersParams{
+		OwnerUserIds: ownerUserIDs,
+		PeerUserID:   peerUserID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list private dialog owners: %w", err)
+	}
+	return owners, nil
+}
+
 // ListPrivateDialogPeerIDs is the narrow presence-fanout read model. Presence
 // needs only private peer IDs; routing it through GetDialogs would hydrate
 // channels, top messages, drafts and viewer projections and can even omit

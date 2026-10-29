@@ -164,3 +164,90 @@ func TestPrivateContactRequirementPremiumGateUsesViewerFactsReadModel(t *testing
 		})
 	}
 }
+
+// “已有私聊”豁免的接线：收件人开了“仅会员可发”，收件人对话列表里已有与发送者
+// 私聊的非会员（含机器人）照常能发；收件人删掉对话后重新被拦；
+// users.getRequirementsToContact 批量判断时对已有私聊的返回 Empty。
+func TestPrivateContactRequirementExemptsExistingPrivateChat(t *testing.T) {
+	ctx := context.Background()
+	usersStore := memory.NewUserStore()
+	create := func(u domain.User) domain.User {
+		t.Helper()
+		out, err := usersStore.Create(ctx, u)
+		if err != nil {
+			t.Fatalf("create %s: %v", u.FirstName, err)
+		}
+		return out
+	}
+	alice := create(domain.User{AccessHash: 11, Phone: "15550008111", FirstName: "Alice"})
+	bot := create(domain.User{AccessHash: 33, FirstName: "JifenBot", Username: "jifen_test_bot", Bot: true})
+	bob := create(domain.User{AccessHash: 22, Phone: "15550008112", FirstName: "Bob"})
+	carol := create(domain.User{AccessHash: 44, Phone: "15550008113", FirstName: "Carol"})
+
+	users := appusers.NewService(usersStore)
+	dialogs := memory.NewDialogStore()
+	privacy := appprivacy.NewService(memory.NewPrivacyStore(), memory.NewContactStore()).
+		ConfigureReadModels(users, nil).
+		ConfigurePrivateDialogs(dialogs)
+	settingsStore := memory.NewPasswordStore()
+	account := appaccount.NewService(settingsStore, appaccount.WithAccountSettings(settingsStore))
+	r := New(Config{}, Deps{
+		Account:  account,
+		Privacy:  privacy,
+		Users:    users,
+		Messages: &captureMessages{},
+	}, zaptest.NewLogger(t), clock.System)
+	for _, recipient := range []domain.User{bob, carol} {
+		if _, err := account.SetGlobalPrivacy(ctx, recipient.ID, domain.GlobalPrivacy{NewNoncontactPeersRequirePremium: true}); err != nil {
+			t.Fatalf("set %s premium requirement: %v", recipient.FirstName, err)
+		}
+	}
+	// Bob 的对话列表里有与 Alice 的私聊，也启动过机器人。
+	for _, peer := range []int64{alice.ID, bot.ID} {
+		if err := dialogs.Upsert(ctx, bob.ID, domain.Dialog{Peer: domain.Peer{Type: domain.PeerTypeUser, ID: peer}, TopMessage: 1}); err != nil {
+			t.Fatalf("seed Bob dialog with %d: %v", peer, err)
+		}
+	}
+
+	send := func(from, to domain.User, randomID int64) error {
+		_, err := r.onMessagesSendMessage(WithUserID(ctx, from.ID), &tg.MessagesSendMessageRequest{
+			Peer:     &tg.InputPeerUser{UserID: to.ID, AccessHash: to.AccessHash},
+			Message:  "hello",
+			RandomID: randomID,
+		})
+		return err
+	}
+	if err := send(alice, bob, 83001); err != nil {
+		t.Fatalf("non-premium with existing private chat must pass: %v", err)
+	}
+	if err := send(bot, bob, 83002); err != nil {
+		t.Fatalf("bot started by recipient must pass: %v", err)
+	}
+	if err := send(alice, carol, 83003); err == nil || !strings.Contains(err.Error(), "PREMIUM_ACCOUNT_REQUIRED") {
+		t.Fatalf("non-premium without private chat err = %v, want blocked", err)
+	}
+
+	requirements, err := r.onUsersGetRequirementsToContact(WithUserID(ctx, alice.ID), []tg.InputUserClass{
+		&tg.InputUser{UserID: bob.ID, AccessHash: bob.AccessHash},
+		&tg.InputUser{UserID: carol.ID, AccessHash: carol.AccessHash},
+	})
+	if err != nil {
+		t.Fatalf("get requirements: %v", err)
+	}
+	if _, ok := requirements[0].(*tg.RequirementToContactEmpty); !ok {
+		t.Fatalf("Bob requirement = %#v, want Empty for existing private chat", requirements[0])
+	}
+	if _, ok := requirements[1].(*tg.RequirementToContactPremium); !ok {
+		t.Fatalf("Carol requirement = %#v, want Premium", requirements[1])
+	}
+
+	// Bob 删除与 Alice 的整个对话后，Alice 重新算作新的非联系人。
+	if err := dialogs.SaveList(ctx, bob.ID, domain.DialogList{Dialogs: []domain.Dialog{{
+		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: bot.ID}, TopMessage: 1,
+	}}}); err != nil {
+		t.Fatalf("delete Bob dialog with Alice: %v", err)
+	}
+	if err := send(alice, bob, 83004); err == nil || !strings.Contains(err.Error(), "PREMIUM_ACCOUNT_REQUIRED") {
+		t.Fatalf("send after recipient deleted dialog err = %v, want blocked", err)
+	}
+}

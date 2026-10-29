@@ -6,6 +6,16 @@ import (
 	"telesrv/internal/domain"
 )
 
+// PrivateDialogPresenceStore 回答“owner 的对话列表里是否有与某个用户的私聊”。
+// 隐私层用它判断“已有私聊”豁免：收件人开了“仅会员/付费”限制时，
+// 收件人对话列表里已有与发送者私聊的人仍可直接发消息。
+type PrivateDialogPresenceStore interface {
+	// HasPrivateDialog 报告 ownerUserID 名下是否有 peer=user peerUserID 的对话行。
+	HasPrivateDialog(ctx context.Context, ownerUserID, peerUserID int64) (bool, error)
+	// ListPrivateDialogOwners 返回 ownerUserIDs 中名下有与 peerUserID 私聊的那些 owner。
+	ListPrivateDialogOwners(ctx context.Context, ownerUserIDs []int64, peerUserID int64) ([]int64, error)
+}
+
 // DialogStore 持久化用户会话摘要。
 type DialogStore interface {
 	ListByUser(ctx context.Context, userID int64, filter domain.DialogFilter) (domain.DialogList, error)

@@ -1157,7 +1157,8 @@ func run(logger *zap.Logger) error {
 		cfg.UploadPartGCBatch,
 	).Run(ctx)
 	langPackService := langpack.NewService(langPackStore, langpack.WithPublicBaseURL(cfg.PublicBaseURL))
-	privacyService := privacyapp.NewService(privacyStore, contactStore)
+	// 对话存储供“已有私聊”豁免：收件人开了仅会员/付费消息时，已与其有私聊的人仍可发。
+	privacyService := privacyapp.NewService(privacyStore, contactStore).ConfigurePrivateDialogs(dialogStore)
 	contactsService := contacts.NewService(contactStore, userStore).Configure(
 		contacts.WithPhotoProvider(cachedPhotos),
 		contacts.WithPrivacyEvaluator(privacyService),

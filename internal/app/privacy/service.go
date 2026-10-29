@@ -23,6 +23,7 @@ type Service struct {
 	memberships     channelMembershipProvider
 	viewerFacts     *readmodelcache.Cache[int64, viewerFacts]
 	membershipFacts *readmodelcache.Cache[membershipKey, bool]
+	privateDialogs  store.PrivateDialogPresenceStore
 	now             func() time.Time
 }
 
@@ -46,6 +47,44 @@ func (s *Service) ConfigureReadModels(users baseUserProvider, memberships channe
 	s.baseUsers = users
 	s.memberships = memberships
 	return s
+}
+
+// ConfigurePrivateDialogs 接入对话存储，供“已有私聊”豁免查询（HasPrivateChatBatch）。
+// 不接时不豁免任何人，维持原有限制。
+func (s *Service) ConfigurePrivateDialogs(dialogs store.PrivateDialogPresenceStore) *Service {
+	if s == nil {
+		return s
+	}
+	s.privateDialogs = dialogs
+	return s
+}
+
+// HasPrivateChatBatch 报告每个 owner（收件人）的对话列表里是否已有与 viewer（发送者）
+// 的私聊。官方语义里“新的非联系人”不包括已与收件人有私聊的人：会员限制与付费消息
+// 都豁免他们；收件人删除整个对话后，发送者重新算作新的非联系人。
+// 调用方只在收件人确实开了限制、且发送者不在常规豁免内时才查，正常发送不多一次查询。
+func (s *Service) HasPrivateChatBatch(ctx context.Context, ownerUserIDs []int64, viewerUserID int64) (map[int64]bool, error) {
+	owners := dedupNonZero(ownerUserIDs)
+	out := make(map[int64]bool, len(owners))
+	if s == nil || s.privateDialogs == nil || viewerUserID == 0 || len(owners) == 0 {
+		return out, nil
+	}
+	if len(owners) == 1 {
+		ok, err := s.privateDialogs.HasPrivateDialog(ctx, owners[0], viewerUserID)
+		if err != nil {
+			return nil, err
+		}
+		out[owners[0]] = ok
+		return out, nil
+	}
+	found, err := s.privateDialogs.ListPrivateDialogOwners(ctx, owners, viewerUserID)
+	if err != nil {
+		return nil, err
+	}
+	for _, ownerUserID := range found {
+		out[ownerUserID] = true
+	}
+	return out, nil
 }
 
 func (s *Service) GetRules(ctx context.Context, ownerUserID int64, key domain.PrivacyKey) (domain.PrivacyRules, error) {

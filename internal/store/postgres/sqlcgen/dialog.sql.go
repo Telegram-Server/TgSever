@@ -339,6 +339,29 @@ func (q *Queries) GetPeerSettingsBarHidden(ctx context.Context, arg GetPeerSetti
 	return hidden_peer_settings_bar, err
 }
 
+const hasPrivateDialog = `-- name: HasPrivateDialog :one
+SELECT EXISTS (
+  SELECT 1
+  FROM dialogs
+  WHERE user_id = $1::bigint
+    AND peer_type = 'user'
+    AND peer_id = $2::bigint
+)::boolean AS has_dialog
+`
+
+type HasPrivateDialogParams struct {
+	OwnerUserID int64
+	PeerUserID  int64
+}
+
+// “已有私聊”豁免：owner（收件人）名下是否有与 peer 用户的私聊对话行。
+func (q *Queries) HasPrivateDialog(ctx context.Context, arg HasPrivateDialogParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasPrivateDialog, arg.OwnerUserID, arg.PeerUserID)
+	var has_dialog bool
+	err := row.Scan(&has_dialog)
+	return has_dialog, err
+}
+
 const listDialogDrafts = `-- name: ListDialogDrafts :many
 SELECT draft::text AS draft_json
 FROM dialog_drafts
@@ -1481,6 +1504,40 @@ func (q *Queries) ListDialogsByUser(ctx context.Context, arg ListDialogsByUserPa
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateDialogOwners = `-- name: ListPrivateDialogOwners :many
+SELECT user_id
+FROM dialogs
+WHERE user_id = ANY($1::bigint[])
+  AND peer_type = 'user'
+  AND peer_id = $2::bigint
+`
+
+type ListPrivateDialogOwnersParams struct {
+	OwnerUserIds []int64
+	PeerUserID   int64
+}
+
+// HasPrivateDialog 的批量版：返回 owner_user_ids 中名下有与 peer 用户私聊的 owner。
+func (q *Queries) ListPrivateDialogOwners(ctx context.Context, arg ListPrivateDialogOwnersParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listPrivateDialogOwners, arg.OwnerUserIds, arg.PeerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var user_id int64
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

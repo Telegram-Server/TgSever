@@ -1058,3 +1058,21 @@ SET read_inbox_max_id = GREATEST(read_inbox_max_id, @read_inbox_max_id::int),
 WHERE user_id = @user_id
   AND peer_type = @peer_type
   AND peer_id = @peer_id;
+
+-- name: HasPrivateDialog :one
+-- “已有私聊”豁免：owner（收件人）名下是否有与 peer 用户的私聊对话行。
+SELECT EXISTS (
+  SELECT 1
+  FROM dialogs
+  WHERE user_id = sqlc.arg(owner_user_id)::bigint
+    AND peer_type = 'user'
+    AND peer_id = sqlc.arg(peer_user_id)::bigint
+)::boolean AS has_dialog;
+
+-- name: ListPrivateDialogOwners :many
+-- HasPrivateDialog 的批量版：返回 owner_user_ids 中名下有与 peer 用户私聊的 owner。
+SELECT user_id
+FROM dialogs
+WHERE user_id = ANY(sqlc.arg(owner_user_ids)::bigint[])
+  AND peer_type = 'user'
+  AND peer_id = sqlc.arg(peer_user_id)::bigint;

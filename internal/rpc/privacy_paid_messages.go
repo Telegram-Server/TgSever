@@ -74,10 +74,47 @@ func (r *Router) privateContactRestrictionFor(
 		return privateContactRequirement{}, internalErr()
 	}
 	global := settings.GlobalPrivacy
+	var requirement privateContactRequirement
 	if global.NoncontactPeersPaidStars > 0 {
-		return privateContactRequirement{paidStars: global.NoncontactPeersPaidStars}, nil
+		requirement = privateContactRequirement{paidStars: global.NoncontactPeersPaidStars}
+	} else {
+		requirement = privateContactRequirement{requirePremium: global.NewNoncontactPeersRequirePremium}
 	}
-	return privateContactRequirement{requirePremium: global.NewNoncontactPeersRequirePremium}, nil
+	if !requirement.restricted() {
+		return requirement, nil
+	}
+	// 收件人确实开了限制才查“已有私聊”豁免，正常发送不多一次查询。
+	exempt, err := r.privateChatExemptions(ctx, []int64{recipientUserID}, senderUserID)
+	if err != nil {
+		return privateContactRequirement{}, err
+	}
+	if exempt[recipientUserID] {
+		return privateContactRequirement{}, nil
+	}
+	return requirement, nil
+}
+
+func (requirement privateContactRequirement) restricted() bool {
+	return requirement.requirePremium || requirement.paidStars > 0
+}
+
+type privacyPrivateChatEvaluator interface {
+	HasPrivateChatBatch(ctx context.Context, ownerUserIDs []int64, viewerUserID int64) (map[int64]bool, error)
+}
+
+// privateChatExemptions 查哪些收件人的对话列表里已有与发送者的私聊。官方语义下
+// “新的非联系人”不含已有私聊的人：会员限制与付费消息都豁免他们（机器人由此覆盖
+// 启动过它的用户），收件人删除整个对话后重新计入。
+func (r *Router) privateChatExemptions(ctx context.Context, recipientUserIDs []int64, senderUserID int64) (map[int64]bool, error) {
+	evaluator, ok := r.deps.Privacy.(privacyPrivateChatEvaluator)
+	if !ok || len(recipientUserIDs) == 0 {
+		return nil, nil
+	}
+	exempt, err := evaluator.HasPrivateChatBatch(ctx, recipientUserIDs, senderUserID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	return exempt, nil
 }
 
 func (r *Router) viewerIsPremiumForPrivacy(ctx context.Context, viewerUserID int64) (bool, error) {

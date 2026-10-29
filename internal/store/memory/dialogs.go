@@ -98,6 +98,34 @@ func (s *DialogStore) ListByPeers(_ context.Context, userID int64, peers []domai
 	return out, nil
 }
 
+// HasPrivateDialog 报告 ownerUserID 名下是否有与 peerUserID 的私聊对话。
+func (s *DialogStore) HasPrivateDialog(_ context.Context, ownerUserID, peerUserID int64) (bool, error) {
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: peerUserID}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, dialog := range s.m[ownerUserID].Dialogs {
+		if dialog.Peer == peer {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// ListPrivateDialogOwners 返回 ownerUserIDs 中名下有与 peerUserID 私聊的 owner。
+func (s *DialogStore) ListPrivateDialogOwners(ctx context.Context, ownerUserIDs []int64, peerUserID int64) ([]int64, error) {
+	out := make([]int64, 0, len(ownerUserIDs))
+	for _, ownerUserID := range ownerUserIDs {
+		ok, err := s.HasPrivateDialog(ctx, ownerUserID, peerUserID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, ownerUserID)
+		}
+	}
+	return out, nil
+}
+
 // ListPrivateDialogPeerIDs returns the bounded private-dialog peer set used by
 // presence fan-out. Keep this narrow read available in the in-memory
 // production-shaped fake as well: callers must not fall back to hydrating a

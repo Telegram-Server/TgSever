@@ -683,10 +683,24 @@ func (r *Router) onUsersGetRequirementsToContact(ctx context.Context, ids []tg.I
 			return nil, internalErr()
 		}
 	}
+	// 只对确实开了限制、且不在常规豁免内的收件人批量查“已有私聊”豁免。
+	restrictedIDs := make([]int64, 0, len(validTargetIDs))
+	for _, userID := range validTargetIDs {
+		global := settingsByUser[userID].GlobalPrivacy
+		if userID != currentUserID && !freeByUser[userID] &&
+			(global.NoncontactPeersPaidStars > 0 || global.NewNoncontactPeersRequirePremium) {
+			restrictedIDs = append(restrictedIDs, userID)
+		}
+	}
+	privateChatByUser, err := r.privateChatExemptions(ctx, restrictedIDs, currentUserID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]tg.RequirementToContactClass, len(inputs))
 	for i, input := range inputs {
 		out[i] = &tg.RequirementToContactEmpty{}
-		if input.userID == 0 || input.self || input.userID == currentUserID || freeByUser[input.userID] {
+		if input.userID == 0 || input.self || input.userID == currentUserID ||
+			freeByUser[input.userID] || privateChatByUser[input.userID] {
 			continue
 		}
 		global := settingsByUser[input.userID].GlobalPrivacy
