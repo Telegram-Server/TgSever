@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Plus, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
@@ -7,8 +7,10 @@ import { Avatar } from "../components/Avatar";
 import { useI18n } from "../i18n";
 import { channelKind, displayUsername, formatDate } from "../lib/format";
 import { channelMetrics } from "../lib/metrics";
+import { permissionChannelsManage, usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import type { ChannelListResponse } from "../types";
+import { CreateGroupsModal } from "./CreateGroupsModal";
 
 type ChannelCursor = { beforeID: number; beforeUpdatedUS: number };
 
@@ -16,6 +18,8 @@ const firstChannelPage: ChannelCursor = { beforeID: 0, beforeUpdatedUS: 0 };
 
 export function ChannelsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
+  const { can } = usePermissions();
+  const [createOpen, setCreateOpen] = useState(false);
   const [q, setQ] = useState("");
   const [limit, setLimit] = useState("50");
   const [data, setData] = useState<ChannelListResponse | null>(null);
@@ -78,9 +82,14 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
       title={t("channel.pageTitle")}
       eyebrow={data?.listing === false ? t("account.queryResults") : t("channel.recentUpdated")}
       actions={
-        <button className="btn" type="button" onClick={() => loadPage(cursor)} disabled={busy}>
-          <RefreshCw size={15} /> {t("common.refresh")}
-        </button>
+        <div className="toolbar">
+          {can(permissionChannelsManage) && (
+            <button className="btn" type="button" onClick={() => setCreateOpen(true)}><Plus size={15} /> {t("groups.createTitle")}</button>
+          )}
+          <button className="btn" type="button" onClick={() => loadPage(cursor)} disabled={busy}>
+            <RefreshCw size={15} /> {t("common.refresh")}
+          </button>
+        </div>
       }
     >
       {error && <Alert>{error}</Alert>}
@@ -150,6 +159,7 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
           </tbody>
         </table>
       </div>
+      {createOpen && <CreateGroupsModal onClose={() => setCreateOpen(false)} onCreated={() => void loadPage(firstChannelPage, filters, true)} />}
     </PageFrame>
   );
 }
