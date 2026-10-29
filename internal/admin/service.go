@@ -531,20 +531,22 @@ type Dependencies struct {
 	Channels                ChannelsService
 	ChannelNotifier         ChannelNotifier
 	GroupCreator            GroupCreator
-	Messages                MessagesService
-	Gifts                   GiftsService
-	GiftGranter             GiftGranter
-	OfficialGifts           OfficialGiftsSource
-	Bots                    BotService
-	Broadcast               BroadcastService
-	Emoji                   EmojiService
-	StickerSets             StickerSetsService
-	GifCatalog              GifCatalogService
-	Moderation              ModerationService
-	Usernames               CollectibleUsernamesService
-	CollectiblePhones       CollectiblePhonesService
-	Rating                  AccountRatingService
-	Verification            VerificationService
+	// PushDevices 是设备推送登记存储，后台推送开关（push.set_device_enabled）用。
+	PushDevices       PushDeviceStore
+	Messages          MessagesService
+	Gifts             GiftsService
+	GiftGranter       GiftGranter
+	OfficialGifts     OfficialGiftsSource
+	Bots              BotService
+	Broadcast         BroadcastService
+	Emoji             EmojiService
+	StickerSets       StickerSetsService
+	GifCatalog        GifCatalogService
+	Moderation        ModerationService
+	Usernames         CollectibleUsernamesService
+	CollectiblePhones CollectiblePhonesService
+	Rating            AccountRatingService
+	Verification      VerificationService
 	// BotVerification is the third-party mechanism, wired separately from
 	// Verification: the two never read each other's state.
 	BotVerification BotVerificationService
@@ -605,6 +607,7 @@ type Service struct {
 	channels                ChannelsService
 	channelNotifier         ChannelNotifier
 	groupCreator            GroupCreator
+	pushDevices             PushDeviceStore
 	messages                MessagesService
 	gifts                   GiftsService
 	giftGranter             GiftGranter
@@ -708,6 +711,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.GroupCreator != nil {
 		s.groupCreator = deps.GroupCreator
+	}
+	if deps.PushDevices != nil {
+		s.pushDevices = deps.PushDevices
 	}
 	if deps.Messages != nil {
 		s.messages = deps.Messages

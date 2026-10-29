@@ -814,6 +814,10 @@ func (fakeService) CreateGroup(_ context.Context, req admin.CreateGroupRequest) 
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) SetPushDeviceEnabled(_ context.Context, req admin.SetPushDeviceEnabledRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) CreateBot(_ context.Context, req admin.CreateBotRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }

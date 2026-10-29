@@ -51,6 +51,7 @@ type Service interface {
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
 	SetChannelFlags(ctx context.Context, req admin.SetChannelFlagsRequest) (admin.CommandResult, error)
 	CreateGroup(ctx context.Context, req admin.CreateGroupRequest) (admin.CommandResult, error)
+	SetPushDeviceEnabled(ctx context.Context, req admin.SetPushDeviceEnabledRequest) (admin.CommandResult, error)
 	CreateBot(ctx context.Context, req admin.CreateBotRequest) (admin.CommandResult, error)
 	DeleteBot(ctx context.Context, req admin.DeleteBotRequest) (admin.CommandResult, error)
 	ExportBotToken(ctx context.Context, req admin.ExportBotTokenRequest) (admin.CommandResult, error)
@@ -318,6 +319,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/channels/{id}/avatar", s.authenticated(s.handleChannelAvatar))
 	mux.HandleFunc("POST /v1/channels/set-avatar", s.authenticated(s.handleSetChannelAvatar))
 	mux.HandleFunc("POST /v1/channels/create-group", s.authenticated(s.handleCreateGroup))
+	mux.HandleFunc("POST /v1/push/set-device-enabled", s.authenticated(s.handleSetPushDeviceEnabled))
 	mux.HandleFunc("POST /v1/bots/create", s.authenticated(s.handleCreateBot))
 	mux.HandleFunc("POST /v1/broadcasts/create", s.authenticated(s.handleCreateBroadcast))
 	mux.HandleFunc("POST /v1/bots/delete", s.authenticated(s.handleDeleteBot))
@@ -1046,6 +1048,16 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.CreateGroup(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// handleSetPushDeviceEnabled 打开或关闭一个会话的离线推送（push.set_device_enabled）。
+func (s *Server) handleSetPushDeviceEnabled(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetPushDeviceEnabledRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetPushDeviceEnabled(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

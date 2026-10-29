@@ -2159,6 +2159,7 @@ func run(logger *zap.Logger) error {
 		Channels:                channelsService,
 		ChannelNotifier:         router,
 		GroupCreator:            router,
+		PushDevices:             pushDeviceStore,
 		Messages:                messagesService,
 		Gifts:                   giftsService,
 		GiftGranter:             router,

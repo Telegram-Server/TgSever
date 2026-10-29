@@ -83,6 +83,11 @@ const (
 	// Deliberately NOT implied by channels.manage: it bypasses that account's
 	// own create-group permission, a far stronger power than editing settings.
 	permissionChannelsCreate = "channels.create"
+	// permissionPushManage gates the per-session offline push switch: seeing
+	// whether an iOS session gets APNs pushes (the state is only sent to a
+	// session holding it) and turning that on or off. Not implied by
+	// accounts.manage: it decides which devices the server contacts Apple for.
+	permissionPushManage     = "push.manage"
 	permissionBotsRead       = "bots.read"
 	permissionBotsManage     = "bots.manage"
 	permissionMessagesRead   = "messages.read"
@@ -154,6 +159,7 @@ func assignablePermissions() []string {
 		permissionChannelsRead,
 		permissionChannelsManage,
 		permissionChannelsCreate,
+		permissionPushManage,
 		permissionBotsRead,
 		permissionBotsManage,
 		permissionMessagesRead,

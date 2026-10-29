@@ -428,6 +428,9 @@ type AuthorizationRow struct {
 	PasswordPending bool
 	CreatedAt       time.Time
 	ActiveAt        time.Time
+	// PushEnabled 是该会话的离线推送开关：只在会话有 APNs/VoIP 登记、且请求方持有
+	// push.manage 时填写（全部登记开启才为 true）；其余情况为 nil，JSON 里没有这个字段。
+	PushEnabled *bool `json:",omitempty"`
 }
 
 // SharedDeviceAccount is one account whose authorizations matched a
@@ -1190,6 +1193,28 @@ LIMIT 100`, userID)
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// fillAuthorizationPushStates 给 rows 里有 APNs/VoIP 推送登记的会话填上推送开关（后台
+// push.manage）。只读登记时与授权当前都属于 userID 的登记，与推送服务的发送判定一致。
+func (s *readStore) fillAuthorizationPushStates(ctx context.Context, userID int64, rows []AuthorizationRow) error {
+	states, err := sqlcgen.New(s.pool).AdminPushDeviceStatesByUser(ctx, sqlcgen.AdminPushDeviceStatesByUserParams{
+		UserID:     userID,
+		TokenTypes: []int32{domain.PushTokenAPNs, domain.PushTokenVoIP},
+	})
+	if err != nil {
+		return fmt.Errorf("list push device states: %w", err)
+	}
+	enabled := make(map[int64]bool, len(states))
+	for _, state := range states {
+		enabled[state.AuthKeyID] = state.PushEnabled
+	}
+	for i := range rows {
+		if on, ok := enabled[rows[i].AuthKeyID]; ok {
+			rows[i].PushEnabled = &on
+		}
+	}
+	return nil
 }
 
 func (s *readStore) auditLogs(ctx context.Context, userID int64) ([]AuditLogRow, error) {

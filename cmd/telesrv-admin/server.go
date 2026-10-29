@@ -172,6 +172,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-permissions", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPermissionsAPI)))
 	mux.Handle("POST /api/actions/set-permission-defaults", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPermissionDefaultsAPI)))
 	mux.Handle("POST /api/actions/unbind-device", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleUnbindDeviceAPI)))
+	mux.Handle("POST /api/actions/set-push-device-enabled", s.scopedRoute(permissionPushManage, http.HandlerFunc(s.handleSetPushDeviceEnabledAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
 	mux.Handle("POST /api/actions/set-account-color", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserColorAPI)))
@@ -982,6 +983,13 @@ func (s *server) handleAccountDetailAPI(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 推送开关状态只给持有 push.manage 的会话：没有这项权限时连查都不查，响应里没有该字段。
+	if permissionsFromContext(r.Context()).Has(permissionPushManage) {
+		if err := s.read.fillAuthorizationPushStates(r.Context(), userID, detail.Authorizations); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, detail)
 }
 
@@ -1385,6 +1393,33 @@ func (s *server) handleUnbindDeviceAPI(w http.ResponseWriter, r *http.Request) {
 		DeviceID:    body.DeviceID,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/unbind-device", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setPushDeviceEnabledAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	// AuthKeyID 是账号详情设备列表里的 AuthKeyID，按十进制字符串传，避免前端丢精度。
+	AuthKeyID int64 `json:"auth_key_id,string"`
+	Enabled   bool  `json:"enabled"`
+}
+
+// handleSetPushDeviceEnabledAPI 打开或关闭账号一个会话的离线推送（push.set_device_enabled），
+// 转发给服务端 POST /v1/push/set-device-enabled。
+func (s *server) handleSetPushDeviceEnabledAPI(w http.ResponseWriter, r *http.Request) {
+	var body setPushDeviceEnabledAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetPushDeviceEnabledRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-push-device-enabled"),
+		UserID:      body.UserID,
+		AuthKeyID:   body.AuthKeyID,
+		Enabled:     body.Enabled,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/push/set-device-enabled", req)
 	writeCommandResultAPI(w, result, err)
 }
 
