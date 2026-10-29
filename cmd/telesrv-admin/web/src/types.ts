@@ -52,6 +52,10 @@ export type AuthorizationRow = {
   PasswordPending: boolean;
   CreatedAt: string;
   ActiveAt: string;
+  // PushEnabled is the session's offline push switch. The server sends it only
+  // to a session holding push.manage, and only for sessions with an APNs/VoIP
+  // registration (iOS); absent otherwise.
+  PushEnabled?: boolean;
 };
 
 // DeviceBinding is one device bound to an account under its device limit
