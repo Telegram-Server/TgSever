@@ -42,6 +42,7 @@
 | `TELESRV_CHECK_NUMBER_FORMAT` | bool / `false` | 登录身份格式策略。默认 `false` 按国家号码计划规范化可识别号码，并接受计划外 4-32 位、首位非 0 的身份（包括短号、未分配号段和未知国家码）。`true` 额外要求普通号码通过已分配号段校验。两种模式均拒绝前导 0，保留虚拟 `+888` 的独立 7-15 位规则，并禁止保留号 `+42777` 登录。server 与 Admin 必须配置一致；切换严格模式可能使之前接纳的身份无法再使用手机号相关操作，但不会重写存量号码。 |
 | `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | 在 MTProto 监听端口启用 MTProto-over-WebSocket 分流。 |
 | `TELESRV_WEBSOCKET_ALLOWED_ORIGINS` | list / `http://localhost:1234,http://127.0.0.1:1234` | 浏览器 WebSocket origin 白名单；`*` 只用于临时调试。 |
+| `TELESRV_WEBSOCKET_TRUSTED_PROXIES` | CIDR list / 空 | 受信反代（例如在宿主机终结 `wss` 的 Caddy），采信其 `X-Forwarded-For`。WebSocket 升级请求来自这些地址时，取转发链中自右向左第一个不属于受信反代的地址作为客户端 IP：记到会话上，并代替反代地址计入 `TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP`。其他来源带的该头一律忽略。为空时始终使用 TCP 对端地址。 |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS` | int / `200000` | 全局物理连接 admission 上限；负数关闭该门禁。 |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP` | int / `4096` | 单来源 IP 物理连接上限；负数关闭该门禁。 |
 | `TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES` | int / `256` | 高成本 RSA/DH 握手并发上限；负数关闭该门禁。 |

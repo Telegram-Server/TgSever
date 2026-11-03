@@ -346,7 +346,7 @@ func TestSamePortWebSocketTransportRoundTrip(t *testing.T) {
 	mux := newSamePortMux(ln, 5*time.Second)
 	wsLn, wsHandler := transport.WebsocketListener(ln.Addr())
 	httpServer := &http.Server{
-		Handler:           websocketRouteHandler(wsHandler, []string{"http://localhost:1234"}),
+		Handler:           websocketRouteHandler(wsHandler, []string{"http://localhost:1234"}, nil),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -517,7 +517,7 @@ func TestWebSocketRouteHandlerChecksBrowserOrigin(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 
 	_, wsHandler := transport.WebsocketListener(ln.Addr())
-	httpServer := &http.Server{Handler: websocketRouteHandler(wsHandler, []string{"http://localhost:1234"})}
+	httpServer := &http.Server{Handler: websocketRouteHandler(wsHandler, []string{"http://localhost:1234"}, nil)}
 	go func() { _ = httpServer.Serve(ln) }()
 	defer func() { _ = httpServer.Close() }()
 

@@ -132,6 +132,25 @@ func TestLoadRejectsInvalidDialogListSnapshotRedisTTL(t *testing.T) {
 	}
 }
 
+func TestLoadWebSocketTrustedProxies(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_WEBSOCKET_TRUSTED_PROXIES", "127.0.0.1/32, ::1/128")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	prefixes, err := ParseWebSocketTrustedProxies(cfg.WebSocketTrustedProxies)
+	if err != nil || len(prefixes) != 2 || prefixes[0].String() != "127.0.0.1/32" || prefixes[1].String() != "::1/128" {
+		t.Fatalf("trusted proxies = %v err=%v", prefixes, err)
+	}
+
+	// 写成裸 IP 是常见笔误；不报错的话这项设置会被悄悄忽略。
+	t.Setenv("TELESRV_WEBSOCKET_TRUSTED_PROXIES", "127.0.0.1")
+	if _, err := Load(); err == nil {
+		t.Fatal("bare IP accepted as a trusted proxy CIDR")
+	}
+}
+
 func TestLoadActiveChannelIDsReadModel(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_ACTIVE_CHANNEL_IDS_CACHE_MAX", "45678")

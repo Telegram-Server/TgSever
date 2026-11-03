@@ -118,6 +118,26 @@ type replayNetConn struct {
 	prefix [8]byte
 	n      uint8
 	offset uint8
+	// forwarded 是受信反代转发的真实客户端地址，只在 WebSocket 升级处理里、hijack 之前
+	// 写入一次；之后读它的 goroutine 经由 gotd 升级处理器的 channel 交接，已有 happens-before。
+	forwarded net.Addr
+}
+
+func (c *replayNetConn) RemoteAddr() net.Addr {
+	if c.forwarded != nil {
+		return c.forwarded
+	}
+	return c.Conn.RemoteAddr()
+}
+
+// useForwardedRemote 让这条连接对外报告 addr 为对端地址，并把单 IP 准入配额一并改记过去。
+// addr 已达单 IP 上限时返回 false，地址不变。
+func (c *replayNetConn) useForwardedRemote(addr net.Addr) bool {
+	if rebinder, ok := c.Conn.(interface{ rebindAdmission(net.Addr) bool }); ok && !rebinder.rebindAdmission(addr) {
+		return false
+	}
+	c.forwarded = addr
+	return true
 }
 
 func newReplayNetConn(conn net.Conn, prefix []byte) *replayNetConn {

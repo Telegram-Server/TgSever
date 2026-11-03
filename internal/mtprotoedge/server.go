@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -261,6 +262,9 @@ type Options struct {
 	// WebSocketAllowedOrigins 是允许浏览器发起 WebSocket upgrade 的页面 origin。
 	// 空列表表示只接受无 Origin 的非浏览器客户端；"*" 表示允许所有来源（仅调试）。
 	WebSocketAllowedOrigins []string
+	// WebSocketTrustedProxies 是受信反代（例如本机 Caddy）的地址段。WebSocket 升级请求的 TCP
+	// 对端落在其中时，采信 X-Forwarded-For 里的真实客户端 IP；为空时一律用 TCP 对端地址。
+	WebSocketTrustedProxies []netip.Prefix
 	// ReadTimeout 单次读取超时。默认 5m。
 	ReadTimeout time.Duration
 	// HandshakeIdleTimeout 是连接「建立 session 前」（握手 + 首个加密消息之前）的读超时，
@@ -502,6 +506,7 @@ type Server struct {
 	obfuscated               bool
 	websocket                bool
 	websocketOrigins         []string
+	websocketTrustedProxies  []netip.Prefix
 	readTimeout              time.Duration
 	handshakeTimeout         time.Duration
 	handshakeMaxDur          time.Duration
@@ -560,6 +565,7 @@ func New(opts Options) *Server {
 		obfuscated:               opts.ObfuscatedTCP,
 		websocket:                opts.WebSocket,
 		websocketOrigins:         append([]string(nil), opts.WebSocketAllowedOrigins...),
+		websocketTrustedProxies:  append([]netip.Prefix(nil), opts.WebSocketTrustedProxies...),
 		readTimeout:              opts.ReadTimeout,
 		handshakeTimeout:         opts.HandshakeIdleTimeout,
 		handshakeMaxDur:          opts.HandshakeMaxDuration,
@@ -742,8 +748,9 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	wsLn := newTransportPacketMessageListener(wsRawLn)
 
 	httpServer := &http.Server{
-		Handler:           websocketRouteHandler(wsHandler, s.websocketOrigins),
+		Handler:           websocketRouteHandler(wsHandler, s.websocketOrigins, s.websocketTrustedProxies),
 		ReadHeaderTimeout: minDuration(10*time.Second, s.handshakeTimeout),
+		ConnContext:       websocketConnContext,
 		BaseContext: func(net.Listener) context.Context {
 			return ctx
 		},
@@ -755,6 +762,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 		zap.String("tcp_transport_mode", intakeTransport(s.obfuscated)),
 		zap.Bool("websocket", true),
 		zap.Strings("websocket_origins", s.websocketOrigins),
+		zap.Int("websocket_trusted_proxies", len(s.websocketTrustedProxies)),
 	)
 	defer s.log.Info("Stopped")
 

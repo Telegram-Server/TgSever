@@ -35,6 +35,10 @@ type Config struct {
 	WebSocketEnable bool
 	// WebSocketAllowedOrigins 是允许浏览器发起 WS upgrade 的页面 origin；"*" 仅用于临时调试。
 	WebSocketAllowedOrigins []string
+	// WebSocketTrustedProxies 是受信反代（如宿主机 Caddy 终结 wss 后转发）的 CIDR。
+	// WebSocket 升级请求的 TCP 对端在其中时，采信 X-Forwarded-For 的真实客户端 IP，
+	// 用于 authorizations.ip 与单 IP 连接上限。为空时一律用 TCP 对端地址。
+	WebSocketTrustedProxies []string
 	// AdvertiseIP 是写入 help.getConfig DCOptions 的对外可达 IP（客户端据此连接本 DC）。
 	AdvertiseIP string
 	// RSAKeyPath 是 server RSA 私钥的 PEM 路径；不存在时自动生成。
@@ -1066,6 +1070,7 @@ func Load() (Config, error) {
 			"http://localhost:1234",
 			"http://127.0.0.1:1234",
 		}),
+		WebSocketTrustedProxies: envListOr("TELESRV_WEBSOCKET_TRUSTED_PROXIES", nil),
 		// help.getConfig 必须下发至少一个可重连的主 DC 地址；远端部署不能
 		// 沿用 loopback 默认值，需显式设置客户端实际可达的 IP。
 		AdvertiseIP:                       advertiseIP,
@@ -1514,6 +1519,9 @@ func Load() (Config, error) {
 	if err := validatePushConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	if _, err := ParseWebSocketTrustedProxies(cfg.WebSocketTrustedProxies); err != nil {
+		return Config{}, err
+	}
 	if err := validateCustomFragmentConfig(cfg); err != nil {
 		return Config{}, err
 	}
@@ -1869,6 +1877,19 @@ func validateGeoIPConfig(cfg Config) error {
 
 // validatePushConfig 只校验推送调优参数的范围；APNs 认证材料（二选一、文件可读、证书有效期）
 // 在 apns.Open 里读取文件时校验。
+// ParseWebSocketTrustedProxies 把 TELESRV_WEBSOCKET_TRUSTED_PROXIES 解析成地址段。
+func ParseWebSocketTrustedProxies(raw []string) ([]netip.Prefix, error) {
+	out := make([]netip.Prefix, 0, len(raw))
+	for _, item := range raw {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(item))
+		if err != nil {
+			return nil, fmt.Errorf("TELESRV_WEBSOCKET_TRUSTED_PROXIES contains invalid CIDR %q: %w", item, err)
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out, nil
+}
+
 func validatePushConfig(cfg Config) error {
 	switch {
 	case cfg.PushQueueSize < 1 || cfg.PushQueueSize > 1_000_000:

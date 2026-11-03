@@ -2469,6 +2469,11 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("start public Web: %w", err)
 	}
 
+	// 配置加载时已校验过，这里不会出错。
+	websocketTrustedProxies, err := config.ParseWebSocketTrustedProxies(cfg.WebSocketTrustedProxies)
+	if err != nil {
+		return err
+	}
 	srv := mtprotoedge.New(mtprotoedge.Options{
 		Logger:                         logger.Named("mtprotoedge"),
 		DC:                             cfg.DC,
@@ -2481,6 +2486,7 @@ func run(logger *zap.Logger) error {
 		ObfuscatedTCP:                  true,
 		WebSocket:                      cfg.WebSocketEnable,
 		WebSocketAllowedOrigins:        cfg.WebSocketAllowedOrigins,
+		WebSocketTrustedProxies:        websocketTrustedProxies,
 		MaxConnections:                 cfg.MTProtoMaxConnections,
 		MaxConnectionsPerIP:            cfg.MTProtoMaxConnectionsPerIP,
 		MaxConcurrentHandshakes:        cfg.MTProtoMaxConcurrentHandshakes,

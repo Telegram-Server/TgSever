@@ -108,6 +108,11 @@ services:
       TELESRV_LOG_LEVEL: ${TELESRV_LOG_LEVEL:-info}
       TELESRV_LISTEN: ${TELESRV_PUBLIC_LISTEN_HOST:-127.0.0.1}:${TELESRV_SERVER_PORT:-2398}
       TELESRV_ADVERTISE_IP: ${TELESRV_ADVERTISE_IP:?set TELESRV_ADVERTISE_IP in deploy/docker/.env}
+      # MTProto over WebSocket for browser clients (Web A) shares the MTProto port.
+      # Browsers need wss, so TLS ends at a host reverse proxy that forwards
+      # /apiws* here; trust it so sessions record the real client IP.
+      TELESRV_WEBSOCKET_ALLOWED_ORIGINS: ${TELESRV_WEBSOCKET_ALLOWED_ORIGINS:-}
+      TELESRV_WEBSOCKET_TRUSTED_PROXIES: ${TELESRV_WEBSOCKET_TRUSTED_PROXIES:-}
       TELESRV_DEFAULT_COUNTRY_CODE: ${TELESRV_DEFAULT_COUNTRY_CODE:-CN}
       TELESRV_PUBLIC_BASE_URL: ${TELESRV_PUBLIC_BASE_URL:?set TELESRV_PUBLIC_BASE_URL in deploy/docker/.env}
       TELESRV_PUBLIC_APP_SCHEME: ${TELESRV_PUBLIC_APP_SCHEME:-telesrv}

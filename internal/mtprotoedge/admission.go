@@ -50,29 +50,72 @@ func (a *admissionController) acquireConnection(addr net.Addr) (func(), bool) {
 	if a == nil {
 		return func() {}, true
 	}
+	ticket, ok := a.acquire(addr)
+	if !ok {
+		return nil, false
+	}
+	return ticket.release, true
+}
+
+func (a *admissionController) acquire(addr net.Addr) (*admissionTicket, bool) {
 	ip := remoteAdmissionKey(addr)
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if (a.maxConnections > 0 && a.connections >= a.maxConnections) ||
 		(a.maxPerIP > 0 && a.byIP[ip] >= a.maxPerIP) {
-		a.mu.Unlock()
 		return nil, false
 	}
 	a.connections++
 	a.byIP[ip]++
-	a.mu.Unlock()
+	return &admissionTicket{admission: a, ip: ip}, true
+}
 
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			a.mu.Lock()
-			a.connections--
-			a.byIP[ip]--
-			if a.byIP[ip] == 0 {
-				delete(a.byIP, ip)
-			}
-			a.mu.Unlock()
-		})
-	}, true
+// admissionTicket 是一条物理连接占用的配额。ip 与 released 由 admission.mu 保护：
+// 反代后面的 WebSocket 连接在升级时把单 IP 计数从反代地址换到真实客户端地址（rekey）。
+type admissionTicket struct {
+	admission *admissionController
+	ip        string
+	released  bool
+}
+
+func (t *admissionTicket) release() {
+	a := t.admission
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if t.released {
+		return
+	}
+	t.released = true
+	a.connections--
+	a.byIP[t.ip]--
+	if a.byIP[t.ip] == 0 {
+		delete(a.byIP, t.ip)
+	}
+}
+
+// rekey 把这条连接的单 IP 计数改记到 addr 名下。addr 已达单 IP 上限时不改动并返回 false，
+// 调用方应拒绝这条连接；连接已归还配额时同样返回 false。
+func (t *admissionTicket) rekey(addr net.Addr) bool {
+	ip := remoteAdmissionKey(addr)
+	a := t.admission
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if t.released {
+		return false
+	}
+	if ip == t.ip {
+		return true
+	}
+	if a.maxPerIP > 0 && a.byIP[ip] >= a.maxPerIP {
+		return false
+	}
+	a.byIP[t.ip]--
+	if a.byIP[t.ip] == 0 {
+		delete(a.byIP, t.ip)
+	}
+	a.byIP[ip]++
+	t.ip = ip
+	return true
 }
 
 func (a *admissionController) tryAcquireHandshake() (func(), bool) {
@@ -116,12 +159,12 @@ func (l *admissionListener) Accept() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		release, ok := l.admission.acquireConnection(conn.RemoteAddr())
+		ticket, ok := l.admission.acquire(conn.RemoteAddr())
 		if !ok {
 			_ = conn.Close()
 			continue
 		}
-		return &admittedConn{Conn: conn, release: release}, nil
+		return &admittedConn{Conn: conn, release: ticket.release, ticket: ticket}, nil
 	}
 }
 
@@ -129,6 +172,16 @@ type admittedConn struct {
 	net.Conn
 	release func()
 	once    sync.Once
+	// ticket 为空时（测试里手工构造的连接）rebindAdmission 视为成功。
+	ticket *admissionTicket
+}
+
+// rebindAdmission 把这条连接的单 IP 配额改记到 addr（受信反代转发的真实客户端地址）。
+func (c *admittedConn) rebindAdmission(addr net.Addr) bool {
+	if c.ticket == nil {
+		return true
+	}
+	return c.ticket.rekey(addr)
 }
 
 func (c *admittedConn) Close() error {

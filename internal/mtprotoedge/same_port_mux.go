@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -257,7 +258,15 @@ func isHTTPHeaderPrefix(header [4]byte) bool {
 	}
 }
 
-func websocketRouteHandler(handler http.Handler, allowedOrigins []string) http.Handler {
+// websocketConnContextKey 把 http.Server 接到的那条 net.Conn 放进请求 context，
+// 升级处理据此把受信反代转发的真实客户端地址写回连接（见 forwardedClientAddr）。
+type websocketConnContextKey struct{}
+
+func websocketConnContext(ctx context.Context, conn net.Conn) context.Context {
+	return context.WithValue(ctx, websocketConnContextKey{}, conn)
+}
+
+func websocketRouteHandler(handler http.Handler, allowedOrigins []string, trustedProxies []netip.Prefix) http.Handler {
 	origins := websocketOriginSet(allowedOrigins)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := websocketAllowedPaths[r.URL.Path]; !ok {
@@ -276,11 +285,60 @@ func websocketRouteHandler(handler http.Handler, allowedOrigins []string) http.H
 			http.Error(w, "websocket origin forbidden", http.StatusForbidden)
 			return
 		}
+		// 经 Caddy 等反代接入时，TCP 对端是反代自己。只有对端在受信列表里才采信
+		// X-Forwarded-For，并把连接的对端地址（authorizations.ip、单 IP 准入）换成真实客户端。
+		// http.Server 在接入时就缓存了 r.RemoteAddr，同一条反代连接上的后续请求仍按反代地址判定。
+		if client, ok := forwardedClientAddr(r, trustedProxies); ok {
+			conn, _ := r.Context().Value(websocketConnContextKey{}).(interface{ useForwardedRemote(net.Addr) bool })
+			if conn != nil && !conn.useForwardedRemote(client) {
+				http.Error(w, "too many connections from this address", http.StatusTooManyRequests)
+				return
+			}
+		}
 		if r.Header.Get("Origin") != "" {
 			r.Header.Set("Origin", "http://"+r.Host)
 		}
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// forwardedClientAddr 在请求的 TCP 对端属于 trusted 时，从 X-Forwarded-For 自右向左取第一个
+// 不属于 trusted 的地址作为真实客户端。对端不受信、没有该头、或遇到无法解析的条目时返回 false，
+// 这样客户端自己伪造的 X-Forwarded-For 永远不会被采信。
+func forwardedClientAddr(r *http.Request, trusted []netip.Prefix) (net.Addr, bool) {
+	if len(trusted) == 0 {
+		return nil, false
+	}
+	peer, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil || !prefixesContain(trusted, peer.Addr()) {
+		return nil, false
+	}
+	var entries []string
+	for _, value := range r.Header.Values("X-Forwarded-For") {
+		entries = append(entries, strings.Split(value, ",")...)
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		addr, err := netip.ParseAddr(strings.TrimSpace(entries[i]))
+		if err != nil {
+			return nil, false
+		}
+		addr = addr.Unmap()
+		if prefixesContain(trusted, addr) {
+			continue
+		}
+		return net.TCPAddrFromAddrPort(netip.AddrPortFrom(addr, 0)), true
+	}
+	return nil, false
+}
+
+func prefixesContain(prefixes []netip.Prefix, addr netip.Addr) bool {
+	addr = addr.Unmap()
+	for _, prefix := range prefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func websocketOriginSet(origins []string) map[string]struct{} {
