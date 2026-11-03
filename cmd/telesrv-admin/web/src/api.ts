@@ -17,6 +17,7 @@ import type {
   BotDetail,
   BotListResponse,
   BroadcastListResponse,
+  BroadcastScheduleListResponse,
 	GifCatalogListResponse,
   BotVerificationCountsResponse,
   BotVerifierListResponse,
@@ -196,6 +197,7 @@ export const api = {
   bots: (params: URLSearchParams) => request<BotListResponse>(`/api/bots?${params.toString()}`),
   bot: (id: number) => request<BotDetail>(`/api/bots/${id}`),
   broadcasts: (params: URLSearchParams) => request<BroadcastListResponse>(`/api/broadcasts?${params.toString()}`),
+  broadcastSchedules: () => request<BroadcastScheduleListResponse>("/api/broadcast-schedules"),
   premiumPlans: () => request<PremiumPlansResponse>("/api/premium/plans"),
   collectibleUsernames: (params: URLSearchParams) =>
     request<CollectibleUsernameListResponse>(`/api/collectible-usernames?${params.toString()}`),

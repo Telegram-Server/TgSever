@@ -89,6 +89,7 @@
 | **Broadcasting** | |
 | `broadcasts.read` | View broadcasts — See past and scheduled broadcasts |
 | `broadcasts.send` | Send broadcasts — Deliver a message to many users at once |
+| `broadcasts.schedule` | Schedule broadcasts — Create, edit, pause and delete automatic broadcasts to every account |
 | **Gifts and ratings** | |
 | `gifts.read` | View the gift catalogue — Browse star gifts, auctions and official gifts |
 | `gifts.manage` | Edit the gift catalogue — Import gifts, publish collectibles and give gifts |
@@ -246,6 +247,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Media | GIFs | `/gif-catalog` | `content.read` |
 | Media | Storage | `/storage` | `storage.read` |
 | Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
+| Broadcasts | Automatic | `/broadcast-schedules` | `broadcasts.read` |
 | Messages | Private | `/messages/private` | `messages.read` (also served at `/messages`) |
 | Messages | Groups | `/messages/groups` | `messages.read` |
 | Messages | Chat audit | `/messages/audit` | `messages.read` |
@@ -349,7 +351,8 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | --- | --- | --- |
 | GET | `/api/bots` | Параметры: `q`, `before_id` (int64), `limit` (int). Ответ: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `listing`. |
 | GET | `/api/bots/{id}` | Карточка бота. |
-| GET | `/api/broadcasts` | Параметры: `before_id` (int64), `limit` (int). Ответ: `limit`, `rows`, `has_more`, `next_before_id`. |
+| GET | `/api/broadcasts` | Параметры: `before_id` (int64), `limit` (int). Ответ: `limit`, `rows`, `has_more`, `next_before_id`. Строка, созданная автоматическим расписанием, содержит его `ScheduleID` (`"0"` для ручной рассылки). |
+| GET | `/api/broadcast-schedules` | Расписания автоматических рассылок, новые первыми (не больше 200). Ответ: `rows` с полями `ID`, `Message`, `Timezone`, `TimeOfDay` (местная минута суток), `Weekdays` (0 = воскресенье … 6 = суббота), `Enabled`, `NextRunAt` (null, если приостановлено), `LastRunAt`, `LastBroadcastID`, `RunCount`, `LastSkippedAt`, `LastSkipReason` (`previous_running`, `missed`, `no_recipients`, `invalid_timezone`), `SkippedCount`, `CreatedBy`, `UpdatedBy`. |
 
 ## API: медиа-каталоги
 
@@ -734,6 +737,9 @@ Content-Type: application/json
 | `delete-bot` | `bot_user_id` (int64) | `bots.manage` |
 | `export-bot-token` | `bot_user_id` (int64) | `bots.token.read` |
 | `create-broadcast` | `message` (string), `target_mode` (string), `user_ids` ([]int64, опц.) | `broadcasts.send` |
+| `create-broadcast-schedule` | `message` (string), `timezone` (имя IANA, пусто = `Asia/Shanghai`), `time_of_day` (int, местная минута суток: 14:00 = 840), `weekdays` ([]int, 0 = воскресенье … 6 = суббота; все семь = каждый день), `enabled` (bool). В каждый запуск сервер создаёт обычную рассылку всем аккаунтам; запуск пропускается и записывается, если предыдущая рассылка этого расписания ещё доставляется, если он опоздал больше чем на час или если аккаунтов нет. `details`: `upcoming` (три ближайших запуска, RFC 3339), `time_of_day`, `weekdays`, `timezone`, `recipient_count_now` и после создания `schedule_id`. Неверные поля — `BROADCAST_SCHEDULE_INVALID`, больше 200 расписаний — `BROADCAST_SCHEDULE_LIMIT` | `broadcasts.schedule` |
+| `update-broadcast-schedule` | `schedule_id` (десятичная строка) и все поля `create-broadcast-schedule`; заменяет расписание и пересчитывает следующий запуск от текущего момента. Приостановка и включение — эта же команда с другим `enabled`. Неизвестный id — `BROADCAST_SCHEDULE_NOT_FOUND` | `broadcasts.schedule` |
+| `delete-broadcast-schedule` | `schedule_id` (десятичная строка); уже отправленные рассылки остаются в списке с `ScheduleID` `"0"` | `broadcasts.schedule` |
 
 ## API: действия над стикерами и emoji
 

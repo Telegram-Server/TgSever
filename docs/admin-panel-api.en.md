@@ -80,6 +80,7 @@ to a named operator account.
 | **Broadcasting** | |
 | `broadcasts.read` | View broadcasts — See past and scheduled broadcasts |
 | `broadcasts.send` | Send broadcasts — Deliver a message to many users at once |
+| `broadcasts.schedule` | Schedule broadcasts — Create, edit, pause and delete automatic broadcasts to every account |
 | **Gifts and ratings** | |
 | `gifts.read` | View the gift catalogue — Browse star gifts, auctions and official gifts |
 | `gifts.manage` | Edit the gift catalogue — Import gifts, publish collectibles and give gifts |
@@ -227,6 +228,7 @@ and the old URL still lands there rather than 404ing on a bookmark.
 | Media | GIFs | `/gif-catalog` | `content.read` |
 | Media | Storage | `/storage` | `storage.read` |
 | Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
+| Broadcasts | Automatic | `/broadcast-schedules` | `broadcasts.read` |
 | Messages | Private | `/messages/private` | `messages.read` (also served at `/messages`) |
 | Messages | Groups | `/messages/groups` | `messages.read` |
 | Messages | Chat audit | `/messages/audit` | `messages.read` |
@@ -325,7 +327,8 @@ Every mutating request carries in its body:
 | --- | --- | --- |
 | GET | `/api/bots` | Params: `q`, `before_id` (int64), `limit` (int). Response: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `listing`. |
 | GET | `/api/bots/{id}` | Bot card. |
-| GET | `/api/broadcasts` | Params: `before_id` (int64), `limit` (int). Response: `limit`, `rows`, `has_more`, `next_before_id`. |
+| GET | `/api/broadcasts` | Params: `before_id` (int64), `limit` (int). Response: `limit`, `rows`, `has_more`, `next_before_id`. A row created by an automatic schedule carries its `ScheduleID` (`"0"` for a manual broadcast). |
+| GET | `/api/broadcast-schedules` | Automatic broadcast schedules, newest first (at most 200). Response: `rows` with `ID`, `Message`, `Timezone`, `TimeOfDay` (local minute of the day), `Weekdays` (0 = Sunday … 6 = Saturday), `Enabled`, `NextRunAt` (null when paused), `LastRunAt`, `LastBroadcastID`, `RunCount`, `LastSkippedAt`, `LastSkipReason` (`previous_running`, `missed`, `no_recipients`, `invalid_timezone`), `SkippedCount`, `CreatedBy`, `UpdatedBy`. |
 
 ## API: media catalogs
 
@@ -720,6 +723,9 @@ Content-Type: application/json
 | `delete-bot` | `bot_user_id` (int64) | `bots.manage` |
 | `export-bot-token` | `bot_user_id` (int64) | `bots.token.read` |
 | `create-broadcast` | `message` (string), `target_mode` (string), `user_ids` ([]int64, opt.) | `broadcasts.send` |
+| `create-broadcast-schedule` | `message` (string), `timezone` (IANA name, empty = `Asia/Shanghai`), `time_of_day` (int, local minute of the day: 14:00 = 840), `weekdays` ([]int, 0 = Sunday … 6 = Saturday; all seven = every day), `enabled` (bool). At each run the server creates an ordinary all-account broadcast; a run is skipped and recorded when the schedule's previous broadcast is still delivering, when it comes more than an hour late, or when there are no accounts. `details`: `upcoming` (next three runs, RFC 3339), `time_of_day`, `weekdays`, `timezone`, `recipient_count_now`, and `schedule_id` once created. Invalid fields fail with `BROADCAST_SCHEDULE_INVALID`, more than 200 schedules with `BROADCAST_SCHEDULE_LIMIT` | `broadcasts.schedule` |
+| `update-broadcast-schedule` | `schedule_id` (decimal string) plus every field of `create-broadcast-schedule`; replaces the schedule and recomputes the next run from now. Pausing and resuming are this command with `enabled` flipped. An unknown id fails with `BROADCAST_SCHEDULE_NOT_FOUND` | `broadcasts.schedule` |
+| `delete-broadcast-schedule` | `schedule_id` (decimal string); broadcasts it already sent stay in the list with `ScheduleID` `"0"` | `broadcasts.schedule` |
 
 ## API: sticker and emoji actions
 

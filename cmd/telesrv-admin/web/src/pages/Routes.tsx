@@ -12,6 +12,7 @@ import { BotDetailPage } from "./BotDetailPage";
 import { BotsPage } from "./BotsPage";
 import { BotVerificationPage } from "./BotVerificationPage";
 import { BotVerificationRequestPage } from "./BotVerificationRequestPage";
+import { BroadcastSchedulesPage } from "./BroadcastSchedulesPage";
 import { BroadcastsPage } from "./BroadcastsPage";
 import { ChannelDetailPage } from "./ChannelDetailPage";
 import { ChannelsPage } from "./ChannelsPage";
@@ -166,6 +167,9 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
   }
   if (route.path === "/broadcasts") {
     return <BroadcastsPage />;
+  }
+  if (route.path === "/broadcast-schedules") {
+    return <BroadcastSchedulesPage />;
   }
   if (route.path === "/moderation") {
     return <ModerationCasesPage navigate={navigate} />;

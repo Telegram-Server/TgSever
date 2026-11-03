@@ -46,6 +46,9 @@ export const permissionMessageDeletionsRead = "messages.deletions.read";
 export const permissionModerationReview = "moderation.review";
 export const permissionBroadcastsRead = "broadcasts.read";
 export const permissionBroadcastsSend = "broadcasts.send";
+// Automatic broadcast schedules: create, edit, pause and delete. Not implied by
+// broadcasts.send -- one approval keeps messaging every account on a timer.
+export const permissionBroadcastsSchedule = "broadcasts.schedule";
 export const permissionStorageRead = "storage.read";
 export const permissionStorageManage = "storage.manage";
 export const permissionContentRead = "content.read";
@@ -159,6 +162,7 @@ const permissionLabels: Record<string, { title: string; hint: string }> = {
   "moderation.review": { title: "Handle reports", hint: "Work the moderation queue and decide cases" },
   "broadcasts.read": { title: "View broadcasts", hint: "See past and scheduled broadcasts" },
   "broadcasts.send": { title: "Send broadcasts", hint: "Deliver a message to many users at once" },
+  "broadcasts.schedule": { title: "Schedule broadcasts", hint: "Create, edit, pause and delete automatic broadcasts to every account" },
   "content.read": { title: "View stickers, emoji and GIFs", hint: "Browse the packs and the GIF catalogue" },
   "content.manage": { title: "Edit stickers, emoji and GIFs", hint: "Create, rename and remove packs and catalogue entries" },
   "usernames.read": { title: "View NFT usernames", hint: "Browse collectible usernames" },
@@ -226,7 +230,7 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   {
     title: "Broadcasting",
     hint: "Messages sent to many users at once",
-    permissions: ["broadcasts.read", "broadcasts.send"]
+    permissions: ["broadcasts.read", "broadcasts.send", "broadcasts.schedule"]
   },
   {
     title: "Gifts and ratings",

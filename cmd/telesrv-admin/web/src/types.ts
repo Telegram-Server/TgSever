@@ -1384,8 +1384,37 @@ export type BroadcastRow = {
   SentCount: string;
   FailedCount: string;
   EnumerationDone: boolean;
+  // ScheduleID is the automatic schedule that created the campaign; "0" for a
+  // manual broadcast or one whose schedule has since been deleted.
+  ScheduleID: string;
   CreatedBy: string;
   CreatedAt: string;
+};
+
+// Weekdays use Go's numbering: 0 = Sunday ... 6 = Saturday. TimeOfDay is the
+// local wall-clock minute in Timezone (14:00 = 840).
+export type BroadcastScheduleRow = {
+  ID: string;
+  Message: string;
+  Timezone: string;
+  TimeOfDay: number;
+  Weekdays: number[];
+  Enabled: boolean;
+  NextRunAt: string | null;
+  LastRunAt: string | null;
+  LastBroadcastID: string;
+  RunCount: string;
+  LastSkippedAt: string | null;
+  LastSkipReason: "" | "previous_running" | "missed" | "no_recipients" | "invalid_timezone";
+  SkippedCount: string;
+  CreatedBy: string;
+  UpdatedBy: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type BroadcastScheduleListResponse = {
+  rows: BroadcastScheduleRow[];
 };
 
 export type BroadcastListResponse = {

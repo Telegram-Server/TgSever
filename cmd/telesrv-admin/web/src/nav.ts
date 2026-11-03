@@ -173,7 +173,10 @@ export const navSections: NavSection[] = [
     id: "broadcasts",
     labelKey: "layout.broadcasts",
     icon: Megaphone,
-    tabs: [{ path: "/broadcasts", labelKey: "layout.broadcasts", permission: permissionBroadcastsRead }]
+    tabs: [
+      { path: "/broadcasts", labelKey: "layout.broadcasts", permission: permissionBroadcastsRead },
+      { path: "/broadcast-schedules", labelKey: "layout.broadcastSchedules", permission: permissionBroadcastsRead }
+    ]
   },
   {
     id: "messages",
@@ -272,6 +275,7 @@ const routePermissions: { prefix: string; permission: string }[] = [
   { prefix: "/channels", permission: permissionChannelsRead },
   { prefix: "/bots", permission: permissionBotsRead },
   { prefix: "/broadcasts", permission: permissionBroadcastsRead },
+  { prefix: "/broadcast-schedules", permission: permissionBroadcastsRead },
   { prefix: "/monetization", permission: permissionPremiumManage },
   { prefix: "/premium", permission: permissionPremiumManage },
   { prefix: "/star-issue", permission: permissionPremiumManage },

@@ -95,7 +95,7 @@ export function BroadcastsPage() {
                 <td><Badge>{t(row.TargetMode === "all" ? "broadcast.targetAll" : "broadcast.targetSelected")}</Badge></td>
                 <td>{row.SentCount} / {row.TargetCount}{BigInt(row.FailedCount) > 0n ? ` · ${t("broadcast.failed")} ${row.FailedCount}` : ""}</td>
                 <td><Badge tone={state === "completed" ? "good" : state === "delivering" ? "warn" : "neutral"}>{t(`broadcast.${state}`)}</Badge></td>
-                <td>{row.CreatedBy || "-"}</td><td>{formatDate(row.CreatedAt)}</td>
+                <td>{row.ScheduleID !== "0" ? <Badge>{t("broadcast.fromSchedule", { id: row.ScheduleID })}</Badge> : row.CreatedBy || "-"}</td><td>{formatDate(row.CreatedAt)}</td>
               </tr>;
             })}
             {rows.length === 0 && <EmptyRow colSpan={7} />}
