@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"unicode"
 
 	"telesrv/internal/domain"
 )
@@ -21,8 +22,14 @@ type activeChannelBotMemberLister interface {
 	ListActiveChannelBotMembers(ctx context.Context, viewerUserID, channelID int64, offset, limit int) (domain.ChannelParticipantList, error)
 }
 
-type activeChannelBotMemberIDLister interface {
-	ListActiveChannelBotMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error)
+type activeChannelBotMemberRoleLister interface {
+	ListActiveChannelBotMemberRoles(ctx context.Context, viewerUserID, channelID int64, limit int) ([]domain.ChannelBotMember, error)
+}
+
+// botUsernameResolver 是 BotProfileResolver 的可选能力：取 bot 当前用户名，判定 /cmd@username
+// 是否发给它。没有该能力时带 @ 后缀的命令按发给所有 bot 处理。
+type botUsernameResolver interface {
+	BotUsername(ctx context.Context, botUserID int64) (string, bool, error)
 }
 
 func (s *Service) getBotParticipants(ctx context.Context, userID, channelID int64, offset, limit int) (domain.ChannelParticipantList, error) {
@@ -106,11 +113,11 @@ func (s *Service) skippedBotDeliveryUserIDs(ctx context.Context, req domain.Send
 	if s.bots == nil || req.ChannelID == 0 || req.UserID == 0 {
 		return nil, nil
 	}
-	memberIDs, err := s.loadActiveBotMemberIDs(ctx, req.UserID, req.ChannelID, domain.MaxSynchronousChannelDialogFanout)
+	members, err := s.loadActiveBotMembers(ctx, req.UserID, req.ChannelID, domain.MaxSynchronousChannelDialogFanout)
 	if err != nil {
 		return nil, err
 	}
-	return s.skippedBotDeliveryUserIDsForIDs(ctx, req, memberIDs)
+	return s.skippedBotDeliveryUserIDsForMembers(ctx, req, members)
 }
 
 // ActiveBotMemberIDs returns active bot members for non-privacy-critical producers
@@ -148,8 +155,12 @@ func (s *Service) loadActiveBotMemberIDs(ctx context.Context, viewerUserID, chan
 	if limit <= 0 || limit > domain.MaxSynchronousChannelDialogFanout {
 		limit = domain.MaxSynchronousChannelDialogFanout
 	}
-	if lister, ok := s.channels.(activeChannelBotMemberIDLister); ok {
-		return lister.ListActiveChannelBotMemberIDs(ctx, viewerUserID, channelID, limit)
+	if lister, ok := s.channels.(activeChannelBotMemberRoleLister); ok {
+		members, err := lister.ListActiveChannelBotMemberRoles(ctx, viewerUserID, channelID, limit)
+		if err != nil {
+			return nil, err
+		}
+		return botMemberIDs(members), nil
 	}
 	if s.bots == nil {
 		return nil, nil
@@ -172,41 +183,85 @@ func (s *Service) loadActiveBotMemberIDs(ctx context.Context, viewerUserID, chan
 	return out, nil
 }
 
-func (s *Service) skippedBotDeliveryUserIDsForIDs(ctx context.Context, req domain.SendChannelMessageRequest, memberIDs []int64) ([]int64, error) {
+// loadActiveBotMembers 列出群里在群的 bot 成员及其角色，供 privacy 投递判定；不走缓存，
+// 角色变更（任免管理员）立刻生效，避免陈旧缓存把消息漏给刚被撤权的 bot。
+func (s *Service) loadActiveBotMembers(ctx context.Context, viewerUserID, channelID int64, limit int) ([]domain.ChannelBotMember, error) {
+	if s == nil || s.channels == nil || viewerUserID == 0 || channelID == 0 {
+		return nil, domain.ErrChannelInvalid
+	}
+	if limit <= 0 || limit > domain.MaxSynchronousChannelDialogFanout {
+		limit = domain.MaxSynchronousChannelDialogFanout
+	}
+	if lister, ok := s.channels.(activeChannelBotMemberRoleLister); ok {
+		return lister.ListActiveChannelBotMemberRoles(ctx, viewerUserID, channelID, limit)
+	}
+	if s.bots == nil {
+		return nil, nil
+	}
+	_, _, active, err := s.channels.ListActiveChannelMembers(ctx, viewerUserID, channelID, limit)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(active))
+	for _, member := range active {
+		ids = append(ids, member.UserID)
+	}
+	profiles, err := s.botProfiles(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.ChannelBotMember, 0, len(profiles))
+	for _, member := range active {
+		if _, found := profiles[member.UserID]; found && member.UserID != 0 {
+			out = append(out, domain.ChannelBotMember{UserID: member.UserID, Role: member.Role})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
+	return out, nil
+}
+
+func botMemberIDs(members []domain.ChannelBotMember) []int64 {
+	out := make([]int64, 0, len(members))
+	for _, member := range members {
+		out = append(out, member.UserID)
+	}
+	return out
+}
+
+func (s *Service) skippedBotDeliveryUserIDsForMembers(ctx context.Context, req domain.SendChannelMessageRequest, members []domain.ChannelBotMember) ([]int64, error) {
 	msg := domain.ChannelMessage{
 		ChannelID:    req.ChannelID,
 		SenderUserID: req.UserID,
 		Body:         req.Message,
 		ReplyTo:      req.ReplyTo,
+		ViaBotID:     req.ViaBotID,
 		Action:       req.Action,
 	}
-	return s.skippedPrivacyBotIDs(ctx, req.UserID, memberIDs, []domain.ChannelMessage{msg}, req.MentionUserIDs)
+	return s.skippedPrivacyBotIDs(ctx, req.UserID, members, []domain.ChannelMessage{msg}, req.MentionUserIDs)
 }
 
-// skippedPrivacyBotIDs 是新消息与编辑推送共用的 privacy bot 跳过规则：memberIDs 中
-// bot_chat_history=false 的 bot，若 msgs 里没有一条对它可见（命令/@/回复它/它发的），就跳过直接推送。
+// skippedPrivacyBotIDs 是新消息与编辑推送共用的 privacy bot 跳过规则：members 中开着 privacy mode
+// （bot_chat_history=false）且不是群管理员的 bot，若 msgs 里没有一条对它可见，就跳过直接推送。
 // actorUserID（发送者/编辑者）本人永不跳过。
-func (s *Service) skippedPrivacyBotIDs(ctx context.Context, actorUserID int64, memberIDs []int64, msgs []domain.ChannelMessage, mentionUserIDs []int64) ([]int64, error) {
-	profiles, err := s.botProfiles(ctx, memberIDs)
+func (s *Service) skippedPrivacyBotIDs(ctx context.Context, actorUserID int64, members []domain.ChannelBotMember, msgs []domain.ChannelMessage, mentionUserIDs []int64) ([]int64, error) {
+	profiles, err := s.botProfiles(ctx, botMemberIDs(members))
 	if err != nil {
 		return nil, err
 	}
 	skip := make([]int64, 0)
-	for _, id := range memberIDs {
+	for _, member := range members {
+		id := member.UserID
 		if id == actorUserID {
 			continue
 		}
 		profile, found := profiles[id]
-		if !found || profile.ChatHistory {
+		if !found {
 			continue
 		}
+		viewer := &botViewer{userID: id, exempt: botPrivacyExempt(profile, member.Role)}
 		visible := false
 		for _, msg := range msgs {
-			ok, err := s.botCanSeeChannelMessage(ctx, id, msg, mentionUserIDs)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
+			if s.botCanSeeChannelMessage(ctx, viewer, msg, mentionUserIDs) {
 				visible = true
 				break
 			}
@@ -235,11 +290,11 @@ func (s *Service) applyEditPrivacyBotSkip(ctx context.Context, actorUserID int64
 	if len(msgs) == 0 {
 		return res, nil
 	}
-	memberIDs, err := s.loadActiveBotMemberIDs(ctx, actorUserID, res.Channel.ID, domain.MaxSynchronousChannelDialogFanout)
+	members, err := s.loadActiveBotMembers(ctx, actorUserID, res.Channel.ID, domain.MaxSynchronousChannelDialogFanout)
 	if err != nil {
 		return domain.EditChannelMessageResult{}, err
 	}
-	skip, err := s.skippedPrivacyBotIDs(ctx, actorUserID, memberIDs, msgs, mentionUserIDs)
+	skip, err := s.skippedPrivacyBotIDs(ctx, actorUserID, members, msgs, mentionUserIDs)
 	if err != nil {
 		return domain.EditChannelMessageResult{}, err
 	}
@@ -262,13 +317,14 @@ func (s *Service) filterBotChannelHistory(ctx context.Context, userID int64, his
 		return history
 	}
 	profile, found, err := s.bots.BotInfo(ctx, userID)
-	if err != nil || !found || profile.ChatHistory {
+	if err != nil || !found || botPrivacyExempt(profile, history.Self.Role) {
 		return history
 	}
+	viewer := &botViewer{userID: userID}
 	filtered := history
 	filtered.Messages = make([]domain.ChannelMessage, 0, len(history.Messages))
 	for _, msg := range history.Messages {
-		if visible, err := s.botCanSeeChannelMessage(ctx, userID, msg, nil); err == nil && visible {
+		if s.botCanSeeChannelMessage(ctx, viewer, msg, nil) {
 			filtered.Messages = append(filtered.Messages, msg)
 		}
 	}
@@ -283,9 +339,10 @@ func (s *Service) filterBotChannelDifference(ctx context.Context, userID int64, 
 		return diff
 	}
 	profile, found, err := s.bots.BotInfo(ctx, userID)
-	if err != nil || !found || profile.ChatHistory {
+	if err != nil || !found || botPrivacyExempt(profile, diff.Self.Role) {
 		return diff
 	}
+	viewer := &botViewer{userID: userID}
 	filtered := diff
 	filtered.NewMessages = nil
 	filtered.OtherUpdates = nil
@@ -294,14 +351,14 @@ func (s *Service) filterBotChannelDifference(ctx context.Context, userID int64, 
 	filtered.Channels = nil
 	if diff.TooLong {
 		for _, msg := range diff.NewMessages {
-			if visible, err := s.botCanSeeChannelMessage(ctx, userID, msg, nil); err == nil && visible {
+			if s.botCanSeeChannelMessage(ctx, viewer, msg, nil) {
 				filtered.NewMessages = append(filtered.NewMessages, msg)
 			}
 		}
 		return filtered
 	}
 	for _, event := range diff.Events {
-		visibleEvent, ok := s.filterBotChannelEvent(ctx, userID, event)
+		visibleEvent, ok := s.filterBotChannelEvent(ctx, viewer, event)
 		if !ok {
 			continue
 		}
@@ -316,14 +373,13 @@ func (s *Service) filterBotChannelDifference(ctx context.Context, userID int64, 
 	return filtered
 }
 
-func (s *Service) filterBotChannelEvent(ctx context.Context, botUserID int64, event domain.ChannelUpdateEvent) (domain.ChannelUpdateEvent, bool) {
+func (s *Service) filterBotChannelEvent(ctx context.Context, viewer *botViewer, event domain.ChannelUpdateEvent) (domain.ChannelUpdateEvent, bool) {
 	switch event.Type {
 	case domain.ChannelUpdateNewMessage, domain.ChannelUpdateEditMessage:
 		if event.Message.ID == 0 {
 			return event, true
 		}
-		visible, err := s.botCanSeeChannelMessage(ctx, botUserID, event.Message, nil)
-		if err != nil || !visible {
+		if !s.botCanSeeChannelMessage(ctx, viewer, event.Message, nil) {
 			return domain.ChannelUpdateEvent{}, false
 		}
 		return event, true
@@ -341,12 +397,11 @@ func (s *Service) filterBotChannelEvent(ctx context.Context, botUserID int64, ev
 		}
 		ids := make([]int, 0, len(event.MessageIDs))
 		for _, id := range event.MessageIDs {
-			history, err := s.channels.GetChannelMessages(ctx, botUserID, event.ChannelID, []int{id})
+			history, err := s.channels.GetChannelMessages(ctx, viewer.userID, event.ChannelID, []int{id})
 			if err != nil || len(history.Messages) == 0 {
 				continue
 			}
-			visible, err := s.botCanSeeChannelMessage(ctx, botUserID, history.Messages[0], nil)
-			if err == nil && visible {
+			if s.botCanSeeChannelMessage(ctx, viewer, history.Messages[0], nil) {
 				ids = append(ids, id)
 			}
 		}
@@ -360,39 +415,88 @@ func (s *Service) filterBotChannelEvent(ctx context.Context, botUserID int64, ev
 	}
 }
 
-func (s *Service) botCanSeeChannelMessage(ctx context.Context, botUserID int64, msg domain.ChannelMessage, mentionUserIDs []int64) (bool, error) {
-	if botUserID == 0 {
-		return true, nil
+// botPrivacyExempt 报告 bot 是否不受 privacy mode 限制：关了 privacy mode（bot_chat_history），
+// 或是群的创建者/管理员。与官方一致，群管理员 bot 能看到群里全部消息。
+func botPrivacyExempt(profile domain.BotProfile, role domain.ChannelMemberRole) bool {
+	return profile.ChatHistory || role.IsAdmin()
+}
+
+// botViewer 是一次可见性判定里的某个 bot。exempt=true 时全部可见；用户名只在遇到
+// 带 @ 后缀的命令时才查，并在本次判定内复用。
+type botViewer struct {
+	userID         int64
+	exempt         bool
+	username       string
+	usernameLoaded bool
+}
+
+func (s *Service) botViewerUsername(ctx context.Context, viewer *botViewer) string {
+	if !viewer.usernameLoaded {
+		viewer.usernameLoaded = true
+		if resolver, ok := s.bots.(botUsernameResolver); ok {
+			if username, found, err := resolver.BotUsername(ctx, viewer.userID); err == nil && found {
+				viewer.username = username
+			}
+		}
 	}
-	if msg.SenderUserID == botUserID {
-		return true, nil
+	return viewer.username
+}
+
+// botCanSeeChannelMessage 判定开着 privacy mode 的 bot 能否看到一条群消息，规则对齐官方：
+// 它自己发的、@它的、所有服务消息、经它 inline 发出的、发给它的命令、回复它或其 inline 消息的。
+// 不带 @ 后缀的命令发给群里所有 bot（官方只发给最近发过言的 bot，暂未实现）。
+func (s *Service) botCanSeeChannelMessage(ctx context.Context, viewer *botViewer, msg domain.ChannelMessage, mentionUserIDs []int64) bool {
+	if viewer == nil || viewer.userID == 0 || viewer.exempt {
+		return true
+	}
+	botUserID := viewer.userID
+	if msg.SenderUserID == botUserID || msg.ViaBotID == botUserID {
+		return true
 	}
 	if msg.Mentioned || containsInt64(mentionUserIDs, botUserID) {
-		return true, nil
+		return true
 	}
-	if msg.Action != nil && containsInt64(msg.Action.UserIDs, botUserID) {
-		return true, nil
+	if msg.Action != nil {
+		return true
 	}
-	if messageIsCommand(msg.Body) {
-		return true, nil
+	if isCommand, target := messageCommandTarget(msg.Body); isCommand {
+		if target == "" {
+			return true
+		}
+		// 取不到用户名时无法判定归属，按发给它处理。
+		if username := s.botViewerUsername(ctx, viewer); username == "" || strings.EqualFold(username, target) {
+			return true
+		}
 	}
 	if msg.ReplyTo != nil && msg.ReplyTo.MessageID > 0 {
 		history, err := s.channels.GetChannelMessages(ctx, botUserID, msg.ChannelID, []int{msg.ReplyTo.MessageID})
 		if err != nil {
-			return false, nil
+			return false
 		}
 		for _, target := range history.Messages {
-			if target.SenderUserID == botUserID {
-				return true, nil
+			if target.SenderUserID == botUserID || target.ViaBotID == botUserID {
+				return true
 			}
 		}
 	}
-	return false, nil
+	return false
 }
 
-func messageIsCommand(message string) bool {
+// messageCommandTarget 解析 bot 命令：isCommand 表示消息以 /命令 开头；target 是
+// /cmd@username 里的 username（不带 @），不带后缀时为空。
+func messageCommandTarget(message string) (isCommand bool, target string) {
 	message = strings.TrimSpace(message)
-	return strings.HasPrefix(message, "/") && len(message) > 1
+	if !strings.HasPrefix(message, "/") || len(message) == 1 {
+		return false, ""
+	}
+	word := message[1:]
+	if end := strings.IndexFunc(word, unicode.IsSpace); end >= 0 {
+		word = word[:end]
+	}
+	if at := strings.IndexByte(word, '@'); at >= 0 {
+		return true, word[at+1:]
+	}
+	return true, ""
 }
 
 func containsInt64(ids []int64, target int64) bool {

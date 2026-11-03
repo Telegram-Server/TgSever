@@ -183,6 +183,18 @@ const (
 	ChannelRoleMember  ChannelMemberRole = "member"
 )
 
+// IsAdmin 报告角色是否为创建者或管理员。
+func (r ChannelMemberRole) IsAdmin() bool {
+	return r == ChannelRoleCreator || r == ChannelRoleAdmin
+}
+
+// ChannelBotMember 是群里一个在群 bot 成员及其角色，供 privacy 投递判定用：
+// 群管理员 bot 不受 privacy mode 限制，能看到群里全部消息。
+type ChannelBotMember struct {
+	UserID int64
+	Role   ChannelMemberRole
+}
+
 // ChannelMemberStatus describes current membership state.
 type ChannelMemberStatus string
 

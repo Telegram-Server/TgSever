@@ -94,7 +94,7 @@ func TestResolveDiscussionReadTargetPostgres(t *testing.T) {
 	if err != nil || !directGuestTarget.Guest || directGuestTarget.ChannelID != group.Channel.ID {
 		t.Fatalf("direct linked-group guest read target = %+v err %v", directGuestTarget, err)
 	}
-	if _, err := channels.ListActiveChannelBotMemberIDs(ctx, subscriber.ID, group.Channel.ID, 20); err != nil {
+	if _, err := channels.ListActiveChannelBotMemberRoles(ctx, subscriber.ID, group.Channel.ID, 20); err != nil {
 		t.Fatalf("linked guest bot-delivery preflight: %v", err)
 	}
 	if _, err := channels.ListActiveChannelBotMembers(ctx, subscriber.ID, group.Channel.ID, 0, 20); err != nil {

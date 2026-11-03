@@ -9,6 +9,45 @@ import (
 	"context"
 )
 
+const listActiveChannelBotMemberRoles = `-- name: ListActiveChannelBotMemberRoles :many
+SELECT m.user_id, m.role
+FROM bots b
+JOIN channel_members m ON m.user_id = b.bot_user_id
+WHERE m.channel_id = $1 AND m.status = 'active'
+ORDER BY m.user_id
+LIMIT $2
+`
+
+type ListActiveChannelBotMemberRolesParams struct {
+	ChannelID int64
+	Limit     int32
+}
+
+type ListActiveChannelBotMemberRolesRow struct {
+	UserID int64
+	Role   string
+}
+
+func (q *Queries) ListActiveChannelBotMemberRoles(ctx context.Context, arg ListActiveChannelBotMemberRolesParams) ([]ListActiveChannelBotMemberRolesRow, error) {
+	rows, err := q.db.Query(ctx, listActiveChannelBotMemberRoles, arg.ChannelID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveChannelBotMemberRolesRow
+	for rows.Next() {
+		var i ListActiveChannelBotMemberRolesRow
+		if err := rows.Scan(&i.UserID, &i.Role); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveChannelMemberIDsAfter = `-- name: ListActiveChannelMemberIDsAfter :many
 SELECT user_id
 FROM channel_members

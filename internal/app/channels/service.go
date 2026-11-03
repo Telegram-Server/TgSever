@@ -2248,7 +2248,7 @@ func (s *Service) ChannelPollFanoutViews(ctx context.Context, channelID int64, m
 			if poll == nil {
 				continue
 			}
-			if !s.botViewerCanSeeChannelMessage(ctx, viewer, views.Message) {
+			if !s.botViewerCanSeeChannelMessage(ctx, viewer, channelID, views.Message) {
 				views.Polls[viewer] = nil
 			}
 		}
@@ -2256,9 +2256,9 @@ func (s *Service) ChannelPollFanoutViews(ctx context.Context, channelID int64, m
 	return views.Polls, nil
 }
 
-// botViewerCanSeeChannelMessage 复刻 filterBotChannelHistory 的单消息判定：非 bot 或带 ChatHistory
-// 的 bot 一律可见；无 ChatHistory 的 bot 按 botCanSeeChannelMessage 判定该条消息是否可见。
-func (s *Service) botViewerCanSeeChannelMessage(ctx context.Context, viewer int64, msg domain.ChannelMessage) bool {
+// botViewerCanSeeChannelMessage 复刻 filterBotChannelHistory 的单消息判定：非 bot、关了 privacy
+// mode 或是群管理员的 bot 一律可见；其余 bot 按 botCanSeeChannelMessage 判定该条消息是否可见。
+func (s *Service) botViewerCanSeeChannelMessage(ctx context.Context, viewer, channelID int64, msg domain.ChannelMessage) bool {
 	if s.bots == nil || viewer == 0 {
 		return true
 	}
@@ -2266,8 +2266,11 @@ func (s *Service) botViewerCanSeeChannelMessage(ctx context.Context, viewer int6
 	if err != nil || !found || profile.ChatHistory {
 		return true
 	}
-	visible, err := s.botCanSeeChannelMessage(ctx, viewer, msg, nil)
-	return err == nil && visible
+	member, err := s.channels.GetParticipant(ctx, viewer, channelID, viewer)
+	if err != nil {
+		return false
+	}
+	return s.botCanSeeChannelMessage(ctx, &botViewer{userID: viewer, exempt: botPrivacyExempt(profile, member.Role)}, msg, nil)
 }
 
 // ListStoryMessageForwards returns public channel/supergroup messages that

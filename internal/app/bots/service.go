@@ -522,6 +522,19 @@ func (s *Service) BotInfos(ctx context.Context, botUserIDs []int64) (map[int64]d
 	return s.botProfiles(ctx, botUserIDs)
 }
 
+// BotUsername 返回 bot 当前的用户名（不带 @）。群里 /cmd@username 判定命令发给哪个 bot 时用；
+// 不读 profile 缓存，改名后立即生效。found=false 表示该用户不存在。
+func (s *Service) BotUsername(ctx context.Context, botUserID int64) (string, bool, error) {
+	if s == nil || s.users == nil || botUserID == 0 {
+		return "", false, nil
+	}
+	user, found, err := s.users.ByID(ctx, botUserID)
+	if err != nil || !found {
+		return "", found, err
+	}
+	return user.Username, true, nil
+}
+
 func uniqueBotUserIDs(ids []int64) []int64 {
 	if len(ids) == 0 {
 		return nil

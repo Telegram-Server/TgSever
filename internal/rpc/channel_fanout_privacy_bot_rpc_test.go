@@ -83,6 +83,44 @@ func TestChannelMessageFanoutSkipsPrivacyBotOnlinePush(t *testing.T) {
 	}
 }
 
+// TestChannelMessageFanoutPushesPlainMessageToAdminPrivacyBot：群管理员 bot 不受 privacy mode 限制，
+// 在线时经实时 fanout 收到普通群消息（放行矩阵在 app/channels 测，这里只测接线）。
+func TestChannelMessageFanoutPushesPlainMessageToAdminPrivacyBot(t *testing.T) {
+	ctx := context.Background()
+	channelService := appchannels.NewService(memory.NewChannelStore(), appchannels.WithBotProfileResolver(privacyBotResolver{1003: true}))
+	created, err := channelService.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Privacy",
+		MemberUserIDs: []int64{1002, 1003},
+		Date:          10,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	if _, err := channelService.EditAdmin(ctx, 1001, domain.EditChannelAdminRequest{ChannelID: created.Channel.ID, MemberID: 1003, AdminRights: domain.ChannelAdminRights{PinMessages: true}, Date: 11}); err != nil {
+		t.Fatalf("promote bot: %v", err)
+	}
+	res, err := channelService.SendMessage(ctx, 1002, domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  2001,
+		Message:   "plain group chatter",
+		Date:      12,
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	sessions := &captureSessions{
+		channelMembers: map[int64][]int64{created.Channel.ID: {1001, 1003}},
+	}
+	users := &prefetchRecordingUsersService{mapUsersService: mapUsersService{users: map[int64]domain.User{
+		1002: {ID: 1002, FirstName: "sender"},
+	}}}
+	r := New(Config{}, Deps{Channels: channelService, Sessions: sessions, Users: users}, zaptest.NewLogger(t), clock.System)
+	r.enqueueChannelMessageFanout(ctx, 1002, res, nil)
+	if pushed := sessions.pushedUserIDs(); !fanoutHasID(pushed, 1003) {
+		t.Fatalf("fanout pushed = %v, admin bot 1003 must receive plain-message push", pushed)
+	}
+}
+
 // privacyBotEditFanoutPushed 在含 privacy bot 1003 的超级群里由 1001 发出 original，再编辑成 edited，
 // 两成员在线，返回编辑在线 fanout 实际推送到的用户。
 func privacyBotEditFanoutPushed(t *testing.T, original, edited string) []int64 {

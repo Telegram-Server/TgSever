@@ -71,12 +71,22 @@ func TestChannelStoreListActiveChannelBotMembers(t *testing.T) {
 	if hidden.Count != 0 || len(hidden.Participants) != 0 {
 		t.Fatalf("hidden bot members = %+v, want empty for ordinary member", hidden)
 	}
-	internalIDs, err := channels.ListActiveChannelBotMemberIDs(ctx, friend.ID, channelID, 20)
+	internal, err := channels.ListActiveChannelBotMemberRoles(ctx, friend.ID, channelID, 20)
 	if err != nil {
-		t.Fatalf("list hidden bot member ids as ordinary member: %v", err)
+		t.Fatalf("list hidden bot member roles as ordinary member: %v", err)
 	}
-	if len(internalIDs) != 1 || internalIDs[0] != bot.ID {
-		t.Fatalf("internal hidden bot ids = %+v, want bot %d", internalIDs, bot.ID)
+	if len(internal) != 1 || internal[0].UserID != bot.ID || internal[0].Role != domain.ChannelRoleMember {
+		t.Fatalf("internal hidden bot members = %+v, want bot %d as member", internal, bot.ID)
+	}
+	if _, err := channels.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{UserID: owner.ID, ChannelID: channelID, MemberID: bot.ID, AdminRights: domain.ChannelAdminRights{PinMessages: true}, Date: 1700008901}); err != nil {
+		t.Fatalf("promote bot: %v", err)
+	}
+	promoted, err := channels.ListActiveChannelBotMemberRoles(ctx, friend.ID, channelID, 20)
+	if err != nil {
+		t.Fatalf("list bot member roles after promote: %v", err)
+	}
+	if len(promoted) != 1 || promoted[0].UserID != bot.ID || promoted[0].Role != domain.ChannelRoleAdmin {
+		t.Fatalf("promoted bot members = %+v, want bot %d as admin", promoted, bot.ID)
 	}
 	ownerVisible, err := channels.ListActiveChannelBotMembers(ctx, owner.ID, channelID, 0, 20)
 	if err != nil {

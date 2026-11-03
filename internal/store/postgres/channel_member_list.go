@@ -11,6 +11,7 @@ import (
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error) {
@@ -284,33 +285,27 @@ OFFSET $2 LIMIT $3`, channelID, offset, limit)
 	return out, nil
 }
 
-func (s *ChannelStore) ListActiveChannelBotMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error) {
+// ListActiveChannelBotMemberRoles 列出群里在群的 bot 成员及其角色（按 user_id 升序），
+// 不受 participants_hidden 影响：这是投递判定的内部视图，不是对外的成员列表。
+func (s *ChannelStore) ListActiveChannelBotMemberRoles(ctx context.Context, viewerUserID, channelID int64, limit int) ([]domain.ChannelBotMember, error) {
 	if _, _, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > domain.MaxSynchronousChannelDialogFanout {
 		limit = domain.MaxSynchronousChannelDialogFanout
 	}
-	rows, err := s.db.Query(ctx, `
-SELECT m.user_id
-FROM bots b
-JOIN channel_members m ON m.user_id = b.bot_user_id
-WHERE m.channel_id = $1 AND m.status = 'active'
-ORDER BY m.user_id
-LIMIT $2`, channelID, limit)
+	rows, err := sqlcgen.New(s.db).ListActiveChannelBotMemberRoles(ctx, sqlcgen.ListActiveChannelBotMemberRolesParams{
+		ChannelID: channelID,
+		Limit:     int32(limit),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("list active channel bot member ids: %w", err)
+		return nil, fmt.Errorf("list active channel bot member roles: %w", err)
 	}
-	defer rows.Close()
-	out := make([]int64, 0, minInt(limit, domain.MaxChannelParticipantsLimit))
-	for rows.Next() {
-		var userID int64
-		if err := rows.Scan(&userID); err != nil {
-			return nil, err
-		}
-		out = append(out, userID)
+	out := make([]domain.ChannelBotMember, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.ChannelBotMember{UserID: row.UserID, Role: domain.ChannelMemberRole(row.Role)})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *ChannelStore) FilterActiveChannelMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error) {
