@@ -166,10 +166,10 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
     return <BotsPage navigate={navigate} />;
   }
   if (route.path === "/broadcasts") {
-    return <BroadcastsPage />;
+    return <BroadcastsPage navigate={navigate} />;
   }
   if (route.path === "/broadcast-schedules") {
-    return <BroadcastSchedulesPage />;
+    return <BroadcastSchedulesPage navigate={navigate} />;
   }
   if (route.path === "/moderation") {
     return <ModerationCasesPage navigate={navigate} />;

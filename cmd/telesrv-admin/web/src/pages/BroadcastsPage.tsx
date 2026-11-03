@@ -1,9 +1,11 @@
 import { ChevronLeft, ChevronRight, Megaphone, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatDate } from "../lib/format";
+import type { Navigate } from "../routing";
 import type { BroadcastListResponse, BroadcastRow } from "../types";
 import { CreateBroadcastModal } from "./CreateBroadcastModal";
 
@@ -13,7 +15,7 @@ function status(row: BroadcastRow): "enumerating" | "delivering" | "completed" {
   return "completed";
 }
 
-export function BroadcastsPage() {
+export function BroadcastsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [data, setData] = useState<BroadcastListResponse | null>(null);
   const [cursor, setCursor] = useState("0");
@@ -67,6 +69,7 @@ export function BroadcastsPage() {
         <button className="btn" type="button" onClick={() => loadPage(cursor)} disabled={busy}><RefreshCw size={15} /> {t("common.refresh")}</button>
       </div>}
     >
+      <SectionTabs sectionId="broadcasts" active="/broadcasts" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       {createOpen && <CreateBroadcastModal onClose={() => setCreateOpen(false)} onCreated={() => loadPage("0", true)} />}
       <div className="metric-row">

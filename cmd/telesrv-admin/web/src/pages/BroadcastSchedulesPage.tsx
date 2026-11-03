@@ -2,10 +2,12 @@ import { CalendarClock, Pause, Pencil, Play, RefreshCw, Trash2 } from "lucide-re
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatDate } from "../lib/format";
 import { permissionBroadcastsSchedule, usePermissions } from "../permissions";
+import type { Navigate } from "../routing";
 import type { BroadcastScheduleListResponse, BroadcastScheduleRow } from "../types";
 import { BroadcastScheduleModal, formatTimeOfDay, weekdayOrder } from "./BroadcastScheduleModal";
 
@@ -22,7 +24,7 @@ function formatInZone(value: string | null, zone: string): string {
   }
 }
 
-export function BroadcastSchedulesPage() {
+export function BroadcastSchedulesPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const { can } = usePermissions();
   const canManage = can(permissionBroadcastsSchedule);
@@ -64,6 +66,7 @@ export function BroadcastSchedulesPage() {
         <button className="btn" type="button" onClick={() => load()} disabled={busy}><RefreshCw size={15} /> {t("common.refresh")}</button>
       </div>}
     >
+      <SectionTabs sectionId="broadcasts" active="/broadcast-schedules" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       {editing !== undefined && (
         // onSaved only reloads: the confirm result is shown by the ActionButton
