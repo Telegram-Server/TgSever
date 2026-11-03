@@ -937,6 +937,18 @@ ON CONFLICT (user_id, filter_id) DO UPDATE SET
   filter = EXCLUDED.filter,
   updated_at = now();
 
+-- name: LockUserDialogFolders :exec
+-- 事务级锁住某个用户的文件夹集合，让“数一下再新建”对同一用户串行，并发新建不会一起越过上限。
+SELECT pg_advisory_xact_lock(hashtextextended('dialog_filters:' || sqlc.arg(user_id)::bigint::text, 0));
+
+-- name: DialogFolderExists :one
+SELECT EXISTS (
+  SELECT 1 FROM dialog_filters WHERE user_id = $1 AND filter_id = $2
+);
+
+-- name: CountDialogFolders :one
+SELECT count(*) FROM dialog_filters WHERE user_id = $1;
+
 -- name: DeleteDialogFolder :exec
 DELETE FROM dialog_filters
 WHERE user_id = $1

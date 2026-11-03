@@ -49,6 +49,10 @@ type DialogStore interface {
 	ListFolders(ctx context.Context, userID int64) (domain.DialogFolderList, error)
 	GetFolder(ctx context.Context, userID int64, folderID int) (domain.DialogFolder, bool, error)
 	UpsertFolder(ctx context.Context, userID int64, folder domain.DialogFolder) error
+	// UpsertFolderWithinLimit 与 UpsertFolder 相同，但 folder 是新建且用户已有 limit 个
+	// 自定义文件夹时不写入，返回 domain.ErrDialogFoldersTooMuch。修改已有文件夹不受限，
+	// 降级后超出的文件夹照常可改。同一用户的并发新建串行判定，不会一起越过上限。
+	UpsertFolderWithinLimit(ctx context.Context, userID int64, folder domain.DialogFolder, limit int) error
 	DeleteFolder(ctx context.Context, userID int64, folderID int) error
 	ReorderFolders(ctx context.Context, userID int64, order []int) error
 	SetFolderTagsEnabled(ctx context.Context, userID int64, enabled bool) error

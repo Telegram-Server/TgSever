@@ -582,6 +582,21 @@ func (s *DialogStore) GetFolder(_ context.Context, userID int64, folderID int) (
 func (s *DialogStore) UpsertFolder(_ context.Context, userID int64, folder domain.DialogFolder) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.upsertFolderLocked(userID, folder)
+	return nil
+}
+
+func (s *DialogStore) UpsertFolderWithinLimit(_ context.Context, userID int64, folder domain.DialogFolder, limit int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.folders[userID][folder.ID]; !exists && len(s.folders[userID]) >= limit {
+		return domain.ErrDialogFoldersTooMuch
+	}
+	s.upsertFolderLocked(userID, folder)
+	return nil
+}
+
+func (s *DialogStore) upsertFolderLocked(userID int64, folder domain.DialogFolder) {
 	if s.folders[userID] == nil {
 		s.folders[userID] = make(map[int]domain.DialogFolder)
 	}
@@ -589,7 +604,6 @@ func (s *DialogStore) UpsertFolder(_ context.Context, userID int64, folder domai
 	if !containsInt(s.folderOrder[userID], folder.ID) {
 		s.folderOrder[userID] = append(s.folderOrder[userID], folder.ID)
 	}
-	return nil
 }
 
 func (s *DialogStore) DeleteFolder(_ context.Context, userID int64, folderID int) error {

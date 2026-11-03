@@ -4,7 +4,9 @@ import "errors"
 
 const (
 	// MaxChatlistInvitePeers bounds one exported shared folder link snapshot.
-	MaxChatlistInvitePeers = MaxDialogFolderPeers
+	// It stays at the non-premium folder size so a link never carries more chats
+	// than a non-premium joiner's folder can hold.
+	MaxChatlistInvitePeers = DialogFolderChatsLimitDefault
 	// MaxChatlistInvitesDefault follows the non-premium appConfig limit.
 	MaxChatlistInvitesDefault = 3
 	// MaxChatlistInvitesPremium follows the premium appConfig limit.
@@ -26,6 +28,10 @@ var (
 	ErrChatlistPeersTooMuch   = errors.New("chatlist peers too much")
 	ErrChatlistNotShareable   = errors.New("chatlist not shareable")
 	ErrChatlistSlugOccupied   = errors.New("chatlist slug occupied")
+
+	// ErrDialogFoldersTooMuch: creating one more folder (directly or by joining a
+	// shared folder) would exceed DialogFoldersLimit.
+	ErrDialogFoldersTooMuch = errors.New("dialog folders too much")
 )
 
 // ChatlistInvite is one exported shared-folder link. Peers is a bounded

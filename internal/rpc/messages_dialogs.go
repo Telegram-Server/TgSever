@@ -443,13 +443,17 @@ func (r *Router) onMessagesUpdateDialogFilter(ctx context.Context, req *tg.Messa
 	filter, ok := req.GetFilter()
 	var folder *domain.DialogFolder
 	if ok {
-		parsed, err := r.dialogFolderFromTG(ctx, userID, req.ID, filter)
+		premium := r.userIsPremium(ctx, userID)
+		parsed, err := r.dialogFolderFromTG(ctx, userID, req.ID, filter, domain.DialogFolderChatsLimit(premium))
 		if err != nil {
 			return false, err
 		}
 		folder = &parsed
 		if r.deps.Dialogs != nil {
-			if err := r.deps.Dialogs.SaveDialogFolder(ctx, userID, parsed); err != nil {
+			if err := r.deps.Dialogs.SaveDialogFolder(ctx, userID, parsed, domain.DialogFoldersLimit(premium)); err != nil {
+				if errors.Is(err, domain.ErrDialogFoldersTooMuch) {
+					return false, dialogFiltersTooMuchErr()
+				}
 				return false, internalErr()
 			}
 		}
@@ -1044,7 +1048,9 @@ func (r *Router) dialogPeersFromInput(ctx context.Context, userID int64, items [
 	return peers, nil
 }
 
-func (r *Router) dialogFolderFromTG(ctx context.Context, userID int64, id int, filter tg.DialogFilterClass) (domain.DialogFolder, error) {
+// dialogFolderFromTG 解析客户端提交的文件夹。chatsLimit 是收录（include ∪ pinned）与
+// 排除会话各自的上限，按会员档位传入（domain.DialogFolderChatsLimit）。
+func (r *Router) dialogFolderFromTG(ctx context.Context, userID int64, id int, filter tg.DialogFilterClass, chatsLimit int) (domain.DialogFolder, error) {
 	if id < domain.DialogCustomFolderMinID {
 		return domain.DialogFolder{}, filterIDInvalidErr()
 	}
@@ -1067,6 +1073,9 @@ func (r *Router) dialogFolderFromTG(ctx context.Context, userID int64, id int, f
 		}
 		exclude, err := r.dialogFolderPeersFromInput(ctx, userID, f.ExcludePeers)
 		if err != nil {
+			return domain.DialogFolder{}, err
+		}
+		if err := checkDialogFolderChats(pinned, include, exclude, chatsLimit); err != nil {
 			return domain.DialogFolder{}, err
 		}
 		emoticon, hasEmoticon := f.GetEmoticon()
@@ -1115,6 +1124,9 @@ func (r *Router) dialogFolderFromTG(ctx context.Context, userID int64, id int, f
 		if err != nil {
 			return domain.DialogFolder{}, err
 		}
+		if err := checkDialogFolderChats(pinned, include, nil, chatsLimit); err != nil {
+			return domain.DialogFolder{}, err
+		}
 		emoticon, hasEmoticon := f.GetEmoticon()
 		color, hasColor := f.GetColor()
 		return domain.DialogFolder{
@@ -1134,6 +1146,25 @@ func (r *Router) dialogFolderFromTG(ctx context.Context, userID int64, id int, f
 	default:
 		return domain.DialogFolder{}, inputConstructorInvalidErr()
 	}
+}
+
+// checkDialogFolderChats 按 appConfig dialog_filters_chats_limit 的口径检查一个文件夹：
+// 置顶会话本身也是收录的会话，所以 include 与 pinned 去重后合计不超过 limit；排除列表单独计。
+func checkDialogFolderChats(pinned, include, exclude []domain.DialogFolderPeer, limit int) error {
+	if len(exclude) > limit {
+		return limitInvalidErr()
+	}
+	included := make(map[domain.Peer]struct{}, len(pinned)+len(include))
+	for _, item := range pinned {
+		included[item.Peer] = struct{}{}
+	}
+	for _, item := range include {
+		included[item.Peer] = struct{}{}
+	}
+	if len(included) > limit {
+		return limitInvalidErr()
+	}
+	return nil
 }
 
 func (r *Router) dialogFolderPeersFromInput(ctx context.Context, userID int64, peers []tg.InputPeerClass) ([]domain.DialogFolderPeer, error) {

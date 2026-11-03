@@ -559,6 +559,8 @@ func chatlistErr(err error) error {
 		return invitesTooMuchErr()
 	case errors.Is(err, domain.ErrChatlistsTooMuch):
 		return chatlistsTooMuchErr()
+	case errors.Is(err, domain.ErrDialogFoldersTooMuch):
+		return filtersTooMuchErr()
 	case errors.Is(err, domain.ErrChatlistPeersEmpty):
 		return peersListEmptyErr()
 	case errors.Is(err, domain.ErrChatlistPeersTooMuch):

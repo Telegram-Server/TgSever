@@ -1065,6 +1065,42 @@ func (s *DialogStore) UpsertFolder(ctx context.Context, userID int64, folder dom
 	return nil
 }
 
+func (s *DialogStore) UpsertFolderWithinLimit(ctx context.Context, userID int64, folder domain.DialogFolder, limit int) error {
+	data, err := json.Marshal(folder)
+	if err != nil {
+		return fmt.Errorf("marshal dialog folder: %w", err)
+	}
+	filterID := pgInt32NonNegative(folder.ID)
+	return withTx(ctx, s.db, "upsert dialog folder within limit", func(tx pgx.Tx) error {
+		q := sqlcgen.New(tx)
+		if err := q.LockUserDialogFolders(ctx, userID); err != nil {
+			return fmt.Errorf("lock dialog folders: %w", err)
+		}
+		exists, err := q.DialogFolderExists(ctx, sqlcgen.DialogFolderExistsParams{UserID: userID, FilterID: filterID})
+		if err != nil {
+			return fmt.Errorf("check dialog folder: %w", err)
+		}
+		if !exists {
+			count, err := q.CountDialogFolders(ctx, userID)
+			if err != nil {
+				return fmt.Errorf("count dialog folders: %w", err)
+			}
+			if count >= int64(limit) {
+				return domain.ErrDialogFoldersTooMuch
+			}
+		}
+		if err := q.UpsertDialogFolder(ctx, sqlcgen.UpsertDialogFolderParams{
+			UserID:     userID,
+			FilterID:   filterID,
+			IsChatlist: folder.IsChatlist,
+			FilterJson: data,
+		}); err != nil {
+			return fmt.Errorf("upsert dialog folder: %w", err)
+		}
+		return nil
+	})
+}
+
 func (s *DialogStore) DeleteFolder(ctx context.Context, userID int64, folderID int) error {
 	if err := s.q.DeleteDialogFolder(ctx, sqlcgen.DeleteDialogFolderParams{
 		UserID:   userID,

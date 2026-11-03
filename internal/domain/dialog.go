@@ -21,10 +21,20 @@ const (
 	DialogArchiveFolderID = 1
 	// DialogCustomFolderMinID 起才允许用户自定义 filter。
 	DialogCustomFolderMinID = 2
-	// MaxDialogFolders 限制单用户自定义 filter 数量，避免无界配置拖垮启动同步。
+	// MaxDialogFolders 是自定义 filter ID 与排序列表的硬上限，避免无界配置拖垮启动同步。
+	// 用户实际能建的数量按会员分档（DialogFoldersLimit），始终不超过它。
 	MaxDialogFolders = 100
-	// MaxDialogFolderPeers 限制单 filter 中 include/exclude/pinned peer 数。
-	MaxDialogFolderPeers = 100
+	// DialogFoldersLimitDefault/Premium 是单用户自定义文件夹（含加入的共享文件夹）数量上限，
+	// 与 appConfig dialog_filters_limit_default/premium 一致；新建超限返回 DIALOG_FILTERS_TOO_MUCH。
+	// 本服务有意高于官方（10/20）。
+	DialogFoldersLimitDefault = 20
+	DialogFoldersLimitPremium = 50
+	// MaxDialogFolderPeers 是单 filter 中 include/exclude/pinned 每个列表的硬上限（= 会员档）。
+	MaxDialogFolderPeers = DialogFolderChatsLimitPremium
+	// DialogFolderChatsLimitDefault/Premium 对齐 appConfig dialog_filters_chats_limit_default/premium：
+	// 一个文件夹收录（include ∪ pinned）与排除的会话各自不超过这个数。
+	DialogFolderChatsLimitDefault = 100
+	DialogFolderChatsLimitPremium = 200
 	// MaxDialogFolderTitleRunes 对齐 Telegram folder title 的短标题语义。
 	MaxDialogFolderTitleRunes = 64
 	// MaxDialogDraftsPerUser bounds messages.getAllDrafts / clearAllDrafts work.
@@ -54,6 +64,22 @@ func PinnedDialogsLimit(folderID int, premium bool) int {
 		return MaxPinnedDialogsMainFolderPremium
 	}
 	return MaxPinnedDialogsMainFolder
+}
+
+// DialogFoldersLimit 返回用户可拥有的自定义文件夹数量上限（premium 双档）。
+func DialogFoldersLimit(premium bool) int {
+	if premium {
+		return DialogFoldersLimitPremium
+	}
+	return DialogFoldersLimitDefault
+}
+
+// DialogFolderChatsLimit 返回单个文件夹收录或排除的会话数上限（premium 双档）。
+func DialogFolderChatsLimit(premium bool) int {
+	if premium {
+		return DialogFolderChatsLimitPremium
+	}
+	return DialogFolderChatsLimitDefault
 }
 
 // Peer 是业务层 peer 值对象，不依赖 TL 类型。

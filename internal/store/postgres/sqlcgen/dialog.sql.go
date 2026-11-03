@@ -143,6 +143,17 @@ func (q *Queries) CountArchiveUnreadDialogs(ctx context.Context, userID int64) (
 	return i, err
 }
 
+const countDialogFolders = `-- name: CountDialogFolders :one
+SELECT count(*) FROM dialog_filters WHERE user_id = $1
+`
+
+func (q *Queries) CountDialogFolders(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countDialogFolders, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteDialogByPeer = `-- name: DeleteDialogByPeer :exec
 WITH dropped_drafts AS (
     -- 删除会话同时丢弃该 peer 的云草稿，避免对端重建会话后旧草稿复活。
@@ -213,6 +224,24 @@ type DeleteDialogFolderParams struct {
 func (q *Queries) DeleteDialogFolder(ctx context.Context, arg DeleteDialogFolderParams) error {
 	_, err := q.db.Exec(ctx, deleteDialogFolder, arg.UserID, arg.FilterID)
 	return err
+}
+
+const dialogFolderExists = `-- name: DialogFolderExists :one
+SELECT EXISTS (
+  SELECT 1 FROM dialog_filters WHERE user_id = $1 AND filter_id = $2
+)
+`
+
+type DialogFolderExistsParams struct {
+	UserID   int64
+	FilterID int32
+}
+
+func (q *Queries) DialogFolderExists(ctx context.Context, arg DialogFolderExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, dialogFolderExists, arg.UserID, arg.FilterID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const editDialogPeerFolders = `-- name: EditDialogPeerFolders :exec
@@ -1543,6 +1572,16 @@ func (q *Queries) ListPrivateDialogOwners(ctx context.Context, arg ListPrivateDi
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockUserDialogFolders = `-- name: LockUserDialogFolders :exec
+SELECT pg_advisory_xact_lock(hashtextextended('dialog_filters:' || $1::bigint::text, 0))
+`
+
+// 事务级锁住某个用户的文件夹集合，让“数一下再新建”对同一用户串行，并发新建不会一起越过上限。
+func (q *Queries) LockUserDialogFolders(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, lockUserDialogFolders, userID)
+	return err
 }
 
 const markDialogRead = `-- name: MarkDialogRead :one

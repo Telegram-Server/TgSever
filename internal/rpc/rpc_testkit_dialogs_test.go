@@ -138,7 +138,7 @@ func (s *captureDialogs) GetDialogFolders(_ context.Context, _ int64) (domain.Di
 	return s.folderList, nil
 }
 
-func (s *captureDialogs) SaveDialogFolder(_ context.Context, _ int64, folder domain.DialogFolder) error {
+func (s *captureDialogs) SaveDialogFolder(_ context.Context, _ int64, folder domain.DialogFolder, _ int) error {
 	s.savedFolder = folder
 	return nil
 }

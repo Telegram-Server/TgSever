@@ -1195,11 +1195,13 @@ func (s *Service) GetDialogFolders(ctx context.Context, userID int64) (domain.Di
 	return s.dialogs.ListFolders(ctx, userID)
 }
 
-func (s *Service) SaveDialogFolder(ctx context.Context, userID int64, folder domain.DialogFolder) error {
+// SaveDialogFolder 保存一个自定义文件夹。新建时用户已有 limit 个文件夹则返回
+// domain.ErrDialogFoldersTooMuch；修改已有文件夹不受限。
+func (s *Service) SaveDialogFolder(ctx context.Context, userID int64, folder domain.DialogFolder, limit int) error {
 	if s == nil || s.dialogs == nil || userID == 0 {
 		return nil
 	}
-	if err := s.dialogs.UpsertFolder(ctx, userID, folder); err != nil {
+	if err := s.dialogs.UpsertFolderWithinLimit(ctx, userID, folder, limit); err != nil {
 		return err
 	}
 	s.invalidateDialogListHashes(userID)

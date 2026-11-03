@@ -57,6 +57,12 @@ func invitesTooMuchErr() error { return tgerr.New(400, "INVITES_TOO_MUCH") }
 
 func chatlistsTooMuchErr() error { return tgerr.New(400, "CHATLISTS_TOO_MUCH") }
 
+// dialogFiltersTooMuchErr：messages.updateDialogFilter 新建文件夹超出数量上限（官方同名）。
+func dialogFiltersTooMuchErr() error { return tgerr.New(400, "DIALOG_FILTERS_TOO_MUCH") }
+
+// filtersTooMuchErr：加入共享文件夹会让文件夹数超出上限（chatlists.joinChatlistInvite，官方同名）。
+func filtersTooMuchErr() error { return tgerr.New(400, "FILTERS_TOO_MUCH") }
+
 func peersListEmptyErr() error { return tgerr.New(400, "PEERS_LIST_EMPTY") }
 
 // peerIDInvalidErr 表示目标 peer 不存在或当前阶段不支持。

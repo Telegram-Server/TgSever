@@ -289,6 +289,13 @@ func (s *Service) JoinInvite(ctx context.Context, userID int64, slug string, pee
 	if count >= s.joinedLimit(ctx, userID) {
 		return domain.ChatlistJoinResult{}, domain.ErrChatlistsTooMuch
 	}
+	// 文件夹数量先在加入频道之前判一次，满了就不必先加入再退出；
+	// 并发新建由下面的 UpsertFolderWithinLimit 兜底。
+	foldersLimit := s.foldersLimit(ctx, userID)
+	filterID, err := s.nextLocalFilterID(ctx, userID, foldersLimit)
+	if err != nil {
+		return domain.ChatlistJoinResult{}, err
+	}
 	channelResults, skipped, err := s.joinChannelPeers(ctx, invite.OwnerUserID, userID, selected, date)
 	botUpdates := channelBotUpdates(channelResults)
 	if err != nil {
@@ -296,10 +303,6 @@ func (s *Service) JoinInvite(ctx context.Context, userID int64, slug string, pee
 	}
 	if selected = peersDifference(selected, skipped); len(selected) == 0 {
 		return domain.ChatlistJoinResult{}, domain.ErrChannelUserBanned
-	}
-	filterID, err := s.nextLocalFilterID(ctx, userID)
-	if err != nil {
-		return domain.ChatlistJoinResult{BotUpdates: botUpdates}, err
 	}
 	folder := importedChatlistFolder(ownerFolder, filterID, selected)
 	membership := domain.ChatlistMembership{
@@ -310,7 +313,7 @@ func (s *Service) JoinInvite(ctx context.Context, userID int64, slug string, pee
 		Slug:          invite.Slug,
 		Date:          date,
 	}
-	if err := s.dialogs.UpsertFolder(ctx, userID, folder); err != nil {
+	if err := s.dialogs.UpsertFolderWithinLimit(ctx, userID, folder, foldersLimit); err != nil {
 		rollbackUpdates, rollbackErr := s.leaveJoinedChannelResults(ctx, userID, channelResults, date)
 		botUpdates = append(botUpdates, rollbackUpdates...)
 		if rollbackErr != nil {
@@ -510,10 +513,15 @@ func (s *Service) memberFolderInvite(ctx context.Context, userID int64, localFil
 	return membership, folder, invite, nil
 }
 
-func (s *Service) nextLocalFilterID(ctx context.Context, userID int64) (int, error) {
+// nextLocalFilterID 为新加入的共享文件夹挑一个空闲的本地 filter ID；用户已有 limit 个
+// 文件夹时返回 domain.ErrDialogFoldersTooMuch。
+func (s *Service) nextLocalFilterID(ctx context.Context, userID int64, limit int) (int, error) {
 	list, err := s.dialogs.ListFolders(ctx, userID)
 	if err != nil {
 		return 0, err
+	}
+	if len(list.Folders) >= limit {
+		return 0, domain.ErrDialogFoldersTooMuch
 	}
 	used := make(map[int]struct{}, len(list.Folders))
 	for _, folder := range list.Folders {
@@ -739,6 +747,11 @@ func (s *Service) joinedLimit(ctx context.Context, userID int64) int {
 		return domain.MaxChatlistsJoinedPremium
 	}
 	return domain.MaxChatlistsJoinedDefault
+}
+
+// foldersLimit 是用户全部自定义文件夹（含加入的共享文件夹）的数量上限。
+func (s *Service) foldersLimit(ctx context.Context, userID int64) int {
+	return domain.DialogFoldersLimit(s != nil && s.premium != nil && s.premium(ctx, userID))
 }
 
 func exportedChatlistFolder(folder domain.DialogFolder, hasMyInvites bool) domain.DialogFolder {

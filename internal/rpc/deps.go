@@ -647,7 +647,8 @@ type DialogsService interface {
 	HidePeerSettingsBar(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
 	PeerSettingsBarHidden(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
 	GetDialogFolders(ctx context.Context, userID int64) (domain.DialogFolderList, error)
-	SaveDialogFolder(ctx context.Context, userID int64, folder domain.DialogFolder) error
+	// SaveDialogFolder 新建时用户已有 limit 个文件夹返回 domain.ErrDialogFoldersTooMuch。
+	SaveDialogFolder(ctx context.Context, userID int64, folder domain.DialogFolder, limit int) error
 	DeleteDialogFolder(ctx context.Context, userID int64, folderID int) error
 	ReorderDialogFolders(ctx context.Context, userID int64, order []int) error
 	ToggleDialogFolderTags(ctx context.Context, userID int64, enabled bool) error

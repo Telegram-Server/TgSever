@@ -393,6 +393,48 @@ func TestSharedFolderPublicPeerFallsBackToSelfJoin(t *testing.T) {
 	}
 }
 
+// 加入共享文件夹也算新建文件夹：已满时在加入频道之前就拒绝，免得先加入再退出。
+// 会员档位更高，同样的人数下仍可加入。
+func TestJoinInviteRespectsFolderLimitBeforeJoiningChannels(t *testing.T) {
+	ctx := context.Background()
+	dialogs := memory.NewDialogStore()
+	channels := &fakeChatlistChannels{publicOnly: true}
+	const ownerID, regularID, premiumID = int64(1001), int64(2002), int64(2003)
+	svc := NewService(
+		memory.NewChatlistStore(),
+		dialogs,
+		WithChannels(channels),
+		WithPremiumChecker(func(_ context.Context, userID int64) bool { return userID == premiumID }),
+		WithSlugGenerator(func() (string, error) { return "slug-limit", nil }),
+	)
+	peer := domain.DialogFolderPeer{Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: 3001}, AccessHash: 31}
+	if err := dialogs.UpsertFolder(ctx, ownerID, domain.DialogFolder{ID: 2, Title: "Shared", IncludePeers: []domain.DialogFolderPeer{peer}}); err != nil {
+		t.Fatalf("seed owner folder: %v", err)
+	}
+	if _, _, err := svc.ExportInvite(ctx, ownerID, 2, "", []domain.DialogFolderPeer{peer}, 100); err != nil {
+		t.Fatalf("ExportInvite: %v", err)
+	}
+	// 两个用户都已有非会员上限那么多个文件夹。
+	for _, userID := range []int64{regularID, premiumID} {
+		for i := 0; i < domain.DialogFoldersLimitDefault; i++ {
+			id := domain.DialogCustomFolderMinID + i
+			if err := dialogs.UpsertFolder(ctx, userID, domain.DialogFolder{ID: id, Title: "own", Contacts: true}); err != nil {
+				t.Fatalf("seed folder %d: %v", id, err)
+			}
+		}
+	}
+
+	if _, err := svc.JoinInvite(ctx, regularID, "slug-limit", []domain.DialogFolderPeer{peer}, 101); !errors.Is(err, domain.ErrDialogFoldersTooMuch) {
+		t.Fatalf("regular JoinInvite at the folder limit: err = %v, want ErrDialogFoldersTooMuch", err)
+	}
+	if len(channels.joinIDs) != 0 || len(channels.inviteIDs) != 0 {
+		t.Fatalf("channels joined before the folder check: join=%v invite=%v", channels.joinIDs, channels.inviteIDs)
+	}
+	if _, err := svc.JoinInvite(ctx, premiumID, "slug-limit", []domain.DialogFolderPeer{peer}, 102); err != nil {
+		t.Fatalf("premium JoinInvite under its higher limit: %v", err)
+	}
+}
+
 func TestExportInviteRejectsRuleBasedFolder(t *testing.T) {
 	ctx := context.Background()
 	dialogs := memory.NewDialogStore()
