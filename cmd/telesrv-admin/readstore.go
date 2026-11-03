@@ -81,8 +81,10 @@ type BroadcastRow struct {
 	SentCount         int64 `json:"SentCount,string"`
 	FailedCount       int64 `json:"FailedCount,string"`
 	EnumerationDone   bool
-	CreatedBy         string
-	CreatedAt         time.Time
+	// ScheduleID 是生成这条广播的自动广播计划；手动广播和计划已删除时为 0。
+	ScheduleID int64 `json:"ScheduleID,string"`
+	CreatedBy  string
+	CreatedAt  time.Time
 }
 
 func (s *readStore) ListBroadcasts(ctx context.Context, beforeID int64, limit int) ([]BroadcastRow, bool, error) {
@@ -94,7 +96,8 @@ func (s *readStore) ListBroadcasts(ctx context.Context, beforeID int64, limit in
 	}
 	rows, err := s.pool.Query(ctx, `
 SELECT id, message, target_mode, target_count, materialized_count,
-       sent_count, failed_count, enumeration_done, created_by, created_at
+       sent_count, failed_count, enumeration_done, COALESCE(schedule_id, 0),
+       created_by, created_at
 FROM broadcasts
 WHERE $1::bigint = 0 OR id < $1
 ORDER BY id DESC
@@ -107,7 +110,7 @@ LIMIT $2`, beforeID, limit+1)
 	for rows.Next() {
 		var item BroadcastRow
 		if err := rows.Scan(&item.ID, &item.Message, &item.TargetMode, &item.TargetCount, &item.MaterializedCount,
-			&item.SentCount, &item.FailedCount, &item.EnumerationDone, &item.CreatedBy, &item.CreatedAt); err != nil {
+			&item.SentCount, &item.FailedCount, &item.EnumerationDone, &item.ScheduleID, &item.CreatedBy, &item.CreatedAt); err != nil {
 			return nil, false, fmt.Errorf("scan broadcast: %w", err)
 		}
 		out = append(out, item)

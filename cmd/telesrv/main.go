@@ -929,7 +929,8 @@ func run(logger *zap.Logger) error {
 		postgres.WithMessageAllocators(boxIDAllocator),
 		postgres.WithMessageLogger(logger.Named("store").Named("messages")))
 	broadcastStore := postgres.NewBroadcastStore(pool)
-	broadcastService := broadcastapp.NewService(broadcastStore, messageStore, logger.Named("app").Named("broadcast"))
+	broadcastService := broadcastapp.NewService(broadcastStore, messageStore, logger.Named("app").Named("broadcast")).
+		WithSchedules(broadcastStore)
 	// 共享频道行/成员缓存 + 统一 read-model LISTEN/NOTIFY 实时失效：消除高频「逐 RPC
 	// 解析频道/成员」在客户端重连同步突发里重复读同一行的放大。
 	channelRowCache := postgres.NewChannelRowCache(cfg.ChannelRowCacheMaxEntries)
@@ -2165,6 +2166,7 @@ func run(logger *zap.Logger) error {
 		GiftGranter:             router,
 		Bots:                    botsService,
 		Broadcast:               broadcastService,
+		BroadcastSchedules:      broadcastService,
 		Emoji:                   filesService,
 		StickerSets:             filesService,
 		GifCatalog:              filesService,

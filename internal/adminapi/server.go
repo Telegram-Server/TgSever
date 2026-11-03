@@ -322,6 +322,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/push/set-device-enabled", s.authenticated(s.handleSetPushDeviceEnabled))
 	mux.HandleFunc("POST /v1/bots/create", s.authenticated(s.handleCreateBot))
 	mux.HandleFunc("POST /v1/broadcasts/create", s.authenticated(s.handleCreateBroadcast))
+	mux.HandleFunc("POST /v1/broadcasts/schedules/create", s.authenticated(s.handleCreateBroadcastSchedule))
+	mux.HandleFunc("POST /v1/broadcasts/schedules/update", s.authenticated(s.handleUpdateBroadcastSchedule))
+	mux.HandleFunc("POST /v1/broadcasts/schedules/delete", s.authenticated(s.handleDeleteBroadcastSchedule))
 	mux.HandleFunc("POST /v1/bots/delete", s.authenticated(s.handleDeleteBot))
 	mux.HandleFunc("POST /v1/bots/export-token", s.authorized(PermissionBotTokenRead, s.handleExportBotToken))
 	mux.HandleFunc("POST /v1/messages/delete", s.authenticated(s.handleDeleteMessages))
@@ -1083,6 +1086,61 @@ func (s *Server) handleCreateBroadcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := service.CreateBroadcast(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// broadcastScheduleService 是自动广播计划的三条命令；没有实现它的服务（测试替身、未接线）
+// 回 501，与 /v1/broadcasts/create 一致。
+type broadcastScheduleService interface {
+	CreateBroadcastSchedule(context.Context, admin.CreateBroadcastScheduleRequest) (admin.CommandResult, error)
+	UpdateBroadcastSchedule(context.Context, admin.UpdateBroadcastScheduleRequest) (admin.CommandResult, error)
+	DeleteBroadcastSchedule(context.Context, admin.DeleteBroadcastScheduleRequest) (admin.CommandResult, error)
+}
+
+func (s *Server) broadcastSchedules(w http.ResponseWriter) (broadcastScheduleService, bool) {
+	service, ok := s.svc.(broadcastScheduleService)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "broadcast schedules are not configured")
+	}
+	return service, ok
+}
+
+func (s *Server) handleCreateBroadcastSchedule(w http.ResponseWriter, r *http.Request) {
+	var req admin.CreateBroadcastScheduleRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	service, ok := s.broadcastSchedules(w)
+	if !ok {
+		return
+	}
+	result, err := service.CreateBroadcastSchedule(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleUpdateBroadcastSchedule(w http.ResponseWriter, r *http.Request) {
+	var req admin.UpdateBroadcastScheduleRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	service, ok := s.broadcastSchedules(w)
+	if !ok {
+		return
+	}
+	result, err := service.UpdateBroadcastSchedule(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteBroadcastSchedule(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteBroadcastScheduleRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	service, ok := s.broadcastSchedules(w)
+	if !ok {
+		return
+	}
+	result, err := service.DeleteBroadcastSchedule(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

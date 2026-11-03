@@ -532,21 +532,23 @@ type Dependencies struct {
 	ChannelNotifier         ChannelNotifier
 	GroupCreator            GroupCreator
 	// PushDevices 是设备推送登记存储，后台推送开关（push.set_device_enabled）用。
-	PushDevices       PushDeviceStore
-	Messages          MessagesService
-	Gifts             GiftsService
-	GiftGranter       GiftGranter
-	OfficialGifts     OfficialGiftsSource
-	Bots              BotService
-	Broadcast         BroadcastService
-	Emoji             EmojiService
-	StickerSets       StickerSetsService
-	GifCatalog        GifCatalogService
-	Moderation        ModerationService
-	Usernames         CollectibleUsernamesService
-	CollectiblePhones CollectiblePhonesService
-	Rating            AccountRatingService
-	Verification      VerificationService
+	PushDevices   PushDeviceStore
+	Messages      MessagesService
+	Gifts         GiftsService
+	GiftGranter   GiftGranter
+	OfficialGifts OfficialGiftsSource
+	Bots          BotService
+	Broadcast     BroadcastService
+	// BroadcastSchedules 是自动广播计划；为空时计划命令报未配置。
+	BroadcastSchedules BroadcastScheduleService
+	Emoji              EmojiService
+	StickerSets        StickerSetsService
+	GifCatalog         GifCatalogService
+	Moderation         ModerationService
+	Usernames          CollectibleUsernamesService
+	CollectiblePhones  CollectiblePhonesService
+	Rating             AccountRatingService
+	Verification       VerificationService
 	// BotVerification is the third-party mechanism, wired separately from
 	// Verification: the two never read each other's state.
 	BotVerification BotVerificationService
@@ -614,6 +616,7 @@ type Service struct {
 	officialGifts           OfficialGiftsSource
 	bots                    BotService
 	broadcast               BroadcastService
+	broadcastSchedules      BroadcastScheduleService
 	emoji                   EmojiService
 	stickerSets             StickerSetsService
 	gifCatalog              GifCatalogService
@@ -732,6 +735,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Broadcast != nil {
 		s.broadcast = deps.Broadcast
+	}
+	if deps.BroadcastSchedules != nil {
+		s.broadcastSchedules = deps.BroadcastSchedules
 	}
 	if deps.Emoji != nil {
 		s.emoji = deps.Emoji

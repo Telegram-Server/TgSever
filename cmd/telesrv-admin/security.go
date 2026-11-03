@@ -99,8 +99,13 @@ const (
 	permissionModerationReview     = "moderation.review"
 	permissionBroadcastsRead       = "broadcasts.read"
 	permissionBroadcastsSend       = "broadcasts.send"
-	permissionStorageRead          = "storage.read"
-	permissionStorageManage        = "storage.manage"
+	// permissionBroadcastsSchedule gates creating, editing and deleting
+	// automatic broadcast schedules. Not implied by broadcasts.send: one
+	// approval here keeps messaging every account on a timer until somebody
+	// turns it off, which is a bigger power than one campaign.
+	permissionBroadcastsSchedule = "broadcasts.schedule"
+	permissionStorageRead        = "storage.read"
+	permissionStorageManage      = "storage.manage"
 	// Sticker packs, emoji packs and the GIF catalogue: one section as far as
 	// the panel is concerned, so one pair of rights.
 	permissionContentRead     = "content.read"
@@ -168,6 +173,7 @@ func assignablePermissions() []string {
 		permissionModerationReview,
 		permissionBroadcastsRead,
 		permissionBroadcastsSend,
+		permissionBroadcastsSchedule,
 		permissionContentRead,
 		permissionContentManage,
 		permissionUsernamesRead,
