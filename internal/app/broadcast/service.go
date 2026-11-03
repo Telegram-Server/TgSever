@@ -14,9 +14,11 @@ import (
 )
 
 type Service struct {
-	store    store.BroadcastStore
-	delivery store.BroadcastDeliveryStore
-	log      *zap.Logger
+	store     store.BroadcastStore
+	delivery  store.BroadcastDeliveryStore
+	schedules store.BroadcastScheduleStore
+	log       *zap.Logger
+	now       func() time.Time
 }
 
 func NewService(st store.BroadcastStore, delivery store.BroadcastDeliveryStore, log *zap.Logger) *Service {
@@ -100,10 +102,13 @@ func (s *Service) List(ctx context.Context, beforeID int64, limit int) ([]domain
 }
 
 type CycleResult struct {
-	Materialized int
-	Claimed      int
-	Sent         int
-	Failed       int
+	// ScheduledCreated / ScheduledSkipped：本轮到期的自动广播计划建出与跳过的次数。
+	ScheduledCreated int
+	ScheduledSkipped int
+	Materialized     int
+	Claimed          int
+	Sent             int
+	Failed           int
 }
 
 func (s *Service) RunCycle(ctx context.Context, leaseToken string, materializeBatch, deliveryBatch int, lease time.Duration) (CycleResult, error) {
@@ -111,6 +116,15 @@ func (s *Service) RunCycle(ctx context.Context, leaseToken string, materializeBa
 		return CycleResult{}, nil
 	}
 	var result CycleResult
+	// 先处理到期计划：建出的广播在同一轮就开始枚举收件人。计划出错不挡已有广播的投递。
+	created, skipped, err := s.FireDueSchedules(ctx, scheduleFireBatch)
+	result.ScheduledCreated, result.ScheduledSkipped = created, skipped
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return result, ctxErr
+		}
+		s.log.Warn("fire broadcast schedules failed", zap.Error(err))
+	}
 	materialized, err := s.store.MaterializeBroadcastRecipients(ctx, materializeBatch)
 	if err != nil {
 		return result, err

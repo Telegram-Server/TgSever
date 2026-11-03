@@ -639,6 +639,7 @@ type Broadcast struct {
 	CreatedBy               string
 	CreatedAt               pgtype.Timestamptz
 	Entities                []byte
+	ScheduleID              *int64
 }
 
 type BroadcastRecipient struct {
@@ -657,6 +658,26 @@ type BroadcastRecipient struct {
 	SentAt           pgtype.Timestamptz
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type BroadcastSchedule struct {
+	ID              int64
+	Message         string
+	Timezone        string
+	TimeOfDay       int32
+	Weekdays        int16
+	Enabled         bool
+	NextRunAt       pgtype.Timestamptz
+	LastRunAt       pgtype.Timestamptz
+	LastBroadcastID *int64
+	RunCount        int64
+	LastSkippedAt   pgtype.Timestamptz
+	LastSkipReason  string
+	SkippedCount    int64
+	CreatedBy       string
+	UpdatedBy       string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type BusinessAutomationDelivery struct {
