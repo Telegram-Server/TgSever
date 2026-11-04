@@ -7,9 +7,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// skipOnWindows 跳过只在 POSIX 上有意义的用例：权限位（Windows 上由只读属性推出，
+// 与 ACL 无关）、symlink（需开发者模式或管理员）、systemd。
+func skipOnWindows(t *testing.T, why string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows: " + why)
+	}
+}
 
 func TestParseDSNURI(t *testing.T) {
 	endpoint, err := parseDSN("postgres://telesrv:s3cr3t@127.0.0.1:5432/telesrv_main?sslmode=disable")
@@ -327,6 +337,7 @@ func TestReadChecksumsRejectsMalformed(t *testing.T) {
 }
 
 func TestArchiveRoundTripPreservesModes(t *testing.T) {
+	skipOnWindows(t, "permission bits and symlinks do not round-trip")
 	src := t.TempDir()
 	secret := filepath.Join(src, "server_rsa.pem")
 	if err := os.WriteFile(secret, []byte("-----BEGIN RSA PRIVATE KEY-----"), 0o600); err != nil {
@@ -441,7 +452,7 @@ func TestExtractArchiveRefusesToOverwriteWithoutForce(t *testing.T) {
 
 func TestSafeArchivePathRejectsTraversal(t *testing.T) {
 	dest := t.TempDir()
-	for _, name := range []string{"../escape", "/etc/passwd", "a/../../escape"} {
+	for _, name := range []string{"../escape", "/etc/passwd", "a/../../escape", `\windows\evil`, "C:/Windows/evil", `C:evil`} {
 		if _, err := safeArchivePath(dest, name); err == nil {
 			t.Errorf("safeArchivePath accepted %q", name)
 		}
@@ -493,15 +504,19 @@ func TestLoadEnvFileParsesQuotesAndExports(t *testing.T) {
 }
 
 func TestDataRootFromBlobDir(t *testing.T) {
-	if got := dataRootFromBlobDir("/srv", "data/blobs"); got != filepath.Join("/srv", "data") {
+	// Absolute paths come from TempDir so they are absolute on every platform
+	// ("/srv" has no volume and is relative on Windows).
+	repo := filepath.Join(t.TempDir(), "srv")
+	mnt := filepath.Join(t.TempDir(), "mnt")
+	if got := dataRootFromBlobDir(repo, "data/blobs"); got != filepath.Join(repo, "data") {
 		t.Errorf("dataRootFromBlobDir = %s", got)
 	}
-	if got := dataRootFromBlobDir("/srv", "/mnt/media/blobs"); got != "/mnt/media" {
+	if got := dataRootFromBlobDir(repo, filepath.Join(mnt, "media", "blobs")); got != filepath.Join(mnt, "media") {
 		t.Errorf("dataRootFromBlobDir = %s", got)
 	}
 	// A non standard blob directory must not have its parent treated as the
 	// key tree, or the RSA key would be looked up in the wrong place.
-	if got := dataRootFromBlobDir("/srv", "/mnt/custom"); got != "/mnt/custom" {
+	if got := dataRootFromBlobDir(repo, filepath.Join(mnt, "custom")); got != filepath.Join(mnt, "custom") {
 		t.Errorf("dataRootFromBlobDir = %s", got)
 	}
 }
@@ -662,7 +677,8 @@ func TestWriteEnvFileIsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// On Windows the temp file is protected by the user profile's ACL instead.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("env file mode = %v, want 0600: it carries a password", info.Mode().Perm())
 	}
 	body, err := os.ReadFile(path)
@@ -714,6 +730,7 @@ func TestIndexBlobsIgnoresUnrelatedFiles(t *testing.T) {
 // Freezing exists to make the media tree byte consistent, so a failure partway
 // through a capture must still put the writers back.
 func TestFreezeSetRestartsEverythingStopped(t *testing.T) {
+	skipOnWindows(t, "freezing stops systemd units and the fake systemctl is a shell script")
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "systemctl.log")
 	script := "#!/bin/sh\necho \"$@\" >> " + logPath + "\nexit 0\n"

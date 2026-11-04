@@ -312,6 +312,9 @@ func extractArchive(src io.Reader, dest string, overwrite bool) ([]string, error
 // safeArchivePath rejects absolute paths and traversal so a hostile bundle
 // cannot write outside dest.
 func safeArchivePath(dest, name string) (string, error) {
+	if archiveNameIsRooted(name) {
+		return "", fmt.Errorf("archive entry %q escapes the destination", name)
+	}
 	cleaned := filepath.Clean(filepath.FromSlash(name))
 	if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("archive entry %q escapes the destination", name)
@@ -322,6 +325,21 @@ func safeArchivePath(dest, name string) (string, error) {
 		return "", fmt.Errorf("archive entry %q escapes the destination", name)
 	}
 	return target, nil
+}
+
+// archiveNameIsRooted reports whether a tar entry name is anchored outside the
+// archive: a leading slash or backslash, or a drive letter. Bundles only ever
+// hold relative POSIX names, so these are rejected on every platform. The check
+// is on the raw name because the OS rules disagree: on Windows "/etc/passwd" is
+// not absolute (no volume) and "C:x" is drive-relative, while on Linux neither
+// a backslash nor "C:" means anything special.
+func archiveNameIsRooted(name string) bool {
+	name = strings.ReplaceAll(name, `\`, "/")
+	if strings.HasPrefix(name, "/") {
+		return true
+	}
+	return len(name) >= 2 && name[1] == ':' &&
+		(name[0] >= 'a' && name[0] <= 'z' || name[0] >= 'A' && name[0] <= 'Z')
 }
 
 // sanitizeMode drops setuid, setgid and sticky bits: a restored bundle is data,
