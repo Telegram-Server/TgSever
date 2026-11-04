@@ -1201,6 +1201,7 @@ func run(logger *zap.Logger) error {
 		account.WithStickerCollections(passwordStore),
 		account.WithUserStickerSets(passwordStore),
 		account.WithSavedMusic(passwordStore),
+		account.WithSavedRingtones(passwordStore),
 		account.WithBusinessAutomation(passwordStore),
 		account.WithUsers(userStore),
 		account.WithPhoneChange(phoneChangeStore, authzStore, codeStore, userCache, cfg.DevAuthCode, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts),

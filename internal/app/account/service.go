@@ -43,6 +43,7 @@ type Service struct {
 	stickers    store.StickerCollectionStore
 	stickerSets store.UserStickerSetStore
 	savedMusic  store.SavedMusicStore
+	ringtones   store.SavedRingtoneStore
 	business    store.BusinessAutomationStore
 	// users 仅用于登录邮箱的 phone→user 解析（sendCode 检测 / login-setup / reset 走 phone）。
 	users                     store.UserStore
@@ -108,6 +109,13 @@ func WithUserStickerSets(stickerSets store.UserStickerSetStore) ServiceOption {
 func WithSavedMusic(savedMusic store.SavedMusicStore) ServiceOption {
 	return func(s *Service) {
 		s.savedMusic = savedMusic
+	}
+}
+
+// WithSavedRingtones 注入账号级已保存通知铃声列表持久化。
+func WithSavedRingtones(ringtones store.SavedRingtoneStore) ServiceOption {
+	return func(s *Service) {
+		s.ringtones = ringtones
 	}
 }
 
@@ -219,6 +227,33 @@ func NewService(passwords store.PasswordStore, opts ...ServiceOption) *Service {
 		opt(s)
 	}
 	return s
+}
+
+// SaveRingtone 把文档加入（unsave=false）或移出当前用户的已保存铃声，返回列表是否
+// 有变化（调用方据此推 updateSavedRingtones）。加入时校验文档能作铃声并受数量上限
+// 约束；移出不校验文档，旧铃声总能删掉。
+func (s *Service) SaveRingtone(ctx context.Context, userID int64, doc domain.Document, unsave bool) (bool, error) {
+	if userID == 0 || doc.ID == 0 {
+		return false, domain.ErrRingtoneInvalid
+	}
+	if s == nil || s.ringtones == nil {
+		return false, nil
+	}
+	if unsave {
+		return s.ringtones.RemoveSavedRingtone(ctx, userID, doc.ID)
+	}
+	if err := domain.ValidateRingtone(doc); err != nil {
+		return false, err
+	}
+	return s.ringtones.AddSavedRingtone(ctx, userID, doc.ID, domain.RingtoneSavedCountMax)
+}
+
+// ListSavedRingtoneIDs 返回已保存铃声的文档 id，最新的在前。
+func (s *Service) ListSavedRingtoneIDs(ctx context.Context, userID int64) ([]int64, error) {
+	if s == nil || s.ringtones == nil || userID == 0 {
+		return nil, nil
+	}
+	return s.ringtones.ListSavedRingtoneIDs(ctx, userID)
 }
 
 // SaveMusic adds, removes, or reorders a song in the current user's profile music list.
@@ -1343,6 +1378,26 @@ func (s *Service) SaveNotifySettings(ctx context.Context, ownerUserID int64, sco
 		return nil
 	}
 	return s.notify.SaveNotifySettings(ctx, ownerUserID, scope, settings)
+}
+
+// UpdateNotifySettings 是 account.updateNotifySettings 的写入：非声音字段整份覆盖；
+// 声音只替换调用方平台 slot 的那一槽（settings 里该槽为空即清空），其它平台的槽沿用
+// 已存的值。读改写不加锁：同一用户的两台不同平台设备在同一瞬间改同一会话时，后写的
+// 一方可能丢掉对方刚写的槽，代价可以接受。返回合并后实际存下的设置。
+func (s *Service) UpdateNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, slot domain.NotifySoundSlot, settings domain.PeerNotifySettings) (domain.PeerNotifySettings, error) {
+	if s == nil || s.notify == nil || ownerUserID == 0 {
+		return settings, nil
+	}
+	existing, _, err := s.notify.GetNotifySettings(ctx, ownerUserID, scope)
+	if err != nil {
+		return domain.PeerNotifySettings{}, err
+	}
+	settings.Sound = existing.Sound.With(slot, settings.Sound.Get(slot))
+	settings.StoriesSound = existing.StoriesSound.With(slot, settings.StoriesSound.Get(slot))
+	if err := s.notify.SaveNotifySettings(ctx, ownerUserID, scope, settings); err != nil {
+		return domain.PeerNotifySettings{}, err
+	}
+	return settings, nil
 }
 
 // ResetNotifySettings 清空该用户全部作用域的通知设置（恢复默认）。

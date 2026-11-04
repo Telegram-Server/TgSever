@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ type PasswordStore struct {
 	stickerCollections             map[stickerCollectionKey][]domain.StickerCollectionItem
 	userStickerSets                map[int64]map[int64]domain.UserStickerSet
 	savedMusic                     map[int64][]domain.Document
+	savedRingtones                 map[int64][]int64 // 最新的在前
 	businessProfiles               map[int64]domain.BusinessProfile
 	businessChatLinks              map[string]domain.BusinessChatLink
 	businessChatLinkSlugs          map[int64][]string
@@ -53,6 +55,7 @@ func NewPasswordStore() *PasswordStore {
 		stickerCollections:             make(map[stickerCollectionKey][]domain.StickerCollectionItem),
 		userStickerSets:                make(map[int64]map[int64]domain.UserStickerSet),
 		savedMusic:                     make(map[int64][]domain.Document),
+		savedRingtones:                 make(map[int64][]int64),
 		businessProfiles:               make(map[int64]domain.BusinessProfile),
 		businessChatLinks:              make(map[string]domain.BusinessChatLink),
 		businessChatLinkSlugs:          make(map[int64][]string),
@@ -453,6 +456,38 @@ func (s *PasswordStore) GetPeerNotifySettings(_ context.Context, ownerUserID int
 		}
 	}
 	return out, nil
+}
+
+func (s *PasswordStore) AddSavedRingtone(_ context.Context, userID, documentID int64, max int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.savedRingtones[userID]
+	if slices.Contains(current, documentID) {
+		return false, nil
+	}
+	if len(current) >= max {
+		return false, domain.ErrRingtoneInvalid
+	}
+	s.savedRingtones[userID] = append([]int64{documentID}, current...)
+	return true, nil
+}
+
+func (s *PasswordStore) RemoveSavedRingtone(_ context.Context, userID, documentID int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.savedRingtones[userID]
+	i := slices.Index(current, documentID)
+	if i < 0 {
+		return false, nil
+	}
+	s.savedRingtones[userID] = slices.Delete(slices.Clone(current), i, i+1)
+	return true, nil
+}
+
+func (s *PasswordStore) ListSavedRingtoneIDs(_ context.Context, userID int64) ([]int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return slices.Clone(s.savedRingtones[userID]), nil
 }
 
 func (s *PasswordStore) SaveMusic(_ context.Context, req domain.SaveMusicRequest) error {

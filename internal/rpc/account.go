@@ -444,14 +444,13 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 			Hash)
 	})
 	registerRPC[*tg.AccountGetSavedRingtonesRequest](d, tlprofile.SemanticMethodAccountGetSavedRingtones, func(ctx context.Context, layerRequest *tg.AccountGetSavedRingtonesRequest) (any, error) {
-		hash := layerRequest.
-			Hash
-		_ = hash
-
-		if _, _, err := r.currentUserID(ctx); err != nil {
-			return nil, internalErr()
-		}
-		return &tg.AccountSavedRingtones{Hash: 0, Ringtones: []tg.DocumentClass{}}, nil
+		return r.onAccountGetSavedRingtones(ctx, layerRequest.Hash)
+	})
+	registerRPC[*tg.AccountSaveRingtoneRequest](d, tlprofile.SemanticMethodAccountSaveRingtone, func(ctx context.Context, layerRequest *tg.AccountSaveRingtoneRequest) (any, error) {
+		return r.onAccountSaveRingtone(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountUploadRingtoneRequest](d, tlprofile.SemanticMethodAccountUploadRingtone, func(ctx context.Context, layerRequest *tg.AccountUploadRingtoneRequest) (any, error) {
+		return r.onAccountUploadRingtone(ctx, layerRequest)
 	})
 	registerRPC[*tg.AccountGetAccountTTLRequest](d, tlprofile.SemanticMethodAccountGetAccountTTL, func(ctx context.Context, layerRequest *tg.AccountGetAccountTTLRequest) (any, error) {
 		return r.onAccountGetAccountTTL(ctx)

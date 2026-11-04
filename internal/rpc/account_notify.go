@@ -13,7 +13,7 @@ import (
 // *app/account.Service 实现。未接通时各 handler 回落历史默认（tdesktop.NotifySettings）。
 type accountNotifySettingsService interface {
 	GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, error)
-	SaveNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error
+	UpdateNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, slot domain.NotifySoundSlot, settings domain.PeerNotifySettings) (domain.PeerNotifySettings, error)
 	ResetNotifySettings(ctx context.Context, ownerUserID int64) error
 	PeerNotifySettings(ctx context.Context, ownerUserID int64, peers []domain.Peer) (map[domain.Peer]domain.PeerNotifySettings, error)
 	AllPeerNotifySettings(ctx context.Context, ownerUserID int64) (map[domain.Peer]domain.PeerNotifySettings, error)
@@ -87,11 +87,14 @@ func (r *Router) onAccountUpdateNotifySettings(ctx context.Context, req *tg.Acco
 	if !ok {
 		return false, peerIDInvalidErr()
 	}
-	settings := domainPeerNotifySettings(req.Settings)
+	slot := notifySoundSlotFor(ctx)
+	settings := domainPeerNotifySettings(req.Settings, slot)
 	if svc, ok := r.accountNotifySvc(); ok {
-		if err := svc.SaveNotifySettings(ctx, userID, scope, settings); err != nil {
+		stored, err := svc.UpdateNotifySettings(ctx, userID, scope, slot, settings)
+		if err != nil {
 			return false, internalErr()
 		}
+		settings = stored
 		r.notifySettings.Delete(userID)
 	}
 	// 推 updateNotifySettings 给本人其它在线设备（多设备静音同步）。
@@ -139,6 +142,7 @@ func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.Accou
 		return nil, internalErr()
 	}
 	compareStories := req != nil && req.CompareStories
+	compareSound := req != nil && req.CompareSound
 	var filterPeer *domain.Peer
 	if req != nil {
 		if p, ok := req.GetPeer(); ok {
@@ -156,7 +160,7 @@ func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.Accou
 		if filterPeer != nil && ex.Peer != *filterPeer {
 			continue
 		}
-		if !notifyExceptionQualifies(ex.Settings, compareStories) {
+		if !notifyExceptionQualifies(ex.Settings, compareStories, compareSound) {
 			continue
 		}
 		scope := domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: ex.Peer, TopicID: ex.TopicID}
@@ -194,15 +198,59 @@ func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.Accou
 }
 
 // notifyExceptionQualifies 判定一条异常是否纳入 getNotifyExceptions 结果。
-// 自定义铃声未建模故 compare_sound 无额外效果。
-func notifyExceptionQualifies(s domain.PeerNotifySettings, compareStories bool) bool {
+// compare_sound 额外纳入只改了消息声音的会话；compare_stories 同时纳入只改了 story 声音的。
+func notifyExceptionQualifies(s domain.PeerNotifySettings, compareStories, compareSound bool) bool {
 	if s.MuteUntil != nil || s.Silent != nil || s.ShowPreviews != nil {
 		return true
 	}
-	if compareStories && (s.StoriesMuted != nil || s.StoriesHideSender != nil) {
+	if compareSound && !s.Sound.IsZero() {
+		return true
+	}
+	if compareStories && (s.StoriesMuted != nil || s.StoriesHideSender != nil || !s.StoriesSound.IsZero()) {
 		return true
 	}
 	return false
+}
+
+// notifySoundSlotFor 按发请求会话的客户端类型选声音槽：iOS 写 ios、Android 写
+// android，其余（TDesktop、macOS、Web、未知）写 other。
+func notifySoundSlotFor(ctx context.Context) domain.NotifySoundSlot {
+	info, _ := ClientInfoFrom(ctx)
+	switch info.Type {
+	case ClientTypeIOS:
+		return domain.NotifySoundSlotIOS
+	case ClientTypeAndroid:
+		return domain.NotifySoundSlotAndroid
+	default:
+		return domain.NotifySoundSlotOther
+	}
+}
+
+func domainNotificationSound(in tg.NotificationSoundClass) *domain.NotificationSound {
+	switch s := in.(type) {
+	case *tg.NotificationSoundDefault:
+		return &domain.NotificationSound{Kind: domain.NotificationSoundDefault}
+	case *tg.NotificationSoundNone:
+		return &domain.NotificationSound{Kind: domain.NotificationSoundNone}
+	case *tg.NotificationSoundLocal:
+		return &domain.NotificationSound{Kind: domain.NotificationSoundLocal, Title: s.Title, Data: s.Data}
+	case *tg.NotificationSoundRingtone:
+		return &domain.NotificationSound{Kind: domain.NotificationSoundRingtone, RingtoneID: s.ID}
+	}
+	return nil
+}
+
+func tgNotificationSound(s domain.NotificationSound) tg.NotificationSoundClass {
+	switch s.Kind {
+	case domain.NotificationSoundNone:
+		return &tg.NotificationSoundNone{}
+	case domain.NotificationSoundLocal:
+		return &tg.NotificationSoundLocal{Title: s.Title, Data: s.Data}
+	case domain.NotificationSoundRingtone:
+		return &tg.NotificationSoundRingtone{ID: s.RingtoneID}
+	default:
+		return &tg.NotificationSoundDefault{}
+	}
 }
 
 // tgChatsForChannelIDs 把一组 channel id 解析为 tg.Chat（无权限/已失效者跳过）。
@@ -255,10 +303,29 @@ func applyStoredNotifySettings(out *tg.PeerNotifySettings, s *domain.PeerNotifyS
 	if s.StoriesHideSender != nil {
 		out.SetStoriesHideSender(*s.StoriesHideSender)
 	}
+	if v := s.Sound.IOS; v != nil {
+		out.SetIosSound(tgNotificationSound(*v))
+	}
+	if v := s.Sound.Android; v != nil {
+		out.SetAndroidSound(tgNotificationSound(*v))
+	}
+	if v := s.Sound.Other; v != nil {
+		out.SetOtherSound(tgNotificationSound(*v))
+	}
+	if v := s.StoriesSound.IOS; v != nil {
+		out.SetStoriesIosSound(tgNotificationSound(*v))
+	}
+	if v := s.StoriesSound.Android; v != nil {
+		out.SetStoriesAndroidSound(tgNotificationSound(*v))
+	}
+	if v := s.StoriesSound.Other; v != nil {
+		out.SetStoriesOtherSound(tgNotificationSound(*v))
+	}
 	return out
 }
 
-func domainPeerNotifySettings(in tg.InputPeerNotifySettings) domain.PeerNotifySettings {
+// domainPeerNotifySettings 转换入参；入参只有一个 sound/stories_sound，写进 slot 这一槽。
+func domainPeerNotifySettings(in tg.InputPeerNotifySettings, slot domain.NotifySoundSlot) domain.PeerNotifySettings {
 	out := domain.PeerNotifySettings{}
 	if v, ok := in.GetShowPreviews(); ok {
 		out.ShowPreviews = &v
@@ -274,6 +341,12 @@ func domainPeerNotifySettings(in tg.InputPeerNotifySettings) domain.PeerNotifySe
 	}
 	if v, ok := in.GetStoriesHideSender(); ok {
 		out.StoriesHideSender = &v
+	}
+	if v, ok := in.GetSound(); ok {
+		out.Sound = out.Sound.With(slot, domainNotificationSound(v))
+	}
+	if v, ok := in.GetStoriesSound(); ok {
+		out.StoriesSound = out.StoriesSound.With(slot, domainNotificationSound(v))
 	}
 	return out
 }

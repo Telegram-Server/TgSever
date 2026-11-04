@@ -2041,6 +2041,8 @@ type NotifySetting struct {
 	StoriesMuted      *bool
 	StoriesHideSender *bool
 	UpdatedAt         pgtype.Timestamptz
+	Sound             []byte
+	StoriesSound      []byte
 }
 
 type PasskeyCredential struct {
@@ -2388,6 +2390,13 @@ type SavedMusic struct {
 	SortOrder  int32
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+}
+
+type SavedRingtone struct {
+	UserID     int64
+	DocumentID int64
+	Seq        *int64
+	CreatedAt  pgtype.Timestamptz
 }
 
 type ScheduledMessage struct {

@@ -79,6 +79,17 @@ type UserStickerSetStore interface {
 	ListUserStickerSets(ctx context.Context, userID int64, kind domain.StickerSetKind, archived *bool, offsetID int64, limit int) ([]domain.UserStickerSet, int, error)
 }
 
+// SavedRingtoneStore persists one account's saved notification ringtones
+// (account.getSavedRingtones), newest first.
+type SavedRingtoneStore interface {
+	// AddSavedRingtone saves documentID for userID. Already saved → (false, nil);
+	// the list already holding max documents → domain.ErrRingtoneInvalid.
+	AddSavedRingtone(ctx context.Context, userID, documentID int64, max int) (bool, error)
+	// RemoveSavedRingtone reports whether documentID was in the list.
+	RemoveSavedRingtone(ctx context.Context, userID, documentID int64) (bool, error)
+	ListSavedRingtoneIDs(ctx context.Context, userID int64) ([]int64, error)
+}
+
 // SavedMusicStore persists one account's ordered profile music list.
 type SavedMusicStore interface {
 	SaveMusic(ctx context.Context, req domain.SaveMusicRequest) error

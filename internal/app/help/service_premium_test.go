@@ -110,6 +110,9 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 		"stories_stealth_future_period":             1500,
 		"stories_stealth_past_period":               300,
 		"stories_stealth_cooldown_period":           10800,
+		"ringtone_size_max":                         float64(domain.RingtoneSizeMax),
+		"ringtone_duration_max":                     domain.RingtoneDurationMax,
+		"ringtone_saved_count_max":                  domain.RingtoneSavedCountMax,
 	}
 	for key, want := range wantNumbers {
 		got, ok := decoded[key].(float64)

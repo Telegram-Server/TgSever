@@ -17,3 +17,10 @@ func TestNotifySettingsBatchContractPostgres(t *testing.T) {
 	}
 	storetest.NotifySettingsBatchContract(t, NewPasswordStore(pool), owners)
 }
+
+func TestNotifySoundContractPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	owner := createRevokeTestUser(t, ctx, pool, "notify-sound")
+	storetest.NotifySoundContract(t, NewPasswordStore(pool), owner)
+}

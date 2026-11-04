@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -346,13 +347,24 @@ func notifyScopeColumns(scope domain.NotifyScope) (kind, peerType string, peerID
 	return kind, "", 0, 0
 }
 
+// notifySettingsColumns 是 scanNotifySettings 期望的列顺序（跟在 prefix 列之后）。
+const notifySettingsColumns = `show_previews, silent, mute_until, stories_muted, stories_hide_sender, sound, stories_sound`
+
 func scanNotifySettings(row pgx.Row, prefix ...any) (domain.PeerNotifySettings, error) {
 	var showPreviews, silent, storiesMuted, storiesHideSender sql.NullBool
 	var muteUntil sql.NullInt32
-	if err := row.Scan(append(prefix, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender)...); err != nil {
+	var sound, storiesSound []byte
+	if err := row.Scan(append(prefix, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender, &sound, &storiesSound)...); err != nil {
 		return domain.PeerNotifySettings{}, err
 	}
 	out := domain.PeerNotifySettings{}
+	var err error
+	if out.Sound, err = decodeNotifySounds(sound); err != nil {
+		return domain.PeerNotifySettings{}, err
+	}
+	if out.StoriesSound, err = decodeNotifySounds(storiesSound); err != nil {
+		return domain.PeerNotifySettings{}, err
+	}
 	if showPreviews.Valid {
 		out.ShowPreviews = &showPreviews.Bool
 	}
@@ -372,12 +384,31 @@ func scanNotifySettings(row pgx.Row, prefix ...any) (domain.PeerNotifySettings, 
 	return out, nil
 }
 
+// encodeNotifySounds 把三个平台槽编成 jsonb；三槽都未设置时存 NULL。
+func encodeNotifySounds(sounds domain.NotifySounds) ([]byte, error) {
+	if sounds.IsZero() {
+		return nil, nil
+	}
+	return json.Marshal(sounds)
+}
+
+func decodeNotifySounds(raw []byte) (domain.NotifySounds, error) {
+	var out domain.NotifySounds
+	if len(raw) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return domain.NotifySounds{}, fmt.Errorf("decode notify sounds: %w", err)
+	}
+	return out, nil
+}
+
 func (s *PasswordStore) GetForumTopicNotifySettings(ctx context.Context, ownerUserID int64, peer domain.Peer, topicIDs []int) (map[int]domain.PeerNotifySettings, error) {
 	out := make(map[int]domain.PeerNotifySettings, len(topicIDs))
 	if len(topicIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.Query(ctx, `SELECT topic_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender
+	rows, err := s.db.Query(ctx, `SELECT topic_id, `+notifySettingsColumns+`
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = 'peer' AND peer_type = $2 AND peer_id = $3 AND topic_id = ANY($4::int[])`,
 		ownerUserID, string(peer.Type), peer.ID, topicIDs)
@@ -402,7 +433,7 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND peer_type = $2 AND peer_id 
 func (s *PasswordStore) GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, bool, error) {
 	kind, peerType, peerID, topicID := notifyScopeColumns(scope)
 	row := s.db.QueryRow(ctx, `
-SELECT show_previews, silent, mute_until, stories_muted, stories_hide_sender
+SELECT `+notifySettingsColumns+`
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = $2 AND peer_type = $3 AND peer_id = $4 AND topic_id = $5`,
 		ownerUserID, kind, peerType, peerID, topicID)
@@ -452,21 +483,33 @@ func (s *PasswordStore) GetNotifySettingsForOwners(ctx context.Context, ownerUse
 
 func (s *PasswordStore) SaveNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error {
 	kind, peerType, peerID, topicID := notifyScopeColumns(scope)
+	sound, err := encodeNotifySounds(settings.Sound)
+	if err != nil {
+		return fmt.Errorf("save notify settings: %w", err)
+	}
+	storiesSound, err := encodeNotifySounds(settings.StoriesSound)
+	if err != nil {
+		return fmt.Errorf("save notify settings: %w", err)
+	}
 	if _, err := s.db.Exec(ctx, `
 INSERT INTO notify_settings (
     owner_user_id, scope_kind, peer_type, peer_id, topic_id,
-    show_previews, silent, mute_until, stories_muted, stories_hide_sender
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    show_previews, silent, mute_until, stories_muted, stories_hide_sender,
+    sound, stories_sound
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT (owner_user_id, scope_kind, peer_type, peer_id, topic_id) DO UPDATE SET
     show_previews = EXCLUDED.show_previews,
     silent = EXCLUDED.silent,
     mute_until = EXCLUDED.mute_until,
     stories_muted = EXCLUDED.stories_muted,
     stories_hide_sender = EXCLUDED.stories_hide_sender,
+    sound = EXCLUDED.sound,
+    stories_sound = EXCLUDED.stories_sound,
     updated_at = now()`,
 		ownerUserID, kind, peerType, peerID, topicID,
 		nullableBool(settings.ShowPreviews), nullableBool(settings.Silent), nullableInt(settings.MuteUntil),
 		nullableBool(settings.StoriesMuted), nullableBool(settings.StoriesHideSender),
+		sound, storiesSound,
 	); err != nil {
 		return fmt.Errorf("save notify settings: %w", err)
 	}
@@ -492,7 +535,7 @@ func (s *PasswordStore) GetPeerNotifySettings(ctx context.Context, ownerUserID i
 		ids = append(ids, p.ID)
 	}
 	rows, err := s.db.Query(ctx, `
-SELECT peer_type, peer_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender
+SELECT peer_type, peer_id, `+notifySettingsColumns+`
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0
   AND (peer_type, peer_id) IN (SELECT * FROM unnest($2::text[], $3::bigint[]))`,
@@ -504,27 +547,9 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0
 	for rows.Next() {
 		var peerType string
 		var peerID int64
-		var showPreviews, silent, storiesMuted, storiesHideSender sql.NullBool
-		var muteUntil sql.NullInt32
-		if err := rows.Scan(&peerType, &peerID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender); err != nil {
+		settings, err := scanNotifySettings(rows, &peerType, &peerID)
+		if err != nil {
 			return nil, fmt.Errorf("scan notify settings: %w", err)
-		}
-		settings := domain.PeerNotifySettings{}
-		if showPreviews.Valid {
-			settings.ShowPreviews = &showPreviews.Bool
-		}
-		if silent.Valid {
-			settings.Silent = &silent.Bool
-		}
-		if muteUntil.Valid {
-			v := int(muteUntil.Int32)
-			settings.MuteUntil = &v
-		}
-		if storiesMuted.Valid {
-			settings.StoriesMuted = &storiesMuted.Bool
-		}
-		if storiesHideSender.Valid {
-			settings.StoriesHideSender = &storiesHideSender.Bool
 		}
 		out[domain.Peer{Type: domain.PeerType(peerType), ID: peerID}] = settings
 	}
@@ -537,7 +562,7 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0
 func (s *PasswordStore) AllPeerNotifySettings(ctx context.Context, ownerUserID int64) (map[domain.Peer]domain.PeerNotifySettings, error) {
 	// owner-scoped 单查询，走部分索引 notify_settings_owner_peer_idx（scope_kind='peer' AND topic_id=0）。
 	rows, err := s.db.Query(ctx, `
-SELECT peer_type, peer_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender
+SELECT peer_type, peer_id, `+notifySettingsColumns+`
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0`, ownerUserID)
 	if err != nil {
@@ -548,27 +573,9 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0`, ownerUserID)
 	for rows.Next() {
 		var peerType string
 		var peerID int64
-		var showPreviews, silent, storiesMuted, storiesHideSender sql.NullBool
-		var muteUntil sql.NullInt32
-		if err := rows.Scan(&peerType, &peerID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender); err != nil {
+		settings, err := scanNotifySettings(rows, &peerType, &peerID)
+		if err != nil {
 			return nil, fmt.Errorf("scan all peer notify settings: %w", err)
-		}
-		settings := domain.PeerNotifySettings{}
-		if showPreviews.Valid {
-			settings.ShowPreviews = &showPreviews.Bool
-		}
-		if silent.Valid {
-			settings.Silent = &silent.Bool
-		}
-		if muteUntil.Valid {
-			v := int(muteUntil.Int32)
-			settings.MuteUntil = &v
-		}
-		if storiesMuted.Valid {
-			settings.StoriesMuted = &storiesMuted.Bool
-		}
-		if storiesHideSender.Valid {
-			settings.StoriesHideSender = &storiesHideSender.Bool
 		}
 		out[domain.Peer{Type: domain.PeerType(peerType), ID: peerID}] = settings
 	}
@@ -580,7 +587,7 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0`, ownerUserID)
 
 func (s *PasswordStore) ListNotifyExceptions(ctx context.Context, ownerUserID int64) ([]domain.NotifyException, error) {
 	rows, err := s.db.Query(ctx, `
-SELECT peer_type, peer_id, topic_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender
+SELECT peer_type, peer_id, topic_id, `+notifySettingsColumns+`
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = 'peer'
 ORDER BY peer_type, peer_id, topic_id`, ownerUserID)
@@ -593,27 +600,9 @@ ORDER BY peer_type, peer_id, topic_id`, ownerUserID)
 		var peerType string
 		var peerID int64
 		var topicID int
-		var showPreviews, silent, storiesMuted, storiesHideSender sql.NullBool
-		var muteUntil sql.NullInt32
-		if err := rows.Scan(&peerType, &peerID, &topicID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender); err != nil {
+		settings, err := scanNotifySettings(rows, &peerType, &peerID, &topicID)
+		if err != nil {
 			return nil, fmt.Errorf("scan notify exception: %w", err)
-		}
-		settings := domain.PeerNotifySettings{}
-		if showPreviews.Valid {
-			settings.ShowPreviews = &showPreviews.Bool
-		}
-		if silent.Valid {
-			settings.Silent = &silent.Bool
-		}
-		if muteUntil.Valid {
-			v := int(muteUntil.Int32)
-			settings.MuteUntil = &v
-		}
-		if storiesMuted.Valid {
-			settings.StoriesMuted = &storiesMuted.Bool
-		}
-		if storiesHideSender.Valid {
-			settings.StoriesHideSender = &storiesHideSender.Bool
 		}
 		if settings.IsZero() {
 			continue // 全默认行（如曾静音后取消）不算异常
