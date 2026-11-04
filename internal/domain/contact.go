@@ -94,4 +94,8 @@ type PeerSettings struct {
 	BusinessBotManageURL  string
 	BusinessBotPaused     bool
 	BusinessBotCanReply   bool
+	// Blocked 是 owner 是否屏蔽了该 peer，只在服务端内部使用（userFull.blocked），
+	// 不下发到 peerSettings。提示栏不给某些 peer 动作时 BlockContact 为 false，
+	// 不能再拿 !BlockContact 反推屏蔽状态。
+	Blocked bool
 }

@@ -182,9 +182,11 @@ func (s *Service) AddContact(ctx context.Context, userID int64, input domain.Con
 	return s.projectContact(ctx, userID, contact)
 }
 
-// AcceptContact creates the reciprocal contact for an existing one-way contact.
-// Phone visibility remains governed exclusively by account privacy rules; this
-// RPC has no protocol flag authorizing a hidden phone-number exception.
+// AcceptContact is the "share my phone number" action: it puts the caller's
+// phone into the peer's entry for the caller, creating the reciprocal contact for
+// a one-way contact or filling the missing phone of an existing mutual one.
+// Privacy rules are not touched; this RPC has no protocol flag authorizing a
+// phone-number exception.
 func (s *Service) AcceptContact(ctx context.Context, userID, contactUserID int64) (domain.Contact, error) {
 	if s == nil || s.contacts == nil || s.users == nil || userID == 0 || contactUserID == 0 || contactUserID == userID {
 		return domain.Contact{}, ErrContactIDInvalid
@@ -211,6 +213,26 @@ func (s *Service) AcceptContact(ctx context.Context, userID, contactUserID int64
 		return domain.Contact{}, ErrContactIDInvalid
 	}
 	if ownerContact.Mutual {
+		// 对方已经有我，但多半是按用户名加的、记录里没有号码：「分享我的手机号码」
+		// 就是把号码补进对方那条记录，对方起的名字和备注保持不变。
+		theirs, found, err := s.contacts.Get(ctx, contactUserID, userID)
+		if err != nil {
+			return domain.Contact{}, err
+		}
+		if !found || theirs.Phone != "" || self.Phone == "" {
+			return ownerContact, nil
+		}
+		if _, err := s.contacts.Upsert(ctx, contactUserID, domain.ContactInput{
+			ContactUserID: userID,
+			Phone:         self.Phone,
+			FirstName:     theirs.FirstName,
+			LastName:      theirs.LastName,
+			Note:          theirs.Note,
+			NoteEntities:  theirs.NoteEntities,
+		}); err != nil {
+			return domain.Contact{}, err
+		}
+		s.InvalidateViewers(userID, contactUserID)
 		return ownerContact, nil
 	}
 	_, err = s.contacts.Upsert(ctx, contactUserID, domain.ContactInput{
@@ -513,11 +535,21 @@ func (s *Service) GetPeerSettings(ctx context.Context, userID int64, peer domain
 	if s == nil || s.contacts == nil || userID == 0 || peer.Type != domain.PeerTypeUser || peer.ID == 0 || peer.ID == userID {
 		return domain.PeerSettings{}, nil
 	}
-	contact, found, err := s.contacts.Get(ctx, userID, peer.ID)
+	blocked, err := s.contacts.IsBlocked(ctx, userID, peer.ID)
 	if err != nil {
 		return domain.PeerSettings{}, err
 	}
-	blocked, err := s.contacts.IsBlocked(ctx, userID, peer.ID)
+	// 机器人、已注销账号、官方客服号不能加为联系人，提示栏不给任何动作（与官方一致）。
+	if s.users != nil {
+		target, found, err := s.users.ByID(ctx, peer.ID)
+		if err != nil {
+			return domain.PeerSettings{}, err
+		}
+		if found && (target.Bot || target.Deleted || target.Support) {
+			return domain.PeerSettings{Blocked: blocked}, nil
+		}
+	}
+	contact, found, err := s.contacts.Get(ctx, userID, peer.ID)
 	if err != nil {
 		return domain.PeerSettings{}, err
 	}
@@ -536,6 +568,7 @@ func (s *Service) GetPeerSettings(ctx context.Context, userID int64, peer domain
 		BlockContact:          !blocked,
 		ShareContact:          shareContact,
 		NeedContactsException: needContactsException,
+		Blocked:               blocked,
 	}, nil
 }
 

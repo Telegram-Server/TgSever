@@ -2057,6 +2057,13 @@ type PasskeyCredential struct {
 	LastUsedAt   pgtype.Timestamptz
 }
 
+type PeerSettingsBarHidden struct {
+	UserID   int64
+	PeerType string
+	PeerID   int64
+	HiddenAt pgtype.Timestamptz
+}
+
 type PeerStarGift struct {
 	ID                       int64
 	OwnerPeerID              int64

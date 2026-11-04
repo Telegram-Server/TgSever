@@ -721,23 +721,32 @@ WHERE user_id = $1
 ORDER BY top_message_date DESC, top_message_id DESC, peer_id DESC;
 
 -- name: SetPeerSettingsBarHidden :one
-WITH updated AS (
+-- 不依赖对话行：先记进 peer_settings_bar_hidden（changed=这次新记下），有对话行时
+-- 顺带置上 dialogs 旧列，保持对话列表 hash 的行为不变。
+WITH inserted AS (
+  INSERT INTO peer_settings_bar_hidden (user_id, peer_type, peer_id)
+  VALUES (sqlc.arg(user_id)::bigint, sqlc.arg(peer_type)::text, sqlc.arg(peer_id)::bigint)
+  ON CONFLICT (user_id, peer_type, peer_id) DO NOTHING
+  RETURNING user_id
+), dialog_flag AS (
   UPDATE dialogs d
   SET hidden_peer_settings_bar = true,
       updated_at = now()
   WHERE d.user_id = sqlc.arg(user_id)::bigint
     AND d.peer_type = sqlc.arg(peer_type)::text
     AND d.peer_id = sqlc.arg(peer_id)::bigint
+    AND NOT d.hidden_peer_settings_bar
   RETURNING d.user_id
 )
-SELECT EXISTS (SELECT 1 FROM updated)::boolean AS changed;
+SELECT EXISTS (SELECT 1 FROM inserted)::boolean AS changed;
 
 -- name: GetPeerSettingsBarHidden :one
-SELECT hidden_peer_settings_bar
-FROM dialogs
-WHERE user_id = $1
-  AND peer_type = $2
-  AND peer_id = $3;
+SELECT EXISTS (
+  SELECT 1 FROM peer_settings_bar_hidden
+  WHERE user_id = $1
+    AND peer_type = $2
+    AND peer_id = $3
+)::boolean AS hidden;
 
 -- name: ReorderPinnedDialogs :exec
 WITH requested AS (

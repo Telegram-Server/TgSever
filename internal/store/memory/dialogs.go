@@ -20,6 +20,9 @@ type DialogStore struct {
 	// archivePinned 记录 archive folder 行置顶状态；无记录时官方默认 true。
 	archivePinned map[int64]bool
 	translations  map[translationPreferenceKey]bool
+	// barHidden 记录已关闭的会话提示栏，不依赖对话行（与 postgres 的
+	// peer_settings_bar_hidden 表对应）。
+	barHidden map[translationPreferenceKey]bool
 }
 
 type translationPreferenceKey struct {
@@ -43,6 +46,7 @@ func NewDialogStore() *DialogStore {
 		folderTags:    make(map[int64]bool),
 		archivePinned: make(map[int64]bool),
 		translations:  make(map[translationPreferenceKey]bool),
+		barHidden:     make(map[translationPreferenceKey]bool),
 	}
 }
 
@@ -492,30 +496,28 @@ func (s *DialogStore) SetChatTheme(_ context.Context, userID int64, peer domain.
 }
 
 func (s *DialogStore) SetPeerSettingsBarHidden(_ context.Context, userID int64, peer domain.Peer) (bool, error) {
+	key := translationPreferenceKey{userID: userID, peer: peer}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.barHidden[key] {
+		return false, nil
+	}
+	s.barHidden[key] = true
 	list := s.m[userID]
 	for i := range list.Dialogs {
-		if list.Dialogs[i].Peer != peer {
-			continue
+		if list.Dialogs[i].Peer == peer {
+			list.Dialogs[i].PeerSettingsBarHidden = true
+			s.m[userID] = list
+			break
 		}
-		list.Dialogs[i].PeerSettingsBarHidden = true
-		s.m[userID] = list
-		return true, nil
 	}
-	return false, nil
+	return true, nil
 }
 
 func (s *DialogStore) PeerSettingsBarHidden(_ context.Context, userID int64, peer domain.Peer) (bool, error) {
 	s.mu.RLock()
-	list := s.m[userID]
-	s.mu.RUnlock()
-	for _, dialog := range list.Dialogs {
-		if dialog.Peer == peer {
-			return dialog.PeerSettingsBarHidden, nil
-		}
-	}
-	return false, nil
+	defer s.mu.RUnlock()
+	return s.barHidden[translationPreferenceKey{userID: userID, peer: peer}], nil
 }
 
 func (s *DialogStore) SetTranslationDisabled(_ context.Context, userID int64, peer domain.Peer, disabled bool) (bool, error) {

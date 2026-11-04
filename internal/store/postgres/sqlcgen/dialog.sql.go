@@ -348,11 +348,12 @@ func (q *Queries) GetDialogFolderTags(ctx context.Context, userID int64) (bool, 
 }
 
 const getPeerSettingsBarHidden = `-- name: GetPeerSettingsBarHidden :one
-SELECT hidden_peer_settings_bar
-FROM dialogs
-WHERE user_id = $1
-  AND peer_type = $2
-  AND peer_id = $3
+SELECT EXISTS (
+  SELECT 1 FROM peer_settings_bar_hidden
+  WHERE user_id = $1
+    AND peer_type = $2
+    AND peer_id = $3
+)::boolean AS hidden
 `
 
 type GetPeerSettingsBarHiddenParams struct {
@@ -363,9 +364,9 @@ type GetPeerSettingsBarHiddenParams struct {
 
 func (q *Queries) GetPeerSettingsBarHidden(ctx context.Context, arg GetPeerSettingsBarHiddenParams) (bool, error) {
 	row := q.db.QueryRow(ctx, getPeerSettingsBarHidden, arg.UserID, arg.PeerType, arg.PeerID)
-	var hidden_peer_settings_bar bool
-	err := row.Scan(&hidden_peer_settings_bar)
-	return hidden_peer_settings_bar, err
+	var hidden bool
+	err := row.Scan(&hidden)
+	return hidden, err
 }
 
 const hasPrivateDialog = `-- name: HasPrivateDialog :one
@@ -1972,16 +1973,22 @@ func (q *Queries) SetDialogUnreadMark(ctx context.Context, arg SetDialogUnreadMa
 }
 
 const setPeerSettingsBarHidden = `-- name: SetPeerSettingsBarHidden :one
-WITH updated AS (
+WITH inserted AS (
+  INSERT INTO peer_settings_bar_hidden (user_id, peer_type, peer_id)
+  VALUES ($1::bigint, $2::text, $3::bigint)
+  ON CONFLICT (user_id, peer_type, peer_id) DO NOTHING
+  RETURNING user_id
+), dialog_flag AS (
   UPDATE dialogs d
   SET hidden_peer_settings_bar = true,
       updated_at = now()
   WHERE d.user_id = $1::bigint
     AND d.peer_type = $2::text
     AND d.peer_id = $3::bigint
+    AND NOT d.hidden_peer_settings_bar
   RETURNING d.user_id
 )
-SELECT EXISTS (SELECT 1 FROM updated)::boolean AS changed
+SELECT EXISTS (SELECT 1 FROM inserted)::boolean AS changed
 `
 
 type SetPeerSettingsBarHiddenParams struct {
@@ -1990,6 +1997,8 @@ type SetPeerSettingsBarHiddenParams struct {
 	PeerID   int64
 }
 
+// 不依赖对话行：先记进 peer_settings_bar_hidden（changed=这次新记下），有对话行时
+// 顺带置上 dialogs 旧列，保持对话列表 hash 的行为不变。
 func (q *Queries) SetPeerSettingsBarHidden(ctx context.Context, arg SetPeerSettingsBarHiddenParams) (bool, error) {
 	row := q.db.QueryRow(ctx, setPeerSettingsBarHidden, arg.UserID, arg.PeerType, arg.PeerID)
 	var changed bool
