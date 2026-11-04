@@ -77,7 +77,7 @@ func starGiftResaleAppConfigFragment() string {
 	return `,"stars_stargift_resale_amount_min":` + strconv.FormatInt(domain.MinStarGiftResaleStars, 10)
 }
 
-const defaultAppConfigHash = 38 // 默认 app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+const defaultAppConfigHash = 39 // 默认 app config 内容变更时必须递增，否则缓存端只会收到 notModified。
 
 // Service 提供客户端启动配置与国家区号目录。
 //
