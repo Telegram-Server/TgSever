@@ -15,7 +15,7 @@ Telegram-compatible MTProto server written in Go. This file is a module map so y
 ```powershell
 go build -o bin/gramsrv.exe ./cmd/telesrv        # main server
 go vet ./...
-go test ./... -count=1                            # CI gate, passes without external services
+go test ./... -count=1                            # passes without external services (Postgres tests skip); CI runs it with Postgres
 ```
 
 ### Tests that need Postgres
@@ -31,7 +31,7 @@ The shared machinery is `internal/store/postgres/pgtest` (wired in each package'
 - **Use the tmpfs test instance.** Every test creates and drops a database; on a disk-backed server each `CREATE/DROP DATABASE` writes WAL and forces a checkpoint, and the package is disk-bound (≈160 s vs ≈110 s, full `go test ./...` ≈440 s → ≈150 s). `docker compose -f deploy/docker-compose.yml --profile test up -d postgres-test` starts one on port 5433 with `fsync=off` on tmpfs; point `TELESRV_TEST_POSTGRES_DSN` at `postgres://telesrv@127.0.0.1:5433/telesrv_test?sslmode=disable` and set `PGPASSWORD` to the `POSTGRES_PASSWORD` of the `postgres-test` service (pgx reads it). Never point a dev server at it — it empties on restart.
 - A killed test run (timeout, Ctrl-C) can leave `*_test` clones behind; drop them by hand.
 
-Run a focused subset like CI does:
+CI runs the whole `go test ./...` against a tmpfs Postgres service with the DSN set, so every Postgres test is a gate. Locally, run a focused subset:
 
 ```powershell
 $env:TELESRV_TEST_POSTGRES_DSN="postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable"
