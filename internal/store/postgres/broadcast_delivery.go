@@ -102,7 +102,7 @@ SELECT EXISTS (
 	if err != nil {
 		return domain.Message{}, fmt.Errorf("create broadcast private message: %w", err)
 	}
-	boxID, err := s.nextIncomingSystemBoxID(ctx, qtx, userID)
+	boxID, err := s.nextIncomingSystemBoxID(ctx, tx, userID)
 	if err != nil {
 		return domain.Message{}, fmt.Errorf("allocate broadcast box id: %w", err)
 	}

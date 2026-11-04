@@ -475,7 +475,8 @@ func (s *CommunityStore) CreateCommunity(ctx context.Context, req domain.CreateC
 		if err := validateCommunityPeerForLink(ctx, tx, req.CreatorUserID, req.InitialPeer, true); err != nil {
 			return domain.CommunityView{}, err
 		}
-		id, err := s.ids.NextChannelID(ctx)
+		// 在事务里分配：回源查询走 tx，不再从连接池借第二条连接（见 counter_db.go）。
+		id, err := s.ids.NextChannelID(withCounterDB(ctx, tx))
 		if err != nil {
 			return domain.CommunityView{}, fmt.Errorf("allocate community id: %w", err)
 		}

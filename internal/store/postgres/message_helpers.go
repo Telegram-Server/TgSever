@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"sort"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 func cloneMessageReply(reply *domain.MessageReply) *domain.MessageReply {
@@ -237,7 +238,7 @@ func (a pgBoxIDAllocator) NextBoxIDs(ctx context.Context, userIDs []int64) (map[
 	if len(unique) == 0 {
 		return map[int64]int{}, nil
 	}
-	rows, err := a.s.db.Query(ctx, `
+	rows, err := counterDB(ctx, a.s.db).Query(ctx, `
 SELECT requested.user_id, COALESCE(MAX(boxes.box_id), 0)::int + 1
 FROM unnest($1::bigint[]) AS requested(user_id)
 LEFT JOIN message_boxes boxes ON boxes.owner_user_id = requested.user_id
@@ -265,7 +266,11 @@ GROUP BY requested.user_id`, unique)
 }
 
 func (a pgBoxIDAllocator) CurrentBoxID(ctx context.Context, userID int64) (int, error) {
-	v, err := a.s.q.MaxMessageBoxID(ctx, userID)
+	q := a.s.q
+	if db := counterDB(ctx, nil); db != nil {
+		q = sqlcgen.New(db)
+	}
+	v, err := q.MaxMessageBoxID(ctx, userID)
 	if err != nil {
 		return 0, err
 	}

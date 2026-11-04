@@ -245,7 +245,7 @@ WHERE channel_id = $1 AND id = $2 AND NOT deleted AND (sender_user_id = $3 OR $8
 		if action == nil {
 			return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
 		}
-		serviceMsgID, err := s.msgIDs.NextChannelMessageID(ctx, req.ChannelID)
+		serviceMsgID, err := s.nextChannelMessageID(ctx, tx, req.ChannelID)
 		if err != nil {
 			return domain.EditChannelMessageResult{}, fmt.Errorf("allocate channel todo service message id: %w", err)
 		}

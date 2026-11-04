@@ -1080,6 +1080,6 @@ func (a pgChannelIDAllocator) NextChannelID(ctx context.Context) (int64, error) 
 
 func (a pgChannelIDAllocator) CurrentChannelID(ctx context.Context) (int64, error) {
 	var id int64
-	err := a.db.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channels`).Scan(&id)
+	err := counterDB(ctx, a.db).QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channels`).Scan(&id)
 	return id, err
 }

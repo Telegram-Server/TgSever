@@ -165,7 +165,7 @@ SELECT EXISTS (
 	if isAdmin {
 		from = domain.Peer{Type: domain.PeerTypeChannel, ID: parent.ID}
 	}
-	msgID, err := s.msgIDs.NextChannelMessageID(ctx, req.MonoforumID)
+	msgID, err := s.nextChannelMessageID(ctx, tx, req.MonoforumID)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("allocate monoforum message id: %w", err)
 	}

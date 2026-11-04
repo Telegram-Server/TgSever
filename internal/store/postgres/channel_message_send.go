@@ -142,7 +142,7 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 			return domain.SendChannelMessageResult{}, err
 		}
 	}
-	msgID, err := s.msgIDs.NextChannelMessageID(ctx, req.ChannelID)
+	msgID, err := s.nextChannelMessageID(ctx, tx, req.ChannelID)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("allocate channel message id: %w", err)
 	}
@@ -155,7 +155,7 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 	if channel.Broadcast && channel.LinkedChatID != 0 && req.Action == nil {
 		linked, err := getChannelByID(ctx, tx, channel.LinkedChatID)
 		if err == nil && !linked.Deleted && linked.Megagroup {
-			discussionMsgID, err := s.msgIDs.NextChannelMessageID(ctx, linked.ID)
+			discussionMsgID, err := s.nextChannelMessageID(ctx, tx, linked.ID)
 			if err != nil {
 				return domain.SendChannelMessageResult{}, fmt.Errorf("allocate discussion message id: %w", err)
 			}
@@ -515,7 +515,7 @@ WHERE channel_id = $1 AND id = $2`, msg.ChannelID, msg.ID).Scan(
 }
 
 func (s *ChannelStore) insertServiceMessage(ctx context.Context, tx pgx.Tx, channel domain.Channel, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.ChannelMessage, domain.ChannelUpdateEvent, error) {
-	msgID, err := s.msgIDs.NextChannelMessageID(ctx, channel.ID)
+	msgID, err := s.nextChannelMessageID(ctx, tx, channel.ID)
 	if err != nil {
 		return domain.ChannelMessage{}, domain.ChannelUpdateEvent{}, fmt.Errorf("allocate channel service message id: %w", err)
 	}

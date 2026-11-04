@@ -417,7 +417,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		return domain.SendPrivateTextResult{}, fmt.Errorf("create private message: %w", err)
 	}
 
-	senderBoxID, err = s.boxIDs.NextBoxID(ctx, req.SenderUserID)
+	senderBoxID, err = s.nextBoxID(ctx, tx, req.SenderUserID)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("allocate sender box id: %w", err)
 	}
@@ -426,7 +426,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		return domain.SendPrivateTextResult{}, fmt.Errorf("allocate sender pts: %w", err)
 	}
 	if deliverRecipient {
-		recipientBoxID, err = s.boxIDs.NextBoxID(ctx, req.RecipientUserID)
+		recipientBoxID, err = s.nextBoxID(ctx, tx, req.RecipientUserID)
 		if err != nil {
 			return domain.SendPrivateTextResult{}, fmt.Errorf("allocate recipient box id: %w", err)
 		}

@@ -142,7 +142,7 @@ func (s *MessageStore) DeliverLoginCodeMessage(ctx context.Context, req domain.L
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("create login code private message: %w", err)
 	}
 
-	boxID, err := s.nextIncomingSystemBoxID(ctx, qtx, req.UserID)
+	boxID, err := s.nextIncomingSystemBoxID(ctx, tx, req.UserID)
 	if err != nil {
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("allocate login code box id: %w", err)
 	}
@@ -334,19 +334,8 @@ WHERE delivery_key = $1`, deliveryKey[:]).Scan(
 	return receipt, true, nil
 }
 
-func (s *MessageStore) nextIncomingSystemBoxID(ctx context.Context, qtx *sqlcgen.Queries, userID int64) (int, error) {
-	// The default allocator queries PostgreSQL. Run that query on the active
-	// transaction connection: querying s.q while holding the transaction can
-	// deadlock a MaxConns=1 pool. External allocators (Redis/counters) retain
-	// their normal semantics.
-	switch s.boxIDs.(type) {
-	case pgBoxIDAllocator, *pgBoxIDAllocator:
-		current, err := qtx.MaxMessageBoxID(ctx, userID)
-		if err != nil {
-			return 0, err
-		}
-		return int(current) + 1, nil
-	default:
-		return s.boxIDs.NextBoxID(ctx, userID)
-	}
+// nextIncomingSystemBoxID 在事务 tx 内分配系统消息的 box id。任何分配器回源
+// PostgreSQL 都走 tx（见 counter_db.go），不再只对默认分配器特判。
+func (s *MessageStore) nextIncomingSystemBoxID(ctx context.Context, tx sqlcgen.DBTX, userID int64) (int, error) {
+	return s.nextBoxID(ctx, tx, userID)
 }

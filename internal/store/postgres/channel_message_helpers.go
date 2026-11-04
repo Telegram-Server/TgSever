@@ -187,6 +187,6 @@ func (a pgChannelMessageIDAllocator) NextChannelMessageID(ctx context.Context, c
 
 func (a pgChannelMessageIDAllocator) CurrentChannelMessageID(ctx context.Context, channelID int64) (int, error) {
 	var id int
-	err := a.db.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channel_messages WHERE channel_id = $1`, channelID).Scan(&id)
+	err := counterDB(ctx, a.db).QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channel_messages WHERE channel_id = $1`, channelID).Scan(&id)
 	return id, err
 }

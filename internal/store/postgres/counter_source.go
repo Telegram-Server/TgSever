@@ -22,7 +22,7 @@ func (s *MessageBoxCounterSource) CurrentBatch(ctx context.Context, userIDs []in
 	if len(userIDs) == 0 {
 		return map[int64]int{}, nil
 	}
-	rows, err := s.db.Query(ctx, `
+	rows, err := counterDB(ctx, s.db).Query(ctx, `
 SELECT requested.user_id, COALESCE(MAX(m.box_id), 0)::integer
 FROM unnest($1::bigint[]) AS requested(user_id)
 LEFT JOIN message_boxes m ON m.owner_user_id = requested.user_id
@@ -50,7 +50,11 @@ GROUP BY requested.user_id`, userIDs)
 }
 
 func (s *MessageBoxCounterSource) Current(ctx context.Context, userID int64) (int, error) {
-	v, err := s.q.MaxMessageBoxID(ctx, userID)
+	q := s.q
+	if db := counterDB(ctx, nil); db != nil {
+		q = sqlcgen.New(db)
+	}
+	v, err := q.MaxMessageBoxID(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("max message box id: %w", err)
 	}
@@ -69,7 +73,7 @@ func NewChannelIDCounterSource(db sqlcgen.DBTX) *ChannelIDCounterSource {
 
 func (s *ChannelIDCounterSource) Current(ctx context.Context, _ int64) (int, error) {
 	var id int
-	if err := s.db.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channels`).Scan(&id); err != nil {
+	if err := counterDB(ctx, s.db).QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channels`).Scan(&id); err != nil {
 		return 0, fmt.Errorf("max channel id: %w", err)
 	}
 	return id, nil
@@ -101,7 +105,7 @@ func NewChannelMessageIDCounterSource(db sqlcgen.DBTX) *ChannelMessageIDCounterS
 
 func (s *ChannelMessageIDCounterSource) Current(ctx context.Context, channelID int64) (int, error) {
 	var id int
-	if err := s.db.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channel_messages WHERE channel_id = $1`, channelID).Scan(&id); err != nil {
+	if err := counterDB(ctx, s.db).QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channel_messages WHERE channel_id = $1`, channelID).Scan(&id); err != nil {
 		return 0, fmt.Errorf("max channel message id: %w", err)
 	}
 	return id, nil
@@ -111,7 +115,7 @@ func (s *ChannelMessageIDCounterSource) CurrentBatch(ctx context.Context, channe
 	if len(channelIDs) == 0 {
 		return map[int64]int{}, nil
 	}
-	rows, err := s.db.Query(ctx, `
+	rows, err := counterDB(ctx, s.db).Query(ctx, `
 SELECT requested.channel_id, COALESCE(MAX(m.id), 0)::integer
 FROM unnest($1::bigint[]) AS requested(channel_id)
 LEFT JOIN channel_messages m ON m.channel_id = requested.channel_id

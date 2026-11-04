@@ -111,7 +111,7 @@ func (s *ChannelStore) CreateChannel(ctx context.Context, req domain.CreateChann
 		}
 	}()
 
-	msgID, err := s.msgIDs.NextChannelMessageID(ctx, channelID)
+	msgID, err := s.nextChannelMessageID(ctx, tx, channelID)
 	if err != nil {
 		return domain.CreateChannelResult{}, fmt.Errorf("allocate channel message id: %w", err)
 	}

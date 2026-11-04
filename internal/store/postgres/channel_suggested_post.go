@@ -259,7 +259,7 @@ func (s *ChannelStore) persistSuggestedPostEditTx(ctx context.Context, tx pgx.Tx
 }
 
 func (s *ChannelStore) insertSuggestedPostServiceTx(ctx context.Context, tx pgx.Tx, mono, parent domain.Channel, actor int64, fromChannel bool, saved domain.Peer, replyID, date int, action domain.ChannelMessageAction) (domain.ChannelMessage, domain.ChannelUpdateEvent, error) {
-	msgID, err := s.msgIDs.NextChannelMessageID(ctx, mono.ID)
+	msgID, err := s.nextChannelMessageID(ctx, tx, mono.ID)
 	if err != nil {
 		return domain.ChannelMessage{}, domain.ChannelUpdateEvent{}, err
 	}
@@ -286,7 +286,7 @@ func (s *ChannelStore) insertSuggestedPostServiceTx(ctx context.Context, tx pgx.
 }
 
 func (s *ChannelStore) publishSuggestedPostTx(ctx context.Context, tx pgx.Tx, parent domain.Channel, original domain.ChannelMessage, actor int64, date int) (domain.SendChannelMessageResult, error) {
-	msgID, err := s.msgIDs.NextChannelMessageID(ctx, parent.ID)
+	msgID, err := s.nextChannelMessageID(ctx, tx, parent.ID)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
