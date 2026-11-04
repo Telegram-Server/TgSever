@@ -14,6 +14,7 @@ package doclint
 import (
 	"bufio"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -171,29 +172,30 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// markdownFiles lists every tracked markdown file.
+// markdownFiles lists every tracked markdown file. It asks git rather than
+// walking the tree: a working copy also holds ignored files that are never
+// published -- secrets/, nested agent worktrees under .claude/worktrees, local
+// notes -- and scanning them reports leaks that cannot happen.
 func markdownFiles(t *testing.T, root string) []string {
 	t.Helper()
+	cmd := exec.Command("git", "-C", root, "ls-files", "-z", "--", "*.md", "*.MD")
+	out, err := cmd.Output()
+	if err != nil {
+		if _, statErr := os.Stat(filepath.Join(root, ".git")); statErr != nil {
+			t.Skip("not a git checkout; tracked files are unknown")
+		}
+		t.Fatalf("git ls-files: %v", err)
+	}
 	var files []string
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name == "" {
+			continue
 		}
-		name := entry.Name()
-		if entry.IsDir() {
-			switch name {
-			case ".git", "node_modules", "bin", "data", "vendor":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.EqualFold(filepath.Ext(name), ".md") {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		// A file deleted in the working copy but not yet staged is still listed.
+		if _, err := os.Stat(path); err == nil {
 			files = append(files, path)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk: %v", err)
 	}
 	if len(files) == 0 {
 		t.Fatal("no markdown files found; the scan is not working")
