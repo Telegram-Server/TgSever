@@ -166,6 +166,9 @@ func TestKeyCipherRoundTripAndIsolation(t *testing.T) {
 	if _, err = keys.Open(ciphertext, append(nonce, 0)); err == nil {
 		t.Fatal("a tampered nonce opened the wallet key")
 	}
+	if !privateModeEnforced {
+		return // 权限位在本平台上不表达访问控制，见 fsperm_windows.go
+	}
 	info, err := os.Stat(filepath.Join(dir, "keys.key"))
 	if err != nil || info.Mode().Perm()&0077 != 0 {
 		t.Fatalf("master key file permissions = %v err = %v", info.Mode(), err)

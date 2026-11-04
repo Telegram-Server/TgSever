@@ -51,7 +51,7 @@ func LoadOrCreateKeyCipher(path string) (*KeyCipher, error) {
 	}
 	if info, statErr := os.Stat(path); statErr != nil {
 		return nil, statErr
-	} else if info.Mode().Perm()&0077 != 0 {
+	} else if !isPrivateMode(info.Mode()) {
 		return nil, fmt.Errorf("%w: %s must have mode 0600", ErrWalletKeyFile, path)
 	}
 	return newKeyCipher(decodeKeyFile(path, raw))
@@ -88,12 +88,7 @@ func writeKeyFile(path string, raw []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return syncDir(filepath.Dir(path))
 }
 
 func newKeyCipher(raw []byte) (*KeyCipher, error) {

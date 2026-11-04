@@ -29,7 +29,7 @@ func TestLoadOrCreateKeyCipherSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0077 != 0 {
+	if privateModeEnforced && info.Mode().Perm()&0077 != 0 {
 		t.Fatalf("key file mode = %v, want no group or world bits", info.Mode().Perm())
 	}
 
@@ -81,6 +81,9 @@ func TestDecodeKeyFileRoundTrip(t *testing.T) {
 // A group-readable key file is a real disclosure, so the mode check has to hold
 // on reload too, not just at creation.
 func TestLoadOrCreateKeyCipherRejectsPermissiveFile(t *testing.T) {
+	if !privateModeEnforced {
+		t.Skip("权限位在本平台上不表达访问控制，见 fsperm_windows.go")
+	}
 	path := filepath.Join(t.TempDir(), "keys.key")
 	raw := make([]byte, 32)
 	if err := os.WriteFile(path, []byte(hex.EncodeToString(raw)+"\n"), 0640); err != nil {

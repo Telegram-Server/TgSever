@@ -71,7 +71,7 @@ func NewFileStore(dir string) (*FileStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+	if !info.IsDir() || !isPrivateMode(info.Mode()) {
 		return nil, fmt.Errorf("wallet state directory must have mode 0700")
 	}
 	lock := flock.New(filepath.Join(dir, ".lock"), flock.SetPermissions(0600))
@@ -158,12 +158,7 @@ func (s *FileStore) write(userID int64, record walletRecord) error {
 	if err = os.Rename(name, filepath.Join(s.dir, strconv.FormatInt(userID, 10)+".json")); err != nil {
 		return err
 	}
-	dir, err := os.Open(s.dir)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return syncDir(s.dir)
 }
 
 func (s *FileStore) PutWalletChallenge(ctx context.Context, c domain.WalletChallenge) error {

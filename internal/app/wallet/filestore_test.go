@@ -112,7 +112,7 @@ func TestFileWalletLifecycle(t *testing.T) {
 		t.Fatalf("expiry: %v", err)
 	}
 	info, err := os.Stat(filepath.Join(dir, "42.json"))
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || (privateModeEnforced && info.Mode().Perm() != 0600) {
 		t.Fatalf("private file: %v %v", info, err)
 	}
 }
