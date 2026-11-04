@@ -315,12 +315,34 @@ type AuthorizationStore struct {
 	// pushDevices 是挂在授权上的设备推送登记（见 PushDeviceStore），与 m 同受 mu 保护，
 	// 删除授权的每条路径都经 removeLocked 一并清掉。
 	pushDevices map[[8]byte]map[int]domain.PushDevice
+	// Windows 上 time.Now() 粒度粗，连续两次登录或绑定常拿到同一时刻（受 mu 保护）：
+	//   - 授权的 CreatedAt 由调用方给出，相同时刻按 createdSeq（完成登录的先后）排，
+	//     而不是按随机的 auth key；
+	//   - 绑定时间由本 store 生成，lastBoundAt 让它严格递增，名单顺序即绑定先后。
+	seq         uint64
+	createdSeq  map[[8]byte]uint64
+	lastBoundAt time.Time
+}
+
+// nextSeqLocked 返回下一个写入序号。调用方持有 s.mu 写锁。
+func (s *AuthorizationStore) nextSeqLocked() uint64 {
+	s.seq++
+	return s.seq
+}
+
+// markCreatedLocked 记下授权"完成登录"（CreatedAt 被设置）的先后。调用方持有 s.mu 写锁。
+func (s *AuthorizationStore) markCreatedLocked(id [8]byte) {
+	if s.createdSeq == nil {
+		s.createdSeq = make(map[[8]byte]uint64)
+	}
+	s.createdSeq[id] = s.nextSeqLocked()
 }
 
 // removeLocked 删除授权及其设备推送登记。调用方持有 s.mu。
 func (s *AuthorizationStore) removeLocked(id [8]byte) {
 	delete(s.m, id)
 	delete(s.pushDevices, id)
+	delete(s.createdSeq, id)
 }
 
 // NewAuthorizationStore 创建内存 AuthorizationStore。
@@ -419,6 +441,7 @@ func (s *AuthorizationStore) bindLocked(a domain.Authorization, limited bool, de
 		}
 	}
 	s.m[a.AuthKeyID] = a
+	s.markCreatedLocked(a.AuthKeyID)
 	return nil
 }
 
@@ -472,6 +495,10 @@ func (s *AuthorizationStore) insertDeviceBindingLocked(a domain.Authorization, d
 		bound = make(map[string]domain.DeviceBinding)
 		s.deviceBindings[a.UserID] = bound
 	}
+	if !now.After(s.lastBoundAt) {
+		now = s.lastBoundAt.Add(time.Nanosecond)
+	}
+	s.lastBoundAt = now
 	bound[deviceID] = domain.DeviceBinding{
 		UserID:      a.UserID,
 		DeviceID:    deviceID,
@@ -500,6 +527,10 @@ func (s *AuthorizationStore) backfillDeviceBindingsLocked(userID int64, limit in
 	sort.Slice(completed, func(i, j int) bool {
 		if !completed[i].CreatedAt.Equal(completed[j].CreatedAt) {
 			return completed[i].CreatedAt.Before(completed[j].CreatedAt)
+		}
+		si, sj := s.createdSeq[completed[i].AuthKeyID], s.createdSeq[completed[j].AuthKeyID]
+		if si != sj {
+			return si < sj
 		}
 		return bytes.Compare(completed[i].AuthKeyID[:], completed[j].AuthKeyID[:]) < 0
 	})
@@ -865,6 +896,7 @@ func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte,
 	a.CreatedAt = now
 	a.ActiveAt = now
 	s.m[id] = a
+	s.markCreatedLocked(id)
 	return nil
 }
 
