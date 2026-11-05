@@ -137,6 +137,10 @@ func (r *Router) onHelpSetBotUpdatesStatus(ctx context.Context) (bool, error) {
 
 func (r *Router) onHelpGetConfig(ctx context.Context) (*tg.Config, error) {
 	config := tdesktop.BuildConfig(r.cfg.DC, r.cfg.IP, r.cfg.Port, r.clock.Now(), r.cfg.PublicBaseURL, r.cfg.UpdatePublicURL)
+	// 未登录也要下发：客户端在欢迎/登录页据此提示「继续使用 XX 语言」。
+	if code := r.suggestedLangCode(ctx); code != "" {
+		config.SetSuggestedLangCode(code)
+	}
 	userID, authorized, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
@@ -156,6 +160,25 @@ func (r *Router) onHelpGetConfig(ctx context.Context) (*tg.Config, error) {
 		config.SetReactionsDefault(reaction)
 	}
 	return config, nil
+}
+
+// suggestedLangCode 按 initConnection 的 system_lang_code（设备系统语言，不是客户端
+// 当前界面语言 lang_code）在客户端所用平台语言包里挑推荐语言。没有 initConnection
+// 信息、语言包服务不可用或查询出错时返回 ""，不下发该字段，help.getConfig 不因此失败。
+func (r *Router) suggestedLangCode(ctx context.Context) string {
+	info, ok := ClientInfoFrom(ctx)
+	if !ok || strings.TrimSpace(info.SystemLangCode) == "" || r.deps.LangPack == nil {
+		return ""
+	}
+	languages, err := r.deps.LangPack.ListLanguages(ctx, strings.ToLower(langPackFromClient(ctx)))
+	if err != nil {
+		return ""
+	}
+	codes := make([]string, 0, len(languages))
+	for _, language := range languages {
+		codes = append(codes, language.LangCode)
+	}
+	return domain.SuggestLangCode(info.SystemLangCode, codes)
 }
 
 // onHelpDismissSuggestion 为 DrKLO 改号成功后的 suggestion 清理提供有界兼容。
