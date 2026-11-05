@@ -11,12 +11,12 @@
           "plural_code": "ar",
           "official": true,
           "rtl": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/ar/",
-          "version": 59981214,
-          "file": "android/android_ar_v59981214.strings",
-          "sha256": "e607832697c79fabbc417b3eff8d5c5ede2270978d23876c920bb90546c5a4c0"
+          "version": 61670267,
+          "file": "android/android_ar_v61670267.strings",
+          "sha256": "520db1589aa40830943bb4dac5712622ee31dd8fd15392a4ed000ebfda055790"
         },
         {
           "lang_code": "be",
@@ -24,12 +24,12 @@
           "native_name": "Беларуская",
           "plural_code": "be",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11405,
           "translations_url": "https://translations.telegram.org/be/",
-          "version": 59969518,
-          "file": "android/android_be_v59969518.strings",
-          "sha256": "0125cd4ef3eef6d8812f90f7a0e8751738507cbc543b8d05102592dc83c911b4"
+          "version": 61638730,
+          "file": "android/android_be_v61638730.strings",
+          "sha256": "74f9b634c5a9b7ed009d652c6d745a7fa87f6fb2c45b1965b736747f50eb1164"
         },
         {
           "lang_code": "ca",
@@ -37,12 +37,12 @@
           "native_name": "Català",
           "plural_code": "ca",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/ca/",
-          "version": 59967427,
-          "file": "android/android_ca_v59967427.strings",
-          "sha256": "a3e09a83169a23a97a43f9a5db51838f6cd71bc2bed2a6f9cb17babd5464f401"
+          "version": 61654457,
+          "file": "android/android_ca_v61654457.strings",
+          "sha256": "fc5cd9c044be21b3a552b6fdcd2e20ea151154068c3d426a4318037dba4739bb"
         },
         {
           "lang_code": "cs",
@@ -50,12 +50,12 @@
           "native_name": "Čeština",
           "plural_code": "cs",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/cs/",
-          "version": 59969803,
-          "file": "android/android_cs_v59969803.strings",
-          "sha256": "fdf83944378ca00a8c8d0079faed4dbae31265487750836e4327d98648753b47"
+          "version": 61670956,
+          "file": "android/android_cs_v61670956.strings",
+          "sha256": "55f6ac76b3733ed71de60316635e5965555d0b5df25ce11e361a36a0839e3054"
         },
         {
           "lang_code": "de",
@@ -63,12 +63,12 @@
           "native_name": "Deutsch",
           "plural_code": "de",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/de/",
-          "version": 59926882,
-          "file": "android/android_de_v59926882.strings",
-          "sha256": "9a2a4bcc8c038010898492afb66812e22e332acd99909510196a3fd9442952dd"
+          "version": 61670885,
+          "file": "android/android_de_v61670885.strings",
+          "sha256": "2ef08e2d793626c2f82e04ef183d55a2fe020f08124f4f42517dff4bfae92d66"
         },
         {
           "lang_code": "en",
@@ -76,12 +76,12 @@
           "native_name": "English",
           "plural_code": "en",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/en/",
-          "version": 59885528,
-          "file": "android/android_en_v59885528.strings",
-          "sha256": "827b00fbc51a4b403826a20eeaa2f715180cabac157af1c9657e4c0b49825064"
+          "version": 61669506,
+          "file": "android/android_en_v61669506.strings",
+          "sha256": "cf37f187b5c7edba9c008792b1b601d7da49d7ee1f4cfe9ccb5ecf2ab71d6f8a"
         },
         {
           "lang_code": "es",
@@ -89,12 +89,12 @@
           "native_name": "Español",
           "plural_code": "es",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/es/",
-          "version": 59946392,
-          "file": "android/android_es_v59946392.strings",
-          "sha256": "856935cf573c15adda351f4332bf63c31b29cb4fd102f6294a33a5af4508cb3b"
+          "version": 61658277,
+          "file": "android/android_es_v61658277.strings",
+          "sha256": "e24685536af847bf7592fa820dc89b8ea21ca20921cac045283d3d332009bec6"
         },
         {
           "lang_code": "fa",
@@ -103,12 +103,12 @@
           "plural_code": "fa",
           "official": true,
           "rtl": true,
-          "strings_count": 10995,
-          "translated_count": 10878,
+          "strings_count": 11691,
+          "translated_count": 11281,
           "translations_url": "https://translations.telegram.org/fa/",
-          "version": 59921144,
-          "file": "android/android_fa_v59921144.strings",
-          "sha256": "119f8706661285935427f1e911bfd7a046f124fba5eac9c008da18cfcc97e5d6"
+          "version": 61638730,
+          "file": "android/android_fa_v61638730.strings",
+          "sha256": "d7b3f6eb26b451d41898fd25314fc1aea953a487d164f84897bcba544a7b2cad"
         },
         {
           "lang_code": "fi",
@@ -116,12 +116,12 @@
           "native_name": "Suomi",
           "plural_code": "fi",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11669,
           "translations_url": "https://translations.telegram.org/fi/",
-          "version": 59933749,
-          "file": "android/android_fi_v59933749.strings",
-          "sha256": "399f5ae6bdf2fd79a88d52745e0f07b5bd7f6c1595241eebb3248741f686a2a6"
+          "version": 61638730,
+          "file": "android/android_fi_v61638730.strings",
+          "sha256": "f6e9798e3641233a48e5bb7887f169533ca80437824d9e7a40d8db7aca0f6af3"
         },
         {
           "lang_code": "fr",
@@ -129,12 +129,12 @@
           "native_name": "Français",
           "plural_code": "fr",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11669,
           "translations_url": "https://translations.telegram.org/fr/",
-          "version": 59921990,
-          "file": "android/android_fr_v59921990.strings",
-          "sha256": "5f470b23adbf6120a0af6f74774750036f04698fbbf05e520e6216d0b03227e4"
+          "version": 61638730,
+          "file": "android/android_fr_v61638730.strings",
+          "sha256": "8fa782e11b084591cb6a9d104bb5b257dbb5d560c48b7af16f01cad503991209"
         },
         {
           "lang_code": "he",
@@ -143,12 +143,12 @@
           "plural_code": "he",
           "official": true,
           "rtl": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/he/",
-          "version": 59966306,
-          "file": "android/android_he_v59966306.strings",
-          "sha256": "0c82141441970e761fefc80f61f787c18dd575a42cdefc3e069cb09165fbea17"
+          "version": 61658048,
+          "file": "android/android_he_v61658048.strings",
+          "sha256": "1e4d8bb18628d3054fa5580c787dc1febb296462bd2c6361fed6b79e5e8c53c9"
         },
         {
           "lang_code": "hr",
@@ -156,12 +156,12 @@
           "native_name": "Hrvatski",
           "plural_code": "hr",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/hr/",
-          "version": 59966087,
-          "file": "android/android_hr_v59966087.strings",
-          "sha256": "9b7b3545e58cf857038c8c20a5f6c4656799acaac45e7dff6416d29f8d9ab3ea"
+          "version": 61657473,
+          "file": "android/android_hr_v61657473.strings",
+          "sha256": "9c1f2f4048e21d8ed1f93950d373d103286856feed487ae739d66d4b6bf22e1e"
         },
         {
           "lang_code": "hu",
@@ -169,12 +169,12 @@
           "native_name": "Magyar",
           "plural_code": "hu",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11446,
           "translations_url": "https://translations.telegram.org/hu/",
-          "version": 59906304,
-          "file": "android/android_hu_v59906304.strings",
-          "sha256": "d36fbe70ed0b24adfbae414439d8019b89dca17a152da1b37940b31bbae70260"
+          "version": 61638730,
+          "file": "android/android_hu_v61638730.strings",
+          "sha256": "14c7816ad9de89e3717cc5439d91f247bb9b1cd12df0248e87cc70d3efd62de9"
         },
         {
           "lang_code": "id",
@@ -182,12 +182,12 @@
           "native_name": "Bahasa Indonesia",
           "plural_code": "id",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10976,
+          "strings_count": 11691,
+          "translated_count": 11669,
           "translations_url": "https://translations.telegram.org/id/",
-          "version": 59866609,
-          "file": "android/android_id_v59866609.strings",
-          "sha256": "e8a64988b491dfa120c7c270769ac6223a2ce66094c48cb40cab03e8682ce7a4"
+          "version": 61638730,
+          "file": "android/android_id_v61638730.strings",
+          "sha256": "47c4a816c8daa44ba8a491159aeaac1e9eada0731aa578e72fec2aa750fd0f03"
         },
         {
           "lang_code": "it",
@@ -195,12 +195,12 @@
           "native_name": "Italiano",
           "plural_code": "it",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/it/",
-          "version": 59967903,
-          "file": "android/android_it_v59967903.strings",
-          "sha256": "3b07ccbc0b2f09a916e834544c409bc8c0d1950897c389e31fd35bd10d2a992e"
+          "version": 61670766,
+          "file": "android/android_it_v61670766.strings",
+          "sha256": "e83c599a1bf69f79dffbe2b69a956131700ee22b33aad5059089872974ca95a8"
         },
         {
           "lang_code": "kk",
@@ -208,12 +208,12 @@
           "native_name": "Қазақша",
           "plural_code": "kk",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/kk/",
-          "version": 59917391,
-          "file": "android/android_kk_v59917391.strings",
-          "sha256": "ddca1076cdf3099ab5236fa0df5464f31726bdf6a9937c22fa1809632879b961"
+          "version": 61670022,
+          "file": "android/android_kk_v61670022.strings",
+          "sha256": "f2d8c259f00aed9934b6db098ac7728112b2af4ef17612f2a4717cea9417f667"
         },
         {
           "lang_code": "ko",
@@ -221,12 +221,12 @@
           "native_name": "한국어",
           "plural_code": "ko",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11687,
           "translations_url": "https://translations.telegram.org/ko/",
-          "version": 59946838,
-          "file": "android/android_ko_v59946838.strings",
-          "sha256": "73c82f860c812a09323e5b29a2996bc25cf63a47e71705b996927814aa0f8ffa"
+          "version": 61638730,
+          "file": "android/android_ko_v61638730.strings",
+          "sha256": "ddbbcddf136201dd149b2ff5752f61201650d46ffbfb21d7ed7bcff9e3647dfd"
         },
         {
           "lang_code": "ms",
@@ -234,12 +234,12 @@
           "native_name": "Bahasa Melayu",
           "plural_code": "ms",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/ms/",
-          "version": 59946976,
-          "file": "android/android_ms_v59946976.strings",
-          "sha256": "2f3cc6680c836dcc254c260ccce716a2e679fe4cd231d5aa4b7af1ebd1790d66"
+          "version": 61669705,
+          "file": "android/android_ms_v61669705.strings",
+          "sha256": "e9751f77aeadef1f4b28fe24d456cb90d9f071f2b02550610131a5faf6feee46"
         },
         {
           "lang_code": "nb",
@@ -247,12 +247,12 @@
           "native_name": "Norsk (Bokmål)",
           "plural_code": "nb",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11669,
           "translations_url": "https://translations.telegram.org/nb/",
-          "version": 59977190,
-          "file": "android/android_nb_v59977190.strings",
-          "sha256": "2dc63c0ed53b8b951b6bb19b2cb459e97146f4393ad57aa76c53522d86dcf288"
+          "version": 61638730,
+          "file": "android/android_nb_v61638730.strings",
+          "sha256": "3dda21ee9a3677fcaf9ca5ddf6af8844520c4e721638d0984777c99b27c2d33a"
         },
         {
           "lang_code": "nl",
@@ -260,12 +260,12 @@
           "native_name": "Nederlands",
           "plural_code": "nl",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/nl/",
-          "version": 59914009,
-          "file": "android/android_nl_v59914009.strings",
-          "sha256": "62ecd6f3517d437c6eec58b4ebf1ccb22a9ae8be78bec1647b755359314a7643"
+          "version": 61669924,
+          "file": "android/android_nl_v61669924.strings",
+          "sha256": "c31ac8eb98c48fbc467b4500c8c2c0911853d599c0d82eb214abf8eb7cd82680"
         },
         {
           "lang_code": "pl",
@@ -273,12 +273,12 @@
           "native_name": "Polski",
           "plural_code": "pl",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10965,
+          "strings_count": 11691,
+          "translated_count": 11586,
           "translations_url": "https://translations.telegram.org/pl/",
-          "version": 59844900,
-          "file": "android/android_pl_v59844900.strings",
-          "sha256": "58c739d6d18ef365054ef1ac08adcb6dcf134e6ced0e2c5aec577eaf58428de5"
+          "version": 61662555,
+          "file": "android/android_pl_v61662555.strings",
+          "sha256": "6096b1701bcce420cafbe5d30af5dcadb3ebf4afc12ebcfe2fa35a4c571c00f0"
         },
         {
           "lang_code": "pt-br",
@@ -286,12 +286,12 @@
           "native_name": "Português (Brasil)",
           "plural_code": "pt",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/pt-br/",
-          "version": 59974228,
-          "file": "android/android_pt-br_v59974228.strings",
-          "sha256": "bbce3f6bad3d83521f72fbf8eaf3e15eea6a85a162471218a761c29668877e95"
+          "version": 61651447,
+          "file": "android/android_pt-br_v61651447.strings",
+          "sha256": "ac42c23c9d30f9fea97a578d284e0661264293a199449d62e0e361418b4bb15b"
         },
         {
           "lang_code": "ro",
@@ -299,12 +299,12 @@
           "native_name": "Română",
           "plural_code": "ro",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/ro/",
-          "version": 59981171,
-          "file": "android/android_ro_v59981171.strings",
-          "sha256": "7604aec3d91b51cba8eb038ec6b76b6414b54e2a1b1b8eef86fb3eae5f3fe243"
+          "version": 61672697,
+          "file": "android/android_ro_v61672697.strings",
+          "sha256": "a455544d6a2902097fd007a998e094a9b505ea4eb7d8472f85230767a72b6b2a"
         },
         {
           "lang_code": "ru",
@@ -312,12 +312,12 @@
           "native_name": "Русский",
           "plural_code": "ru",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/ru/",
-          "version": 59974213,
-          "file": "android/android_ru_v59974213.strings",
-          "sha256": "d69a3404aaa3d788ad01a2bc863e2492bdf9f627adbc61f2babba6ab98355d32"
+          "version": 61657510,
+          "file": "android/android_ru_v61657510.strings",
+          "sha256": "2ddcf07709d72f851084224360a5b873fe8f903f9e6fbe462d888bb7f7b9b8c6"
         },
         {
           "lang_code": "sk",
@@ -325,12 +325,12 @@
           "native_name": "Slovenčina",
           "plural_code": "sk",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 9668,
+          "strings_count": 11691,
+          "translated_count": 9961,
           "translations_url": "https://translations.telegram.org/sk/",
-          "version": 59822247,
-          "file": "android/android_sk_v59822247.strings",
-          "sha256": "9548570f699626455a61dc07d73618a00e58e8e7369ad5bd6b05206ba66707b4"
+          "version": 61638730,
+          "file": "android/android_sk_v61638730.strings",
+          "sha256": "ba9da6c9a68d90b72b5ae87073ae0d84983809ebc0c46d66246913e99d5d6e29"
         },
         {
           "lang_code": "sr",
@@ -338,12 +338,12 @@
           "native_name": "Српски",
           "plural_code": "sr",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/sr/",
-          "version": 59973181,
-          "file": "android/android_sr_v59973181.strings",
-          "sha256": "8de302ea9f7a60ee19959829c87d50374aa5a45e4cdd8fc9d79b71c60efdea44"
+          "version": 61670720,
+          "file": "android/android_sr_v61670720.strings",
+          "sha256": "a9e0af30a20b34364e4d2c2b0c4a96c0868b5ae9afa2a98b8d2fabbd2b86f9ac"
         },
         {
           "lang_code": "sv",
@@ -351,12 +351,12 @@
           "native_name": "Svenska",
           "plural_code": "sv",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/sv/",
-          "version": 59950998,
-          "file": "android/android_sv_v59950998.strings",
-          "sha256": "020e0a6f80260f0f4985347d71f53ac5593551856b703cb771d1750dca563679"
+          "version": 61650998,
+          "file": "android/android_sv_v61650998.strings",
+          "sha256": "5133d7ae74429d2878d8c15f46e96bcb1033a25715be5daf34c01b76bf1cddd9"
         },
         {
           "lang_code": "tr",
@@ -364,12 +364,12 @@
           "native_name": "Türkçe",
           "plural_code": "tr",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11279,
           "translations_url": "https://translations.telegram.org/tr/",
-          "version": 59920319,
-          "file": "android/android_tr_v59920319.strings",
-          "sha256": "3cfff05f63631c2ba9777df4f5f7f9bd3444f95dc0166950a34def70aacc4473"
+          "version": 61676781,
+          "file": "android/android_tr_v61676781.strings",
+          "sha256": "ea81f6ffb000839eedb923397c765613e139502ad4c85fc67ed0d39a251ffe1a"
         },
         {
           "lang_code": "uk",
@@ -377,12 +377,12 @@
           "native_name": "Українська",
           "plural_code": "uk",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/uk/",
-          "version": 59953439,
-          "file": "android/android_uk_v59953439.strings",
-          "sha256": "b8c12d8a5cae3044fc27b70b4197798a06c483c1418e216c147ba673fcb069d5"
+          "version": 61676199,
+          "file": "android/android_uk_v61676199.strings",
+          "sha256": "a27f4fc225a6e40d65c0200a763adbe59133297d015ac6495ca3ea010fef2793"
         },
         {
           "lang_code": "uz",
@@ -390,12 +390,12 @@
           "native_name": "O‘zbek",
           "plural_code": "uz",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10305,
+          "strings_count": 11691,
+          "translated_count": 11691,
           "translations_url": "https://translations.telegram.org/uz/",
-          "version": 59985112,
-          "file": "android/android_uz_v59985112.strings",
-          "sha256": "3dec417cf41e17b095167fb7a367d6b311bdb1880e573fd2ccc171a3c0cd9d60"
+          "version": 61654755,
+          "file": "android/android_uz_v61654755.strings",
+          "sha256": "298f5396a7b22821c1bb1d8966dc846869d1e418de6feff76a73cb7f3bbc0b09"
         },
         {
           "lang_code": "vi",
@@ -403,12 +403,12 @@
           "native_name": "Tiếng Việt",
           "plural_code": "vi",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10827,
+          "strings_count": 11691,
+          "translated_count": 11546,
           "translations_url": "https://translations.telegram.org/vi/",
-          "version": 59453700,
-          "file": "android/android_vi_v59453700.strings",
-          "sha256": "3a9eb66155bfe27e18aed39eed20fe1c347a1162dfcae4c78ac4712b89e93599"
+          "version": 61638730,
+          "file": "android/android_vi_v61638730.strings",
+          "sha256": "ba49ac944d35591c593c490a57bce69d3cc56f81bef148633413f81da7bf5100"
         },
         {
           "lang_code": "zh-hans",
@@ -416,12 +416,12 @@
           "native_name": "简体中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11669,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 59926883,
-          "file": "android/android_zh-hans_v59926883.strings",
-          "sha256": "478581d6bb22f8acde81540bc41011ef6ff377a6ec23f11a3ae24a56eb457bfc"
+          "version": 61638730,
+          "file": "android/android_zh-hans_v61638730.strings",
+          "sha256": "2ee3f2c265588283f0bfe8c29c5e8f8fe951de3aed8b40775fa995449349c50d"
         },
         {
           "lang_code": "zh-hant",
@@ -429,12 +429,12 @@
           "native_name": "繁體中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 10995,
-          "translated_count": 10995,
+          "strings_count": 11691,
+          "translated_count": 11669,
           "translations_url": "https://translations.telegram.org/zh-hant/",
-          "version": 59979378,
-          "file": "android/android_zh-hant_v59979378.strings",
-          "sha256": "c48d1a70df5e5c834c30d4554f68f9437c571a4984fb8f0fdd2d0e0e2a81d5e5"
+          "version": 61638730,
+          "file": "android/android_zh-hant_v61638730.strings",
+          "sha256": "16f8bd350f5518b89a96c06031f45cc2a1b87f4b5187024b16c128f7c2a472dd"
         }
       ]
     },
@@ -448,12 +448,12 @@
           "plural_code": "ar",
           "official": true,
           "rtl": true,
-          "strings_count": 4637,
-          "translated_count": 4426,
+          "strings_count": 4799,
+          "translated_count": 4419,
           "translations_url": "https://translations.telegram.org/ar/",
-          "version": 1623895,
-          "file": "android_x/android_x_ar_v1623895.strings",
-          "sha256": "08835e5e645bbc5d7e5c3587f907f22f011a189610869c8c43c3a60248361d29"
+          "version": 1659431,
+          "file": "android_x/android_x_ar_v1659431.strings",
+          "sha256": "703ea628aece93e23c3b17cce8ea70d337f9123c10c9f18bb039a1e05b98da40"
         },
         {
           "lang_code": "be",
@@ -461,12 +461,12 @@
           "native_name": "Беларуская",
           "plural_code": "be",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 3970,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/be/",
-          "version": 1623843,
-          "file": "android_x/android_x_be_v1623843.strings",
-          "sha256": "16471900a609b5461cf05e65977882e5479102a945796a8ef2bf10162d9f59dc"
+          "version": 1664172,
+          "file": "android_x/android_x_be_v1664172.strings",
+          "sha256": "833e4179080a65c5b907316c9b5a967ffa497ac9b985d2524fbc4a1b98a73b0a"
         },
         {
           "lang_code": "ca",
@@ -474,12 +474,12 @@
           "native_name": "Català",
           "plural_code": "ca",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/ca/",
-          "version": 1621108,
-          "file": "android_x/android_x_ca_v1621108.strings",
-          "sha256": "dd7a889e193b4c394036fce7ed24aefe42c40fe1a0259ad46e0155b257cc5679"
+          "version": 1660923,
+          "file": "android_x/android_x_ca_v1660923.strings",
+          "sha256": "f32b162840c993cec170208931f8f3e214c4c4cffb93b90d77aaeb1f20b49793"
         },
         {
           "lang_code": "cs",
@@ -487,12 +487,12 @@
           "native_name": "Čeština",
           "plural_code": "cs",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/cs/",
-          "version": 1623534,
-          "file": "android_x/android_x_cs_v1623534.strings",
-          "sha256": "185577831ab89ebf4db4a6bdfb8e517a0710e42ab897700792d24134b22669b2"
+          "version": 1671518,
+          "file": "android_x/android_x_cs_v1671518.strings",
+          "sha256": "1f86ec774f7fc990f304c48d527ec719d03cd102604a0ffee2a60b0b705a18be"
         },
         {
           "lang_code": "de",
@@ -500,12 +500,12 @@
           "native_name": "Deutsch",
           "plural_code": "de",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 3576,
+          "strings_count": 4799,
+          "translated_count": 3569,
           "translations_url": "https://translations.telegram.org/de/",
-          "version": 1617403,
-          "file": "android_x/android_x_de_v1617403.strings",
-          "sha256": "10691abd2e7b47cccb82bfe01717f74e6f03afd181a7cf1ef4e2c5ce56b3016e"
+          "version": 1659431,
+          "file": "android_x/android_x_de_v1659431.strings",
+          "sha256": "e6df0d339892014d33843bfd279b41f0af6cdc3ec7d385dab128499fba84e194"
         },
         {
           "lang_code": "en",
@@ -513,12 +513,12 @@
           "native_name": "English",
           "plural_code": "en",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/en/",
-          "version": 1619065,
-          "file": "android_x/android_x_en_v1619065.strings",
-          "sha256": "8880ee44d22b084cf0e71037e344847727b3ac5272f791905028482febfb8756"
+          "version": 1659878,
+          "file": "android_x/android_x_en_v1659878.strings",
+          "sha256": "9db2e304811943344878f97a0ef67f8834c81dc8d13f37abbc109577911a07e6"
         },
         {
           "lang_code": "eo",
@@ -526,12 +526,12 @@
           "native_name": "Esperanto",
           "plural_code": "eo",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 3303,
+          "strings_count": 4799,
+          "translated_count": 3332,
           "translations_url": "https://translations.telegram.org/eo/",
-          "version": 1581671,
-          "file": "android_x/android_x_eo_v1581671.strings",
-          "sha256": "88496493b8dcccc8d01364a18f3bda7edf7351370ceea3d96054d5cd48780df7"
+          "version": 1659431,
+          "file": "android_x/android_x_eo_v1659431.strings",
+          "sha256": "b8af3cd83606118a75b5cd9b8778f07fc1bec4336c072c2cb650582251e3ca69"
         },
         {
           "lang_code": "es",
@@ -539,12 +539,12 @@
           "native_name": "Español",
           "plural_code": "es",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/es/",
-          "version": 1621303,
-          "file": "android_x/android_x_es_v1621303.strings",
-          "sha256": "86e66b0d6808653e0aab5961e4647bde9037a148b875022dfaaa84e0e6474474"
+          "version": 1671514,
+          "file": "android_x/android_x_es_v1671514.strings",
+          "sha256": "4ee56b0d4f9fc680fe0bf6c08e1dd106065fdc867cb37fe7cd5e77206b1dce59"
         },
         {
           "lang_code": "fa",
@@ -553,12 +553,12 @@
           "plural_code": "fa",
           "official": true,
           "rtl": true,
-          "strings_count": 4637,
-          "translated_count": 4628,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/fa/",
-          "version": 1618464,
-          "file": "android_x/android_x_fa_v1618464.strings",
-          "sha256": "6b81efc2fa5efc916f43c936166f1d881fd47bbb1ed0d7a597ff17041eb33921"
+          "version": 1659942,
+          "file": "android_x/android_x_fa_v1659942.strings",
+          "sha256": "d09b7eea53d9dc11bfa55e063ad5049b5c19a46f0ac1d2aa7233d9b797fe3f01"
         },
         {
           "lang_code": "fi",
@@ -566,12 +566,12 @@
           "native_name": "Suomi",
           "plural_code": "fi",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/fi/",
-          "version": 1623250,
-          "file": "android_x/android_x_fi_v1623250.strings",
-          "sha256": "97fecaa338233b64994fa0e8583a130f98d46f93a28d24b233f26888bf42d6e3"
+          "version": 1664207,
+          "file": "android_x/android_x_fi_v1664207.strings",
+          "sha256": "ff9e10bee98d1173245f8934316d145d265ab672a86e728adfd83e3ff762690d"
         },
         {
           "lang_code": "fr",
@@ -579,12 +579,12 @@
           "native_name": "Français",
           "plural_code": "fr",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/fr/",
-          "version": 1623248,
-          "file": "android_x/android_x_fr_v1623248.strings",
-          "sha256": "f3f7dd73ab0005c07b2a90fe0615bcd70c639c92a8aaf729e0af0fa2d6287d45"
+          "version": 1659880,
+          "file": "android_x/android_x_fr_v1659880.strings",
+          "sha256": "a70efc059ab0ee774bce94d81a7a7fd1f42ad0d19be2aff9afeee67d8a5ea27d"
         },
         {
           "lang_code": "he",
@@ -593,12 +593,12 @@
           "plural_code": "he",
           "official": true,
           "rtl": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/he/",
-          "version": 1623787,
-          "file": "android_x/android_x_he_v1623787.strings",
-          "sha256": "0150940132cab46d4541217069076eb929b24427239f4645e7f42266468fdcda"
+          "version": 1670990,
+          "file": "android_x/android_x_he_v1670990.strings",
+          "sha256": "bef67a10e0f632d1e2dfa614567b51b503c527e3598adfe0196ed069c67143ed"
         },
         {
           "lang_code": "hr",
@@ -606,12 +606,12 @@
           "native_name": "Hrvatski",
           "plural_code": "hr",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4502,
+          "strings_count": 4799,
+          "translated_count": 4582,
           "translations_url": "https://translations.telegram.org/hr/",
-          "version": 1623294,
-          "file": "android_x/android_x_hr_v1623294.strings",
-          "sha256": "d27e4ec1d5b7a00c478a6c08ddbb2acf3d90d4ae8562547bfee0257a0259e83d"
+          "version": 1671513,
+          "file": "android_x/android_x_hr_v1671513.strings",
+          "sha256": "eb6e182dad1502e899fe75c016ac250d3218a7e1ce64565444331d0d2d2b13ff"
         },
         {
           "lang_code": "hu",
@@ -619,12 +619,12 @@
           "native_name": "Magyar",
           "plural_code": "hu",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4630,
+          "strings_count": 4799,
+          "translated_count": 4622,
           "translations_url": "https://translations.telegram.org/hu/",
-          "version": 1620856,
-          "file": "android_x/android_x_hu_v1620856.strings",
-          "sha256": "4d4a856bcd7ae4091b78a590566836e23648f40517f124a779efea904b4b3adf"
+          "version": 1659431,
+          "file": "android_x/android_x_hu_v1659431.strings",
+          "sha256": "bf487572cb7f57115da093a66a56328447c985d1fc4305def415fcb81e291896"
         },
         {
           "lang_code": "it",
@@ -632,12 +632,12 @@
           "native_name": "Italiano",
           "plural_code": "it",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/it/",
-          "version": 1621269,
-          "file": "android_x/android_x_it_v1621269.strings",
-          "sha256": "8263dfca363d07bdb86d540ae554a725217db64a7767ef720bc8d24f26d70ee1"
+          "version": 1659671,
+          "file": "android_x/android_x_it_v1659671.strings",
+          "sha256": "0a04e46119ce085427434f266818e078fbf4791a77239bab27732bff893f8ec8"
         },
         {
           "lang_code": "kk",
@@ -645,12 +645,12 @@
           "native_name": "Қазақша",
           "plural_code": "kk",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/kk/",
-          "version": 1623033,
-          "file": "android_x/android_x_kk_v1623033.strings",
-          "sha256": "d1dd0bdaeb1422583a6220db73a1422c5a46871104dfc9466add3fa7c20fe521"
+          "version": 1659683,
+          "file": "android_x/android_x_kk_v1659683.strings",
+          "sha256": "cf915cf38386c5ae55bdeed97385ffa805386ab881fe465ce28259cb5091cdaa"
         },
         {
           "lang_code": "ko",
@@ -658,12 +658,12 @@
           "native_name": "한국어",
           "plural_code": "ko",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/ko/",
-          "version": 1621784,
-          "file": "android_x/android_x_ko_v1621784.strings",
-          "sha256": "74cb0da919a6ce491b4eb384e439fac472f3828e5a8d8757b156a511644a3fd9"
+          "version": 1660158,
+          "file": "android_x/android_x_ko_v1660158.strings",
+          "sha256": "0aef96e3a00c1669b8f2b04e847797d77547e78819bdd94c76f961d04f1d1378"
         },
         {
           "lang_code": "ml",
@@ -671,12 +671,12 @@
           "native_name": "മലയാളം",
           "plural_code": "ml",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 2948,
+          "strings_count": 4799,
+          "translated_count": 2943,
           "translations_url": "https://translations.telegram.org/ml/",
-          "version": 1555695,
-          "file": "android_x/android_x_ml_v1555695.strings",
-          "sha256": "925058b44c7a7342cf0db378b98831b016b5accf7521411d3834ca52b02cc249"
+          "version": 1659431,
+          "file": "android_x/android_x_ml_v1659431.strings",
+          "sha256": "c3c5996ac69b4f7bf6478bb1a05ad13edaba25338f6891b5f071f5a20e394685"
         },
         {
           "lang_code": "ms",
@@ -684,12 +684,12 @@
           "native_name": "Bahasa Melayu",
           "plural_code": "ms",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/ms/",
-          "version": 1623219,
-          "file": "android_x/android_x_ms_v1623219.strings",
-          "sha256": "0f5f947aa7d3e9e005ac0cba709935182d5e4f1c6b8308e94a7f3551ba348c20"
+          "version": 1660893,
+          "file": "android_x/android_x_ms_v1660893.strings",
+          "sha256": "5bab28fac7be60a436bd2679e414bc6b034f280a5e5eec2f768838bb7c95d32d"
         },
         {
           "lang_code": "nb",
@@ -697,12 +697,12 @@
           "native_name": "Norsk (Bokmål)",
           "plural_code": "nb",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/nb/",
-          "version": 1623870,
-          "file": "android_x/android_x_nb_v1623870.strings",
-          "sha256": "caa59201b0397dec04978b4c950006cf2898aaf5a1f2d5990023fd5d134c3cc4"
+          "version": 1670982,
+          "file": "android_x/android_x_nb_v1670982.strings",
+          "sha256": "9463b8c7139f291935979c837f6fd4b46be6f579784ddc9e8ea102dd4120aacb"
         },
         {
           "lang_code": "pl",
@@ -710,12 +710,12 @@
           "native_name": "Polski",
           "plural_code": "pl",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4374,
+          "strings_count": 4799,
+          "translated_count": 4677,
           "translations_url": "https://translations.telegram.org/pl/",
-          "version": 1621110,
-          "file": "android_x/android_x_pl_v1621110.strings",
-          "sha256": "0110b99e63a36665716a3fdaccba2742f213377b4a4c32a1fdded1bfc2338328"
+          "version": 1661160,
+          "file": "android_x/android_x_pl_v1661160.strings",
+          "sha256": "be9dcaddcc7531062ae3e84f54aa7bf39841cf03b06647c525148d2720152fde"
         },
         {
           "lang_code": "pt-br",
@@ -723,12 +723,12 @@
           "native_name": "Português (Brasil)",
           "plural_code": "pt",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/pt-br/",
-          "version": 1623582,
-          "file": "android_x/android_x_pt-br_v1623582.strings",
-          "sha256": "c5ce0d13baf8f59109ab5b34f5db21999b579cfc8d487f36c76504fd0193463c"
+          "version": 1659699,
+          "file": "android_x/android_x_pt-br_v1659699.strings",
+          "sha256": "9f88fa1eec3f34724128dcbecae9dc018f1b7485342bb06c2380bdc3bcfc22a0"
         },
         {
           "lang_code": "ro",
@@ -736,12 +736,12 @@
           "native_name": "Română",
           "plural_code": "ro",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/ro/",
-          "version": 1621247,
-          "file": "android_x/android_x_ro_v1621247.strings",
-          "sha256": "310c59ac980a79902f09a7d414e24ccb6fd47553b84bb66c994b52bdee44c3f0"
+          "version": 1666180,
+          "file": "android_x/android_x_ro_v1666180.strings",
+          "sha256": "ce07cd3c45efeb81ff6e480739f157a855a0d8cd07e8fe31b94a2894dd1bb175"
         },
         {
           "lang_code": "ru",
@@ -749,12 +749,12 @@
           "native_name": "Русский",
           "plural_code": "ru",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/ru/",
-          "version": 1620897,
-          "file": "android_x/android_x_ru_v1620897.strings",
-          "sha256": "c3cf312961c4d3dd167ec47219eec46f81ad25ec7d8454989f553c8ba865ff1d"
+          "version": 1664380,
+          "file": "android_x/android_x_ru_v1664380.strings",
+          "sha256": "1f89077c6a16cefc7b67bdaaf8f34ffba22bde2d595f75cadc967acf527986e9"
         },
         {
           "lang_code": "sk",
@@ -762,12 +762,12 @@
           "native_name": "Slovenčina",
           "plural_code": "sk",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4242,
+          "strings_count": 4799,
+          "translated_count": 4275,
           "translations_url": "https://translations.telegram.org/sk/",
-          "version": 1618398,
-          "file": "android_x/android_x_sk_v1618398.strings",
-          "sha256": "7764e0e8db21f0c527a81320e07b2a646a319c4dba7061818af871d7097a7639"
+          "version": 1659431,
+          "file": "android_x/android_x_sk_v1659431.strings",
+          "sha256": "0f825c24ac690b51355f4fb1d4e686ec1c2df8df0cc5787d9440e4e40258b836"
         },
         {
           "lang_code": "sr",
@@ -775,12 +775,12 @@
           "native_name": "Српски",
           "plural_code": "sr",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/sr/",
-          "version": 1623148,
-          "file": "android_x/android_x_sr_v1623148.strings",
-          "sha256": "796b5f1de6761c7b6dba6281f25ddd6b1254014744ae4e6376207f110eb39545"
+          "version": 1671023,
+          "file": "android_x/android_x_sr_v1671023.strings",
+          "sha256": "ec49d1fb1a9ee7f6583051305991eeaa45010f8c94d04221327382245751259b"
         },
         {
           "lang_code": "sv",
@@ -788,12 +788,12 @@
           "native_name": "Svenska",
           "plural_code": "sv",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/sv/",
-          "version": 1623532,
-          "file": "android_x/android_x_sv_v1623532.strings",
-          "sha256": "bfc5dd68d91a714e68603237ce3d99da34961256667d750c903d3e277bf00bf2"
+          "version": 1661213,
+          "file": "android_x/android_x_sv_v1661213.strings",
+          "sha256": "02d3161d0f6065b5a70ad70e3152bb5a7f06fbad181993400d7e4f3928eb0ba3"
         },
         {
           "lang_code": "ta",
@@ -801,12 +801,12 @@
           "native_name": "தமிழ்",
           "plural_code": "ta",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4674,
           "translations_url": "https://translations.telegram.org/ta/",
-          "version": 1614352,
-          "file": "android_x/android_x_ta_v1614352.strings",
-          "sha256": "e35d98a8dd488aed53d8f28b192903e4c5d6ed0185f27bcf916dd8b0643dbc6d"
+          "version": 1659431,
+          "file": "android_x/android_x_ta_v1659431.strings",
+          "sha256": "b851d32268c2c237cd310fad1668b126ecadfc0b22626cd6162b8ee7468787d6"
         },
         {
           "lang_code": "tr",
@@ -814,12 +814,12 @@
           "native_name": "Türkçe",
           "plural_code": "tr",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 3637,
+          "strings_count": 4799,
+          "translated_count": 3631,
           "translations_url": "https://translations.telegram.org/tr/",
-          "version": 1604803,
-          "file": "android_x/android_x_tr_v1604803.strings",
-          "sha256": "109c765b5407976292ec9a5b141b75a1254f9547afdbd229cd6ba5bd892f1850"
+          "version": 1659431,
+          "file": "android_x/android_x_tr_v1659431.strings",
+          "sha256": "ba198e41bdf12e7d9cc21020f9f6085dbb0cf1faeac27ade2437503178061cdd"
         },
         {
           "lang_code": "uk",
@@ -827,12 +827,12 @@
           "native_name": "Українська",
           "plural_code": "uk",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/uk/",
-          "version": 1623660,
-          "file": "android_x/android_x_uk_v1623660.strings",
-          "sha256": "38c8d5970b8c89eb432e125dbe3b98e73d5a65f5c616251c78276b0d31cdb93c"
+          "version": 1671020,
+          "file": "android_x/android_x_uk_v1671020.strings",
+          "sha256": "5238761babc6c14de981da54e089166c5ae6dc77502e104a7289e2ba0cefdf68"
         },
         {
           "lang_code": "vi",
@@ -840,12 +840,12 @@
           "native_name": "Tiếng Việt",
           "plural_code": "vi",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4622,
+          "strings_count": 4799,
+          "translated_count": 4617,
           "translations_url": "https://translations.telegram.org/vi/",
-          "version": 1602260,
-          "file": "android_x/android_x_vi_v1602260.strings",
-          "sha256": "374e4b7d2b5efba1488a5eb769159b843caf324a1163ced617395d5616d110e8"
+          "version": 1661109,
+          "file": "android_x/android_x_vi_v1661109.strings",
+          "sha256": "69a6b517cd3d27386984caee74264ba4e1c0ca12d22481673a368dd4f66d87b6"
         },
         {
           "lang_code": "zh-hans",
@@ -853,12 +853,12 @@
           "native_name": "简体中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4501,
+          "strings_count": 4799,
+          "translated_count": 4792,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 1619347,
-          "file": "android_x/android_x_zh-hans_v1619347.strings",
-          "sha256": "8c5779e790e0d66dec85ac295501e21bfc1573bde07491a577bf9257c9842ba4"
+          "version": 1666176,
+          "file": "android_x/android_x_zh-hans_v1666176.strings",
+          "sha256": "30de7f8eb16e22179a55ad4298aa6cbb9668c5f50e7a554d7586c5b951f4326a"
         },
         {
           "lang_code": "zh-hant",
@@ -866,12 +866,12 @@
           "native_name": "繁體中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 4637,
-          "translated_count": 4637,
+          "strings_count": 4799,
+          "translated_count": 4799,
           "translations_url": "https://translations.telegram.org/zh-hant/",
-          "version": 1622408,
-          "file": "android_x/android_x_zh-hant_v1622408.strings",
-          "sha256": "fc33137f5937d288362eaa9d24e8270bf58238b44288827560a28d3dda6635c3"
+          "version": 1661164,
+          "file": "android_x/android_x_zh-hant_v1661164.strings",
+          "sha256": "b70f70431b163611abf2c8ec22e7aef85722971cd967fc236d12bbcafc92bf76"
         }
       ]
     },
@@ -885,12 +885,12 @@
           "plural_code": "ar",
           "official": true,
           "rtl": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/ar/",
-          "version": 21554106,
-          "file": "ios/ios_ar_v21554106.strings",
-          "sha256": "f02850934606270326d1b8697491b3e5f81e902ead5eea2bc35fabea0d7e101a"
+          "version": 22452752,
+          "file": "ios/ios_ar_v22452752.strings",
+          "sha256": "73187cb2c9d5bbdfdf8e9ee9e2c54942a3d2cb3d812b078f3b920e1d195f63ca"
         },
         {
           "lang_code": "be",
@@ -898,12 +898,12 @@
           "native_name": "Беларуская",
           "plural_code": "be",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12062,
           "translations_url": "https://translations.telegram.org/be/",
-          "version": 21547555,
-          "file": "ios/ios_be_v21547555.strings",
-          "sha256": "0aae55d185579ba34cdde4de7d272f5d5dc15e956fd234758f48ae6b71028509"
+          "version": 22431046,
+          "file": "ios/ios_be_v22431046.strings",
+          "sha256": "4beab85cbeda97417296db92443265145277a85f919c639babb4a760ecff43f1"
         },
         {
           "lang_code": "ca",
@@ -911,12 +911,12 @@
           "native_name": "Català",
           "plural_code": "ca",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/ca/",
-          "version": 21546564,
-          "file": "ios/ios_ca_v21546564.strings",
-          "sha256": "a16529294db8a97b56b3cb73609603af63915c7b2fa4fa5740615f9bd360a14d"
+          "version": 22476638,
+          "file": "ios/ios_ca_v22476638.strings",
+          "sha256": "7f0b5a3de0e09a8861450d4a91f04f5654463214abd0849695fced192f740e4c"
         },
         {
           "lang_code": "cs",
@@ -924,12 +924,12 @@
           "native_name": "Čeština",
           "plural_code": "cs",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/cs/",
-          "version": 21519219,
-          "file": "ios/ios_cs_v21519219.strings",
-          "sha256": "5452fe7f8cfd649fcb2fd7ddfc568b49403c1deb7f914cbd2f4081056ca96ad0"
+          "version": 22502231,
+          "file": "ios/ios_cs_v22502231.strings",
+          "sha256": "161646fa416e1c66c69ad72fd89ee619ab6d8decd2ad37b9ab8b5dd71c8102cb"
         },
         {
           "lang_code": "de",
@@ -937,12 +937,12 @@
           "native_name": "Deutsch",
           "plural_code": "de",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/de/",
-          "version": 21536099,
-          "file": "ios/ios_de_v21536099.strings",
-          "sha256": "65df26f251fc1bb2930028d7bc4bc238608f74c22827e28ae11d1919bbd24d51"
+          "version": 22502094,
+          "file": "ios/ios_de_v22502094.strings",
+          "sha256": "11ac0606f48aceac831ca663f04b80205cc602d884fc8042b8be33f1542e3ce9"
         },
         {
           "lang_code": "en",
@@ -950,12 +950,12 @@
           "native_name": "English",
           "plural_code": "en",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/en/",
-          "version": 21495337,
-          "file": "ios/ios_en_v21495337.strings",
-          "sha256": "7801bae1ed3e5b21e782709cfdd93690b5896cf4d4c323e6432715716258d492"
+          "version": 22501475,
+          "file": "ios/ios_en_v22501475.strings",
+          "sha256": "f7b73ab86731a96aea11432573c4b699d2c6ecbe100c64b0dc68504dbd442bee"
         },
         {
           "lang_code": "es",
@@ -963,12 +963,12 @@
           "native_name": "Español",
           "plural_code": "es",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/es/",
-          "version": 21538743,
-          "file": "ios/ios_es_v21538743.strings",
-          "sha256": "52e338815fec94cab82a9f0089240142aad09bc28814030bbbce16907db190eb"
+          "version": 22479940,
+          "file": "ios/ios_es_v22479940.strings",
+          "sha256": "e6090345068271371d207592b1b2b0ef019fcf2b95dd2a32eeed93feef3f99e2"
         },
         {
           "lang_code": "fa",
@@ -977,12 +977,12 @@
           "plural_code": "fa",
           "official": true,
           "rtl": true,
-          "strings_count": 11721,
-          "translated_count": 11552,
+          "strings_count": 12454,
+          "translated_count": 11953,
           "translations_url": "https://translations.telegram.org/fa/",
-          "version": 21515079,
-          "file": "ios/ios_fa_v21515079.strings",
-          "sha256": "05933213d067b9c1fb1134ed2ae212c91218a311d9d8ef72a4687df5426574ce"
+          "version": 22437586,
+          "file": "ios/ios_fa_v22437586.strings",
+          "sha256": "e2aa217a9dd2e0fa99d0bc8a034e8c51a166bb938e506ed139ecc9835fe1315a"
         },
         {
           "lang_code": "fi",
@@ -990,12 +990,12 @@
           "native_name": "Suomi",
           "plural_code": "fi",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/fi/",
-          "version": 21552839,
-          "file": "ios/ios_fi_v21552839.strings",
-          "sha256": "86c96424c093631d47987240456f2cb0a5f197a005f03f2a5be698c542ca29dd"
+          "version": 22418238,
+          "file": "ios/ios_fi_v22418238.strings",
+          "sha256": "ac1bbdee7444f20c10c37ed6a7350937c3b69a4f3f096f783918c0b6fa728bf3"
         },
         {
           "lang_code": "fr",
@@ -1003,12 +1003,12 @@
           "native_name": "Français",
           "plural_code": "fr",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/fr/",
-          "version": 21511263,
-          "file": "ios/ios_fr_v21511263.strings",
-          "sha256": "2656695d11a778c08eed1a2d9a9345b7b510a4558cc8033236d8746f3c0e160c"
+          "version": 22418237,
+          "file": "ios/ios_fr_v22418237.strings",
+          "sha256": "7df8067160a4668958678afcc7af7450403d6ed795a736a4de60b5836fc40ba4"
         },
         {
           "lang_code": "he",
@@ -1017,12 +1017,12 @@
           "plural_code": "he",
           "official": true,
           "rtl": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/he/",
-          "version": 21546080,
-          "file": "ios/ios_he_v21546080.strings",
-          "sha256": "6d55fb0990c9464c982d4a913c6aa302d69b7c645be05e37f64ebfc34ae6b328"
+          "version": 22479884,
+          "file": "ios/ios_he_v22479884.strings",
+          "sha256": "ab388c69537231b24941ec96f88e219d9ff13a7223e2c939aa00c5bc3491fa75"
         },
         {
           "lang_code": "hr",
@@ -1030,12 +1030,12 @@
           "native_name": "Hrvatski",
           "plural_code": "hr",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12453,
           "translations_url": "https://translations.telegram.org/hr/",
-          "version": 21545920,
-          "file": "ios/ios_hr_v21545920.strings",
-          "sha256": "25ae5bba83605caccca656db542d922272738f1e85af9f1daf842aba1c68dd51"
+          "version": 22479498,
+          "file": "ios/ios_hr_v22479498.strings",
+          "sha256": "e66ad6ac993d3abee26e4bb19c973a6f9c244eb563e1aac4d48afed590c8d18f"
         },
         {
           "lang_code": "hu",
@@ -1043,12 +1043,12 @@
           "native_name": "Magyar",
           "plural_code": "hu",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 11934,
           "translations_url": "https://translations.telegram.org/hu/",
-          "version": 21506944,
-          "file": "ios/ios_hu_v21506944.strings",
-          "sha256": "065f78d5be8a8b5c67e33ecd698740e234fd760a5eeb98b6fdac0b098be87695"
+          "version": 22433831,
+          "file": "ios/ios_hu_v22433831.strings",
+          "sha256": "348ca100c652dee5df3c9c18dffdba7db853a846daad0345f25a7d081d3516c7"
         },
         {
           "lang_code": "id",
@@ -1056,12 +1056,12 @@
           "native_name": "Bahasa Indonesia",
           "plural_code": "id",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11671,
+          "strings_count": 12454,
+          "translated_count": 12403,
           "translations_url": "https://translations.telegram.org/id/",
-          "version": 21491615,
-          "file": "ios/ios_id_v21491615.strings",
-          "sha256": "b860d19cf682691538615c099008f813a8488589c539a725178bd0bd13fa835e"
+          "version": 22463131,
+          "file": "ios/ios_id_v22463131.strings",
+          "sha256": "6cadb093e64048efeee6625c5105651115667e0e54d0f304ca6e4ccc63700b2b"
         },
         {
           "lang_code": "it",
@@ -1069,12 +1069,12 @@
           "native_name": "Italiano",
           "plural_code": "it",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/it/",
-          "version": 21546733,
-          "file": "ios/ios_it_v21546733.strings",
-          "sha256": "7ebd40bda54381c0f7b52493d6c97e6567a668759a4c58122d8ab7a94d6a9c4e"
+          "version": 22501781,
+          "file": "ios/ios_it_v22501781.strings",
+          "sha256": "c7f663fe22738b4758d5c4e757a8b74f8d82811626752a03e692bb175d90fc8c"
         },
         {
           "lang_code": "kk",
@@ -1082,12 +1082,12 @@
           "native_name": "Қазақша",
           "plural_code": "kk",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/kk/",
-          "version": 21553952,
-          "file": "ios/ios_kk_v21553952.strings",
-          "sha256": "124f1c697554ea57f5cae9861c4aca71380ad954718cda4584ea8f19c6a0af98"
+          "version": 22501720,
+          "file": "ios/ios_kk_v22501720.strings",
+          "sha256": "d2694df45d3afe67a91f7c1d9068211856d9285da7799d09e6a53c6f2335fa29"
         },
         {
           "lang_code": "ko",
@@ -1095,12 +1095,12 @@
           "native_name": "한국어",
           "plural_code": "ko",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12442,
           "translations_url": "https://translations.telegram.org/ko/",
-          "version": 21535953,
-          "file": "ios/ios_ko_v21535953.strings",
-          "sha256": "06a5cc21716629c9f410ab6414120c3cba19b0a47d644dd9a8a7c79c60cd96fc"
+          "version": 22347653,
+          "file": "ios/ios_ko_v22347653.strings",
+          "sha256": "fa97182d44809cee9fc35d3b95a1cb92bf16faa5bf613048aee66d8583e4c8ae"
         },
         {
           "lang_code": "ms",
@@ -1108,12 +1108,12 @@
           "native_name": "Bahasa Melayu",
           "plural_code": "ms",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/ms/",
-          "version": 21552746,
-          "file": "ios/ios_ms_v21552746.strings",
-          "sha256": "29bdd79cd2aa676399236d4fc1b96b0089b5cbbe22bea3cb8a0b5b9370949780"
+          "version": 22501545,
+          "file": "ios/ios_ms_v22501545.strings",
+          "sha256": "dc76acb702ffb0980b24fb43b10801b44341fcf80359011f8de40b8b801dc750"
         },
         {
           "lang_code": "nb",
@@ -1121,12 +1121,12 @@
           "native_name": "Norsk (Bokmål)",
           "plural_code": "nb",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/nb/",
-          "version": 21553405,
-          "file": "ios/ios_nb_v21553405.strings",
-          "sha256": "1636f4f9b2d4118d3b9ba19eaaf2ed56d9b8c64566ba372e81784f091f5647b7"
+          "version": 22461220,
+          "file": "ios/ios_nb_v22461220.strings",
+          "sha256": "dd65c80cfeaabf4cd21d68c1b8a9a2146ec5705928116221364791e06e07693f"
         },
         {
           "lang_code": "nl",
@@ -1134,12 +1134,12 @@
           "native_name": "Nederlands",
           "plural_code": "nl",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12452,
           "translations_url": "https://translations.telegram.org/nl/",
-          "version": 21554810,
-          "file": "ios/ios_nl_v21554810.strings",
-          "sha256": "154e28e1c19dd82f70fe89a29cd767726948673001eb18a0e20cb11c82e9b938"
+          "version": 22501678,
+          "file": "ios/ios_nl_v22501678.strings",
+          "sha256": "67d7e0955041314f71211726b1ca1d0fc050fa7b38dc980cd98904932d80114b"
         },
         {
           "lang_code": "pl",
@@ -1147,12 +1147,12 @@
           "native_name": "Polski",
           "plural_code": "pl",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11707,
+          "strings_count": 12454,
+          "translated_count": 12355,
           "translations_url": "https://translations.telegram.org/pl/",
-          "version": 21447117,
-          "file": "ios/ios_pl_v21447117.strings",
-          "sha256": "84aa7da9cbd8a0003912a29d980b1987dd4eb911b7a942ca7e840c5745d22082"
+          "version": 22488469,
+          "file": "ios/ios_pl_v22488469.strings",
+          "sha256": "91f0c81f3e1253d5a813f1ac18b7975dd873042a8a9f23dd42379338e7d8c6a6"
         },
         {
           "lang_code": "pt-br",
@@ -1160,12 +1160,12 @@
           "native_name": "Português (Brasil)",
           "plural_code": "pt",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/pt-br/",
-          "version": 21552845,
-          "file": "ios/ios_pt-br_v21552845.strings",
-          "sha256": "4d5250219590711779f2d6c140b16066479880a0cf6f6596c61674ae2ceedd7d"
+          "version": 22431427,
+          "file": "ios/ios_pt-br_v22431427.strings",
+          "sha256": "0230e839bb78a91b451a1ebc24237daa75462667b18e3102fbfe6ce5d0c4ae06"
         },
         {
           "lang_code": "ro",
@@ -1173,12 +1173,12 @@
           "native_name": "Română",
           "plural_code": "ro",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/ro/",
-          "version": 21546565,
-          "file": "ios/ios_ro_v21546565.strings",
-          "sha256": "d0af9d76a7d9c81c8fd26fedef4d8ba2f49328cd17278d089a15014a8bbae500"
+          "version": 22501816,
+          "file": "ios/ios_ro_v22501816.strings",
+          "sha256": "e4570f06d23af4f527c6bc7aed191e103668b713850a490a115493bb9026be05"
         },
         {
           "lang_code": "ru",
@@ -1186,12 +1186,12 @@
           "native_name": "Русский",
           "plural_code": "ru",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/ru/",
-          "version": 21552838,
-          "file": "ios/ios_ru_v21552838.strings",
-          "sha256": "991c90ab11c68e5e3367eb22043b45111046b579dd80b9dbef2a1630dd3b307d"
+          "version": 22463528,
+          "file": "ios/ios_ru_v22463528.strings",
+          "sha256": "2912c66896ca21d93e026cf5c043f5ce31977b00aa6746adbf1323629a07dffb"
         },
         {
           "lang_code": "sk",
@@ -1199,12 +1199,12 @@
           "native_name": "Slovenčina",
           "plural_code": "sk",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11158,
+          "strings_count": 12454,
+          "translated_count": 11459,
           "translations_url": "https://translations.telegram.org/sk/",
-          "version": 21453335,
-          "file": "ios/ios_sk_v21453335.strings",
-          "sha256": "c5f2c70dbe9ee4c8b93561b47d6d7e164a4e0d8c0263ea897651da6acda6a198"
+          "version": 22300690,
+          "file": "ios/ios_sk_v22300690.strings",
+          "sha256": "f7a2b016e345e66cc584a76c7740b52616e60a6f2290a1f5ca561daa67526a5a"
         },
         {
           "lang_code": "sr",
@@ -1212,12 +1212,12 @@
           "native_name": "Српски",
           "plural_code": "sr",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/sr/",
-          "version": 21545085,
-          "file": "ios/ios_sr_v21545085.strings",
-          "sha256": "a7761b52d1faa370597c8d108ddbad067d5ff33e180c5de84b37c4b13a79c3bf"
+          "version": 22502051,
+          "file": "ios/ios_sr_v22502051.strings",
+          "sha256": "e23bf5621f187f39daf62dc255099e798ab8ca46019ef1b6cf0bdeecb4117c5a"
         },
         {
           "lang_code": "sv",
@@ -1225,12 +1225,12 @@
           "native_name": "Svenska",
           "plural_code": "sv",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/sv/",
-          "version": 21514892,
-          "file": "ios/ios_sv_v21514892.strings",
-          "sha256": "f09dc31752cc8b047949d2ecf58204454c9abc541b4ed1abd98cd84573e6f41f"
+          "version": 22427908,
+          "file": "ios/ios_sv_v22427908.strings",
+          "sha256": "ee184a88ff16391139236ac46084539f184a432bde2c1598abda6763d3fa1504"
         },
         {
           "lang_code": "tr",
@@ -1238,12 +1238,12 @@
           "native_name": "Türkçe",
           "plural_code": "tr",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12124,
           "translations_url": "https://translations.telegram.org/tr/",
-          "version": 21517866,
-          "file": "ios/ios_tr_v21517866.strings",
-          "sha256": "d68a96c83a3341c92464d6f2e00a267e7a29871aa80c11a59f12a6a58dc436c5"
+          "version": 22502483,
+          "file": "ios/ios_tr_v22502483.strings",
+          "sha256": "83cec49a5753a435a1cba10fc82392c265f8394012bb04e215ddf910d522d464"
         },
         {
           "lang_code": "uk",
@@ -1251,12 +1251,12 @@
           "native_name": "Українська",
           "plural_code": "uk",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/uk/",
-          "version": 21537819,
-          "file": "ios/ios_uk_v21537819.strings",
-          "sha256": "4b563865474b6a72cfbc67dd922d380c2a73a928658fbe22f95855c71b7b69ac"
+          "version": 22502458,
+          "file": "ios/ios_uk_v22502458.strings",
+          "sha256": "9bc28344643ec8f6e89f2b62eea68b8b641cce5f4ff53b822045928f87901420"
         },
         {
           "lang_code": "uz",
@@ -1264,12 +1264,12 @@
           "native_name": "O‘zbek",
           "plural_code": "uz",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 10586,
+          "strings_count": 12454,
+          "translated_count": 11287,
           "translations_url": "https://translations.telegram.org/uz/",
-          "version": 21554962,
-          "file": "ios/ios_uz_v21554962.strings",
-          "sha256": "48b3c501a5900653734bb100ed8c6a4f0d3ae2dc25120315a2b38ea0f69b2bf4"
+          "version": 22476735,
+          "file": "ios/ios_uz_v22476735.strings",
+          "sha256": "4357c360d7fd304283de84cc9632167d18e84b045013a9193dd57dd94b621b78"
         },
         {
           "lang_code": "vi",
@@ -1277,12 +1277,12 @@
           "native_name": "Tiếng Việt",
           "plural_code": "vi",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11460,
+          "strings_count": 12454,
+          "translated_count": 12213,
           "translations_url": "https://translations.telegram.org/vi/",
-          "version": 21202542,
-          "file": "ios/ios_vi_v21202542.strings",
-          "sha256": "6aaea4934f0af12f653f6af6bb441fa275db08026536e32a3d494d8bd43478cc"
+          "version": 22345429,
+          "file": "ios/ios_vi_v22345429.strings",
+          "sha256": "8c83676b4d1e6a14277f47e62310bea3ec683bd7477e496abf0fd7eb01da6e0e"
         },
         {
           "lang_code": "zh-hans",
@@ -1290,12 +1290,12 @@
           "native_name": "简体中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 21265098,
-          "file": "ios/ios_zh-hans_v21265098.strings",
-          "sha256": "e5beb5c136292d8cef06fb4bae9f815413d9c99b663c4ace2f0ee3a76562ed8f"
+          "version": 22461111,
+          "file": "ios/ios_zh-hans_v22461111.strings",
+          "sha256": "d6e1fdc2d871a970d6521d63615c92359cf1e1708f7d1a09dd6558f09999f47b"
         },
         {
           "lang_code": "zh-hant",
@@ -1303,12 +1303,12 @@
           "native_name": "繁體中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 11721,
-          "translated_count": 11721,
+          "strings_count": 12454,
+          "translated_count": 12454,
           "translations_url": "https://translations.telegram.org/zh-hant/",
-          "version": 21553802,
-          "file": "ios/ios_zh-hant_v21553802.strings",
-          "sha256": "ccfe293058baf39c0a63796117b28a979e37bfdbbbb846d87fde17db0ce05352"
+          "version": 22421532,
+          "file": "ios/ios_zh-hant_v22421532.strings",
+          "sha256": "1976487b7e7998c3bd6dc1cb4d2e9b341f868d14b779766b21f55f1ec09faeb0"
         }
       ]
     },
@@ -1321,12 +1321,12 @@
           "native_name": "Беларуская",
           "plural_code": "be",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 6661,
+          "strings_count": 9060,
+          "translated_count": 8419,
           "translations_url": "https://translations.telegram.org/be/",
-          "version": 2235886,
-          "file": "macos/macos_be_v2235886.strings",
-          "sha256": "b113e1a2dda8ca94e18a005f6d607c13932474c0208bfc379ce5962c063638b7"
+          "version": 2402312,
+          "file": "macos/macos_be_v2402312.strings",
+          "sha256": "25457edc4f57fbfbbf64cefa5e3b918639490b27931089ca457b077f66102ffc"
         },
         {
           "lang_code": "ca",
@@ -1334,12 +1334,12 @@
           "native_name": "Català",
           "plural_code": "ca",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 8738,
           "translations_url": "https://translations.telegram.org/ca/",
-          "version": 2236968,
-          "file": "macos/macos_ca_v2236968.strings",
-          "sha256": "28c9632327c0751efce3d61d0aac5770240f09dec6093340b21f532e55895a9a"
+          "version": 2414296,
+          "file": "macos/macos_ca_v2414296.strings",
+          "sha256": "d3867171555f6ae747f3897c95c6e71bf9e94bdebe796d368c9074adbd2f5de5"
         },
         {
           "lang_code": "cs",
@@ -1347,12 +1347,12 @@
           "native_name": "Čeština",
           "plural_code": "cs",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8061,
+          "strings_count": 9060,
+          "translated_count": 8560,
           "translations_url": "https://translations.telegram.org/cs/",
-          "version": 2232674,
-          "file": "macos/macos_cs_v2232674.strings",
-          "sha256": "5c62ed783ef8743c1565199a20acfda5d573004cf61f5147640a1c45cb6e770f"
+          "version": 2420431,
+          "file": "macos/macos_cs_v2420431.strings",
+          "sha256": "a516dad7802b414f7fa8203e7077d448fa51958165ec8787848d365fa0f5ada7"
         },
         {
           "lang_code": "de",
@@ -1360,12 +1360,12 @@
           "native_name": "Deutsch",
           "plural_code": "de",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 6342,
+          "strings_count": 9060,
+          "translated_count": 7542,
           "translations_url": "https://translations.telegram.org/de/",
-          "version": 2227135,
-          "file": "macos/macos_de_v2227135.strings",
-          "sha256": "1d6f1ce7c22ca4919b35ad8b3178610638ee7c0bd70ff69af73a90c13950ab20"
+          "version": 2420652,
+          "file": "macos/macos_de_v2420652.strings",
+          "sha256": "e1aa6a14b4889705f60a7b2d10e5e858db9ad6c86c8561a53e4fb51312483ef1"
         },
         {
           "lang_code": "en",
@@ -1373,12 +1373,12 @@
           "native_name": "English",
           "plural_code": "en",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9060,
           "translations_url": "https://translations.telegram.org/en/",
-          "version": 2224214,
-          "file": "macos/macos_en_v2224214.strings",
-          "sha256": "541ddcaf5c9b28510cc3b5344d226eb50239c6084c69af5c4993d6fc771fee67"
+          "version": 2419915,
+          "file": "macos/macos_en_v2419915.strings",
+          "sha256": "d89899e5694edb2ad560d418aa0448627c171d099239d062d4d9ff6418708386"
         },
         {
           "lang_code": "es",
@@ -1386,12 +1386,12 @@
           "native_name": "Español",
           "plural_code": "es",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/es/",
-          "version": 2234313,
-          "file": "macos/macos_es_v2234313.strings",
-          "sha256": "08845512bd7d9396482719ff9d46bb81b749615505b29ce7ca7e4c2a1c58792a"
+          "version": 2415244,
+          "file": "macos/macos_es_v2415244.strings",
+          "sha256": "75336464368c401b52ba1495be558ad9aeec2b23851d02100122dffb06c2c50c"
         },
         {
           "lang_code": "fi",
@@ -1399,12 +1399,12 @@
           "native_name": "Suomi",
           "plural_code": "fi",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/fi/",
-          "version": 2232687,
-          "file": "macos/macos_fi_v2232687.strings",
-          "sha256": "a8c0bd37eb5329606fba205dd8eb77c5297fa11a7d50264aa0f482648df79834"
+          "version": 2402557,
+          "file": "macos/macos_fi_v2402557.strings",
+          "sha256": "c4996b2b5cc5933017cf4d29ca7348f29ba98b3983dea3214d4d4632cd827776"
         },
         {
           "lang_code": "fr",
@@ -1412,12 +1412,12 @@
           "native_name": "Français",
           "plural_code": "fr",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/fr/",
-          "version": 2232688,
-          "file": "macos/macos_fr_v2232688.strings",
-          "sha256": "0ac506be46f1e2b30c1a56096344b3563291cd595434e58fefcc55fb7eb0c145"
+          "version": 2402556,
+          "file": "macos/macos_fr_v2402556.strings",
+          "sha256": "85d58e83e2836bfad3ad7d9b0cd4579e288e55bc71f7e805ef1e3526b5e206cd"
         },
         {
           "lang_code": "he",
@@ -1426,12 +1426,12 @@
           "plural_code": "he",
           "official": true,
           "rtl": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/he/",
-          "version": 2235717,
-          "file": "macos/macos_he_v2235717.strings",
-          "sha256": "ab98fcda91baa7d4edba03640682731d4b2a66586bfdcdbc8d758bec864fec6b"
+          "version": 2405382,
+          "file": "macos/macos_he_v2405382.strings",
+          "sha256": "37cc839ebced427422fbe2d45d031f2cdc488d41b559c0087eac8517e69dcfd2"
         },
         {
           "lang_code": "hr",
@@ -1439,12 +1439,12 @@
           "native_name": "Hrvatski",
           "plural_code": "hr",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 8980,
           "translations_url": "https://translations.telegram.org/hr/",
-          "version": 2235704,
-          "file": "macos/macos_hr_v2235704.strings",
-          "sha256": "094a3ede7a0ffe94ce62df2d2313a5b5b6d964b338de8e482e9bfbc573c103c1"
+          "version": 2415243,
+          "file": "macos/macos_hr_v2415243.strings",
+          "sha256": "b82056b522a2b5b899789c479d0d44e67c42f8a15c3f45df2ccdb76805c70b8d"
         },
         {
           "lang_code": "it",
@@ -1452,12 +1452,12 @@
           "native_name": "Italiano",
           "plural_code": "it",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/it/",
-          "version": 2233689,
-          "file": "macos/macos_it_v2233689.strings",
-          "sha256": "601b97daadd3a2ae2eb7111fb6c9bf4a544baceb114177c3d819006efefa4251"
+          "version": 2420215,
+          "file": "macos/macos_it_v2420215.strings",
+          "sha256": "539eb00a972500c37c2c70eee1c087796b2d1ecc35f160a8f7718bbe1ca6dd37"
         },
         {
           "lang_code": "kk",
@@ -1465,12 +1465,12 @@
           "native_name": "Қазақша",
           "plural_code": "kk",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/kk/",
-          "version": 2234642,
-          "file": "macos/macos_kk_v2234642.strings",
-          "sha256": "778467546ba79dbed65ee8c947e62f9c18836e7494a5ecad4b9d9e4c8a008b8b"
+          "version": 2420097,
+          "file": "macos/macos_kk_v2420097.strings",
+          "sha256": "cf2c6dfdc259b23160c8a67f2783b7befdc35e84a7099bd6f8014e374275c468"
         },
         {
           "lang_code": "ko",
@@ -1478,12 +1478,12 @@
           "native_name": "한국어",
           "plural_code": "ko",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9051,
           "translations_url": "https://translations.telegram.org/ko/",
-          "version": 2234742,
-          "file": "macos/macos_ko_v2234742.strings",
-          "sha256": "611eb5cec6987a98688b00c048f76e2a54b980727e56b7cf77f7fad2e070d38a"
+          "version": 2396567,
+          "file": "macos/macos_ko_v2396567.strings",
+          "sha256": "279b36b026414435f140ba0508e987cb1c38a27bc036bb110667e18ff60099dc"
         },
         {
           "lang_code": "ms",
@@ -1491,12 +1491,12 @@
           "native_name": "Bahasa Melayu",
           "plural_code": "ms",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/ms/",
-          "version": 2234836,
-          "file": "macos/macos_ms_v2234836.strings",
-          "sha256": "bbc688f86ca669437eb02fa645a8d5b48c7a7c14208230b7806d24aa6c714b42"
+          "version": 2419917,
+          "file": "macos/macos_ms_v2419917.strings",
+          "sha256": "7676aa8fe4c747b3b7051c991b13c10585790dcab78a29628d22938bb2d03e5f"
         },
         {
           "lang_code": "nb",
@@ -1504,12 +1504,12 @@
           "native_name": "Norsk (Bokmål)",
           "plural_code": "nb",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/nb/",
-          "version": 2236355,
-          "file": "macos/macos_nb_v2236355.strings",
-          "sha256": "97552b58d1f99cc943c834d041204d9917941cb4ed59658d085d4eb5d6ca3c47"
+          "version": 2407395,
+          "file": "macos/macos_nb_v2407395.strings",
+          "sha256": "9828bfa41fd3625fb1b1769a9eeae8272c8d76098ce1c36ba281d5704a9c30c8"
         },
         {
           "lang_code": "nl",
@@ -1517,12 +1517,12 @@
           "native_name": "Nederlands",
           "plural_code": "nl",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 8386,
           "translations_url": "https://translations.telegram.org/nl/",
-          "version": 2237010,
-          "file": "macos/macos_nl_v2237010.strings",
-          "sha256": "1a5a1cf316d22690bc2874be80ab4238584785570270f808bf82f70f1d2d6195"
+          "version": 2419949,
+          "file": "macos/macos_nl_v2419949.strings",
+          "sha256": "b41e99720eee0e8077075a540c238f8e4cf268b6f55a198d3a347435f036aa3f"
         },
         {
           "lang_code": "pl",
@@ -1530,12 +1530,12 @@
           "native_name": "Polski",
           "plural_code": "pl",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8052,
+          "strings_count": 9060,
+          "translated_count": 8832,
           "translations_url": "https://translations.telegram.org/pl/",
-          "version": 2226375,
-          "file": "macos/macos_pl_v2226375.strings",
-          "sha256": "da47f22b4bbe456ec3dacd4621f90c401cce2218ed6c8fe17164556497dd3bc7"
+          "version": 2419787,
+          "file": "macos/macos_pl_v2419787.strings",
+          "sha256": "8a89d71db9ba76034774ddf99556cd55af160bbafdaa862ce8b0735dcce1380d"
         },
         {
           "lang_code": "pt-br",
@@ -1543,12 +1543,12 @@
           "native_name": "Português (Brasil)",
           "plural_code": "pt",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/pt-br/",
-          "version": 2236262,
-          "file": "macos/macos_pt-br_v2236262.strings",
-          "sha256": "d25da2ffa995f903f690686072a295ca1ebbdf2aa0cc141c7539422a898cae05"
+          "version": 2403684,
+          "file": "macos/macos_pt-br_v2403684.strings",
+          "sha256": "af4b284131219ff0c221d5608a613c35c340a071545e7ed6d447475e73d119d9"
         },
         {
           "lang_code": "ro",
@@ -1556,12 +1556,12 @@
           "native_name": "Română",
           "plural_code": "ro",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/ro/",
-          "version": 2236890,
-          "file": "macos/macos_ro_v2236890.strings",
-          "sha256": "64814f98d97373daf42769a281b0f2c7ef1a8d546b47fc507f2cbcaf9d6002e5"
+          "version": 2420219,
+          "file": "macos/macos_ro_v2420219.strings",
+          "sha256": "b80b4b67926d9bbba0809db1e146617672bdf5aefb6824ca96d545635f14843b"
         },
         {
           "lang_code": "ru",
@@ -1569,12 +1569,12 @@
           "native_name": "Русский",
           "plural_code": "ru",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9057,
           "translations_url": "https://translations.telegram.org/ru/",
-          "version": 2233684,
-          "file": "macos/macos_ru_v2233684.strings",
-          "sha256": "8cbe6243ec1e6023c09a63f2849512592c1e09ba363ac48bba8a488b2732cbc0"
+          "version": 2411411,
+          "file": "macos/macos_ru_v2411411.strings",
+          "sha256": "8751dd41ed8be724773b0504ffd0e9443a53c75526c1c62578f3a84770d6f292"
         },
         {
           "lang_code": "sr",
@@ -1582,12 +1582,12 @@
           "native_name": "Српски",
           "plural_code": "sr",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/sr/",
-          "version": 2235370,
-          "file": "macos/macos_sr_v2235370.strings",
-          "sha256": "17cc62efc76816460e918bce4a300c4739d9cf759b030572476caac34ad9c534"
+          "version": 2420332,
+          "file": "macos/macos_sr_v2420332.strings",
+          "sha256": "1a4b17aabfe6d3adf1db82c994a02efc030ff00aded3f63ff4f16bec49371996"
         },
         {
           "lang_code": "tr",
@@ -1595,12 +1595,12 @@
           "native_name": "Türkçe",
           "plural_code": "tr",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 5556,
+          "strings_count": 9060,
+          "translated_count": 5646,
           "translations_url": "https://translations.telegram.org/tr/",
-          "version": 2233532,
-          "file": "macos/macos_tr_v2233532.strings",
-          "sha256": "d38becc3c390fce7aacdf1ad822678d3a5c145f5ece3e4e492f662880f006824"
+          "version": 2404010,
+          "file": "macos/macos_tr_v2404010.strings",
+          "sha256": "7d109fad38525a9f09fe95ee97f5cbeadb40d2de8d606d3a72e87eec067d059c"
         },
         {
           "lang_code": "uk",
@@ -1608,12 +1608,12 @@
           "native_name": "Українська",
           "plural_code": "uk",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/uk/",
-          "version": 2235234,
-          "file": "macos/macos_uk_v2235234.strings",
-          "sha256": "ceb20a61849efe7926fa0ba352331d38882e991631f9cbeb2c7702522b1786bf"
+          "version": 2420709,
+          "file": "macos/macos_uk_v2420709.strings",
+          "sha256": "b73993aa82cb17f672158fe16f8d48138410b5ddf0059746849c92307ca55e56"
         },
         {
           "lang_code": "zh-hans",
@@ -1621,12 +1621,12 @@
           "native_name": "简体中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8061,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 2226909,
-          "file": "macos/macos_zh-hans_v2226909.strings",
-          "sha256": "5143d6f4546662ebdd4909d0419a35b63fa78e0bf5445b983a2e8f17375e14e9"
+          "version": 2414268,
+          "file": "macos/macos_zh-hans_v2414268.strings",
+          "sha256": "a97baf3be72a134ac3ad765f6e57cceea98c858c187b183191164f9fe5334ed2"
         },
         {
           "lang_code": "zh-hant",
@@ -1634,12 +1634,12 @@
           "native_name": "繁體中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 8062,
-          "translated_count": 8062,
+          "strings_count": 9060,
+          "translated_count": 9059,
           "translations_url": "https://translations.telegram.org/zh-hant/",
-          "version": 2233113,
-          "file": "macos/macos_zh-hant_v2233113.strings",
-          "sha256": "eecea95e8c5f80df6fb72112d7d1a1de9b065b8c48c45e4b845b6af1ed6b6bbe"
+          "version": 2397011,
+          "file": "macos/macos_zh-hant_v2397011.strings",
+          "sha256": "9f7b3b355f7c34deb399345c99a93d3f8ccc426e241394c9fa35d4c3b4cef2ba"
         }
       ]
     },
@@ -1652,12 +1652,12 @@
           "native_name": "Беларуская",
           "plural_code": "be",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 6703,
+          "strings_count": 8860,
+          "translated_count": 8371,
           "translations_url": "https://translations.telegram.org/be/",
-          "version": 5729033,
-          "file": "tdesktop/tdesktop_be_v5729033.strings",
-          "sha256": "bd0dcd6e928fcd13e5636babcbcc9a2f7c47f006ea8dedce79369318b95810b1"
+          "version": 6017792,
+          "file": "tdesktop/tdesktop_be_v6017792.strings",
+          "sha256": "ee272fe132e865bd104b579b137a0d98fb69d42910807d58d05f020db413c10e"
         },
         {
           "lang_code": "ca",
@@ -1665,12 +1665,12 @@
           "native_name": "Català",
           "plural_code": "ca",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8594,
           "translations_url": "https://translations.telegram.org/ca/",
-          "version": 5730268,
-          "file": "tdesktop/tdesktop_ca_v5730268.strings",
-          "sha256": "d64ffbf6877bf01883b7c7ccd899f41538923d6a9a2da33de0de69a4587c514f"
+          "version": 6035586,
+          "file": "tdesktop/tdesktop_ca_v6035586.strings",
+          "sha256": "3b912ba39c6e9ee8daf9e9ea1c012ee1e0731e2a1c3d621a469137cbe9ec31eb"
         },
         {
           "lang_code": "cs",
@@ -1678,12 +1678,12 @@
           "native_name": "Čeština",
           "plural_code": "cs",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7832,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/cs/",
-          "version": 5716115,
-          "file": "tdesktop/tdesktop_cs_v5716115.strings",
-          "sha256": "19ac8b544716e54ac1c4f3b8f135a211902a629dca5415a0c6fada43f0d47519"
+          "version": 6046983,
+          "file": "tdesktop/tdesktop_cs_v6046983.strings",
+          "sha256": "09f1ffef125ac131ae6b21986170a1a68d1c0a504cb777b8cbb4016018a4188b"
         },
         {
           "lang_code": "de",
@@ -1691,12 +1691,12 @@
           "native_name": "Deutsch",
           "plural_code": "de",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8860,
           "translations_url": "https://translations.telegram.org/de/",
-          "version": 5726789,
-          "file": "tdesktop/tdesktop_de_v5726789.strings",
-          "sha256": "4fc71ef5968da1bac562404dc1847c418616ad01f438460b5d7e13c1452e5420"
+          "version": 6046979,
+          "file": "tdesktop/tdesktop_de_v6046979.strings",
+          "sha256": "2cdfeaae996f7028ce8c32c1cf9367f403e171fd46358399a8e8a628dd4a6d23"
         },
         {
           "lang_code": "en",
@@ -1704,12 +1704,12 @@
           "native_name": "English",
           "plural_code": "en",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8860,
           "translations_url": "https://translations.telegram.org/en/",
-          "version": 5704848,
-          "file": "tdesktop/tdesktop_en_v5704848.strings",
-          "sha256": "43a6bdfc32deaf69d66a40f5fcd9bcf7cbe4923673c44028c5d3e4ae8bc33d8b"
+          "version": 6046851,
+          "file": "tdesktop/tdesktop_en_v6046851.strings",
+          "sha256": "92132a8c334e391ac9d5e1ca91cb4369b4732cc53ed7f8c01d7e0c9438c4ce29"
         },
         {
           "lang_code": "es",
@@ -1717,12 +1717,12 @@
           "native_name": "Español",
           "plural_code": "es",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8860,
           "translations_url": "https://translations.telegram.org/es/",
-          "version": 5726585,
-          "file": "tdesktop/tdesktop_es_v5726585.strings",
-          "sha256": "ee450f560a31b7143689ab0f773acfe8f7ed5a5c8694502882dba4c316afb170"
+          "version": 6036765,
+          "file": "tdesktop/tdesktop_es_v6036765.strings",
+          "sha256": "1fc3a41f67ab18675296da8465999dfb06cc2b40b6af50f49f8b1adb921e29f3"
         },
         {
           "lang_code": "fi",
@@ -1730,12 +1730,12 @@
           "native_name": "Suomi",
           "plural_code": "fi",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/fi/",
-          "version": 5729595,
-          "file": "tdesktop/tdesktop_fi_v5729595.strings",
-          "sha256": "62acf8a007179c8ed6f39306be049381cdd6153baa4c39326d8f29746b2cf4b0"
+          "version": 6018529,
+          "file": "tdesktop/tdesktop_fi_v6018529.strings",
+          "sha256": "b01b6e2cb741b9eba2e37583e6300be478ded33c2f67b0d7f08da315d3a6037b"
         },
         {
           "lang_code": "fr",
@@ -1743,12 +1743,12 @@
           "native_name": "Français",
           "plural_code": "fr",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/fr/",
-          "version": 5716153,
-          "file": "tdesktop/tdesktop_fr_v5716153.strings",
-          "sha256": "8d7a5835af23f202609781746e470494a82709f7aa669a7382b7ee1de12fa35e"
+          "version": 6018582,
+          "file": "tdesktop/tdesktop_fr_v6018582.strings",
+          "sha256": "b27896142df6a242f8d8701c4ed42ae3728e7b0572526161659f4c6bd0df380e"
         },
         {
           "lang_code": "hr",
@@ -1756,12 +1756,12 @@
           "native_name": "Hrvatski",
           "plural_code": "hr",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8825,
           "translations_url": "https://translations.telegram.org/hr/",
-          "version": 5728682,
-          "file": "tdesktop/tdesktop_hr_v5728682.strings",
-          "sha256": "d5015751410e2484b92d8c3252a3e0304d6136bd95601bbd4ca1088bfa11bc2a"
+          "version": 6036324,
+          "file": "tdesktop/tdesktop_hr_v6036324.strings",
+          "sha256": "265dbfbba831efa91110072a525c611be29703d174d54f15a000e682830968b4"
         },
         {
           "lang_code": "id",
@@ -1769,12 +1769,12 @@
           "native_name": "Bahasa Indonesia",
           "plural_code": "id",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 6252,
+          "strings_count": 8860,
+          "translated_count": 6588,
           "translations_url": "https://translations.telegram.org/id/",
-          "version": 5704126,
-          "file": "tdesktop/tdesktop_id_v5704126.strings",
-          "sha256": "220cddd030be4087a5f833932dc064244785d5666066071c9f171ba86358bda5"
+          "version": 6032437,
+          "file": "tdesktop/tdesktop_id_v6032437.strings",
+          "sha256": "bb14151a116d69791a616f2ba039e57fe1ba72c292dcd8784315887b91c6e04e"
         },
         {
           "lang_code": "it",
@@ -1782,12 +1782,12 @@
           "native_name": "Italiano",
           "plural_code": "it",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8860,
           "translations_url": "https://translations.telegram.org/it/",
-          "version": 5726312,
-          "file": "tdesktop/tdesktop_it_v5726312.strings",
-          "sha256": "31df16f8587499ce8b9a0f47078fabb9887e15ab649ccb75264fed9a0d6ad7e1"
+          "version": 6046901,
+          "file": "tdesktop/tdesktop_it_v6046901.strings",
+          "sha256": "b61d689d1c666f88229ec809be1f01dd33fb36b49aea3cd67e0100210269cc30"
         },
         {
           "lang_code": "kk",
@@ -1795,12 +1795,12 @@
           "native_name": "Қазақша",
           "plural_code": "kk",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/kk/",
-          "version": 5726569,
-          "file": "tdesktop/tdesktop_kk_v5726569.strings",
-          "sha256": "c77e2a18a82e01fcc313ed85587d506726c9de86a800125b776079872f10c233"
+          "version": 6046897,
+          "file": "tdesktop/tdesktop_kk_v6046897.strings",
+          "sha256": "d7a18d44963d53b0db39f435f11748fafbd045dbaee3e8526980ef7ed2f2f53d"
         },
         {
           "lang_code": "ko",
@@ -1808,12 +1808,12 @@
           "native_name": "한국어",
           "plural_code": "ko",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8856,
           "translations_url": "https://translations.telegram.org/ko/",
-          "version": 5726710,
-          "file": "tdesktop/tdesktop_ko_v5726710.strings",
-          "sha256": "b653bc4ae007f94ccc49b487fccad3b4ed08aa0e0c0efba40158b38875936891"
+          "version": 6003462,
+          "file": "tdesktop/tdesktop_ko_v6003462.strings",
+          "sha256": "5088439016e46a6212e4505202f62bccd1a06343d711b1f2a0cebcb2f1e2e582"
         },
         {
           "lang_code": "ms",
@@ -1821,12 +1821,12 @@
           "native_name": "Bahasa Melayu",
           "plural_code": "ms",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/ms/",
-          "version": 5726718,
-          "file": "tdesktop/tdesktop_ms_v5726718.strings",
-          "sha256": "0ad22baf454c295031737b41045f5a660c7025dede40eee388ad558822e9555e"
+          "version": 6046866,
+          "file": "tdesktop/tdesktop_ms_v6046866.strings",
+          "sha256": "20fa4357c00af23f2aa560e29c8f16b3221881b73d393b063b16dd45990da696"
         },
         {
           "lang_code": "nb",
@@ -1834,12 +1834,12 @@
           "native_name": "Norsk (Bokmål)",
           "plural_code": "nb",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/nb/",
-          "version": 5729712,
-          "file": "tdesktop/tdesktop_nb_v5729712.strings",
-          "sha256": "0d7034d8cb2380e9f8bcc766ec998ea92008546cbd1a0e38198cf41db38b4e4e"
+          "version": 6031903,
+          "file": "tdesktop/tdesktop_nb_v6031903.strings",
+          "sha256": "71d596bb87203b17abd5fb01669d621e0be9e84e75f1a061668efd27f3ceeefa"
         },
         {
           "lang_code": "nl",
@@ -1847,12 +1847,12 @@
           "native_name": "Nederlands",
           "plural_code": "nl",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8422,
           "translations_url": "https://translations.telegram.org/nl/",
-          "version": 5730338,
-          "file": "tdesktop/tdesktop_nl_v5730338.strings",
-          "sha256": "0c3deff1c6703e04b4a7f27080afce5eff8e78ac83f30fde423e8ab6c04ad357"
+          "version": 6047051,
+          "file": "tdesktop/tdesktop_nl_v6047051.strings",
+          "sha256": "6882ac70ac234c232afc28304df24d78a4a5f6eadb5e1896e5ae8d028c87253a"
         },
         {
           "lang_code": "pl",
@@ -1860,12 +1860,12 @@
           "native_name": "Polski",
           "plural_code": "pl",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7814,
+          "strings_count": 8860,
+          "translated_count": 8692,
           "translations_url": "https://translations.telegram.org/pl/",
-          "version": 5700177,
-          "file": "tdesktop/tdesktop_pl_v5700177.strings",
-          "sha256": "2425b658c7670408bc36ee60cf57486785956d0c2696b19877ad411dcdd43ba1"
+          "version": 6038297,
+          "file": "tdesktop/tdesktop_pl_v6038297.strings",
+          "sha256": "e385cb35ed4fcec63d1bcf483cc0b7308726bf19560ff01adb200ded139eb4b6"
         },
         {
           "lang_code": "pt-br",
@@ -1873,12 +1873,12 @@
           "native_name": "Português (Brasil)",
           "plural_code": "pt",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8860,
           "translations_url": "https://translations.telegram.org/pt-br/",
-          "version": 5729597,
-          "file": "tdesktop/tdesktop_pt-br_v5729597.strings",
-          "sha256": "680e5960d3016810ce3d7fe06d538b2bb92e81e2f9eeba67380d64ad2ffd6922"
+          "version": 6037942,
+          "file": "tdesktop/tdesktop_pt-br_v6037942.strings",
+          "sha256": "ba894406f9c3535c67f47f85af5f847a2cd7118a8a0cafeda11c5a2e93fcc018"
         },
         {
           "lang_code": "ro",
@@ -1886,12 +1886,12 @@
           "native_name": "Română",
           "plural_code": "ro",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/ro/",
-          "version": 5730132,
-          "file": "tdesktop/tdesktop_ro_v5730132.strings",
-          "sha256": "856090cb8c0aaec3da6645f8957688da6295b8d9edb89ec28c4bc7485221428b"
+          "version": 6047037,
+          "file": "tdesktop/tdesktop_ro_v6047037.strings",
+          "sha256": "9a410d71b7fa74e10b896a54a262249adf39e08aa212748ff51d30904eeece7c"
         },
         {
           "lang_code": "ru",
@@ -1899,12 +1899,12 @@
           "native_name": "Русский",
           "plural_code": "ru",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/ru/",
-          "version": 5729594,
-          "file": "tdesktop/tdesktop_ru_v5729594.strings",
-          "sha256": "7ca7f9e72aee5899cdeb629c5c7953debd65e74c3ab6947421e6e235b30d2c1e"
+          "version": 6032497,
+          "file": "tdesktop/tdesktop_ru_v6032497.strings",
+          "sha256": "a5848e5609e5d6a646955b524dbbd8ea7be444e6a9c7253a4fe5cb12a6c6dbc8"
         },
         {
           "lang_code": "sr",
@@ -1912,12 +1912,12 @@
           "native_name": "Српски",
           "plural_code": "sr",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/sr/",
-          "version": 5729030,
-          "file": "tdesktop/tdesktop_sr_v5729030.strings",
-          "sha256": "263dec461b947fbe683d08d9be2eb2d8c14606c386c5a112b694699c3a72c68e"
+          "version": 6046949,
+          "file": "tdesktop/tdesktop_sr_v6046949.strings",
+          "sha256": "71bfec89ba013ea4ebf280cfc9719dc553a32c6b0cf5db4521d3bf09772d9a8d"
         },
         {
           "lang_code": "tr",
@@ -1925,12 +1925,12 @@
           "native_name": "Türkçe",
           "plural_code": "tr",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8295,
           "translations_url": "https://translations.telegram.org/tr/",
-          "version": 5716896,
-          "file": "tdesktop/tdesktop_tr_v5716896.strings",
-          "sha256": "91016cccff3d8afa630f3f8aa79aaa96062847d96e022e55bc4f197a3903497a"
+          "version": 6018458,
+          "file": "tdesktop/tdesktop_tr_v6018458.strings",
+          "sha256": "5ebdd461a3a6dd26fb0b31ea617a99c7e5fc059cd31a4ebf9dc620bef2c175f2"
         },
         {
           "lang_code": "uk",
@@ -1938,12 +1938,12 @@
           "native_name": "Українська",
           "plural_code": "uk",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/uk/",
-          "version": 5727918,
-          "file": "tdesktop/tdesktop_uk_v5727918.strings",
-          "sha256": "fd91693c2d55069dbb6e120c7b0c65ba38fc10ea6231a5a3007ce3e890fcd299"
+          "version": 6047047,
+          "file": "tdesktop/tdesktop_uk_v6047047.strings",
+          "sha256": "79ffa2c58c45a6feef979f1ecd598446056bbf99b59068eb0a21ab99669eb97c"
         },
         {
           "lang_code": "zh-hans",
@@ -1951,12 +1951,12 @@
           "native_name": "简体中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7832,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 5701859,
-          "file": "tdesktop/tdesktop_zh-hans_v5701859.strings",
-          "sha256": "f09a4b5ef1e76988a15562b592fdfcac7b5210d50620862d0f92ffc65aa980e1"
+          "version": 6031754,
+          "file": "tdesktop/tdesktop_zh-hans_v6031754.strings",
+          "sha256": "6548bd7e5415c51ab832ad3e1f33ed11fa4ada79b3642e050cf3ab34efeb0c62"
         },
         {
           "lang_code": "zh-hant",
@@ -1964,12 +1964,12 @@
           "native_name": "繁體中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 7834,
-          "translated_count": 7834,
+          "strings_count": 8860,
+          "translated_count": 8858,
           "translations_url": "https://translations.telegram.org/zh-hant/",
-          "version": 5729875,
-          "file": "tdesktop/tdesktop_zh-hant_v5729875.strings",
-          "sha256": "30a4ad073bf99601803da057134f84e9f5e46130a419007b243691bf0a39b491"
+          "version": 6017790,
+          "file": "tdesktop/tdesktop_zh-hant_v6017790.strings",
+          "sha256": "8d31435a736138f135055008e8da383e6233fbf19e2c7b301ee8a6f0c60b2833"
         }
       ]
     },
@@ -1983,12 +1983,12 @@
           "plural_code": "ar",
           "official": true,
           "rtl": true,
-          "strings_count": 2760,
-          "translated_count": 1863,
+          "strings_count": 4279,
+          "translated_count": 2644,
           "translations_url": "https://translations.telegram.org/ar/",
-          "version": 266224,
-          "file": "weba/weba_ar_v266224.strings",
-          "sha256": "436cdcee4ca1fde9c089c5654c293111aeefa887d101a531d6ea76fed1ad3ca9"
+          "version": 380744,
+          "file": "weba/weba_ar_v380744.strings",
+          "sha256": "75ae3a5a99111658ad88f9d019c42845ddcb08ba75f32b343299c326696d991b"
         },
         {
           "lang_code": "be",
@@ -1996,12 +1996,12 @@
           "native_name": "Беларуская",
           "plural_code": "be",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 1772,
+          "strings_count": 4279,
+          "translated_count": 3553,
           "translations_url": "https://translations.telegram.org/be/",
-          "version": 266130,
-          "file": "weba/weba_be_v266130.strings",
-          "sha256": "31e7ec5339474b41cd9324be0dc4db32753094b4edfce3b820826d59eddc7872"
+          "version": 379157,
+          "file": "weba/weba_be_v379157.strings",
+          "sha256": "66452c92c13dbc24a896c27614ef5b690120fb2042fbf0c902b5a26fb32e05db"
         },
         {
           "lang_code": "ca",
@@ -2009,12 +2009,12 @@
           "native_name": "Català",
           "plural_code": "ca",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 3955,
           "translations_url": "https://translations.telegram.org/ca/",
-          "version": 266118,
-          "file": "weba/weba_ca_v266118.strings",
-          "sha256": "3ebf9595fbf7968dbd843289aefe55e307cf78bb2810029a583c98f2c369ddbb"
+          "version": 387812,
+          "file": "weba/weba_ca_v387812.strings",
+          "sha256": "6e5ab6b2e3a7cc07bdc0f48be354f6902cb196e9dc0e696955b89ded8e27dd4d"
         },
         {
           "lang_code": "cs",
@@ -2022,12 +2022,12 @@
           "native_name": "Čeština",
           "plural_code": "cs",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/cs/",
-          "version": 264559,
-          "file": "weba/weba_cs_v264559.strings",
-          "sha256": "9f94ba717c108a33aa1007a6fcace8bcb60ee5354eb80605f06e706f1581d1a4"
+          "version": 388339,
+          "file": "weba/weba_cs_v388339.strings",
+          "sha256": "49a4374ca671fce4589052e2c63042283063f96e1170564706f6a01b763daf05"
         },
         {
           "lang_code": "de",
@@ -2035,12 +2035,12 @@
           "native_name": "Deutsch",
           "plural_code": "de",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 1513,
+          "strings_count": 4279,
+          "translated_count": 1405,
           "translations_url": "https://translations.telegram.org/de/",
-          "version": 263556,
-          "file": "weba/weba_de_v263556.strings",
-          "sha256": "e1572e1c687a5309fb83b062733fd618529ad173fe1d88f83ad4c14c08d1c69d"
+          "version": 376754,
+          "file": "weba/weba_de_v376754.strings",
+          "sha256": "e7790c6ef292322c7361c19b085a862b8056d848f47d583749e3c033f75d276f"
         },
         {
           "lang_code": "en",
@@ -2048,12 +2048,12 @@
           "native_name": "English",
           "plural_code": "en",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/en/",
-          "version": 263556,
-          "file": "weba/weba_en_v263556.strings",
-          "sha256": "63be2f59a5e1bf35b0395cd4a65232611d2578c584bd6a277afb429918b0d2ab"
+          "version": 379933,
+          "file": "weba/weba_en_v379933.strings",
+          "sha256": "c23f5d7970d3b19fbe5771f1b774d1b09125c1173e6d550173a9065e24b3f42b"
         },
         {
           "lang_code": "es",
@@ -2061,12 +2061,12 @@
           "native_name": "Español",
           "plural_code": "es",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4277,
           "translations_url": "https://translations.telegram.org/es/",
-          "version": 266014,
-          "file": "weba/weba_es_v266014.strings",
-          "sha256": "e7a4739193e91ec046f58b8344e3faf26404165f62f304e6e73d03d39e516123"
+          "version": 383148,
+          "file": "weba/weba_es_v383148.strings",
+          "sha256": "ed3766905ab183589c7822750313b0a37bb0822ace1ab99095405066f8030bd1"
         },
         {
           "lang_code": "fa",
@@ -2075,12 +2075,12 @@
           "plural_code": "fa",
           "official": true,
           "rtl": true,
-          "strings_count": 2760,
-          "translated_count": 2717,
+          "strings_count": 4279,
+          "translated_count": 3460,
           "translations_url": "https://translations.telegram.org/fa/",
-          "version": 265648,
-          "file": "weba/weba_fa_v265648.strings",
-          "sha256": "889a4f2b22c836a7335c6b550d88c02363e6f2f2911c71db13c38f7c50c80716"
+          "version": 376754,
+          "file": "weba/weba_fa_v376754.strings",
+          "sha256": "5fa8cdeddf778d483494087bf50d357f78c7861ae0885624087076b986befb1d"
         },
         {
           "lang_code": "fi",
@@ -2088,12 +2088,12 @@
           "native_name": "Suomi",
           "plural_code": "fi",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/fi/",
-          "version": 266152,
-          "file": "weba/weba_fi_v266152.strings",
-          "sha256": "dc5bde2c12a072b14a78c2e0e27d08326ee4f0acb7017f451321362faf7b531d"
+          "version": 380203,
+          "file": "weba/weba_fi_v380203.strings",
+          "sha256": "510118bff4dbbac08830c4badf7b0251042d7cc14d405d0147a98e40c5e8823f"
         },
         {
           "lang_code": "fr",
@@ -2101,12 +2101,12 @@
           "native_name": "Français",
           "plural_code": "fr",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/fr/",
-          "version": 265492,
-          "file": "weba/weba_fr_v265492.strings",
-          "sha256": "7d24b226ec3a9ca10ced49730731c23380448e45d0fc91013af452c56efeab3d"
+          "version": 380292,
+          "file": "weba/weba_fr_v380292.strings",
+          "sha256": "b644ae46239b9041afe8e604bfa82012562c79ae69179e0edd923fbc579ecc42"
         },
         {
           "lang_code": "he",
@@ -2115,12 +2115,12 @@
           "plural_code": "he",
           "official": true,
           "rtl": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/he/",
-          "version": 266100,
-          "file": "weba/weba_he_v266100.strings",
-          "sha256": "683618f42944d2e1ae8a527353119dda3eb0a1586ca30c71a159c45a19e3afba"
+          "version": 379562,
+          "file": "weba/weba_he_v379562.strings",
+          "sha256": "73cc0014d38b3ac062da1ddd8c06d75c67d84c61eb7f05234bd92f1170096bf9"
         },
         {
           "lang_code": "hr",
@@ -2128,12 +2128,12 @@
           "native_name": "Hrvatski",
           "plural_code": "hr",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 3980,
           "translations_url": "https://translations.telegram.org/hr/",
-          "version": 265527,
-          "file": "weba/weba_hr_v265527.strings",
-          "sha256": "32a38826978171e1c0b2bc7b243671e18e0e65d449efa237c3f7690cae72997e"
+          "version": 388095,
+          "file": "weba/weba_hr_v388095.strings",
+          "sha256": "06e8c13ea7b20c76ec53d593e3f544a83a9fbab57376a8263f8872d56d8dce2d"
         },
         {
           "lang_code": "hu",
@@ -2141,12 +2141,12 @@
           "native_name": "Magyar",
           "plural_code": "hu",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 1972,
+          "strings_count": 4279,
+          "translated_count": 2572,
           "translations_url": "https://translations.telegram.org/hu/",
-          "version": 263556,
-          "file": "weba/weba_hu_v263556.strings",
-          "sha256": "f9ae28250c02013d0ab71fc82982a9820eb770472e91818e8546c771d17c5893"
+          "version": 379711,
+          "file": "weba/weba_hu_v379711.strings",
+          "sha256": "d91656897ccb5773f37a294ef878c9b6ae5d776e892a6f71eb12f3b497d0877d"
         },
         {
           "lang_code": "id",
@@ -2154,12 +2154,12 @@
           "native_name": "Bahasa Indonesia",
           "plural_code": "id",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 1276,
+          "strings_count": 4279,
+          "translated_count": 2171,
           "translations_url": "https://translations.telegram.org/id/",
-          "version": 265360,
-          "file": "weba/weba_id_v265360.strings",
-          "sha256": "78ef2f45ea15c3a897ce5c8fb2aab5521c8aa1ebc772caf4eefb931a33196776"
+          "version": 382872,
+          "file": "weba/weba_id_v382872.strings",
+          "sha256": "09023a5cd44c65354829712e1b40968cae2dda96d9f0507312e678de284b56a7"
         },
         {
           "lang_code": "it",
@@ -2167,12 +2167,12 @@
           "native_name": "Italiano",
           "plural_code": "it",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4262,
           "translations_url": "https://translations.telegram.org/it/",
-          "version": 266011,
-          "file": "weba/weba_it_v266011.strings",
-          "sha256": "dcc9c288a8b7da5456749e06558fcdde3bf17f70b16e83359d5a0a3ef4557367"
+          "version": 382874,
+          "file": "weba/weba_it_v382874.strings",
+          "sha256": "dca2eeb4c81663335874d709dcb2de5eb5e5358c71bf9662e35dbc11cacc2730"
         },
         {
           "lang_code": "kk",
@@ -2180,12 +2180,12 @@
           "native_name": "Қазақша",
           "plural_code": "kk",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/kk/",
-          "version": 265833,
-          "file": "weba/weba_kk_v265833.strings",
-          "sha256": "032113e4b29a639bcba9b07eae49cfeded7131a09792f39061401446f981e2c7"
+          "version": 379524,
+          "file": "weba/weba_kk_v379524.strings",
+          "sha256": "66545445bdb77ceb438af7786d96ec79144bac330f2d987949553f878cf4b7f4"
         },
         {
           "lang_code": "ko",
@@ -2193,12 +2193,12 @@
           "native_name": "한국어",
           "plural_code": "ko",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4203,
           "translations_url": "https://translations.telegram.org/ko/",
-          "version": 264877,
-          "file": "weba/weba_ko_v264877.strings",
-          "sha256": "d26a39296cf08bc41bfb611e2fec9b805361aabfac1dd8d4e64dc34c32554e24"
+          "version": 376754,
+          "file": "weba/weba_ko_v376754.strings",
+          "sha256": "5c46b0328c53b8653e43c718a9efbe386ba2cb437e8f317082a1a8839acee7e9"
         },
         {
           "lang_code": "ms",
@@ -2206,12 +2206,12 @@
           "native_name": "Bahasa Melayu",
           "plural_code": "ms",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/ms/",
-          "version": 265811,
-          "file": "weba/weba_ms_v265811.strings",
-          "sha256": "ecfdd53fb847f6ae58adb97e1ee5c9e4b0bbdc3f30ab57af2c451910598dc39d"
+          "version": 385174,
+          "file": "weba/weba_ms_v385174.strings",
+          "sha256": "d348ef3e09e66d166b4263fa00bb26930fba1717ea10af64e09e890bf857aafa"
         },
         {
           "lang_code": "nb",
@@ -2219,12 +2219,12 @@
           "native_name": "Norsk (Bokmål)",
           "plural_code": "nb",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/nb/",
-          "version": 266178,
-          "file": "weba/weba_nb_v266178.strings",
-          "sha256": "5eb31dc2cfdb92267960e34872dea1c774bb9f2b6399ffecb9e48f23a231fdc2"
+          "version": 382663,
+          "file": "weba/weba_nb_v382663.strings",
+          "sha256": "68e1b04e3de43297652bd0374ca08a468acf49e165f13a92e988b52e0b8f8834"
         },
         {
           "lang_code": "nl",
@@ -2232,12 +2232,12 @@
           "native_name": "Nederlands",
           "plural_code": "nl",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 3540,
           "translations_url": "https://translations.telegram.org/nl/",
-          "version": 266310,
-          "file": "weba/weba_nl_v266310.strings",
-          "sha256": "9e84101593c87882cfca1365cf552c7d920042a5ba93096608550f0f4effae4c"
+          "version": 389604,
+          "file": "weba/weba_nl_v389604.strings",
+          "sha256": "c217b496247263092eeab63093a66511a1eb48c021d3c8d41d8b116eb0f88d43"
         },
         {
           "lang_code": "pl",
@@ -2245,12 +2245,12 @@
           "native_name": "Polski",
           "plural_code": "pl",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4033,
           "translations_url": "https://translations.telegram.org/pl/",
-          "version": 264972,
-          "file": "weba/weba_pl_v264972.strings",
-          "sha256": "be0c1886156ecef6da57d8cf18392be9f6ef5715f3966b657a35f101721882cc"
+          "version": 388423,
+          "file": "weba/weba_pl_v388423.strings",
+          "sha256": "3b17283c61ace4a047f1f7831a4b89482fe0305ffa633e2b5f06de8d815721b5"
         },
         {
           "lang_code": "pt-br",
@@ -2258,12 +2258,12 @@
           "native_name": "Português (Brasil)",
           "plural_code": "pt",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/pt-br/",
-          "version": 266171,
-          "file": "weba/weba_pt-br_v266171.strings",
-          "sha256": "6862644a619503923aabc94a3439225ae7c4c525a1232d6f0b9e98fe8764cf86"
+          "version": 379329,
+          "file": "weba/weba_pt-br_v379329.strings",
+          "sha256": "7fb236cec90d077aa03b842460b0820b1e99e28bda5343889021f4707b093545"
         },
         {
           "lang_code": "ro",
@@ -2271,12 +2271,12 @@
           "native_name": "Română",
           "plural_code": "ro",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 3524,
           "translations_url": "https://translations.telegram.org/ro/",
-          "version": 265651,
-          "file": "weba/weba_ro_v265651.strings",
-          "sha256": "1c2f0fb5c58788c138ce52ac48aac89670efdc50886584c7427fa40147da45bd"
+          "version": 383153,
+          "file": "weba/weba_ro_v383153.strings",
+          "sha256": "e59c6b3f53cd5514ed5d6f59665ba6bdbfa7e7a64537a69b982a93be0ea6c3bc"
         },
         {
           "lang_code": "ru",
@@ -2284,12 +2284,12 @@
           "native_name": "Русский",
           "plural_code": "ru",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4278,
           "translations_url": "https://translations.telegram.org/ru/",
-          "version": 266150,
-          "file": "weba/weba_ru_v266150.strings",
-          "sha256": "44bd6a45f0a953fc5e8da03fdeed9151e9d5a44babdb40726ee91f20527f520c"
+          "version": 382900,
+          "file": "weba/weba_ru_v382900.strings",
+          "sha256": "e0a7a3bd7c751538599a23ef618428b34e2c2e4de0078f8f6c5f3f30f443ee0d"
         },
         {
           "lang_code": "sr",
@@ -2297,12 +2297,12 @@
           "native_name": "Српски",
           "plural_code": "sr",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/sr/",
-          "version": 266026,
-          "file": "weba/weba_sr_v266026.strings",
-          "sha256": "a98f6501fe14aa84e9e473b36e7f0cafa6935e8ff479b55738b8d7354c5ba78a"
+          "version": 388425,
+          "file": "weba/weba_sr_v388425.strings",
+          "sha256": "136056116ab4695cdc93013cbdbdf9657bd3f59f5049eb0770203b38a85f3410"
         },
         {
           "lang_code": "tr",
@@ -2310,12 +2310,12 @@
           "native_name": "Türkçe",
           "plural_code": "tr",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 1329,
+          "strings_count": 4279,
+          "translated_count": 2053,
           "translations_url": "https://translations.telegram.org/tr/",
-          "version": 264293,
-          "file": "weba/weba_tr_v264293.strings",
-          "sha256": "f5748bd55e47666330791b3fb59e4f2ddd7c07aa1518eb964f6f338b0a03c716"
+          "version": 389602,
+          "file": "weba/weba_tr_v389602.strings",
+          "sha256": "14e968fd5cde711f4fd1dab030b0a5eb89a2e1e05d77298d858070e615f86426"
         },
         {
           "lang_code": "uk",
@@ -2323,12 +2323,12 @@
           "native_name": "Українська",
           "plural_code": "uk",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/uk/",
-          "version": 265989,
-          "file": "weba/weba_uk_v265989.strings",
-          "sha256": "8c5adea815b0c942418311797189fa56cda0af63d11402b2a0d03df287df68a1"
+          "version": 383716,
+          "file": "weba/weba_uk_v383716.strings",
+          "sha256": "012a49ab275c73819a3ee371184be9a026d91388bd5a0b7776005916d07038c8"
         },
         {
           "lang_code": "uz",
@@ -2336,12 +2336,12 @@
           "native_name": "O‘zbek",
           "plural_code": "uz",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 1663,
+          "strings_count": 4279,
+          "translated_count": 2788,
           "translations_url": "https://translations.telegram.org/uz/",
-          "version": 266316,
-          "file": "weba/weba_uz_v266316.strings",
-          "sha256": "8625fb878b9dc397e8aa21ccbaea09f42a1582e36c7b822faef3f160fa355fb2"
+          "version": 380722,
+          "file": "weba/weba_uz_v380722.strings",
+          "sha256": "8023f9864809e00220928d0d7cff48745109fc9e5030b0287f3e305a56b857f2"
         },
         {
           "lang_code": "zh-hans",
@@ -2349,12 +2349,12 @@
           "native_name": "简体中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 1391,
+          "strings_count": 4279,
+          "translated_count": 2217,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 263556,
-          "file": "weba/weba_zh-hans_v263556.strings",
-          "sha256": "41c98ac1781aed94c500ac9c8062489e039d8a56d6762cd5c4fb630286e89e73"
+          "version": 382407,
+          "file": "weba/weba_zh-hans_v382407.strings",
+          "sha256": "1b98c75832fa0bb85b16bf29573dd4ca583d0922241204adb17236b7dd443039"
         },
         {
           "lang_code": "zh-hant",
@@ -2362,12 +2362,12 @@
           "native_name": "繁體中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 2760,
-          "translated_count": 2760,
+          "strings_count": 4279,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/zh-hant/",
-          "version": 266186,
-          "file": "weba/weba_zh-hant_v266186.strings",
-          "sha256": "7cd60e7ed5a5a65d15e5e289920d0867f8fc810487960db9c0ca409c76902cce"
+          "version": 379152,
+          "file": "weba/weba_zh-hant_v379152.strings",
+          "sha256": "ea8309a939c5c3a0a686217b067fff0037d34f0d0fb2b60210ea5211a656c6b7"
         }
       ]
     },
@@ -2381,12 +2381,12 @@
           "plural_code": "ar",
           "official": true,
           "rtl": true,
-          "strings_count": 4096,
-          "translated_count": 2824,
+          "strings_count": 5346,
+          "translated_count": 3365,
           "translations_url": "https://translations.telegram.org/ar/",
-          "version": 300623,
-          "file": "webk/webk_ar_v300623.strings",
-          "sha256": "9c9f0f775ecbeed596606e4061093af6ec974bd17b94b2d0b63597ff393a1020"
+          "version": 369993,
+          "file": "webk/webk_ar_v369993.strings",
+          "sha256": "e17ad0bf1f619f75f8386022114238c076a3eb85c7098224bfc30b205c9d028c"
         },
         {
           "lang_code": "be",
@@ -2394,12 +2394,12 @@
           "native_name": "Беларуская",
           "plural_code": "be",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 2733,
+          "strings_count": 5346,
+          "translated_count": 4789,
           "translations_url": "https://translations.telegram.org/be/",
-          "version": 300704,
-          "file": "webk/webk_be_v300704.strings",
-          "sha256": "9db5252e23dddabc89331ec25deae271a6aaf4967853e28613198a59634b2afa"
+          "version": 366657,
+          "file": "webk/webk_be_v366657.strings",
+          "sha256": "75a0f0de62ebd27f49e8017b11ef6a5902cd10e6b8abe0fd620d6366bbe84146"
         },
         {
           "lang_code": "ca",
@@ -2407,12 +2407,12 @@
           "native_name": "Català",
           "plural_code": "ca",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 3910,
+          "strings_count": 5346,
+          "translated_count": 5070,
           "translations_url": "https://translations.telegram.org/ca/",
-          "version": 300682,
-          "file": "webk/webk_ca_v300682.strings",
-          "sha256": "33ea96b9925da28f31e53ef35892a41cf2063377bd0f3cb5b825feb4be12183b"
+          "version": 371724,
+          "file": "webk/webk_ca_v371724.strings",
+          "sha256": "7214c8abab6ed1fb338080ffe19553a1f8a9c58ce9fffaae7ecfe6cb7145a3d1"
         },
         {
           "lang_code": "cs",
@@ -2420,12 +2420,12 @@
           "native_name": "Čeština",
           "plural_code": "cs",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/cs/",
-          "version": 300082,
-          "file": "webk/webk_cs_v300082.strings",
-          "sha256": "19b0281fc328b5a7d9aa9f421e516beaa3f9a8c85286f050d8bc114de2a040cc"
+          "version": 369959,
+          "file": "webk/webk_cs_v369959.strings",
+          "sha256": "e08c1d23db5c4ccaff60310e2017b2a34f5eb7ac589148296a1ca7fe04220fb1"
         },
         {
           "lang_code": "de",
@@ -2433,12 +2433,12 @@
           "native_name": "Deutsch",
           "plural_code": "de",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 2378,
+          "strings_count": 5346,
+          "translated_count": 2384,
           "translations_url": "https://translations.telegram.org/de/",
-          "version": 293873,
-          "file": "webk/webk_de_v293873.strings",
-          "sha256": "5455bad6f9190e6c2e8f914fc2782ee54482f7610a35e67d3d12096abb4f2fbb"
+          "version": 348622,
+          "file": "webk/webk_de_v348622.strings",
+          "sha256": "da73ef09225924b08eb49a6e1916ee4f69cf0ae8214b0afccec826ee032d2097"
         },
         {
           "lang_code": "en",
@@ -2446,12 +2446,12 @@
           "native_name": "English",
           "plural_code": "en",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/en/",
-          "version": 299487,
-          "file": "webk/webk_en_v299487.strings",
-          "sha256": "0105cf3f176c629ce51172b3dfb40677e3b4ea35938b57e27c816e897caf4f19"
+          "version": 369363,
+          "file": "webk/webk_en_v369363.strings",
+          "sha256": "ca3540bde22628eb9d593f3f6f21474e683bae9a6274077fecb0d188701831c2"
         },
         {
           "lang_code": "es",
@@ -2459,12 +2459,12 @@
           "native_name": "Español",
           "plural_code": "es",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5337,
           "translations_url": "https://translations.telegram.org/es/",
-          "version": 300308,
-          "file": "webk/webk_es_v300308.strings",
-          "sha256": "6fcd72427a2a7f64218d9c0a3b05af53f0719d64f456f6fc93f24c561624f02d"
+          "version": 376349,
+          "file": "webk/webk_es_v376349.strings",
+          "sha256": "94076449566401ae1afdabefb189f1c540899cacd5e5cafe5156d7e4f8c83bfa"
         },
         {
           "lang_code": "fa",
@@ -2473,12 +2473,12 @@
           "plural_code": "fa",
           "official": true,
           "rtl": true,
-          "strings_count": 4096,
-          "translated_count": 3772,
+          "strings_count": 5346,
+          "translated_count": 4733,
           "translations_url": "https://translations.telegram.org/fa/",
-          "version": 300507,
-          "file": "webk/webk_fa_v300507.strings",
-          "sha256": "b5799d1344be99f57bc69bf2ea627147f6f8b8660ea8ba62095172bed887ab1e"
+          "version": 369721,
+          "file": "webk/webk_fa_v369721.strings",
+          "sha256": "2bb3bdd981b2d578f97097bd699e3ff5f64afd07f9bc3533339afce48239ac96"
         },
         {
           "lang_code": "fi",
@@ -2486,12 +2486,12 @@
           "native_name": "Suomi",
           "plural_code": "fi",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/fi/",
-          "version": 300323,
-          "file": "webk/webk_fi_v300323.strings",
-          "sha256": "c9414d4721735fc06fb1437e69d4c5667d2239a1f403505b565cb490c982a1cc"
+          "version": 369542,
+          "file": "webk/webk_fi_v369542.strings",
+          "sha256": "70cae9bd6b735dbb339a700d5f33e670f9a6381c58c57caabaea0aaa8da23ab1"
         },
         {
           "lang_code": "fr",
@@ -2499,12 +2499,12 @@
           "native_name": "Français",
           "plural_code": "fr",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/fr/",
-          "version": 300322,
-          "file": "webk/webk_fr_v300322.strings",
-          "sha256": "e1fc4360172028765507d947d4bfd5fc59a52543ea395da2bc2596883d99353c"
+          "version": 369744,
+          "file": "webk/webk_fr_v369744.strings",
+          "sha256": "ac684f6c0891a07c8c769d04fa407b062c1f1c603aa8c56357365adbffc9d629"
         },
         {
           "lang_code": "hr",
@@ -2512,12 +2512,12 @@
           "native_name": "Hrvatski",
           "plural_code": "hr",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 3955,
+          "strings_count": 5346,
+          "translated_count": 4825,
           "translations_url": "https://translations.telegram.org/hr/",
-          "version": 300343,
-          "file": "webk/webk_hr_v300343.strings",
-          "sha256": "5619990ed03dddda5f210897dff1f56e124a2b00a72118ae87447422453d27da"
+          "version": 376346,
+          "file": "webk/webk_hr_v376346.strings",
+          "sha256": "ae6bedc84973c0c73117f1ebf7063602f621eb9c4b6319dd800e048ac9027117"
         },
         {
           "lang_code": "hu",
@@ -2525,12 +2525,12 @@
           "native_name": "Magyar",
           "plural_code": "hu",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 3203,
+          "strings_count": 5346,
+          "translated_count": 3427,
           "translations_url": "https://translations.telegram.org/hu/",
-          "version": 297682,
-          "file": "webk/webk_hu_v297682.strings",
-          "sha256": "be188ef7b1d9cde95a55d5498e4174e66f29e1aea15eaf4236d1206cb38eec24"
+          "version": 362427,
+          "file": "webk/webk_hu_v362427.strings",
+          "sha256": "1c9b3437107663927bf71096b72626f1dbefd2237808c2a58b2100841c0fe007"
         },
         {
           "lang_code": "id",
@@ -2538,12 +2538,12 @@
           "native_name": "Bahasa Indonesia",
           "plural_code": "id",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 2036,
+          "strings_count": 5346,
+          "translated_count": 2266,
           "translations_url": "https://translations.telegram.org/id/",
-          "version": 300248,
-          "file": "webk/webk_id_v300248.strings",
-          "sha256": "1dab17ae87421b38b58d7759ba0494d5f000df19ab8fecc60b70aa0c0784ba93"
+          "version": 370665,
+          "file": "webk/webk_id_v370665.strings",
+          "sha256": "fb535357c7c9a6c9be97a5e3f4a363d9ec53f279197df209d4127508130464dd"
         },
         {
           "lang_code": "it",
@@ -2551,12 +2551,12 @@
           "native_name": "Italiano",
           "plural_code": "it",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5329,
           "translations_url": "https://translations.telegram.org/it/",
-          "version": 300222,
-          "file": "webk/webk_it_v300222.strings",
-          "sha256": "604ee094fcc9700f2aef48803cb9e6e0617168712b447712a7f05706c96da895"
+          "version": 370667,
+          "file": "webk/webk_it_v370667.strings",
+          "sha256": "bd9ab400046d7718513593558c0227564b24149b3ed0644323b3dac282a0c435"
         },
         {
           "lang_code": "kk",
@@ -2564,12 +2564,12 @@
           "native_name": "Қазақша",
           "plural_code": "kk",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/kk/",
-          "version": 300353,
-          "file": "webk/webk_kk_v300353.strings",
-          "sha256": "27bcb0e31e917b5006b1f9fab3d820841d73cb8fb2c8adcf7f07f3f8e8f5ee36"
+          "version": 369874,
+          "file": "webk/webk_kk_v369874.strings",
+          "sha256": "f6667f8c415712d463d8dfd5d5dd05862c26195c3810be26c3fedddde99434da"
         },
         {
           "lang_code": "ko",
@@ -2577,12 +2577,12 @@
           "native_name": "한국어",
           "plural_code": "ko",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5173,
           "translations_url": "https://translations.telegram.org/ko/",
-          "version": 300615,
-          "file": "webk/webk_ko_v300615.strings",
-          "sha256": "0525a091727e2c0c873cb8070fb9772c1f1fe3b96736aab23afc252455175a6a"
+          "version": 362782,
+          "file": "webk/webk_ko_v362782.strings",
+          "sha256": "acf2361b0b57f02db84d8a325c285948fb37634083a22e79d303f687fd678a13"
         },
         {
           "lang_code": "ms",
@@ -2590,12 +2590,12 @@
           "native_name": "Bahasa Melayu",
           "plural_code": "ms",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/ms/",
-          "version": 300064,
-          "file": "webk/webk_ms_v300064.strings",
-          "sha256": "aa2d40cee9699b3ca79bb5edb60c23d00d971e97b514f6a554bd6c3ce548626e"
+          "version": 376448,
+          "file": "webk/webk_ms_v376448.strings",
+          "sha256": "5ea633d265489beab0512250cfdbae95a350fbf6e538a955e94ce703ad593e7e"
         },
         {
           "lang_code": "nb",
@@ -2603,12 +2603,12 @@
           "native_name": "Norsk (Bokmål)",
           "plural_code": "nb",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/nb/",
-          "version": 300726,
-          "file": "webk/webk_nb_v300726.strings",
-          "sha256": "f08118315cc5f804ae7a3c169e9d9e6f61e6426bddf7c2ddebe229d9899e0dfb"
+          "version": 370430,
+          "file": "webk/webk_nb_v370430.strings",
+          "sha256": "43d0273e39fd86969271d99280a2adcad1b26c51c1db103f77343055d2e3cba5"
         },
         {
           "lang_code": "nl",
@@ -2616,12 +2616,12 @@
           "native_name": "Nederlands",
           "plural_code": "nl",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 4735,
           "translations_url": "https://translations.telegram.org/nl/",
-          "version": 300109,
-          "file": "webk/webk_nl_v300109.strings",
-          "sha256": "6634103c4b0df5bad6ae9912d78f743d443bb2182d7129846f3a579f69dbabf6"
+          "version": 370322,
+          "file": "webk/webk_nl_v370322.strings",
+          "sha256": "26883e2d2152f0ee2ed6bd9af7d694da4a4ada2186df8ac8eb5b673a573127ad"
         },
         {
           "lang_code": "pl",
@@ -2629,12 +2629,12 @@
           "native_name": "Polski",
           "plural_code": "pl",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4087,
+          "strings_count": 5346,
+          "translated_count": 5158,
           "translations_url": "https://translations.telegram.org/pl/",
-          "version": 300025,
-          "file": "webk/webk_pl_v300025.strings",
-          "sha256": "a6505eb1add5a6e95fcb00d4e4598c7712072fc0844dfebf5e069f00b919a605"
+          "version": 376423,
+          "file": "webk/webk_pl_v376423.strings",
+          "sha256": "6d3e1866364fed7a5ba27b7c1b338801973b4729a3d0ead4b02267b5f74e81d0"
         },
         {
           "lang_code": "pt-br",
@@ -2642,12 +2642,12 @@
           "native_name": "Português (Brasil)",
           "plural_code": "pt",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/pt-br/",
-          "version": 300052,
-          "file": "webk/webk_pt-br_v300052.strings",
-          "sha256": "ab6fb604a7085760ed437161d5a4c423bed0ee1feed14e624ac9e057e118997a"
+          "version": 369061,
+          "file": "webk/webk_pt-br_v369061.strings",
+          "sha256": "7b2750d357ee07e09fee3e21320faf915940a8306a9157644eba5817527be79f"
         },
         {
           "lang_code": "ro",
@@ -2655,12 +2655,12 @@
           "native_name": "Română",
           "plural_code": "ro",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 4916,
           "translations_url": "https://translations.telegram.org/ro/",
-          "version": 299998,
-          "file": "webk/webk_ro_v299998.strings",
-          "sha256": "0fb1efd763621b07caf8098af57c6dba704a6723b352e32a640f947acca8a2d1"
+          "version": 370655,
+          "file": "webk/webk_ro_v370655.strings",
+          "sha256": "0aea16301ac7e37b125d2adbdcd05fff9a6fb0046f63ec1c81a277ad3ffdc2c5"
         },
         {
           "lang_code": "ru",
@@ -2668,12 +2668,12 @@
           "native_name": "Русский",
           "plural_code": "ru",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4095,
+          "strings_count": 5346,
+          "translated_count": 5335,
           "translations_url": "https://translations.telegram.org/ru/",
-          "version": 300410,
-          "file": "webk/webk_ru_v300410.strings",
-          "sha256": "dda14af0d9cd8bfe1f1e551eb25d22cb92416dd53cc4a3f0d4f55c7050f77efc"
+          "version": 370676,
+          "file": "webk/webk_ru_v370676.strings",
+          "sha256": "19cb3b9f7584a033d94963ac04212a1abaef6f8db08e2ca0f169f0a678fa3935"
         },
         {
           "lang_code": "sr",
@@ -2681,12 +2681,12 @@
           "native_name": "Српски",
           "plural_code": "sr",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/sr/",
-          "version": 300657,
-          "file": "webk/webk_sr_v300657.strings",
-          "sha256": "1a14b91e3e2c69199b4a15fa389bcc4131064a86f83637076ec7bcdacf008990"
+          "version": 376431,
+          "file": "webk/webk_sr_v376431.strings",
+          "sha256": "55ae5905e70dd2a1abc71259b40e3e9487a348ef55bf6738498928224c11d0a4"
         },
         {
           "lang_code": "tr",
@@ -2694,12 +2694,12 @@
           "native_name": "Türkçe",
           "plural_code": "tr",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 2115,
+          "strings_count": 5346,
+          "translated_count": 2359,
           "translations_url": "https://translations.telegram.org/tr/",
-          "version": 299130,
-          "file": "webk/webk_tr_v299130.strings",
-          "sha256": "9f7dcfc9f3cfbeda8d6094380e7e379f61ba760ab096024b33d965794b6ad060"
+          "version": 369420,
+          "file": "webk/webk_tr_v369420.strings",
+          "sha256": "4040b4e5eb4c397c4d5fc5bf943a8349838e02bfec8688e206ff2a53ca4714bd"
         },
         {
           "lang_code": "uk",
@@ -2707,12 +2707,12 @@
           "native_name": "Українська",
           "plural_code": "uk",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4096,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/uk/",
-          "version": 300638,
-          "file": "webk/webk_uk_v300638.strings",
-          "sha256": "7e012fd14d5ba57b4939bd2523f174c70fa3802bc6544a4461acf1d11f1027c4"
+          "version": 376094,
+          "file": "webk/webk_uk_v376094.strings",
+          "sha256": "e0ca2ee1dd49b17e7b77e517d0a67de79a7e320ce85b47aa46da459f6108e176"
         },
         {
           "lang_code": "uz",
@@ -2720,12 +2720,12 @@
           "native_name": "O‘zbek",
           "plural_code": "uz",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 2571,
+          "strings_count": 5346,
+          "translated_count": 3135,
           "translations_url": "https://translations.telegram.org/uz/",
-          "version": 300798,
-          "file": "webk/webk_uz_v300798.strings",
-          "sha256": "fb8a874510e902e0d0c81dbd7d4ba38288b296ca9a1cc5d5cfffe539a3e97453"
+          "version": 376450,
+          "file": "webk/webk_uz_v376450.strings",
+          "sha256": "060e5535f50ccfb1ebef9c23585907602fcf70afb09d2e8cbcc7c34fff12936e"
         },
         {
           "lang_code": "zh-hans",
@@ -2733,12 +2733,12 @@
           "native_name": "简体中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 2660,
+          "strings_count": 5346,
+          "translated_count": 2974,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 295486,
-          "file": "webk/webk_zh-hans_v295486.strings",
-          "sha256": "2581f6121a0370132722dc3c0d5779451e5977170370ac4010e2072233683a88"
+          "version": 370351,
+          "file": "webk/webk_zh-hans_v370351.strings",
+          "sha256": "8239e7672d50200cd179c98d59569ab03f196248b6bc126fb78669820e193a65"
         },
         {
           "lang_code": "zh-hant",
@@ -2746,12 +2746,12 @@
           "native_name": "繁體中文",
           "plural_code": "zh",
           "official": true,
-          "strings_count": 4096,
-          "translated_count": 4093,
+          "strings_count": 5346,
+          "translated_count": 5346,
           "translations_url": "https://translations.telegram.org/zh-hant/",
-          "version": 300416,
-          "file": "webk/webk_zh-hant_v300416.strings",
-          "sha256": "cc77263d3a3dd502fa6976ecb54d9d0bbc219b26f3c185e12b37db853d969a0d"
+          "version": 368800,
+          "file": "webk/webk_zh-hant_v368800.strings",
+          "sha256": "63d5d6db096d5d86a0b94d9f57a5e11026e0429d7a21329ae830713a4c53e8f8"
         }
       ]
     }
