@@ -73,15 +73,9 @@ func (s *Service) GetDifference(ctx context.Context, langPack, langCode string, 
 	if err := s.validateLanguage(ctx, packName, code); err != nil {
 		return domain.LangPack{}, err
 	}
-	var (
-		pack domain.LangPack
-		err  error
-	)
-	if fromVersion == 0 {
-		pack, err = s.effectivePack(ctx, packName, code)
-	} else {
-		pack, err = s.rawPack(ctx, packName, code)
-	}
+	// 全量与增量都返回叠加后的语言包：版本号取自叠加结果，增量若退回原始包，
+	// 客户端会拿到比版本号对应内容少的字符串（telesrv 叠加的键会丢）。
+	pack, err := s.effectivePack(ctx, packName, code)
 	if err != nil {
 		return domain.LangPack{}, err
 	}
@@ -179,8 +173,19 @@ func (s *Service) rawPack(ctx context.Context, langPack, langCode string) (domai
 	})
 }
 
+// TelesrvOverlayPack 是本服务自有文案的语言包目录（data/langpack/telesrv/
+// telesrv_<lang>_v<N>.strings）。官方语言包里没有的客户端自加键（如 Android 的
+// Telesrv*）放在这里，叠加进每个平台的同语言包；cmd/langpackfetch 只写官方平台
+// 目录，重新拉取官方语言包不会覆盖它。改动文案时把文件名里的版本号 +1。
+const TelesrvOverlayPack = "telesrv"
+
 func (s *Service) effectivePack(ctx context.Context, langPack, langCode string) (domain.LangPack, error) {
-	if !shouldOverlayWebA(langPack) {
+	webA := shouldOverlayWebA(langPack)
+	telesrv, err := s.hasTelesrvOverlay(ctx, langPack, langCode)
+	if err != nil {
+		return domain.LangPack{}, err
+	}
+	if !webA && !telesrv {
 		return s.rawPack(ctx, langPack, langCode)
 	}
 	key := langPackCacheKey{pack: langPack, code: langCode, kind: langPackCacheEffective}
@@ -189,12 +194,66 @@ func (s *Service) effectivePack(ctx context.Context, langPack, langCode string) 
 		if err != nil {
 			return domain.LangPack{}, err
 		}
-		overlay, err := s.rawPack(ctx, "weba", langCode)
-		if err != nil {
-			return domain.LangPack{}, err
+		if webA {
+			overlay, err := s.rawPack(ctx, "weba", langCode)
+			if err != nil {
+				return domain.LangPack{}, err
+			}
+			pack = mergeMissingLangPackStrings(pack, overlay)
 		}
-		return mergeMissingLangPackStrings(pack, overlay), nil
+		if telesrv {
+			overlay, err := s.rawPack(ctx, TelesrvOverlayPack, langCode)
+			if err != nil {
+				return domain.LangPack{}, err
+			}
+			pack = overlayLangPackStrings(pack, overlay)
+		}
+		return pack, nil
 	})
+}
+
+// hasTelesrvOverlay 判断该语言是否有 telesrv 叠加包。语言列表有缓存，没有叠加包的
+// 语言（多数）不会为此多查一次存储。
+func (s *Service) hasTelesrvOverlay(ctx context.Context, langPack, langCode string) (bool, error) {
+	if langPack == TelesrvOverlayPack {
+		return false, nil
+	}
+	languages, err := s.cachedLanguages(ctx, TelesrvOverlayPack)
+	if err != nil {
+		return false, err
+	}
+	for _, language := range languages {
+		if normalizeCode(language.LangCode) == langCode {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// overlayLangPackStrings 用 overlay 的字符串覆盖或补充 pack（同键以 overlay 为准）。
+// 版本号取两者之和：官方版本与 overlay 版本各自只增不减，和也只增不减，所以
+// 任意一边更新，客户端缓存的版本都会落后，从而重新拉取。
+func overlayLangPackStrings(pack, overlay domain.LangPack) domain.LangPack {
+	if len(overlay.Strings) == 0 {
+		return pack
+	}
+	if pack.LangCode == "" {
+		pack.LangCode = overlay.LangCode
+	}
+	pack.Version += overlay.Version
+	index := make(map[string]int, len(pack.Strings))
+	for i, item := range pack.Strings {
+		index[item.Key] = i
+	}
+	for _, item := range overlay.Strings {
+		if i, ok := index[item.Key]; ok {
+			pack.Strings[i] = item
+			continue
+		}
+		index[item.Key] = len(pack.Strings)
+		pack.Strings = append(pack.Strings, item)
+	}
+	return pack
 }
 
 type cachedPackLoadResult struct {

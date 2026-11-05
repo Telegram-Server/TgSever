@@ -166,12 +166,21 @@ func TestServiceNormalizesWebARawLangCode(t *testing.T) {
 		t.Fatalf("AccDescrPollVoteDown = %q, want WebA fallback", got)
 	}
 
-	notModified, err := svc.GetDifference(ctx, "android", "en-raw", seed.Version)
+	// 增量与全量同用补齐后的包与版本：客户端从全量拿到的是 WebA 补齐后的版本 12，
+	// 停在源包版本 7 的客户端缺 WebA 补齐的键，应拿到完整内容。
+	stale, err := svc.GetDifference(ctx, "android", "en-raw", seed.Version)
+	if err != nil {
+		t.Fatalf("get stale difference: %v", err)
+	}
+	if stale.LangCode != "en" || stale.Version != webASeed.Version || stringValue(stale.Strings, "AccDescrPollVoteDown") == "" {
+		t.Fatalf("stale difference = %+v, want normalized effective pack with WebA fallback", stale)
+	}
+	notModified, err := svc.GetDifference(ctx, "android", "en-raw", webASeed.Version)
 	if err != nil {
 		t.Fatalf("get difference: %v", err)
 	}
 	if notModified.LangCode != "en" || len(notModified.Strings) != 0 {
-		t.Fatalf("difference = %+v, want normalized not-modified source pack", notModified)
+		t.Fatalf("difference = %+v, want normalized not-modified pack", notModified)
 	}
 }
 
@@ -354,9 +363,10 @@ func TestServiceCachesLanguageResourcesAfterFirstRequest(t *testing.T) {
 		t.Fatalf("cached languages alias = %+v, %v", languages, err)
 	}
 
+	// list 两次：android 自身，以及判断有无 telesrv 叠加包时查一次叠加包的语言列表，都各只查一次。
 	getPack, getStrings, listLanguages := counting.counts()
-	if getPack != 2 || getStrings != 0 || listLanguages != 1 {
-		t.Fatalf("store calls = getPack:%d getStrings:%d list:%d, want 2/0/1", getPack, getStrings, listLanguages)
+	if getPack != 2 || getStrings != 0 || listLanguages != 2 {
+		t.Fatalf("store calls = getPack:%d getStrings:%d list:%d, want 2/0/2", getPack, getStrings, listLanguages)
 	}
 }
 
