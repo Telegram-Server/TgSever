@@ -2556,7 +2556,7 @@ func run(logger *zap.Logger) error {
 				zap.Int("pid", os.Getpid()),
 				zap.String("git_commit", buildMeta.Commit),
 				zap.Uint("schema_version", migrationStatus.Version),
-				zap.String("blob_backend", "localfs"),
+				zap.String("blob_backend", blobBackend.Name()),
 			)
 		},
 	})
