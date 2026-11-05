@@ -342,7 +342,8 @@ action: (path: string, payload: Record<string, unknown> | FormData) => request<C
   })
 };
 
-// uploadClientUpdate sends a desktop update package as the raw request body
+// uploadClientUpdate sends a desktop update package or an Android APK (the
+// server tells them apart by content; details.kind says which it was) as the raw request body
 // (application/octet-stream) for the server to stage and preflight. It uses
 // XMLHttpRequest rather than fetch because fetch reports no upload progress,
 // and a package can be a couple of hundred MB. The File is sent as a Blob, so

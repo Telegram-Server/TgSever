@@ -161,16 +161,19 @@ type catalogPaths struct {
 	RootPublicKey string
 }
 
-// runPublish 验签一个 v2 桌面包，把它拷进文件目录并原子更新清单，输出发布的条目。
+// runPublish 发布一个包：v2 桌面包验签后发布到 desktop 下；Android 安装包（APK，按内容
+// 识别）发布到 apps.android.<-channel>。都拷进文件目录并原子更新清单，输出发布的条目。
 func runPublish(args []string) error {
 	fs := flag.NewFlagSet("telesrv-update publish", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: telesrv-update publish [flags] <package>")
+		fmt.Fprintln(fs.Output(), "  a desktop package goes to desktop.<platform>.<channel>; an Android APK needs -channel and at least one -notes-* flag")
 		fs.PrintDefaults()
 	}
 	catalog := registerCatalogFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "verify the package and the resulting manifest without writing any file")
 	allowDowngrade := fs.Bool("allow-downgrade", false, "allow a build not newer than the published one (roll back a bad release)")
+	android := registerAndroidFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -181,6 +184,16 @@ func runPublish(args []string) error {
 	if fs.NArg() != 1 {
 		fs.Usage()
 		return fmt.Errorf("publish takes exactly one package path (flags go before it), got %d arguments", fs.NArg())
+	}
+	kind, err := updatecdn.SniffPackageKind(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if kind == updatecdn.PackageKindAndroid {
+		return publishAndroid(paths, fs.Arg(0), android, *dryRun, *allowDowngrade)
+	}
+	if android.set() {
+		return errors.New("-channel, -notes-*, -can-not-skip and -url only apply to an Android APK")
 	}
 	if paths.RootPublicKey == "" {
 		return errors.New("publish requires the update root public key (-root-public-key or TELESRV_UPDATE_ROOT_PUBLIC_KEY)")

@@ -42,6 +42,9 @@ type SetDisabledResult struct {
 // opts.DryRun 时做同样的校验（新清单完整加载一遍）但不取锁、不写文件，与发布的
 // 只校验模式一致。
 func SetDesktopReleaseDisabled(manifestPath, filesDir, platform, channel string, disabled bool, opts SetDisabledOptions) (*SetDisabledResult, error) {
+	if platform == "android" {
+		return nil, fmt.Errorf("desktop.%s.%s: %w (use SetAppReleaseDisabled for apps entries)", platform, channel, ErrDesktopEntryNotFound)
+	}
 	if !opts.DryRun {
 		unlock, err := lockManifest(manifestPath)
 		if err != nil {
@@ -88,6 +91,71 @@ func SetDesktopReleaseDisabled(manifestPath, filesDir, platform, channel string,
 		return nil, err
 	}
 	return result, nil
+}
+
+// SetAppDisabledResult 描述一次 apps 条目的停用或启用，字段与 SetDisabledResult 同义。
+type SetAppDisabledResult struct {
+	Platform  string
+	Channel   string
+	Release   ApplicationRelease
+	Unchanged bool
+}
+
+// SetAppReleaseDisabled 是 SetDesktopReleaseDisabled 的 apps 版本：设置
+// apps.<platform>.<channel> 的 disabled，锁、校验与写入规则相同。重新启用带 file 的
+// Android 条目时，安装包必须仍在文件目录中，且与条目的大小、SHA256、包名、版本与签名一致。
+func SetAppReleaseDisabled(manifestPath, filesDir, platform, channel string, disabled bool, opts SetDisabledOptions) (*SetAppDisabledResult, error) {
+	if !opts.DryRun {
+		unlock, err := lockManifest(manifestPath)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+	}
+	manifest, manifestInfo, err := readManifestFile(manifestPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("apps.%s.%s: %w (no manifest at %s)", platform, channel, ErrDesktopEntryNotFound, manifestPath)
+	}
+	if err != nil {
+		return nil, err
+	}
+	release, ok := manifest.Apps[platform][channel]
+	if !ok {
+		return nil, fmt.Errorf("apps.%s.%s: %w", platform, channel, ErrDesktopEntryNotFound)
+	}
+	result := &SetAppDisabledResult{Platform: platform, Channel: channel, Release: release}
+	if release.Disabled == disabled {
+		result.Unchanged = true
+		return result, nil
+	}
+	release.Disabled = disabled
+	manifest.Apps[platform][channel] = release
+	data, err := encodeManifest(manifest)
+	if err != nil {
+		return nil, err
+	}
+	result.Release = release
+	if opts.DryRun {
+		candidate, err := decodeManifest(bytes.NewReader(data))
+		if err == nil {
+			_, err = newCatalog(candidate, filesDir, opts.CatalogOptions, nil)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("new manifest is invalid: %w", err)
+		}
+		return result, nil
+	}
+	if err := replaceManifest(manifestPath, manifestInfo, data, filesDir, opts.CatalogOptions); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// SetAppReleaseDisabled previews (dryRun) or applies disabling or re-enabling
+// apps.<platform>.<channel> in this store's manifest; see the package function.
+func (s *Store) SetAppReleaseDisabled(platform, channel string, disabled, dryRun bool) (*SetAppDisabledResult, error) {
+	opts := SetDisabledOptions{CatalogOptions: s.opts, DryRun: dryRun}
+	return SetAppReleaseDisabled(s.manifestPath, s.filesDir, platform, channel, disabled, opts)
 }
 
 // SetDesktopReleaseDisabled previews (dryRun) or applies disabling or

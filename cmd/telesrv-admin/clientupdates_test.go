@@ -186,6 +186,18 @@ func TestClientUpdatePublishProxiesToAdminAPI(t *testing.T) {
 		t.Fatalf("status=%d request=%+v body=%s", rec.Code, got, rec.Body.String())
 	}
 
+	// 发布 APK 时的通道、说明、强制与链接原样转发。
+	androidBody := `{"reason":"ship 12.3","confirm":true,"staging_id":"0123456789abcdef0123456789abcdef",` +
+		`"android":{"channel":"beta","notes":{"zh":"修复","en":"Fixes"},"can_not_skip":true,"url":"https://dl.example/app.apk"}}`
+	req = withCookies(httptest.NewRequest(http.MethodPost, "/api/actions/client-update-publish", strings.NewReader(androidBody)), cookies)
+	req.Header.Set(csrfHeaderName, csrf)
+	rec = httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || got.Android == nil || got.Android.Channel != "beta" || got.Android.Notes["zh"] != "修复" ||
+		!got.Android.CanNotSkip || got.Android.URL != "https://dl.example/app.apk" {
+		t.Fatalf("status=%d android=%+v body=%s", rec.Code, got.Android, rec.Body.String())
+	}
+
 	viewer := panelServer(t, permissionUpdatesRead)
 	viewer.cfg.AdminAPIURL = upstream.URL
 	viewerCookies, viewerCSRF := signIn(t, viewer)

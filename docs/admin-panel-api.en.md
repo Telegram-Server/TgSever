@@ -499,10 +499,10 @@ The update service is described in [update-service.md](update-service.md).
 
 | Method | Path | Parameters / body |
 | --- | --- | --- |
-| GET | `/api/client-updates` | State of the update service: `mode`, `public_url`, `service_url`, `reload_error`, `max_package_size`, and the published `entries`. Needs `updates.read`. Proxied from Admin API `/v1/client-updates`, not cached. |
-| POST | `/api/actions/client-update-upload` | Raw package bytes as the body (`application/octet-stream`), with `reason` (required), `command_id` and `allow_downgrade` (bool) in the query string; stages the package. Needs `updates.publish`. A body over the limit answers `413`, a wrong content type `415`. |
-| POST | `/api/actions/client-update-publish` | Common fields + `staging_id` (string), `allow_downgrade` (bool); publishes a staged package. Needs `updates.publish`. |
-| POST | `/api/actions/client-update-disable` | Common fields + `platform`, `channel` (string); stops offering that entry. Needs `updates.publish`. |
+| GET | `/api/client-updates` | State of the update service: `mode`, `public_url`, `service_url`, `reload_error`, `max_package_size`, the published desktop `entries`, and `android_entries` (channel, version, version code, package, file, signer, notes, forced, disabled, and `document_ready`: whether the APK is registered as a document yet). Needs `updates.read`. Proxied from Admin API `/v1/client-updates`, not cached. |
+| POST | `/api/actions/client-update-upload` | Raw package bytes as the body (`application/octet-stream`), with `reason` (required), `command_id` and `allow_downgrade` (bool) in the query string; stages the package and preflights it. A desktop package or an Android APK (told apart by content); for an APK the result details carry `kind: "android"`, package, version, version code, minimum SDK, signer and the current entry of each channel. Needs `updates.publish`. A body over the limit answers `413`, a wrong content type `415`. |
+| POST | `/api/actions/client-update-publish` | Common fields + `staging_id` (string), `allow_downgrade` (bool), and for an APK `android`: `channel` (`stable`, `beta`, `alpha`), `notes` (object by language, at least one non-empty), `can_not_skip` (bool), `url` (optional); publishes a staged package. Needs `updates.publish`. |
+| POST | `/api/actions/client-update-disable` | Common fields + `platform` (a desktop platform, or `android`), `channel` (string); stops offering that entry. Needs `updates.publish`. |
 | POST | `/api/actions/client-update-enable` | Common fields + `platform`, `channel` (string); offers a disabled entry again. Needs `updates.publish`. |
 
 ## API: operator accounts

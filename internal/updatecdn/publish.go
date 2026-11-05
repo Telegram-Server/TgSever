@@ -108,7 +108,7 @@ func PublishDesktopPackage(manifestPath, filesDir, packagePath string, opts Publ
 		}
 	}
 	target := filepath.Join(filesDir, release.File)
-	fileExists, err := checkPublishedFile(target, release)
+	fileExists, err := checkPublishedFile(target, desktopPublishedFile(release))
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func PublishDesktopPackage(manifestPath, filesDir, packagePath string, opts Publ
 
 	copied := false
 	if !fileExists {
-		if copied, err = copyPublishPackage(packagePath, filesDir, release); err != nil {
+		if copied, err = copyPublishPackage(packagePath, filesDir, desktopPublishedFile(release)); err != nil {
 			return nil, err
 		}
 		result.FileCopied = copied
@@ -258,9 +258,21 @@ func lockManifest(manifestPath string) (func(), error) {
 	return func() { _ = os.Remove(lockPath) }, nil
 }
 
+// publishedFile 是要放进文件目录的一个包：文件名与完整性元数据。桌面包与 Android 安装包
+// 共用同一套拷贝与“已发布的包不可变”规则。
+type publishedFile struct {
+	File   string
+	Size   int64
+	SHA256 string
+}
+
+func desktopPublishedFile(release DesktopRelease) publishedFile {
+	return publishedFile{File: release.File, Size: release.Size, SHA256: release.SHA256}
+}
+
 // checkPublishedFile 检查文件目录中的同名文件：不存在返回 false；内容与包完全相同返回
 // true（重复发布）；内容不同则拒绝，已发布的包不可变。
-func checkPublishedFile(path string, release DesktopRelease) (bool, error) {
+func checkPublishedFile(path string, release publishedFile) (bool, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
@@ -294,7 +306,7 @@ func checkPublishedFile(path string, release DesktopRelease) (bool, error) {
 // 被替换），再用硬链接放到最终文件名——硬链接在目标已存在时失败，不会覆盖已发布的包。
 // 文件系统不支持硬链接时退回到排他创建目标文件再拷贝。返回是否新建了文件；目标已被
 // 他人放入相同内容时返回 false。
-func copyPublishPackage(packagePath, filesDir string, release DesktopRelease) (bool, error) {
+func copyPublishPackage(packagePath, filesDir string, release publishedFile) (bool, error) {
 	if err := os.MkdirAll(filesDir, 0o755); err != nil {
 		return false, fmt.Errorf("create files directory: %w", err)
 	}
@@ -348,7 +360,7 @@ func copyPublishPackage(packagePath, filesDir string, release DesktopRelease) (b
 // copyExclusive 以 O_EXCL 新建 target 并从 src 拷贝，用于不支持硬链接的文件系统；
 // target 已存在时返回满足 fs.ErrExist 的错误，失败时删除已建的 target。拷贝期间
 // target 不完整，但清单尚未引用它，服务不会提供它。
-func copyExclusive(src, target string, release DesktopRelease) error {
+func copyExclusive(src, target string, release publishedFile) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err

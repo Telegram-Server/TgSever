@@ -310,6 +310,23 @@ func CleanupStagedPackages(manifestPath string, now time.Time, ttl time.Duration
 // drops the claim and keeps the staging. A preview claims nothing: previews
 // only read, and any number may run side by side.
 func PublishStagedPackage(manifestPath, filesDir, id string, opts PublishOptions, ttl time.Duration) (*PublishResult, error) {
+	return publishStaged(manifestPath, id, opts, ttl, func(path string) (*PublishResult, error) {
+		return PublishDesktopPackage(manifestPath, filesDir, path, opts)
+	})
+}
+
+// PublishStagedAndroidPackage is PublishStagedPackage for an Android installer
+// package: PublishAndroidPackage on the staged file, with the same claim,
+// cleanup and removal rules.
+func PublishStagedAndroidPackage(manifestPath, filesDir, id string, meta AndroidReleaseMeta, opts PublishOptions, ttl time.Duration) (*AndroidPublishResult, error) {
+	return publishStaged(manifestPath, id, opts, ttl, func(path string) (*AndroidPublishResult, error) {
+		return PublishAndroidPackage(manifestPath, filesDir, path, meta, opts)
+	})
+}
+
+// publishStaged 是两种发布共用的暂存处理：清理过期暂存、找到 id 对应的文件；只校验时直接
+// 运行 publish，正式发布时先认领（见 PublishStagedPackage），成功后删除暂存。
+func publishStaged[T any](manifestPath, id string, opts PublishOptions, ttl time.Duration, publish func(path string) (*T, error)) (*T, error) {
 	now := opts.now()
 	_, _ = CleanupStagedPackages(manifestPath, now, ttl)
 	path, err := StagedPackagePath(manifestPath, id, now, ttl)
@@ -317,7 +334,7 @@ func PublishStagedPackage(manifestPath, filesDir, id string, opts PublishOptions
 		return nil, err
 	}
 	if opts.DryRun {
-		return PublishDesktopPackage(manifestPath, filesDir, path, opts)
+		return publish(path)
 	}
 	claim := path + stagingClaimSuffix
 	marker, err := os.OpenFile(claim, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -335,13 +352,65 @@ func PublishStagedPackage(manifestPath, filesDir, id string, opts PublishOptions
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrStagingNotFound
 	}
-	result, err := PublishDesktopPackage(manifestPath, filesDir, path, opts)
+	result, err := publish(path)
 	if err != nil {
 		return nil, err
 	}
 	// 先删暂存再（经 defer）删标记：标记还在时，别的确认认领不到这个 id。
 	_ = os.Remove(path)
 	return result, nil
+}
+
+// 暂存包的种类，由内容判断：zip（APK）是 Android 安装包，其余按桌面 v2 包处理。
+const (
+	PackageKindDesktop = "desktop"
+	PackageKindAndroid = "android"
+)
+
+// SniffPackageKind 按文件开头判断包的种类：以 zip 本地文件头 PK\x03\x04 开头的是 Android
+// 安装包，其余都按桌面包处理（桌面包是否合法由验签决定）。
+func SniffPackageKind(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open package: %w", err)
+	}
+	defer f.Close()
+	head := make([]byte, 4)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read package: %w", err)
+	}
+	if n == 4 && string(head) == "PK\x03\x04" {
+		return PackageKindAndroid, nil
+	}
+	return PackageKindDesktop, nil
+}
+
+// StagedPackageKind reports the kind of the staged package id.
+func (s *Store) StagedPackageKind(id string) (string, error) {
+	path, err := StagedPackagePath(s.manifestPath, id, s.opts.now(), DefaultStagingTTL)
+	if err != nil {
+		return "", err
+	}
+	return SniffPackageKind(path)
+}
+
+// InspectStagedAndroidPackage parses the staged package id as an Android
+// installer and checks it against the published Android app; see
+// InspectAndroidPackage. It writes nothing.
+func (s *Store) InspectStagedAndroidPackage(id string) (*AndroidInspection, error) {
+	path, err := StagedPackagePath(s.manifestPath, id, s.opts.now(), DefaultStagingTTL)
+	if err != nil {
+		return nil, err
+	}
+	return InspectAndroidPackage(s.manifestPath, path)
+}
+
+// PublishStagedAndroidPackage previews (dryRun) or publishes the staged Android
+// package id into this store's manifest; see the package function.
+func (s *Store) PublishStagedAndroidPackage(id string, meta AndroidReleaseMeta, dryRun, allowDowngrade bool) (*AndroidPublishResult, error) {
+	opts := PublishOptions{CatalogOptions: s.opts, DryRun: dryRun, AllowDowngrade: allowDowngrade}
+	return PublishStagedAndroidPackage(s.manifestPath, s.filesDir, id, meta, opts, DefaultStagingTTL)
 }
 
 // StagePackage stages r for this store's manifest; see the package function.

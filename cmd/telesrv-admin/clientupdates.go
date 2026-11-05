@@ -108,6 +108,8 @@ type clientUpdatePublishAPIRequest struct {
 	Confirm        bool   `json:"confirm"`
 	StagingID      string `json:"staging_id"`
 	AllowDowngrade bool   `json:"allow_downgrade"`
+	// Android 是发布 APK 时填写的通道、更新说明、是否强制与备用链接；桌面包不带。
+	Android *admin.ClientUpdateAndroidRelease `json:"android,omitempty"`
 }
 
 func (s *server) handleClientUpdatePublishAPI(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +121,7 @@ func (s *server) handleClientUpdatePublishAPI(w http.ResponseWriter, r *http.Req
 		CommandMeta:    s.commandMetaFromAPI(r, body.CommandID, strings.TrimSpace(body.Reason), body.Confirm, "client-update-publish"),
 		StagingID:      strings.TrimSpace(body.StagingID),
 		AllowDowngrade: body.AllowDowngrade,
+		Android:        body.Android,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/client-updates/publish", req)
 	writeCommandResultAPI(w, result, err)

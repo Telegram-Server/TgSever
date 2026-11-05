@@ -596,6 +596,51 @@ func (s *Service) CreateDocumentFromBytes(ctx context.Context, data []byte, spec
 	return doc, nil
 }
 
+// CreateDocumentFromReader 把 r 流式存成一个文档，不把内容读进内存，不做 GIF 转码，也不
+// 生成缩略图（用于更新安装包这类大文件）。wantSize > 0 时实际大小必须等于它；r 的读取
+// 错误（例如校验和不符）会让整次写入失败，不留下 file_blobs 与 documents 行。blob 按内容
+// 寻址，失败时可能留下一个未被引用的 blob 对象，与上传失败时相同。
+func (s *Service) CreateDocumentFromReader(ctx context.Context, r io.Reader, spec domain.DocumentSpec, wantSize int64) (domain.Document, error) {
+	if r == nil {
+		return domain.Document{}, domain.ErrDocumentInvalid
+	}
+	if strings.TrimSpace(spec.MimeType) == "" {
+		spec.MimeType = "application/octet-stream"
+	}
+	objectKey, size, sum, err := s.blobs.PutReader(ctx, r)
+	if err != nil {
+		return domain.Document{}, err
+	}
+	if size == 0 || (wantSize > 0 && size != wantSize) {
+		return domain.Document{}, fmt.Errorf("%w: stored %d bytes, want %d", domain.ErrDocumentInvalid, size, wantSize)
+	}
+	docID := randomID()
+	if err := s.media.PutFileBlob(ctx, domain.FileBlob{
+		LocationKey: fmt.Sprintf("doc:%d", docID),
+		Backend:     domain.MediaBackend(s.blobs.Name()),
+		ObjectKey:   objectKey,
+		Size:        size,
+		SHA256:      sum,
+		MimeType:    spec.MimeType,
+	}); err != nil {
+		return domain.Document{}, err
+	}
+	doc := domain.Document{
+		ID:            docID,
+		AccessHash:    randomID(),
+		FileReference: randomFileReference(),
+		Date:          int(time.Now().Unix()),
+		MimeType:      spec.MimeType,
+		Size:          size,
+		DCID:          s.dc,
+		Attributes:    spec.Attributes,
+	}
+	if err := s.media.PutDocument(ctx, doc); err != nil {
+		return domain.Document{}, err
+	}
+	return doc, nil
+}
+
 // SetCurrentProfilePhoto 把已存在的 photo 设为当前头像（updateProfilePhoto 选历史头像）。
 func (s *Service) SetCurrentProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int) (domain.Photo, bool, error) {
 	return s.SetCurrentProfilePhotoKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile, photoID, date)

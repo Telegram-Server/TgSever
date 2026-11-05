@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -55,6 +56,12 @@ const (
 	// CodeUpdatePackageRejected 是预检、发布或重新启用的其余失败：签名、平台、通道、
 	// 版本回退、同名文件内容不同、包文件缺失、新清单无效。具体原因在错误文本里。
 	CodeUpdatePackageRejected = "UPDATE_PACKAGE_REJECTED"
+	// CodeUpdateAndroidIdentityMismatch 表示 APK 的包名或签名证书与已发布的 Android 应用不同：
+	// 传错了应用，或换了签名密钥（已安装的客户端装不上）。
+	CodeUpdateAndroidIdentityMismatch = "UPDATE_ANDROID_IDENTITY_MISMATCH"
+	// CodeUpdateAndroidReleaseInvalid 表示发布 APK 时通道、更新说明或备用链接不合法，或者
+	// 暂存的是 APK 却没给发布信息（反之亦然）。
+	CodeUpdateAndroidReleaseInvalid = "UPDATE_ANDROID_RELEASE_INVALID"
 )
 
 // ClientUpdateCatalog is the in-process update catalog. *updatecdn.Store
@@ -75,6 +82,18 @@ type ClientUpdateCatalog interface {
 	PublishStagedPackage(id string, dryRun, allowDowngrade bool) (*updatecdn.PublishResult, error)
 	DiscardStagedPackage(id string) error
 	SetDesktopReleaseDisabled(platform, channel string, disabled, dryRun bool) (*updatecdn.SetDisabledResult, error)
+	// Android 安装包：按内容判断暂存的种类，预检（解析 APK、核对身份），发布到某个通道，
+	// 停用或启用 apps 条目。
+	StagedPackageKind(id string) (string, error)
+	InspectStagedAndroidPackage(id string) (*updatecdn.AndroidInspection, error)
+	PublishStagedAndroidPackage(id string, meta updatecdn.AndroidReleaseMeta, dryRun, allowDowngrade bool) (*updatecdn.AndroidPublishResult, error)
+	SetAppReleaseDisabled(platform, channel string, disabled, dryRun bool) (*updatecdn.SetAppDisabledResult, error)
+}
+
+// ClientUpdateDocuments reports whether an installer package has been
+// registered as a document yet (app/appupdates.Registry).
+type ClientUpdateDocuments interface {
+	Ready(ctx context.Context, sha256 string) (bool, error)
 }
 
 var _ ClientUpdateCatalog = (*updatecdn.Store)(nil)
@@ -90,6 +109,8 @@ type ClientUpdates struct {
 	ServiceURL string
 	// Catalog 是进程内的更新目录；为 nil 表示外部模式。
 	Catalog ClientUpdateCatalog
+	// Documents 报告安装包是否已注册成文档；为 nil 时状态里不报告。
+	Documents ClientUpdateDocuments
 }
 
 // ClientUpdateStatus is what the panel's client updates page shows.
@@ -103,6 +124,28 @@ type ClientUpdateStatus struct {
 	// 不必把超限的文件传到一半才被拒绝。
 	MaxPackageSize int64               `json:"max_package_size,omitempty"`
 	Entries        []ClientUpdateEntry `json:"entries"`
+	// AndroidEntries 是 apps.android 下的条目（含停用）。
+	AndroidEntries []ClientUpdateAndroidEntry `json:"android_entries"`
+}
+
+// ClientUpdateAndroidEntry is one apps.android.<channel> manifest entry.
+type ClientUpdateAndroidEntry struct {
+	Channel     string            `json:"channel"`
+	ID          int               `json:"id"`
+	Version     string            `json:"version"`
+	VersionCode int64             `json:"version_code,omitempty"`
+	PackageName string            `json:"package_name,omitempty"`
+	File        string            `json:"file,omitempty"`
+	SHA256      string            `json:"sha256,omitempty"`
+	Size        int64             `json:"size,omitempty"`
+	CertSHA256  string            `json:"cert_sha256,omitempty"`
+	CanNotSkip  bool              `json:"can_not_skip"`
+	Notes       map[string]string `json:"notes"`
+	URL         string            `json:"url,omitempty"`
+	Disabled    bool              `json:"disabled"`
+	// DocumentReady 是安装包是否已注册成文档（只有带 file 的启用条目才有）；还没就绪时
+	// 安卓客户端收到的是“没有更新”。
+	DocumentReady *bool `json:"document_ready,omitempty"`
 }
 
 // ClientUpdateEntry is one desktop.<platform>.<channel> manifest entry.
@@ -125,7 +168,7 @@ type ClientUpdateEntry struct {
 // failed, if it did. It does not fail when the service is disabled or
 // external; those are states the page explains.
 func (s *Service) ClientUpdateStatus(ctx context.Context) (ClientUpdateStatus, error) {
-	status := ClientUpdateStatus{Mode: ClientUpdatesDisabled, Entries: []ClientUpdateEntry{}}
+	status := ClientUpdateStatus{Mode: ClientUpdatesDisabled, Entries: []ClientUpdateEntry{}, AndroidEntries: []ClientUpdateAndroidEntry{}}
 	if s == nil || s.clientUpdates == nil {
 		return status, nil
 	}
@@ -162,6 +205,27 @@ func (s *Service) ClientUpdateStatus(ctx context.Context) (ClientUpdateStatus, e
 		}
 		status.Entries = append(status.Entries, item)
 	}
+	for _, entry := range current.Apps {
+		if entry.Platform != "android" {
+			continue
+		}
+		release := entry.Release
+		item := ClientUpdateAndroidEntry{
+			Channel: entry.Channel, ID: release.ID, Version: release.Version, VersionCode: release.VersionCode,
+			PackageName: release.PackageName, File: release.File, SHA256: release.SHA256, Size: release.Size,
+			CertSHA256: release.CertSHA256, CanNotSkip: release.CanNotSkip, Notes: release.Notes, URL: release.URL,
+			Disabled: release.Disabled,
+		}
+		if item.Notes == nil {
+			item.Notes = map[string]string{}
+		}
+		if release.File != "" && !release.Disabled && cfg.Documents != nil {
+			if ready, err := cfg.Documents.Ready(ctx, release.SHA256); err == nil {
+				item.DocumentReady = &ready
+			}
+		}
+		status.AndroidEntries = append(status.AndroidEntries, item)
+	}
 	return status, nil
 }
 
@@ -181,6 +245,18 @@ type PublishClientUpdateRequest struct {
 	CommandMeta
 	StagingID      string `json:"staging_id"`
 	AllowDowngrade bool   `json:"allow_downgrade"`
+	// Android 是发布 APK 时运营者填写的部分；暂存的是 APK 时必填，是桌面包时必须为空。
+	Android *ClientUpdateAndroidRelease `json:"android,omitempty"`
+}
+
+// ClientUpdateAndroidRelease is what the operator fills in to publish an
+// Android installer: everything else (version, package, signer) comes from the
+// APK itself.
+type ClientUpdateAndroidRelease struct {
+	Channel    string            `json:"channel"`
+	Notes      map[string]string `json:"notes"`
+	CanNotSkip bool              `json:"can_not_skip"`
+	URL        string            `json:"url,omitempty"`
 }
 
 // clientUpdateCatalog returns the in-process catalog, or the coded error the
@@ -232,11 +308,28 @@ func (s *Service) UploadClientUpdate(ctx context.Context, req UploadClientUpdate
 	req.SHA256, req.Size = staged.SHA256, staged.Size
 
 	result, err := s.runCommand(ctx, req.CommandMeta, ActionPreflightClientUpdate, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		kind, err := catalog.StagedPackageKind(staged.ID)
+		if err != nil {
+			return CommandResult{}, clientUpdateError(err)
+		}
+		if kind == updatecdn.PackageKindAndroid {
+			// APK 的通道与更新说明要在确认时填写：预检只解析包、核对身份，列出各通道当前的
+			// 条目；版本回退在确认的试运行里按所选通道判断。
+			inspected, err := catalog.InspectStagedAndroidPackage(staged.ID)
+			if err != nil {
+				return CommandResult{}, clientUpdateError(err)
+			}
+			details := androidInspectionDetails(inspected)
+			details["staging_id"] = staged.ID
+			keep = true
+			return CommandResult{Message: "preflight passed; choose the channel and release notes to publish", Details: details}, nil
+		}
 		published, err := catalog.PublishStagedPackage(staged.ID, true, req.AllowDowngrade)
 		if err != nil {
 			return CommandResult{}, clientUpdateError(err)
 		}
 		details := clientUpdateDetails(published)
+		details["kind"] = updatecdn.PackageKindDesktop
 		if published.Unchanged {
 			return CommandResult{Message: "package is already published; nothing to do", Details: details}, nil
 		}
@@ -260,11 +353,22 @@ func (s *Service) PublishClientUpdate(ctx context.Context, req PublishClientUpda
 		return CommandResult{}, err
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionPublishClientUpdate, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		kind, err := catalog.StagedPackageKind(req.StagingID)
+		if err != nil {
+			return CommandResult{}, clientUpdateError(err)
+		}
+		if kind == updatecdn.PackageKindAndroid {
+			return s.publishAndroidClientUpdate(catalog, req)
+		}
+		if req.Android != nil {
+			return CommandResult{}, codedError(CodeUpdateAndroidReleaseInvalid, errors.New("the staged package is a desktop package; android release fields do not apply"))
+		}
 		published, err := catalog.PublishStagedPackage(req.StagingID, req.DryRun, req.AllowDowngrade)
 		if err != nil {
 			return CommandResult{}, clientUpdateError(err)
 		}
 		details := clientUpdateDetails(published)
+		details["kind"] = updatecdn.PackageKindDesktop
 		switch {
 		case req.DryRun:
 			details["staging_id"] = req.StagingID
@@ -274,6 +378,95 @@ func (s *Service) PublishClientUpdate(ctx context.Context, req PublishClientUpda
 		}
 		return CommandResult{Message: "published", Details: details}, nil
 	})
+}
+
+// publishAndroidClientUpdate 是 PublishClientUpdate 的 APK 分支（在命令体里运行）。
+func (s *Service) publishAndroidClientUpdate(catalog ClientUpdateCatalog, req PublishClientUpdateRequest) (CommandResult, error) {
+	if req.Android == nil {
+		return CommandResult{}, codedError(CodeUpdateAndroidReleaseInvalid, errors.New("the staged package is an Android installer: channel and release notes are required"))
+	}
+	meta := updatecdn.AndroidReleaseMeta{
+		Channel:    req.Android.Channel,
+		Notes:      req.Android.Notes,
+		CanNotSkip: req.Android.CanNotSkip,
+		URL:        req.Android.URL,
+	}
+	published, err := catalog.PublishStagedAndroidPackage(req.StagingID, meta, req.DryRun, req.AllowDowngrade)
+	if err != nil {
+		return CommandResult{}, clientUpdateError(err)
+	}
+	details := androidPublishDetails(published)
+	switch {
+	case req.DryRun:
+		details["staging_id"] = req.StagingID
+		return CommandResult{Message: "dry-run completed", Details: details}, nil
+	case published.Unchanged:
+		return CommandResult{Message: "package is already published; nothing to do", Details: details}, nil
+	}
+	return CommandResult{Message: "published; Android clients see it once the package is registered as a document", Details: details}, nil
+}
+
+// androidInspectionDetails 是 APK 预检记录的结果：从包里读出的元数据，与各通道当前的条目。
+func androidInspectionDetails(r *updatecdn.AndroidInspection) map[string]any {
+	current := make(map[string]any, len(r.Current))
+	for channel, release := range r.Current {
+		current[channel] = map[string]any{
+			"version":      release.Version,
+			"version_code": release.VersionCode,
+			"file":         release.File,
+			"disabled":     release.Disabled,
+		}
+	}
+	return map[string]any{
+		"kind":         updatecdn.PackageKindAndroid,
+		"package_name": r.APK.PackageName,
+		"version":      r.APK.VersionName,
+		"version_code": r.APK.VersionCode,
+		"min_sdk":      r.APK.MinSDK,
+		"cert_sha256":  r.APK.SignerCertSHA256,
+		"signing":      r.APK.SigningScheme,
+		"size":         r.Size,
+		"sha256":       r.SHA256,
+		"current":      current,
+	}
+}
+
+// androidPublishDetails 是 APK 发布（或试运行）记录的结果。更新说明只记语言，正文在命令请求里。
+func androidPublishDetails(r *updatecdn.AndroidPublishResult) map[string]any {
+	langs := make([]string, 0, len(r.Release.Notes))
+	for lang := range r.Release.Notes {
+		langs = append(langs, lang)
+	}
+	sort.Strings(langs)
+	details := map[string]any{
+		"kind":             updatecdn.PackageKindAndroid,
+		"platform":         "android",
+		"channel":          r.Channel,
+		"version":          r.Release.Version,
+		"version_code":     r.Release.VersionCode,
+		"package_name":     r.Release.PackageName,
+		"file":             r.Release.File,
+		"size":             r.Release.Size,
+		"sha256":           r.Release.SHA256,
+		"cert_sha256":      r.Release.CertSHA256,
+		"can_not_skip":     r.Release.CanNotSkip,
+		"notes_languages":  langs,
+		"url":              r.Release.URL,
+		"manifest_updated": r.ManifestUpdated,
+		"file_copied":      r.FileCopied,
+		"unchanged":        r.Unchanged,
+		"downgrade":        r.Downgrade,
+	}
+	if p := r.Previous; p != nil {
+		details["previous"] = map[string]any{
+			"version":      p.Version,
+			"version_code": p.VersionCode,
+			"file":         p.File,
+			"sha256":       p.SHA256,
+			"disabled":     p.Disabled,
+		}
+	}
+	return details
 }
 
 // ClientUpdateEntryRequest names the desktop.<platform>.<channel> entry to
@@ -310,6 +503,27 @@ func (s *Service) setClientUpdateDisabled(ctx context.Context, req ClientUpdateE
 	if req.Platform == "" || req.Channel == "" {
 		return CommandResult{}, codedError(CodeUpdateEntryInvalid, errors.New("platform and channel are required"))
 	}
+	if req.Platform == "android" {
+		return s.runCommand(ctx, req.CommandMeta, action, 0, domain.Peer{}, req, func() (CommandResult, error) {
+			changed, err := catalog.SetAppReleaseDisabled(req.Platform, req.Channel, disabled, req.DryRun)
+			if err != nil {
+				return CommandResult{}, clientUpdateError(err)
+			}
+			release := changed.Release
+			details := map[string]any{
+				"platform":     changed.Platform,
+				"channel":      changed.Channel,
+				"version":      release.Version,
+				"version_code": release.VersionCode,
+				"file":         release.File,
+				"sha256":       release.SHA256,
+				"size":         release.Size,
+				"disabled":     release.Disabled,
+				"unchanged":    changed.Unchanged,
+			}
+			return CommandResult{Message: entryToggleMessage(changed.Unchanged, disabled, req.DryRun), Details: details}, nil
+		})
+	}
 	return s.runCommand(ctx, req.CommandMeta, action, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		changed, err := catalog.SetDesktopReleaseDisabled(req.Platform, req.Channel, disabled, req.DryRun)
 		if err != nil {
@@ -327,18 +541,22 @@ func (s *Service) setClientUpdateDisabled(ctx context.Context, req ClientUpdateE
 			"disabled":  release.Disabled,
 			"unchanged": changed.Unchanged,
 		}
-		switch {
-		case changed.Unchanged && disabled:
-			return CommandResult{Message: "entry is already disabled; nothing to do", Details: details}, nil
-		case changed.Unchanged:
-			return CommandResult{Message: "entry is already enabled; nothing to do", Details: details}, nil
-		case req.DryRun:
-			return CommandResult{Message: "dry-run completed", Details: details}, nil
-		case disabled:
-			return CommandResult{Message: "disabled", Details: details}, nil
-		}
-		return CommandResult{Message: "re-enabled", Details: details}, nil
+		return CommandResult{Message: entryToggleMessage(changed.Unchanged, disabled, req.DryRun), Details: details}, nil
 	})
+}
+
+func entryToggleMessage(unchanged, disabled, dryRun bool) string {
+	switch {
+	case unchanged && disabled:
+		return "entry is already disabled; nothing to do"
+	case unchanged:
+		return "entry is already enabled; nothing to do"
+	case dryRun:
+		return "dry-run completed"
+	case disabled:
+		return "disabled"
+	}
+	return "re-enabled"
 }
 
 // clientUpdateStagingError codes a failure to stage an upload by whose problem
@@ -371,6 +589,10 @@ func clientUpdateError(err error) error {
 		return codedError(CodeUpdatePackageTooLarge, err)
 	case errors.Is(err, updatecdn.ErrDesktopEntryNotFound):
 		return codedError(CodeUpdateEntryNotFound, err)
+	case errors.Is(err, updatecdn.ErrAndroidIdentityMismatch):
+		return codedError(CodeUpdateAndroidIdentityMismatch, err)
+	case errors.Is(err, updatecdn.ErrAndroidReleaseInvalid):
+		return codedError(CodeUpdateAndroidReleaseInvalid, err)
 	}
 	return codedError(CodeUpdatePackageRejected, err)
 }

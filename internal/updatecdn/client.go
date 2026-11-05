@@ -73,5 +73,8 @@ func (c *Client) Resolve(ctx context.Context, request ResolveRequest) (*Resolved
 	if resolved.ID <= 0 || strings.TrimSpace(resolved.Version) == "" || strings.TrimSpace(resolved.Text) == "" {
 		return nil, fmt.Errorf("resolve application update: incomplete response")
 	}
+	if resolved.File != nil && !resolved.File.Valid() {
+		return nil, fmt.Errorf("resolve application update: invalid installer package")
+	}
 	return &resolved, nil
 }

@@ -1169,13 +1169,16 @@ type Deps struct {
 	// AuthKeySessionLayers is the protocol-only durable ordering boundary for
 	// explicit invokeWithLayer evidence. Production must wire the same auth-key
 	// store used by the MTProto edge; nil is reserved for isolated router tests.
-	AuthKeySessionLayers         store.AuthKeySessionLayerStore
-	ReadModelVersions            store.ReadModelVersionStore
-	UserProjectionFacts          UserProjectionFactInvalidator
-	Account                      AccountService
-	Privacy                      PrivacyService
-	Help                         HelpService
-	AppUpdates                   updatecdn.Resolver
+	AuthKeySessionLayers store.AuthKeySessionLayerStore
+	ReadModelVersions    store.ReadModelVersionStore
+	UserProjectionFacts  UserProjectionFactInvalidator
+	Account              AccountService
+	Privacy              PrivacyService
+	Help                 HelpService
+	AppUpdates           updatecdn.Resolver
+	// AppUpdateDocuments 把带安装包的更新（Android）换成已入库的文档；为 nil 时这类更新
+	// 一律回答 help.noAppUpdate。
+	AppUpdateDocuments           AppUpdateDocumentProvider
 	AccountFreeze                AccountFreezeService
 	Permissions                  AccountPermissionsService
 	AccountFreezeNotifications   AccountFreezeNotificationService

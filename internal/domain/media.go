@@ -198,6 +198,15 @@ func (s PhotoSize) Downloadable() bool {
 	return s.Kind == PhotoSizeKindDefault || s.Kind == PhotoSizeKindProgressive || s.Kind == PhotoSizeKindVideo
 }
 
+// AppUpdateDocument 是一个客户端更新安装包（按 SHA-256，小写十六进制）注册成的文档。
+type AppUpdateDocument struct {
+	SHA256     string
+	DocumentID int64
+	FileName   string
+	Size       int64
+	CreatedAt  time.Time
+}
+
 // DocumentAttributeKind 标识 TL DocumentAttribute 变体。
 type DocumentAttributeKind string
 

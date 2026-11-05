@@ -5,7 +5,9 @@ tdesktop) that a new version exists and serves the signed package. It speaks the
 tdesktop **v2** update contract: `td-update-{os}-{arch}-{base}[-beta]` file
 names, `TDUP` packages signed under a key manifest that our own update root key
 signs, and the `stable` and `beta` channels. The same service also answers
-`help.getAppUpdate` for Android, iOS and other MTProto clients.
+`help.getAppUpdate` for Android, iOS and other MTProto clients, and publishes
+Android APKs that the Standalone client downloads as a Telegram document (see
+[Android (standalone builds)](#android-standalone-builds)).
 
 There are two ways to run it, and both use the same handler and the same checks:
 
@@ -305,12 +307,18 @@ still done with the CLI and the environment variables above; with the service
 disabled the page shows those steps, and with a separate `telesrv-update`
 (standalone mode) the page only shows its status and changes nothing.
 
+The same upload takes a desktop package or an Android APK; the server tells them
+apart by content (an APK is a zip). Everything below applies to both. What is
+specific to APKs (channel and notes at confirm time, the same-signer check, the
+document state column) is described under
+[Android (standalone builds)](#android-standalone-builds).
+
 **Permissions.** Two rights, granted per operator on the operator accounts
 screen:
 
 | Right | Allows |
 |---|---|
-| `updates.read` | The Client updates tab: service status, update URL, manifest reload errors, every desktop entry (disabled ones included). |
+| `updates.read` | The Client updates tab: service status, update URL, manifest reload errors, every desktop and Android entry (disabled ones included) and whether each Android package is registered as a document yet. |
 | `updates.publish` | Uploading, preflighting and publishing packages, and disabling and re-enabling entries. It does not include `updates.read`; grant both. |
 
 **Upload, preflight, confirm.** The operator picks a package, writes the reason,
@@ -649,13 +657,21 @@ the standalone service).
   catalog, supports GET, HEAD and Range (resumable downloads), and sends an
   immutable cache policy and a SHA-256 ETag. Other files in the directory are
   never exposed. A package changed on disk after loading returns `503`.
-- `/v1/resolve` returns a newer application release or `204 No Content`.
+- `/v1/resolve` returns a newer application release or `204 No Content`. An
+  Android release with an installer package carries `file` (`name`, `sha256`,
+  `size`, `mime_type`).
+- `/v1/app-files` lists the installer packages of the enabled Android entries
+  (each file once), so a `telesrv` in front of a standalone service can register
+  them as documents ahead of the first `help.getAppUpdate`. The packages
+  themselves are under `/files/<name>` like desktop packages.
 
 ## Release manifest fields
 
 The release manifest (`manifest.json`) is what the server serves from. Publish
-desktop entries with `telesrv-update publish`; edit `apps` entries by hand.
-`deploy/update/manifest.example.json` is a complete, disabled example.
+desktop packages and Android APKs with `telesrv-update publish` or the admin
+panel; other `apps` entries (iOS, Android entries without an installer) are
+edited by hand. `deploy/update/manifest.example.json` is a complete, disabled
+example.
 
 - `schema_version`: `1`.
 - `desktop.<platform>.<channel>`: `platform` is a `/current4` key from the
@@ -674,6 +690,13 @@ desktop entries with `telesrv-update publish`; edit `apps` entries by hand.
   - `notes`: localized text keyed by `en`, `ru`, `ru-ru` and similar codes.
   - `can_not_skip`: whether the client may dismiss the update.
   - `disabled`: as above.
+  - Android installer (`apps.android` only; written by the publish, not by
+    hand): `file` (`android-<package>-<versionCode>.apk` in the files
+    directory), `sha256`, `size`, `package_name`, `version_code` and
+    `cert_sha256` (SHA-256 of the APK's signing certificate). On every load the
+    file is hashed and the APK parsed again; a package that does not match its
+    entry (swapped file, hand-edited field) fails the load. Publishing writes
+    `id` = `version_code` and `version` = the APK's `versionName`.
 
 Unknown fields are an error.
 
@@ -683,10 +706,84 @@ Unknown fields are an error.
 channel and `lang_code` to the resolver (in process, or `/v1/resolve` of a
 standalone service). The resolver selects localized notes, never offers an
 equal or older version, and applies `url_by_source` when a matching installer or
-store source is configured.
+store source is configured. Android sends `versionName (versionCode)` as
+`app_version`; the comparison uses the `versionName` part, the same one the
+client compares locally.
 
-- A standalone Android build may open or install an APK URL, but the APK must be
-  signed with the same Android application signing key as the installed build.
+### Android (standalone builds)
+
+The Android Standalone client (`TMessagesProj_AppStandalone`, the build our CI
+ships) downloads and installs the update **as a Telegram document**: the
+update popup and the update bar in the side menu read `help.appUpdate.document`
+and fetch it with `upload.getFile` from the DC. Only the forced-update screen
+(`can_not_skip`) falls back to opening `url`. An update without a document is
+therefore broken on Android in two ways:
+
+- the popup fails silently and the side-menu bar never appears;
+- the client stores the release as pending and, for the same `version`, never
+  asks again: even a later fixed entry with a document stays invisible until a
+  higher version is published.
+
+So publish Android releases **with the APK** (admin panel or CLI below), not as a
+hand-written entry with only a `url`. `telesrv` logs a warning at startup for
+an enabled `apps.android` entry without `file`.
+
+**How the APK reaches clients.** `telesrv` registers each installer package as
+a Telegram document once (keyed by its SHA-256 in `app_update_documents`;
+restarts reuse it). In process it reads the files directory; in front of a
+standalone `telesrv-update` it streams `/files/<name>` from
+`TELESRV_UPDATE_SERVICE_URL`. Either way the bytes are checked against the
+entry's size and SHA-256 and a mismatch is not registered. Registration runs in
+the background: every 30 seconds `telesrv` scans the catalog's packages, and a
+`help.getAppUpdate` for a package not registered yet starts one. **Until the
+document is ready, Android clients get `help.noAppUpdate`**, never an update
+without a document. A failed registration (update service down, package
+mismatch) is retried a minute later. The admin panel shows each Android entry's
+document state.
+
+**Publishing an APK.** Version, package name and signer come from the APK; the
+operator chooses the channel, writes release notes (at least one of `zh`, `en`,
+`ru`; clients pick their language, falling back to English), and optionally
+marks the update forced or gives a fallback URL. The checks:
+
+- the APK must be a valid, v2- or v3-signed APK with a literal `versionName`
+  and a `versionCode` that fits a 32-bit id;
+- **same app, same signer.** The package name and the signing certificate must
+  match every Android entry already in the manifest (any channel, disabled ones
+  included). Android only installs an update signed by the same key, so a
+  package signed with another key is refused at upload instead of failing on
+  every phone with "App not installed". To really switch keys, delete the old
+  `apps.android` entries from the manifest by hand first. The signer is read,
+  not cryptographically verified: Android verifies the signature on install;
+- not older than the channel's entry (compared by `versionCode`), unless a
+  rollback is allowed explicitly. Re-publishing the same APK with other notes,
+  forced flag or URL is an edit, not a rollback;
+- the same 256 MiB upload limit, staging, lock, audit and disable / re-enable
+  as desktop packages. Re-enabling an Android entry requires its APK to still be
+  in the files directory and to match the entry.
+
+From the admin panel (**Server → Client updates**) upload the APK like a desktop
+package: the preflight shows package, version, minimum Android version, signer
+and the current entry of each channel; then fill in the channel, notes and the
+optional fields and confirm. From the command line:
+
+```sh
+telesrv-update publish -channel stable \
+  -notes-zh "修复若干问题" -notes-en "Bug fixes" \
+  [-notes-file notes.json] [-can-not-skip] [-url https://…/app.apk] \
+  [-dry-run] [-allow-downgrade] app.apk
+```
+
+`-notes-file` is a JSON object of notes by language; the `-notes-*` flags
+override it per language. The root public key is only needed when the manifest
+also has enabled desktop entries (the new manifest is validated in full).
+
+After a publish, clients see the update on their next check: the Android client
+checks at most once a day by default (`inapp_update_check_delay`), and users can
+check by hand under Settings → About.
+
+### Other platforms
+
 - Google Play and other store builds should use the corresponding store URL;
   this mechanism does not bypass store policy.
 - iOS may display information returned by `help.getAppUpdate`, but installation

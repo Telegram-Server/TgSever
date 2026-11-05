@@ -523,10 +523,10 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 
 | Метод | Путь | Параметры / тело |
 | --- | --- | --- |
-| GET | `/api/client-updates` | Состояние сервиса обновлений: `mode`, `public_url`, `service_url`, `reload_error`, `max_package_size` и опубликованные записи `entries`. Требует `updates.read`. Проксируется из Admin API `/v1/client-updates`, не кешируется. |
-| POST | `/api/actions/client-update-upload` | Тело — байты пакета (`application/octet-stream`), в строке запроса `reason` (обязателен), `command_id` и `allow_downgrade` (bool); подготавливает пакет. Требует `updates.publish`. Слишком большое тело — `413`, неверный тип содержимого — `415`. |
-| POST | `/api/actions/client-update-publish` | Общие поля + `staging_id` (string), `allow_downgrade` (bool); публикует подготовленный пакет. Требует `updates.publish`. |
-| POST | `/api/actions/client-update-disable` | Общие поля + `platform`, `channel` (string); перестаёт предлагать эту запись. Требует `updates.publish`. |
+| GET | `/api/client-updates` | Состояние сервиса обновлений: `mode`, `public_url`, `service_url`, `reload_error`, `max_package_size`, опубликованные записи для десктопа `entries` и `android_entries` (канал, версия, versionCode, пакет, файл, подписант, описание, принудительность, отключение и `document_ready` — зарегистрирован ли APK как документ). Требует `updates.read`. Проксируется из Admin API `/v1/client-updates`, не кешируется. |
+| POST | `/api/actions/client-update-upload` | Тело — байты пакета (`application/octet-stream`), в строке запроса `reason` (обязателен), `command_id` и `allow_downgrade` (bool); подготавливает пакет и проверяет его. Пакет для десктопа или Android APK (различаются по содержимому); для APK в деталях результата `kind: "android"`, пакет, версия, versionCode, минимальный SDK, подписант и текущая запись каждого канала. Требует `updates.publish`. Слишком большое тело — `413`, неверный тип содержимого — `415`. |
+| POST | `/api/actions/client-update-publish` | Общие поля + `staging_id` (string), `allow_downgrade` (bool), а для APK — `android`: `channel` (`stable`, `beta`, `alpha`), `notes` (объект по языкам, хотя бы один непустой), `can_not_skip` (bool), `url` (необязательно); публикует подготовленный пакет. Требует `updates.publish`. |
+| POST | `/api/actions/client-update-disable` | Общие поля + `platform` (платформа десктопа или `android`), `channel` (string); перестаёт предлагать эту запись. Требует `updates.publish`. |
 | POST | `/api/actions/client-update-enable` | Общие поля + `platform`, `channel` (string); снова предлагает отключённую запись. Требует `updates.publish`. |
 
 ## API: учётные записи операторов

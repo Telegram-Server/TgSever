@@ -9,6 +9,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	ioscompat "telesrv/internal/compat/ios"
+	"telesrv/internal/domain"
 	"telesrv/internal/updatecdn"
 )
 
@@ -60,7 +61,30 @@ func (r *Router) onHelpGetAppUpdate(ctx context.Context, source string) (tg.Help
 	if resolved.URL != "" {
 		result.SetURL(resolved.URL)
 	}
+	if resolved.File != nil {
+		// 带安装包的更新（Android）只在包已注册成文档后下发：安卓客户端拿到只有 url 的
+		// 更新时弹窗静默失败，还会记住这个版本、以后不再弹出（见 internal/app/appupdates）。
+		if r.deps.AppUpdateDocuments == nil {
+			return ioscompat.NoAppUpdate(), nil
+		}
+		doc, ready, err := r.deps.AppUpdateDocuments.Document(ctx, *resolved.File)
+		if err != nil {
+			r.log.Warn("application update document lookup failed",
+				zap.String("platform", platform), zap.String("file", resolved.File.Name), zap.Error(err))
+			return ioscompat.NoAppUpdate(), nil
+		}
+		if !ready {
+			return ioscompat.NoAppUpdate(), nil
+		}
+		result.SetDocument(tgDocument(doc))
+	}
 	return result, nil
+}
+
+// AppUpdateDocumentProvider 把更新目录里的安装包换成已入库的文档（app/appupdates.Registry）。
+// 还没入库时返回 ready=false 并在后台开始入库。
+type AppUpdateDocumentProvider interface {
+	Document(ctx context.Context, file updatecdn.ResolvedFile) (domain.Document, bool, error)
 }
 
 func updateChannel(info ClientInfo) string {

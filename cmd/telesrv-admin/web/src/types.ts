@@ -250,6 +250,31 @@ export type ClientUpdateStatus = {
   // checks a file against it before sending a byte.
   max_package_size?: number;
   entries: ClientUpdateEntry[];
+  // apps.android entries, one per channel; always an array.
+  android_entries: ClientUpdateAndroidEntry[];
+};
+
+// One apps.android entry as admin.ClientUpdateAndroidEntry reports it. An entry
+// without file is a hand-written one that only carries a download url.
+export type ClientUpdateAndroidEntry = {
+  channel: string;
+  id: number;
+  version: string;
+  version_code?: number;
+  package_name?: string;
+  file?: string;
+  sha256?: string;
+  size?: number;
+  cert_sha256?: string;
+  can_not_skip: boolean;
+  // Release notes keyed by language (zh, en, ru).
+  notes: Record<string, string> | null;
+  url?: string;
+  disabled: boolean;
+  // Only on enabled entries with a file: whether the APK is registered as a
+  // Telegram document yet. Until it is, Android clients are told there is no
+  // update.
+  document_ready?: boolean;
 };
 
 export type DonationDepositStatus = "pending" | "confirmed" | "credited" | "orphaned";

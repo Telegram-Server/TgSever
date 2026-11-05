@@ -42,11 +42,37 @@ func (c *Catalog) DesktopReleases() []DesktopEntry {
 	return entries
 }
 
-// StoreStatus 是 Store 某一时刻的状态：正在提供的快照中的全部桌面条目（含停用，
-// 见 Catalog.DesktopReleases），以及清单最近一次重新加载失败的原因（为 nil 表示
-// 快照就是当前清单）。两者在同一把锁下取得。
+// AppEntry 是清单中的一个 apps 条目（apps.<Platform>.<Channel>），停用的也列出。
+type AppEntry struct {
+	Platform string
+	Channel  string
+	Release  ApplicationRelease
+}
+
+// AppReleases returns every apps entry of the manifest, disabled ones
+// included, sorted by platform and channel.
+func (c *Catalog) AppReleases() []AppEntry {
+	var entries []AppEntry
+	for platform, channels := range c.manifest.Apps {
+		for channel, release := range channels {
+			entries = append(entries, AppEntry{Platform: platform, Channel: channel, Release: release})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Platform != entries[j].Platform {
+			return entries[i].Platform < entries[j].Platform
+		}
+		return entries[i].Channel < entries[j].Channel
+	})
+	return entries
+}
+
+// StoreStatus 是 Store 某一时刻的状态：正在提供的快照中的全部桌面条目与 apps 条目（含停用，
+// 见 Catalog.DesktopReleases、Catalog.AppReleases），以及清单最近一次重新加载失败的原因
+// （为 nil 表示快照就是当前清单）。它们在同一把锁下取得。
 type StoreStatus struct {
 	Desktop   []DesktopEntry
+	Apps      []AppEntry
 	ReloadErr error
 }
 
@@ -58,7 +84,7 @@ func (s *Store) Status() (StoreStatus, error) {
 	if err != nil {
 		return StoreStatus{}, err
 	}
-	return StoreStatus{Desktop: catalog.DesktopReleases(), ReloadErr: stale}, nil
+	return StoreStatus{Desktop: catalog.DesktopReleases(), Apps: catalog.AppReleases(), ReloadErr: stale}, nil
 }
 
 // ManifestPath returns the manifest the store loads.

@@ -34,6 +34,7 @@ func NewHandler(store *Store) (*Handler, error) {
 	h.mux.HandleFunc("/healthz", h.health)
 	h.mux.HandleFunc("/readyz", h.ready)
 	h.mux.HandleFunc("/v1/resolve", h.resolve)
+	h.mux.HandleFunc("/v1/app-files", h.appFiles)
 	h.mux.HandleFunc("/files/", h.file)
 	h.mux.HandleFunc("/current", h.current)
 	for n := 1; n <= maxCurrentEndpoint; n++ {
@@ -100,6 +101,30 @@ func (h *Handler) current(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(catalog.DesktopMap()); err != nil {
 		return
 	}
+}
+
+// appFiles 列出启用的 Android 条目引用的安装包（Client.AppFiles）：独立部署时 telesrv
+// 据此提前把 APK 注册成文档，不必等到第一个 help.getAppUpdate。
+func (h *Handler) appFiles(w http.ResponseWriter, r *http.Request) {
+	if !allowReadMethod(w, r) {
+		return
+	}
+	catalog, err := h.store.Snapshot()
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "catalog unavailable")
+		return
+	}
+	files := catalog.AppFiles()
+	if files == nil {
+		files = []ResolvedFile{}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(appFilesResponse{Files: files})
 }
 
 func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {

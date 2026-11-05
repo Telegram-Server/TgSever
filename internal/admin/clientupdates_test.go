@@ -100,6 +100,31 @@ func (f *fakeClientUpdateCatalog) SetDesktopReleaseDisabled(platform, channel st
 	return &result, nil
 }
 
+// 替身只模拟桌面包：暂存内容以 zip 头开头时报告为 Android，但 Android 的预检与发布不在
+// 替身里模拟——那条路径用真实的 updatecdn.Store 测（clientupdates_android_test.go）。
+func (f *fakeClientUpdateCatalog) StagedPackageKind(id string) (string, error) {
+	data, ok := f.staged[id]
+	if !ok {
+		return "", updatecdn.ErrStagingNotFound
+	}
+	if len(data) >= 4 && string(data[:4]) == "PK\x03\x04" {
+		return updatecdn.PackageKindAndroid, nil
+	}
+	return updatecdn.PackageKindDesktop, nil
+}
+
+func (f *fakeClientUpdateCatalog) InspectStagedAndroidPackage(string) (*updatecdn.AndroidInspection, error) {
+	return nil, errors.New("fake catalog: android inspection is not modelled")
+}
+
+func (f *fakeClientUpdateCatalog) PublishStagedAndroidPackage(string, updatecdn.AndroidReleaseMeta, bool, bool) (*updatecdn.AndroidPublishResult, error) {
+	return nil, errors.New("fake catalog: android publish is not modelled")
+}
+
+func (f *fakeClientUpdateCatalog) SetAppReleaseDisabled(string, string, bool, bool) (*updatecdn.SetAppDisabledResult, error) {
+	return nil, errors.New("fake catalog: apps entries are not modelled")
+}
+
 func TestClientUpdateStatusWithoutDependencyReportsDisabled(t *testing.T) {
 	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Now: fixedNow})
 	status, err := svc.ClientUpdateStatus(context.Background())

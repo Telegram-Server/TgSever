@@ -308,6 +308,14 @@ type AppConfig struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type AppUpdateDocument struct {
+	Sha256     string
+	DocumentID int64
+	FileName   string
+	Size       int64
+	CreatedAt  pgtype.Timestamptz
+}
+
 type AttachMenuBot struct {
 	BotUserID                int64
 	AppID                    *int64

@@ -28,6 +28,7 @@ import (
 	"telesrv/internal/adminapi"
 	"telesrv/internal/app/account"
 	aiapp "telesrv/internal/app/ai"
+	appupdatesapp "telesrv/internal/app/appupdates"
 	"telesrv/internal/app/auth"
 	authdiagnosticsapp "telesrv/internal/app/authdiagnostics"
 	botsapp "telesrv/internal/app/bots"
@@ -1900,6 +1901,8 @@ func run(logger *zap.Logger) error {
 	}
 	pushDeviceStore := postgres.NewPushDeviceStore(pool)
 	var appUpdateResolver updatecdn.Resolver
+	// appFileSource 是安装包（Android APK）的来源：进程内是同一个 Store，外部模式是 Client。
+	var appFileSource updatecdn.AppFileSource
 	// 进程内更新服务：清单与包由公开 Web 的 /_updates/ 提供，help.getAppUpdate 直接
 	// 读同一个 Store。保持 nil 接口（而不是 nil *Handler），未启用时公开 Web 不注册路由。
 	var appUpdateHandler http.Handler
@@ -1928,8 +1931,16 @@ func run(logger *zap.Logger) error {
 		if err != nil {
 			return fmt.Errorf("initialize update handler: %w", err)
 		}
-		appUpdateResolver, appUpdateHandler = updateStore, handler
+		appUpdateResolver, appUpdateHandler, appFileSource = updateStore, handler, updateStore
 		adminClientUpdates = &adminapp.ClientUpdates{PublicURL: cfg.UpdatePublicURL, Catalog: updateStore}
+		if status, err := updateStore.Status(); err == nil {
+			for _, entry := range status.Apps {
+				if entry.Platform == "android" && !entry.Release.Disabled && entry.Release.File == "" {
+					updateLog.Warn("apps.android entry has no installer package (file): Android Standalone clients only show forced updates without one; publish the APK from the admin panel or with telesrv-update publish",
+						zap.String("channel", entry.Channel), zap.String("version", entry.Release.Version))
+				}
+			}
+		}
 		if strings.TrimSpace(cfg.PublicLinkWebAddr) == "" {
 			updateLog.Warn("in-process updates are enabled but the public Web listener is disabled; /_updates/ is not served")
 		}
@@ -1944,7 +1955,18 @@ func run(logger *zap.Logger) error {
 			return fmt.Errorf("initialize update service client: %w", err)
 		}
 		appUpdateResolver = client
+		appFileSource = client
 		adminClientUpdates = &adminapp.ClientUpdates{PublicURL: cfg.UpdatePublicURL, ServiceURL: cfg.UpdateServiceURL}
+	}
+	// 安装包（Android APK）注册成文档：两种模式都在本进程里入库，进程内读文件目录，外部模式从
+	// telesrv-update 的 /files/ 拉取。help.appUpdate 只在文档就绪后带上 document。
+	var appUpdateDocuments *appupdatesapp.Registry
+	if appFileSource != nil {
+		appUpdateDocuments = appupdatesapp.NewRegistry(appFileSource, postgres.NewAppUpdateDocumentStore(pool), filesService, logger.Named("update-documents"))
+		if adminClientUpdates != nil {
+			adminClientUpdates.Documents = appUpdateDocuments
+		}
+		go appUpdateDocuments.Run(ctx)
 	}
 	// 会话地理归属(account.getAuthorizations 的 country/region)。协议层没有
 	// help.requestIpAddress 的对等实现,不配 endpoint 时 resolver 为 nil,列表继续回传
@@ -2073,6 +2095,7 @@ func run(logger *zap.Logger) error {
 			help.WithAccountFreezeProvider(adminService),
 			help.WithAccountPermissionsProvider(permissionsService)),
 		AppUpdates:                   appUpdateResolver,
+		AppUpdateDocuments:           appUpdateDocumentProvider(appUpdateDocuments),
 		AccountFreeze:                userProjectionFacts,
 		Permissions:                  permissionsService,
 		AccountFreezeNotifications:   adminService,
