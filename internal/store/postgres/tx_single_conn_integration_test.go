@@ -16,9 +16,12 @@ import (
 // 事务都占着一条连接等第二条，全部卡死。连接池默认按 CPU 数取大小，4 核的 CI 上
 // 6 个并发转发就挂住了。这里把连接池压到 2 条，并发数远大于它，必须全部完成。
 func TestTransactionsNeverBorrowASecondConnection(t *testing.T) {
+	// TestDSN 会调用 t.Parallel()，测试在那里暂停到包里的串行测试跑完；时限要从恢复之后
+	// 算起，先建 context 的话，排队期间就把 30 秒耗光了。
+	dsn := pgtest.TestDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool, err := Open(ctx, pgtest.TestDSN(t), WithMaxConns(2))
+	pool, err := Open(ctx, dsn, WithMaxConns(2))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
