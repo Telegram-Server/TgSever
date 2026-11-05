@@ -133,6 +133,9 @@ services:
       # requires TELESRV_PASSWORD_LOGIN_ENABLED=true or the server refuses to
       # start (nobody could log in).
       TELESRV_CODE_LOGIN_ENABLED: ${TELESRV_CODE_LOGIN_ENABLED:-true}
+      # Guest login (telesrv.signUpAsGuest), off by default; see docs/guest-login.md.
+      TELESRV_GUEST_LOGIN_ENABLED: ${TELESRV_GUEST_LOGIN_ENABLED:-false}
+      TELESRV_GUEST_IP_BIND_DAYS: ${TELESRV_GUEST_IP_BIND_DAYS:-7}
       # Phone number + password login (telesrv extension), off by default; the
       # risks of turning it on are listed in .env.example and
       # docs/password-login.md. Defaults match internal/config.
@@ -282,6 +285,9 @@ services:
       # the server does.
       TELESRV_CODE_LOGIN_ENABLED: ${TELESRV_CODE_LOGIN_ENABLED:-true}
       TELESRV_PASSWORD_LOGIN_ENABLED: ${TELESRV_PASSWORD_LOGIN_ENABLED:-false}
+      # The panel shows the guest login defaults; config validates the days range.
+      TELESRV_GUEST_LOGIN_ENABLED: ${TELESRV_GUEST_LOGIN_ENABLED:-false}
+      TELESRV_GUEST_IP_BIND_DAYS: ${TELESRV_GUEST_IP_BIND_DAYS:-7}
       # Read-only here (see the server's TELESRV_IDENTITY_DIR): the panel shows
       # the current settings from it and sends every change to the server.
       TELESRV_IDENTITY_DIR: /var/lib/telesrv/identity

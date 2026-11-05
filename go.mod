@@ -138,4 +138,4 @@ require (
 )
 
 // telesrv.* 扩展协议只在 Telegram-Server/td 发布；td 改用新模块路径后由 #58 去掉这一行。
-replace github.com/iamxvbaba/td => github.com/Telegram-Server/td v1.7.0-telesrv.1
+replace github.com/iamxvbaba/td => github.com/Telegram-Server/td v1.7.0-telesrv.2

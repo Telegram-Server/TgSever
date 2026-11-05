@@ -30,6 +30,7 @@ import (
 	"telesrv/internal/app/auth"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/dialogs"
+	guestsignupapp "telesrv/internal/app/guestsignup"
 	"telesrv/internal/app/help"
 	loginpasswordapp "telesrv/internal/app/loginpassword"
 	messageapp "telesrv/internal/app/messages"
@@ -94,6 +95,9 @@ type loginPasswordServerOptions struct {
 	// codeLoginDisabled 关闭验证码登录（TELESRV_CODE_LOGIN_ENABLED=false），见
 	// code_login_switch_e2e_test.go。零值保持验证码登录开启。
 	codeLoginDisabled bool
+	// guestLogin 开启游客登录（TELESRV_GUEST_LOGIN_ENABLED=true），见 guest_login_e2e_test.go。
+	// 零值保持关闭。
+	guestLogin bool
 }
 
 // loginPasswordServer 是一个跑在随机端口上的完整服务端，供多个子测试并发使用。
@@ -206,15 +210,32 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	lifecycle := memory.NewAccountLifecycleStore(baseUsers, loginPasswordStore,
 		memory.WithAccountLifecyclePasswords(cloudPasswords), memory.WithAccountLifecycleAuthorizations(authorizations))
 
+	// 游客注册与密码注册共用同一个建号操作（再接上游客标记与 IP 绑定），开关与 help 下发同源。
+	guestLogin := auth.StaticGuestLogin(opts.guestLogin, domain.GuestIPBindDaysDefault)
+	guestAccounts := memory.NewGuestAccountStore()
+	guestSignUp := guestsignupapp.NewService(guestsignupapp.Deps{
+		Settings:       guestLogin,
+		Users:          userStore,
+		Guests:         guestAccounts,
+		Accounts:       memory.NewAccountCreationStore(baseUsers, loginPasswordStore, accountPermissions).WithGuests(guestAccounts),
+		LoginPasswords: loginPasswordStore,
+		Passwords:      cloudPasswords,
+		Flows:          authService,
+	})
 	permissionsService := permissionsapp.NewService(accountPermissions, userStore)
 	deps := rpc.Deps{
 		Permissions:   permissionsService,
 		Auth:          authService,
 		LoginPassword: loginPasswords,
+		GuestSignUp:   guestSignUp,
 		Sessions:      activeSessions,
 		Account:       account.NewService(cloudPasswords, account.WithUsers(userStore), account.WithAccountLifecycle(lifecycle)),
 		Help: help.NewService(helpStore, helpStore, help.WithPasswordLogin(opts.enabled), help.WithSignUpAllowed(authService.SignUpAllowed),
-			help.WithCodeLoginAllowed(authService.CodeLoginAllowed), help.WithAccountPermissionsProvider(permissionsService)),
+			help.WithCodeLoginAllowed(authService.CodeLoginAllowed), help.WithAccountPermissionsProvider(permissionsService),
+			help.WithGuestLoginAllowed(func(ctx context.Context) (bool, error) {
+				settings, err := guestLogin(ctx)
+				return settings.Enabled, err
+			})),
 		Users:    users.NewService(userStore),
 		Updates:  updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
 		Contacts: contacts.NewService(memory.NewContactStore()),

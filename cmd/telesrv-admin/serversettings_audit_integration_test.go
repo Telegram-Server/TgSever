@@ -32,11 +32,13 @@ func serverSettingsChain(t *testing.T) (*server, *readStore, string) {
 	srv, store := operatorServer(t)
 	serverDir := t.TempDir()
 	svc := admin.NewService(admin.Dependencies{
-		Commands:                postgres.NewAdminStore(store.pool),
-		ServerIdentity:          identity.NewStore(serverDir),
-		SignUpEnabledDefault:    func() bool { return true },
-		CodeLoginEnabledDefault: func() bool { return true },
-		PasswordLoginEnabled:    func() bool { return true },
+		Commands:                 postgres.NewAdminStore(store.pool),
+		ServerIdentity:           identity.NewStore(serverDir),
+		SignUpEnabledDefault:     func() bool { return true },
+		CodeLoginEnabledDefault:  func() bool { return true },
+		PasswordLoginEnabled:     func() bool { return true },
+		GuestLoginEnabledDefault: func() bool { return false },
+		GuestIPBindDaysDefault:   func() int { return 7 },
 	})
 	api := httptest.NewServer(adminapi.NewHandler(adminapi.Config{Token: "chain-token"}, svc, nil))
 	t.Cleanup(api.Close)
@@ -149,6 +151,13 @@ func TestServerSettingsWritesAreAudited(t *testing.T) {
 		}, func(t *testing.T) {
 			if info := panelIdentity(t); info.CodeLoginEnabled == nil || *info.CodeLoginEnabled || info.CodeLoginEnabledEffective || info.CodeLoginSource != "override" {
 				t.Fatalf("code login override not written: %+v", info)
+			}
+		}},
+		{"server.set_guest_login", func(id string) *http.Request {
+			return jsonPost("/api/actions/set-guest-login", fmt.Sprintf(`{"command_id":%q,"reason":"open guests","confirm":true,"mode":"on","ip_bind_days":14}`, id))
+		}, func(t *testing.T) {
+			if info := panelIdentity(t); !info.GuestLoginEnabledEffective || info.GuestLoginSource != "override" || info.GuestIPBindDaysEffective != 14 {
+				t.Fatalf("guest login override not written: %+v", info)
 			}
 		}},
 		{"server.upload_icon", func(id string) *http.Request {

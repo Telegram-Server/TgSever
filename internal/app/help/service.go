@@ -101,6 +101,9 @@ type Service struct {
 	// codeLoginAllowed 是 auth 服务"是否允许验证码登录"的同一个来源，每次 GetAppConfig
 	// 都实时读取，据此按请求注入 telesrv_code_login_disabled。nil 表示允许。
 	codeLoginAllowed func(context.Context) (bool, error)
+	// guestLoginAllowed 是"是否允许游客登录"的来源，据此按请求注入 telesrv_guest_login_enabled。
+	// nil 表示关闭（游客登录默认关闭）。
+	guestLoginAllowed func(context.Context) (bool, error)
 	// loginSwitches 一次读取同时给出两个开关（生产接线：auth.IdentityLoginSwitches，
 	// 每次 GetAppConfig 只读一次 identity）。设置后优先于上面两个单独的来源。
 	loginSwitches func(context.Context) domain.LoginSwitches
@@ -241,6 +244,19 @@ func WithCodeLoginAllowed(fn func(context.Context) (bool, error)) Option {
 	}
 }
 
+// appConfigKeyGuestLoginEnabled 是游客登录开启时下发给客户端的服务器状态 key。方向与上面两个
+// 相反：游客登录默认关闭，所以开启时才出现，官方服务器和旧版本服务器不带它，客户端读作"不提供
+// 游客入口"。同样参与 hash。
+const appConfigKeyGuestLoginEnabled = "telesrv_guest_login_enabled"
+
+// WithGuestLoginAllowed 注入"是否允许游客登录"的来源（没有 WithLoginSwitches 时使用）。每次
+// GetAppConfig 都实时调用；nil 或返回 error 时按关闭下发。
+func WithGuestLoginAllowed(fn func(context.Context) (bool, error)) Option {
+	return func(s *Service) {
+		s.guestLoginAllowed = fn
+	}
+}
+
 // WithLoginSwitches 注入一次读取同时给出注册开关与验证码登录开关的快照函数（通常是
 // auth.IdentityLoginSwitches，与 auth 的两个判断函数取同样的参数，保证下发状态与服务端
 // 拦截同源）。每次 GetAppConfig 只调用一次；返回值已按 fail-closed 与"密码登录关闭时
@@ -349,7 +365,7 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 		return domain.AppConfig{}, fmt.Errorf("decode base app config: %w", err)
 	}
 	changed := false
-	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled, appConfigKeyCodeLoginDisabled, appConfigKeyPermissions} {
+	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url", appConfigKeySignUpDisabled, appConfigKeyCodeLoginDisabled, appConfigKeyGuestLoginEnabled, appConfigKeyPermissions} {
 		if _, exists := values[key]; exists {
 			delete(values, key)
 			changed = true
@@ -362,6 +378,10 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 	}
 	if !switches.CodeLoginAllowed {
 		values[appConfigKeyCodeLoginDisabled] = json.RawMessage("true")
+		changed = true
+	}
+	if switches.GuestLoginAllowed {
+		values[appConfigKeyGuestLoginEnabled] = json.RawMessage("true")
 		changed = true
 	}
 	if userID > 0 {
@@ -413,9 +433,14 @@ func (s *Service) loginSwitchState(ctx context.Context) domain.LoginSwitches {
 	if s.loginSwitches != nil {
 		return s.loginSwitches(ctx)
 	}
+	guestAllowed := false
+	if s.guestLoginAllowed != nil {
+		guestAllowed = sourceAllows(ctx, s.guestLoginAllowed)
+	}
 	return domain.LoginSwitches{
-		SignUpAllowed:    sourceAllows(ctx, s.signUpAllowed),
-		CodeLoginAllowed: sourceAllows(ctx, s.codeLoginAllowed),
+		SignUpAllowed:     sourceAllows(ctx, s.signUpAllowed),
+		CodeLoginAllowed:  sourceAllows(ctx, s.codeLoginAllowed),
+		GuestLoginAllowed: guestAllowed,
 	}
 }
 

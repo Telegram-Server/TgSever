@@ -19,6 +19,7 @@ type AccountCreationStore struct {
 	users       *UserStore
 	passwords   *LoginPasswordStore
 	permissions *AccountPermissionsStore
+	guests      *GuestAccountStore
 }
 
 var _ store.AccountCreationStore = (*AccountCreationStore)(nil)
@@ -28,7 +29,17 @@ func NewAccountCreationStore(users *UserStore, passwords *LoginPasswordStore, pe
 	return &AccountCreationStore{users: users, passwords: passwords, permissions: permissions}
 }
 
+// WithGuests 接上游客标记与 IP 绑定的存储，之后才接受 AccountExtras.Guest。guests.mu 排在
+// permissions.mu 之后。
+func (s *AccountCreationStore) WithGuests(guests *GuestAccountStore) *AccountCreationStore {
+	s.guests = guests
+	return s
+}
+
 func (s *AccountCreationStore) CreateAccount(_ context.Context, u domain.User, extras store.AccountExtras) (domain.User, error) {
+	if extras.Guest != nil && (s.guests == nil || extras.Guest.IPKey == "") {
+		return domain.User{}, fmt.Errorf("create account: guest store is not configured or ip key is empty")
+	}
 	if extras.LoginPassword != nil {
 		if s.passwords == nil {
 			return domain.User{}, fmt.Errorf("create account: login password store is not configured")
@@ -66,10 +77,20 @@ func (s *AccountCreationStore) CreateAccount(_ context.Context, u domain.User, e
 		s.permissions.mu.Lock()
 		defer s.permissions.mu.Unlock()
 	}
+	if extras.Guest != nil {
+		s.guests.mu.Lock()
+		defer s.guests.mu.Unlock()
+		if err := s.guests.checkBindingLocked(*extras.Guest); err != nil {
+			return domain.User{}, err
+		}
+	}
 
 	created, err := s.users.createLocked(u)
 	if err != nil {
 		return domain.User{}, err
+	}
+	if extras.Guest != nil {
+		s.guests.writeLocked(created, *extras.Guest)
 	}
 	if extras.LoginPassword != nil {
 		s.passwords.putLocked(created.ID, *extras.LoginPassword, time.Now().UTC())

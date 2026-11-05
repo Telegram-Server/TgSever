@@ -1753,6 +1753,19 @@ type GroupCallScheduleSubscriber struct {
 	UserID int64
 }
 
+type GuestAccount struct {
+	UserID    int64
+	Phone     string
+	IpKey     string
+	CreatedAt pgtype.Timestamptz
+}
+
+type GuestIpBinding struct {
+	IpKey   string
+	UserID  int64
+	BoundAt pgtype.Timestamptz
+}
+
 type ItemPrice struct {
 	ProductCode string
 	StarsPrice  int32

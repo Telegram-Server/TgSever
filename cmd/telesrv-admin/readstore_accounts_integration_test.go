@@ -92,7 +92,7 @@ VALUES (lower($1), lower($1), 'user', $2, $3, false, $4, $5)`,
 	}
 	assertCollectibles(t, "AccountDetail", detail.Account, editable, want)
 
-	rows, _, err := store.ListAccounts(ctx, 0, 0, 200)
+	rows, _, err := store.ListAccounts(ctx, 0, 0, 200, false)
 	if err != nil {
 		t.Fatalf("ListAccounts: %v", err)
 	}
@@ -120,6 +120,71 @@ WHERE peer_type='user' AND peer_id=$1 AND collectible_id IS NOT NULL`, userID); 
 	}
 	if bare.Account.Collectibles == nil || len(bare.Account.Collectibles) != 0 {
 		t.Fatalf("collectibles without any rows = %#v, want an empty slice", bare.Account.Collectibles)
+	}
+}
+
+// 游客标记来自 guest_accounts：列表、搜索、详情都带上它，guest=1 时列表只剩游客账号。
+func TestReadStoreAccountsCarryGuestMarker(t *testing.T) {
+	store, pool := verificationReadStore(t)
+	ctx := context.Background()
+	base := 3_700_000_000 + time.Now().UnixNano()%1_000_000
+	guestID, plainID := base, base+1_000_000
+	t.Cleanup(func() {
+		for _, id := range []int64{guestID, plainID} {
+			_, _ = pool.Exec(ctx, `DELETE FROM guest_accounts WHERE user_id=$1`, id)
+			_, _ = pool.Exec(ctx, `DELETE FROM authorizations WHERE user_id=$1`, id)
+			_, _ = pool.Exec(ctx, `DELETE FROM auth_keys WHERE auth_key_id=$1`, id)
+			_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, id)
+		}
+	})
+	for _, id := range []int64{guestID, plainID} {
+		phone := fmt.Sprintf("1997%07d", id%10_000_000)
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, access_hash, phone, first_name, last_name, created_at, updated_at)
+VALUES ($1, $1, $2, 'Guesty', '', now(), now())`, id, phone); err != nil {
+			t.Fatalf("seed user: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO auth_keys (auth_key_id, body, server_salt) VALUES ($1, '\x00', 0)`, id); err != nil {
+			t.Fatalf("seed auth key: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO authorizations (user_id, auth_key_id, created_at, active_at) VALUES ($1, $1, now(), now())`, id); err != nil {
+			t.Fatalf("seed authorization: %v", err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO guest_accounts (user_id, phone, ip_key) VALUES ($1, 'x', '203.0.113.1')`, guestID); err != nil {
+		t.Fatalf("seed guest marker: %v", err)
+	}
+
+	for id, want := range map[int64]bool{guestID: true, plainID: false} {
+		detail, err := store.AccountDetail(ctx, id)
+		if err != nil || detail.Account.Guest != want {
+			t.Fatalf("AccountDetail(%d).Guest = %v err=%v, want %v", id, detail.Account.Guest, err, want)
+		}
+		found, err := store.SearchAccounts(ctx, fmt.Sprint(id))
+		if err != nil || len(found) == 0 || found[0].Guest != want {
+			t.Fatalf("SearchAccounts(%d) = %+v err=%v, want guest=%v", id, found, err, want)
+		}
+	}
+	listed := func(guestOnly bool) map[int64]bool {
+		rows, _, err := store.ListAccounts(ctx, 0, 0, 200, guestOnly)
+		if err != nil {
+			t.Fatalf("ListAccounts(guestOnly=%v): %v", guestOnly, err)
+		}
+		out := map[int64]bool{}
+		for _, row := range rows {
+			if guestOnly && !row.Guest {
+				t.Fatalf("guest-only list returned non-guest %d", row.ID)
+			}
+			out[row.ID] = row.Guest
+		}
+		return out
+	}
+	if all := listed(false); !all[guestID] || all[plainID] {
+		t.Fatalf("full list guest flags = guest:%v plain:%v", all[guestID], all[plainID])
+	}
+	if only := listed(true); !only[guestID] {
+		t.Fatal("guest-only list is missing the guest account")
+	} else if _, ok := only[plainID]; ok {
+		t.Fatal("guest-only list contains the plain account")
 	}
 }
 

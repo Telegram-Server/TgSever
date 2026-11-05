@@ -37,10 +37,10 @@ func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
 // Server Settings writes fall into two groups.
 //
 // The identity store (internal/identity: the 777000 name and description, the
-// icon, the welcome and login-code templates, the sign-up and code login
-// overrides) is written by the telesrv server only. In Docker this process
+// icon, the welcome and login-code templates, the sign-up, code login and
+// guest login overrides) is written by the telesrv server only. In Docker this process
 // runs on a read-only root filesystem with the server_state volume mounted
-// read-only, so it could never write there; instead each of the seven identity writes below is handed to the
+// read-only, so it could never write there; instead each of the eight identity writes below is handed to the
 // server as an admin command over the admin API (callAdminAPI /
 // callAdminMultipart, like account freezing), and the server writes its own
 // identity.Store. The server's command runner owns the command_id idempotency
@@ -111,6 +111,16 @@ type serverIdentityAPIResponse struct {
 	CodeLoginSource           string `json:"code_login_source"`
 	PasswordLoginEnabled      bool   `json:"password_login_enabled"`
 	CodeLoginOverrideIgnored  bool   `json:"code_login_override_ignored"`
+	// The guest login switch and its IP-binding window, reported the same way:
+	// identity.Info's raw guest_login_enabled / guest_ip_bind_days overrides
+	// (embedded above) plus their resolved values (domain.ResolveGuestLogin over
+	// s.cfg.GuestLoginEnabledDefault / GuestIPBindDaysDefault) and sources.
+	DefaultGuestLoginEnabled   bool   `json:"default_guest_login_enabled"`
+	GuestLoginEnabledEffective bool   `json:"guest_login_enabled_effective"`
+	GuestLoginSource           string `json:"guest_login_source"`
+	DefaultGuestIPBindDays     int    `json:"default_guest_ip_bind_days"`
+	GuestIPBindDaysEffective   int    `json:"guest_ip_bind_days_effective"`
+	GuestIPBindDaysSource      string `json:"guest_ip_bind_days_source"`
 }
 
 func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +129,19 @@ func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	guest := domain.ResolveGuestLogin(info.GuestLoginEnabled, s.cfg.GuestLoginEnabledDefault, info.GuestIPBindDays, s.cfg.GuestIPBindDaysDefault)
+	guestDaysSource := admin.OverrideSourceEnv
+	if info.GuestIPBindDays != nil && domain.ValidGuestIPBindDays(*info.GuestIPBindDays) {
+		guestDaysSource = admin.OverrideSourceOverride
+	}
+	defaultGuestDays := domain.ResolveGuestLogin(nil, false, nil, s.cfg.GuestIPBindDaysDefault).IPBindDays
 	writeJSON(w, http.StatusOK, serverIdentityAPIResponse{
+		DefaultGuestLoginEnabled:           s.cfg.GuestLoginEnabledDefault,
+		GuestLoginEnabledEffective:         guest.Enabled,
+		GuestLoginSource:                   admin.OverrideSource(info.GuestLoginEnabled),
+		DefaultGuestIPBindDays:             defaultGuestDays,
+		GuestIPBindDaysEffective:           guest.IPBindDays,
+		GuestIPBindDaysSource:              guestDaysSource,
 		Info:                               info,
 		DefaultWelcomeMessagePhoneTemplate: s.cfg.WelcomeMessagePhoneDefault,
 		DefaultWelcomeMessageEmailTemplate: s.cfg.WelcomeMessageEmailDefault,
@@ -209,6 +231,46 @@ func (s *server) handleSetCodeLoginEnabledAPI(w http.ResponseWriter, r *http.Req
 		Mode:        mode,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/set-code-login-enabled", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+// --- guest login switch ---------------------------------------------------
+
+type setGuestLoginAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	// Mode is "on", "off" or "follow_env", as for the sign-up switch.
+	Mode string `json:"mode"`
+	// IPBindDays is 1-365, or 0 to follow TELESRV_GUEST_IP_BIND_DAYS.
+	IPBindDays int `json:"ip_bind_days"`
+}
+
+// handleSetGuestLoginAPI sets or clears the guest login overrides (the switch
+// and the IP-binding window, in one write) in identity.json, through the
+// server (admin.Service.SetGuestLogin). telesrv re-reads them on every guest
+// sign-up and every getAppConfig (auth.IdentityGuestLogin /
+// IdentityLoginSwitches), so the change -- including the
+// telesrv_guest_login_enabled app-config key and its hash -- takes effect
+// without a restart. Invalid input is refused here with 422 before anything is
+// forwarded; the server applies the same check
+// (admin.GuestLoginOverrideForRequest).
+func (s *server) handleSetGuestLoginAPI(w http.ResponseWriter, r *http.Request) {
+	var body setGuestLoginAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	mode := strings.TrimSpace(body.Mode)
+	if _, _, ok := admin.GuestLoginOverrideForRequest(mode, body.IPBindDays); !ok {
+		writeAPIError(w, http.StatusUnprocessableEntity, `mode must be "on", "off" or "follow_env" and ip_bind_days 0 (follow env) or 1-365`)
+		return
+	}
+	req := admin.SetGuestLoginRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-guest-login"),
+		Mode:        mode,
+		IPBindDays:  body.IPBindDays,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/server-settings/set-guest-login", req)
 	writeCommandResultAPI(w, result, err)
 }
 

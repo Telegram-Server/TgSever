@@ -124,6 +124,12 @@ type uiConfig struct {
 	// contract as SignUpEnabledDefault; the server makes the real decision.
 	CodeLoginEnabledDefault bool
 	PasswordLoginEnabled    bool
+	// GuestLoginEnabledDefault / GuestIPBindDaysDefault mirror
+	// config.GuestLoginEnabled / config.GuestIPBindDays (TELESRV_GUEST_LOGIN_ENABLED,
+	// TELESRV_GUEST_IP_BIND_DAYS), under the same "both processes share one .env"
+	// contract; the server makes the real decision.
+	GuestLoginEnabledDefault bool
+	GuestIPBindDaysDefault   int
 	// RepoRoot is the working directory the .env editor (see
 	// internal/procctl) operates on: it reads .env.example for the field
 	// vocabulary and rewrites .env in place. The panel resolves it the same
@@ -195,6 +201,8 @@ func loadConfig() (uiConfig, error) {
 		SignUpEnabledDefault:       appCfg.SignUpEnabled,
 		CodeLoginEnabledDefault:    appCfg.CodeLoginEnabled,
 		PasswordLoginEnabled:       appCfg.PasswordLoginEnabled,
+		GuestLoginEnabledDefault:   appCfg.GuestLoginEnabled,
+		GuestIPBindDaysDefault:     appCfg.GuestIPBindDays,
 		RepoRoot:                   repoRoot,
 		RedisAddr:                  appCfg.RedisAddr,
 		RedisPassword:              appCfg.RedisPassword,

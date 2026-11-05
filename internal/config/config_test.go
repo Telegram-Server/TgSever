@@ -1156,6 +1156,28 @@ func TestLoadSignUpEnabledDefaultsOpen(t *testing.T) {
 	}
 }
 
+func TestLoadGuestLoginSettings(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GuestLoginEnabled || cfg.GuestIPBindDays != 7 {
+		t.Fatalf("defaults = enabled %v, days %d; want off, 7", cfg.GuestLoginEnabled, cfg.GuestIPBindDays)
+	}
+	t.Setenv("TELESRV_GUEST_LOGIN_ENABLED", "true")
+	t.Setenv("TELESRV_GUEST_IP_BIND_DAYS", "30")
+	if cfg, err = Load(); err != nil || !cfg.GuestLoginEnabled || cfg.GuestIPBindDays != 30 {
+		t.Fatalf("Load = enabled %v, days %d, err %v; want on, 30", cfg.GuestLoginEnabled, cfg.GuestIPBindDays, err)
+	}
+	for _, bad := range []string{"0", "366", "-1"} {
+		t.Setenv("TELESRV_GUEST_IP_BIND_DAYS", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TELESRV_GUEST_IP_BIND_DAYS") {
+			t.Fatalf("days=%s: Load err = %v, want a range error", bad, err)
+		}
+	}
+}
+
 func TestLoadPasswordLoginSwitch(t *testing.T) {
 	disableDefaultConfigFile(t)
 	cfg, err := Load()

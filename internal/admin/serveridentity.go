@@ -11,11 +11,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 服务器设置（Server Settings → Server identity / 登录通知模板 / 注册开关 / 验证码登录开关）的写入命令。
+// 服务器设置（Server Settings → Server identity / 登录通知模板 / 注册开关 / 验证码登录开关 / 游客登录）的写入命令。
 //
 // identity 存储（internal/identity，目录为 Config.IdentityDir）只由主服务器写：
 // Docker 部署下管理后台的根文件系统是只读的，server_state 卷也以只读方式挂给后台，
-// 后台进程根本写不进去。所以后台把这 7 种写操作作为管理命令经 admin API 交给主服务器，
+// 后台进程根本写不进去。所以后台把这 8 种写操作作为管理命令经 admin API 交给主服务器，
 // 由这里写入服务端自己的 identity.Store；后台只读同一目录用来展示当前设置。
 //
 // 与其他管理命令一样走 runCommand：带 command_id、理由、试运行，按 command_id 幂等，
@@ -29,6 +29,7 @@ const (
 	ActionSetLoginCodeMessageTemplate = "server.set_login_code_message_template"
 	ActionSetSignUpEnabled            = "server.set_sign_up_enabled"
 	ActionSetCodeLoginEnabled         = "server.set_code_login_enabled"
+	ActionSetGuestLogin               = "server.set_guest_login"
 	ActionUploadServerIcon            = "server.upload_icon"
 	ActionRemoveServerIcon            = "server.remove_icon"
 )
@@ -39,6 +40,8 @@ const (
 	CodeLoginCodeTemplateInvalid  = "LOGIN_CODE_TEMPLATE_INVALID"
 	CodeSignUpModeInvalid         = "SIGN_UP_MODE_INVALID"
 	CodeCodeLoginModeInvalid      = "CODE_LOGIN_MODE_INVALID"
+	// CodeGuestLoginInvalid：游客登录的 mode 不认识，或 IP 绑定天数不在 1–365（0 表示跟随环境变量）。
+	CodeGuestLoginInvalid = "GUEST_LOGIN_SETTINGS_INVALID"
 	// CodeCodeLoginLockout：密码登录总开关关闭时拒绝关闭验证码登录，否则没有人能登录。
 	CodeCodeLoginLockout  = "CODE_LOGIN_LOCKOUT"
 	CodeServerIconInvalid = "SERVER_ICON_INVALID"
@@ -59,6 +62,7 @@ type ServerIdentityStore interface {
 	SetLoginCodeMessageTemplate(template string) error
 	SetSignUpOverride(enabled *bool) error
 	SetCodeLoginOverride(enabled *bool) error
+	SetGuestLoginOverride(enabled *bool, days *int) error
 	SetIcon(data []byte, ext string) error
 	RemoveIcon() error
 }
@@ -92,6 +96,30 @@ type SetSignUpEnabledRequest struct {
 type SetCodeLoginEnabledRequest struct {
 	CommandMeta
 	Mode string `json:"mode"`
+}
+
+// SetGuestLoginRequest 一次设置游客登录的两项：Mode 取 "on"、"off" 或 "follow_env"；
+// IPBindDays 取 1–365，0 表示跟随 TELESRV_GUEST_IP_BIND_DAYS。
+type SetGuestLoginRequest struct {
+	CommandMeta
+	Mode       string `json:"mode"`
+	IPBindDays int    `json:"ip_bind_days"`
+}
+
+// GuestLoginOverrideForRequest 把游客登录请求映射为 identity 的两项覆盖；ok=false 表示 mode
+// 不认识或天数越界。管理后台与服务端用同一处校验。
+func GuestLoginOverrideForRequest(mode string, days int) (enabled *bool, daysOverride *int, ok bool) {
+	enabled, ok = SignUpOverrideForMode(mode)
+	if !ok {
+		return nil, nil, false
+	}
+	if days == 0 {
+		return enabled, nil, true
+	}
+	if !domain.ValidGuestIPBindDays(days) {
+		return nil, nil, false
+	}
+	return enabled, &days, true
 }
 
 // UploadServerIconRequest 经 multipart 上传（metadata JSON + file），与
@@ -164,7 +192,7 @@ func (s *Service) serverIdentityStore() (ServerIdentityStore, error) {
 	return s.serverIdentity, nil
 }
 
-// runServerIdentityCommand 是 7 种写操作共用的命令体：试运行只返回 dryMessage，
+// runServerIdentityCommand 是 8 种写操作共用的命令体：试运行只返回 dryMessage，
 // 正式执行调用 apply 写入 identity 存储。
 //
 // 文件写入无法回滚，所以命令记录不跟随请求取消：后台的请求在写入之后被掐断时，
@@ -305,6 +333,46 @@ func (s *Service) SetCodeLoginEnabled(ctx context.Context, req SetCodeLoginEnabl
 		fmt.Sprintf("Would set code login to %s (effective: %s).", mode, state),
 		fmt.Sprintf("Code login set to %s (effective: %s).", mode, state),
 		func() error { return store.SetCodeLoginOverride(override) })
+}
+
+// SetGuestLogin 设置或清除游客登录开关与 IP 绑定天数的覆盖（一次写入）。主服务器每次游客注册、
+// 每次 getAppConfig 都现读 identity.json（auth.IdentityGuestLogin / IdentityLoginSwitches），
+// 因此无需重启即生效。effective 按服务端自己的环境变量计算。
+func (s *Service) SetGuestLogin(ctx context.Context, req SetGuestLoginRequest) (CommandResult, error) {
+	mode := strings.TrimSpace(req.Mode)
+	enabled, days, ok := GuestLoginOverrideForRequest(mode, req.IPBindDays)
+	if !ok {
+		return CommandResult{}, codedError(CodeGuestLoginInvalid, fmt.Errorf(`mode must be "on", "off" or "follow_env" and ip_bind_days 0 (follow env) or %d-%d`, domain.GuestIPBindDaysMin, domain.GuestIPBindDaysMax))
+	}
+	store, err := s.serverIdentityStore()
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if s.guestLoginDefault == nil || s.guestIPBindDaysDefault == nil {
+		return CommandResult{}, codedError(CodeServerIdentityUnavailable, fmt.Errorf("guest login environment defaults are not configured"))
+	}
+	req.Mode = mode
+	effective := domain.ResolveGuestLogin(enabled, s.guestLoginDefault(), days, s.guestIPBindDaysDefault())
+	daysSource := OverrideSourceEnv
+	if days != nil {
+		daysSource = OverrideSourceOverride
+	}
+	details := map[string]any{
+		"mode":                          mode,
+		"ip_bind_days":                  req.IPBindDays,
+		"guest_login_enabled_effective": effective.Enabled,
+		"guest_login_source":            OverrideSource(enabled),
+		"guest_ip_bind_days_effective":  effective.IPBindDays,
+		"guest_ip_bind_days_source":     daysSource,
+	}
+	state := "off"
+	if effective.Enabled {
+		state = "on"
+	}
+	return s.runServerIdentityCommand(ctx, req.CommandMeta, ActionSetGuestLogin, req, details,
+		fmt.Sprintf("Would set guest login to %s (effective: %s, IP binding %d days).", mode, state, effective.IPBindDays),
+		fmt.Sprintf("Guest login set to %s (effective: %s, IP binding %d days).", mode, state, effective.IPBindDays),
+		func() error { return store.SetGuestLoginOverride(enabled, days) })
 }
 
 // UploadServerIcon 替换服务器图标。图标同时是 777000 的头像来源，由

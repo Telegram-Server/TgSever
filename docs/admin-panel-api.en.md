@@ -303,7 +303,7 @@ Every mutating request carries in its body:
 
 | Method | Path | Parameters / response |
 | --- | --- | --- |
-| GET | `/api/accounts` | Params: `q` (search), `before_id` (int64), `before_active_us` (int64, microseconds), `limit` (int). Response: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `next_before_active_us`, `listing`. |
+| GET | `/api/accounts` | Params: `q` (search), `before_id` (int64), `before_active_us` (int64, microseconds), `limit` (int), `guest` (`1` lists only guest-registered accounts; ignored by a search). Each row carries `Guest`. Response: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `next_before_active_us`, `listing`. |
 | GET | `/api/accounts/{id}` | Account card: profile, flags, statistics, `DeviceLimit` (int 1..100, `null` = unlimited). Only for a session holding `push.manage`, each session in `Authorizations` that has an APNs/VoIP registration carries `PushEnabled` (bool, `true` when every registration of that session has push on); otherwise the field is absent. |
 | GET | `/api/accounts/{id}/avatar` | Account avatar (file). |
 | GET | `/api/accounts/{id}/device-bindings` | Devices bound to the account (see `set-device-limit`), oldest binding first. Response: `user_id`, `bindings` (empty array when none) of `device_id`, `device_model`, `platform`, `app_version` (as reported at binding time), `bound_at`, `last_used_at` (RFC 3339). Proxied from Admin API `/v1/accounts/{id}/device-bindings`, not cached. |
@@ -473,12 +473,13 @@ All routes need `prices.manage`.
 
 ## API: server settings
 
-All routes need `server.manage`. Sign-up and code login are described in
-[sign-up-switch.md](sign-up-switch.md) and [code-login-switch.md](code-login-switch.md).
+All routes need `server.manage`. Sign-up, code login and guest login are described in
+[sign-up-switch.md](sign-up-switch.md), [code-login-switch.md](code-login-switch.md) and
+[guest-login.md](guest-login.md).
 
 | Method | Path | Parameters / body |
 | --- | --- | --- |
-| GET | `/api/server/identity` | Name, description and message templates, plus the defaults from the environment and the effective sign-up and code-login state with its source. |
+| GET | `/api/server/identity` | Name, description and message templates, plus the defaults from the environment and the effective sign-up, code-login and guest-login state (with the guest IP-binding days) and its source. |
 | GET | `/api/server/icon` | The server icon (file); `404` when none is configured. |
 | GET | `/api/server/env` | The `.env` settings, grouped as in `.env.example` (always an array). |
 | GET | `/api/server/status` | Host (hostname, distro, OS, architecture, Go version) and probes of Postgres, Redis, MTProto and Docker. |
@@ -487,6 +488,7 @@ All routes need `server.manage`. Sign-up and code login are described in
 | POST | `/api/actions/set-login-code-message-template` | Common fields + `template` (string; empty restores the default). An invalid template answers `422`. |
 | POST | `/api/actions/set-sign-up-enabled` | Common fields + `mode` (`on`, `off` or `follow_env`; anything else answers `422`). |
 | POST | `/api/actions/set-code-login-enabled` | Common fields + `mode` (`on`, `off` or `follow_env`; anything else answers `422`). |
+| POST | `/api/actions/set-guest-login` | Common fields + `mode` (`on`, `off` or `follow_env`) and `ip_bind_days` (int, 1-365; `0` follows `TELESRV_GUEST_IP_BIND_DAYS`). Both are written together; anything else answers `422`. |
 | POST | `/api/actions/upload-server-icon` | **multipart**: `metadata` (JSON with the common fields) and an image `file` (up to 2 MiB). |
 | POST | `/api/actions/remove-server-icon` | Common fields only. |
 | POST | `/api/actions/update-server-env` | Common fields + `values` (object, key → value). Takes effect when telesrv restarts. The audit trail records which keys changed, never their values. When the audit store is unreachable the write still goes through, unaudited, because this editor is how a broken database setting is repaired. |

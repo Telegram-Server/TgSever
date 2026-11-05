@@ -272,6 +272,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-login-code-message-template", s.serverManage(s.handleSetLoginCodeMessageTemplateAPI))
 	mux.Handle("POST /api/actions/set-sign-up-enabled", s.serverManage(s.handleSetSignUpEnabledAPI))
 	mux.Handle("POST /api/actions/set-code-login-enabled", s.serverManage(s.handleSetCodeLoginEnabledAPI))
+	mux.Handle("POST /api/actions/set-guest-login", s.serverManage(s.handleSetGuestLoginAPI))
 	mux.Handle("POST /api/actions/upload-server-icon", s.serverManage(s.handleUploadServerIconAPI))
 	mux.Handle("POST /api/actions/remove-server-icon", s.serverManage(s.handleRemoveServerIconAPI))
 	mux.Handle("GET /api/server/env", s.serverManage(s.handleServerEnvAPI))
@@ -915,7 +916,9 @@ func (s *server) handleAccountsAPI(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(q) != "" {
 		rows, err = s.read.SearchAccounts(r.Context(), q)
 	} else {
-		rows, hasMore, err = s.read.ListAccounts(r.Context(), beforeActiveUS, beforeID, limit)
+		// guest=1 只列游客注册创建的账号；搜索不受它影响。
+		guestOnly := r.URL.Query().Get("guest") == "1"
+		rows, hasMore, err = s.read.ListAccounts(r.Context(), beforeActiveUS, beforeID, limit, guestOnly)
 	}
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())

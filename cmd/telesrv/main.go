@@ -44,6 +44,7 @@ import (
 	filesapp "telesrv/internal/app/files"
 	"telesrv/internal/app/files/botavatars"
 	groupcallsapp "telesrv/internal/app/groupcalls"
+	guestsignupapp "telesrv/internal/app/guestsignup"
 	"telesrv/internal/app/help"
 	"telesrv/internal/app/langpack"
 	"telesrv/internal/app/livestream"
@@ -1130,6 +1131,9 @@ func run(logger *zap.Logger) error {
 		// 服务端命令拒绝关闭验证码登录。
 		CodeLoginEnabledDefault: func() bool { return cfg.CodeLoginEnabled },
 		PasswordLoginEnabled:    func() bool { return cfg.PasswordLoginEnabled },
+		// 游客登录的环境默认值：命令结果据此报告覆盖清除后的实际状态。
+		GuestLoginEnabledDefault: func() bool { return cfg.GuestLoginEnabled },
+		GuestIPBindDaysDefault:   func() int { return cfg.GuestIPBindDays },
 	})
 	userProjectionFacts := userprojection.NewDurableUserProjectionFacts(
 		adminService,
@@ -1792,6 +1796,18 @@ func run(logger *zap.Logger) error {
 		// 忘记登录密码：授权创建时间在窗口内可以不填旧密码直接重设。窗口从任何新授权（含扫码批准的新设备）
 		// 算起，默认 0 关闭，见 WithResetWindow。
 		loginpasswordapp.WithResetWindow(cfg.PasswordLoginResetWindow))
+	// 游客注册（telesrv.signUpAsGuest）：开关与 IP 绑定天数以管理面板覆盖（identity.json，每次现读）
+	// 优先，未设置时跟随 TELESRV_GUEST_LOGIN_ENABLED / TELESRV_GUEST_IP_BIND_DAYS；
+	// help.getAppConfig 下发的 telesrv_guest_login_enabled 用同样参数的 auth.IdentityLoginSwitches。
+	guestSignUpService := guestsignupapp.NewService(guestsignupapp.Deps{
+		Settings:       auth.IdentityGuestLogin(identityStore, cfg.GuestLoginEnabled, cfg.GuestIPBindDays),
+		Users:          userStore,
+		Guests:         postgres.NewGuestAccountStore(pool),
+		Accounts:       accountCreationStore,
+		LoginPasswords: postgres.NewLoginPasswordStore(pool),
+		Passwords:      passwordStore,
+		Flows:          authService,
+	})
 	if cfg.PasswordLoginEnabled {
 		logger.Warn("手机号 + 密码登录已启用：任何人都可以不经验证码用任意号码注册")
 	}
@@ -2036,6 +2052,7 @@ func run(logger *zap.Logger) error {
 	}, rpc.Deps{
 		Auth:                 authService,
 		LoginPassword:        loginPasswordService,
+		GuestSignUp:          guestSignUpService,
 		AuthDeliveryReports:  authDeliveryReportService,
 		ClientTelemetry:      clientTelemetryService,
 		AuthKeySessionLayers: authKeySessionLayerStore,
@@ -2052,7 +2069,7 @@ func run(logger *zap.Logger) error {
 			help.WithWalletAvailable(walletService != nil),
 			help.WithPasswordLogin(loginPasswordService.Enabled()),
 			// 每次 getAppConfig 只读一次 identity，同时得出两个开关；参数与 auth 的两个判断函数相同。
-			help.WithLoginSwitches(auth.IdentityLoginSwitches(identityStore, cfg.SignUpEnabled, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled)),
+			help.WithLoginSwitches(auth.IdentityLoginSwitches(identityStore, cfg.SignUpEnabled, cfg.CodeLoginEnabled, cfg.PasswordLoginEnabled, cfg.GuestLoginEnabled)),
 			help.WithAccountFreezeProvider(adminService),
 			help.WithAccountPermissionsProvider(permissionsService)),
 		AppUpdates:                   appUpdateResolver,

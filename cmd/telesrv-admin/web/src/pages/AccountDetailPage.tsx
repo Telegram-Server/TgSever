@@ -123,6 +123,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                 {detail.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}
                 <ScamFakeBadges scam={detail.Scam} fake={detail.Fake} />
                 {account.Frozen ? <Badge tone="danger">{t("account.accountFrozen")}</Badge> : <Badge>{t("account.accountActive")}</Badge>}
+                {account.Guest && <Badge>{t("account.guest")}</Badge>}
               </div>
             </section>
             <div className="summary-grid">

@@ -296,7 +296,9 @@ func IdentityCodeLoginAllowed(store *identity.Store, envDefault, passwordLoginEn
 // 快照函数，供 help.getAppConfig 每次只读一次 identity。合并规则与 IdentitySignUpAllowed、
 // IdentityCodeLoginAllowed 完全相同（参数也应与它们取同样的值）：读失败时两者都按关闭，
 // 但密码登录关闭时验证码登录一定开启。nil store 等价于只有环境变量一个来源。
-func IdentityLoginSwitches(store *identity.Store, signUpEnv, codeLoginEnv, passwordLoginEnabled bool) func(context.Context) domain.LoginSwitches {
+//
+// 游客登录开关的合并规则与 IdentityGuestLogin 相同（guestEnv 取同样的值），读失败时关闭。
+func IdentityLoginSwitches(store *identity.Store, signUpEnv, codeLoginEnv, passwordLoginEnabled, guestEnv bool) func(context.Context) domain.LoginSwitches {
 	return func(context.Context) domain.LoginSwitches {
 		var info identity.Info
 		if store != nil {
@@ -306,8 +308,9 @@ func IdentityLoginSwitches(store *identity.Store, signUpEnv, codeLoginEnv, passw
 			}
 		}
 		return domain.LoginSwitches{
-			SignUpAllowed:    domain.ResolveSignUpEnabled(info.SignUpEnabled, signUpEnv),
-			CodeLoginAllowed: domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, codeLoginEnv, passwordLoginEnabled),
+			SignUpAllowed:     domain.ResolveSignUpEnabled(info.SignUpEnabled, signUpEnv),
+			CodeLoginAllowed:  domain.ResolveCodeLoginEnabled(info.CodeLoginEnabled, codeLoginEnv, passwordLoginEnabled),
+			GuestLoginAllowed: domain.ResolveOverride(info.GuestLoginEnabled, guestEnv),
 		}
 	}
 }

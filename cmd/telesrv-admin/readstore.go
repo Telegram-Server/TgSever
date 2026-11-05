@@ -367,7 +367,13 @@ type AccountRow struct {
 	PremiumUntil int64
 	LastActiveAt time.Time
 	DeviceCount  int
+	// Guest 表示账号经游客注册创建（guest_accounts 有它的行，docs/guest-login.md）。只记来源，
+	// 账号后来设置密码或换号也不清除。
+	Guest bool
 }
+
+// accountGuestColumn 报告 u 是否是游客注册创建的账号。
+const accountGuestColumn = `EXISTS (SELECT 1 FROM guest_accounts g WHERE g.user_id = u.id)`
 
 // accountCollectibleUsernamesColumn aggregates a peer's collectible usernames
 // into one jsonb value, so a list page costs one indexed subquery per row instead
@@ -701,6 +707,7 @@ func (s *readStore) SearchAccounts(ctx context.Context, q string) ([]AccountRow,
 			CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time,
 			Frozen: r.Frozen, Reason: r.Reason, Verified: r.Verified, Scam: r.Scam, Fake: r.Fake, Bot: r.IsBot,
 			PremiumUntil: r.PremiumUntil, LastActiveAt: r.LastActiveAt.Time, DeviceCount: int(r.DeviceCount),
+			Guest: r.IsGuest,
 		})
 	}
 	return out, nil
@@ -978,7 +985,8 @@ func channelScanDestWithRaw(item *ChannelRow, raw *[]byte) []any {
 	return append(dest, raw)
 }
 
-func (s *readStore) ListAccounts(ctx context.Context, beforeActiveUS, beforeID int64, limit int) ([]AccountRow, bool, error) {
+// guestOnly 只列出游客注册创建的账号。
+func (s *readStore) ListAccounts(ctx context.Context, beforeActiveUS, beforeID int64, limit int, guestOnly bool) ([]AccountRow, bool, error) {
 	if limit <= 0 {
 		limit = accountListDefaultLimit
 	}
@@ -996,15 +1004,17 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	auth.last_active_at, auth.device_count,
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
-	`+accountCollectibleUsernamesColumn+` AS collectibles
+	`+accountCollectibleUsernamesColumn+` AS collectibles,
+	`+accountGuestColumn+` AS guest
 FROM users u
 JOIN auth ON auth.user_id = u.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE NOT u.is_bot
 	AND ($1::bigint = 0 OR (auth.last_active_at, u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
+	AND (NOT $4::boolean OR `+accountGuestColumn+`)
 ORDER BY auth.last_active_at DESC, u.id DESC
-LIMIT $3`, beforeActiveUS, beforeID, limit+1)
+LIMIT $3`, beforeActiveUS, beforeID, limit+1, guestOnly)
 	if err != nil {
 		return nil, false, fmt.Errorf("list accounts: %w", err)
 	}
@@ -1012,7 +1022,7 @@ LIMIT $3`, beforeActiveUS, beforeID, limit+1)
 	out := make([]AccountRow, 0, limit+1)
 	for rows.Next() {
 		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username, &item.Collectibles); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username, &item.Collectibles, &item.Guest); err != nil {
 			return nil, false, err
 		}
 		out = append(out, item)
@@ -1121,7 +1131,8 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(ap.login_email, ''),
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
 	`+accountCollectibleUsernamesColumn+` AS collectibles,
-	r.device_limit
+	r.device_limit,
+	`+accountGuestColumn+` AS guest
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN stars_balances sb ON sb.user_id = u.id
@@ -1131,7 +1142,7 @@ WHERE u.id = $1`, userID).Scan(
 		&out.Account.ID, &out.Account.Phone, &out.Account.Username, &out.Account.FirstName, &out.Account.LastName,
 		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot, &out.Deleted,
 		&out.Account.Frozen, &out.Account.Reason, &out.Account.PremiumUntil, &out.StarsBalance, &out.StarsGranted, &out.LoginEmail, &out.Account.Username,
-		&out.Account.Collectibles, &deviceLimit,
+		&out.Account.Collectibles, &deviceLimit, &out.Account.Guest,
 	)
 	if err != nil {
 		return out, fmt.Errorf("get account: %w", err)

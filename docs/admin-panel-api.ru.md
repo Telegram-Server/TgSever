@@ -327,7 +327,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 
 | Метод | Путь | Параметры / ответ |
 | --- | --- | --- |
-| GET | `/api/accounts` | Параметры: `q` (поиск), `before_id` (int64), `before_active_us` (int64, микросекунды), `limit` (int). Ответ: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `next_before_active_us`, `listing`. |
+| GET | `/api/accounts` | Параметры: `q` (поиск), `before_id` (int64), `before_active_us` (int64, микросекунды), `limit` (int), `guest` (`1` — только аккаунты, созданные гостевой регистрацией; при поиске не учитывается). Каждая строка содержит `Guest`. Ответ: `query`, `limit`, `rows`, `has_more`, `next_before_id`, `next_before_active_us`, `listing`. |
 | GET | `/api/accounts/{id}` | Карточка аккаунта: профиль, флаги, статистика, `DeviceLimit` (int 1..100, `null` — без ограничений) (проксируется/читается из БД). Только для сессии с правом `push.manage` каждый сеанс в `Authorizations`, у которого есть регистрация APNs/VoIP, содержит `PushEnabled` (bool, `true`, если push включён для всех регистраций этого сеанса); иначе поля нет. |
 | GET | `/api/accounts/{id}/avatar` | Аватар аккаунта (файл). |
 | GET | `/api/accounts/{id}/device-bindings` | Устройства, привязанные к аккаунту (см. `set-device-limit`), от самой ранней привязки. Ответ: `user_id`, `bindings` (пустой массив, если привязок нет) с полями `device_id`, `device_model`, `platform`, `app_version` (на момент привязки), `bound_at`, `last_used_at` (RFC 3339). Проксируется в Admin API `/v1/accounts/{id}/device-bindings`, не кэшируется. |
@@ -497,12 +497,13 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 
 ## API: настройки сервера
 
-Все маршруты требуют `server.manage`. Регистрация и вход по коду описаны в
-[sign-up-switch.md](sign-up-switch.md) и [code-login-switch.md](code-login-switch.md).
+Все маршруты требуют `server.manage`. Регистрация, вход по коду и гостевой вход описаны в
+[sign-up-switch.md](sign-up-switch.md), [code-login-switch.md](code-login-switch.md) и
+[guest-login.md](guest-login.md).
 
 | Метод | Путь | Параметры / тело |
 | --- | --- | --- |
-| GET | `/api/server/identity` | Название, описание и шаблоны сообщений, а также значения по умолчанию из окружения и действующее состояние регистрации и входа по коду с источником. |
+| GET | `/api/server/identity` | Название, описание и шаблоны сообщений, а также значения по умолчанию из окружения и действующее состояние регистрации, входа по коду и гостевого входа (с числом дней привязки к IP) с источником. |
 | GET | `/api/server/icon` | Иконка сервера (файл); `404`, если не задана. |
 | GET | `/api/server/env` | Настройки `.env`, сгруппированные как в `.env.example` (всегда массив). |
 | GET | `/api/server/status` | Хост (имя, дистрибутив, ОС, архитектура, версия Go) и проверки Postgres, Redis, MTProto и Docker. |
@@ -511,6 +512,7 @@ PostgreSQL, решения — всегда через Admin API (журнал �
 | POST | `/api/actions/set-login-code-message-template` | Общие поля + `template` (string; пустая строка возвращает значение по умолчанию). Неверный шаблон — `422`. |
 | POST | `/api/actions/set-sign-up-enabled` | Общие поля + `mode` (`on`, `off` или `follow_env`; другое значение — `422`). |
 | POST | `/api/actions/set-code-login-enabled` | Общие поля + `mode` (`on`, `off` или `follow_env`; другое значение — `422`). |
+| POST | `/api/actions/set-guest-login` | Общие поля + `mode` (`on`, `off` или `follow_env`) и `ip_bind_days` (int, 1–365; `0` — следовать `TELESRV_GUEST_IP_BIND_DAYS`). Оба значения записываются вместе; другое значение — `422`. |
 | POST | `/api/actions/upload-server-icon` | **multipart**: `metadata` (JSON с общими полями) и изображение `file` (до 2 МиБ). |
 | POST | `/api/actions/remove-server-icon` | Только общие поля. |
 | POST | `/api/actions/update-server-env` | Общие поля + `values` (объект ключ → значение). Вступает в силу после перезапуска telesrv. В журнал аудита попадают изменённые ключи, но не значения. Если хранилище аудита недоступно, запись всё равно выполняется без аудита: этот редактор — способ починить сломанную настройку базы данных. |

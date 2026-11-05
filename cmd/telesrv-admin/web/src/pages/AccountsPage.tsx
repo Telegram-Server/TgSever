@@ -22,7 +22,10 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
   const [q, setQ] = useState("");
   const [limit, setLimit] = useState("50");
   const [data, setData] = useState<AccountListResponse | null>(null);
-  const [filters, setFilters] = useState({ q: "", limit: "50" });
+  const [guestOnly, setGuestOnly] = useState(false);
+  // guest narrows the recent-activity listing to guest-registered accounts; a
+  // search ignores it (the server does too).
+  const [filters, setFilters] = useState({ q: "", limit: "50", guest: false });
   const [cursor, setCursor] = useState<AccountCursor>(firstAccountPage);
   const [cursorHistory, setCursorHistory] = useState<AccountCursor[]>([]);
   const [busy, setBusy] = useState(false);
@@ -49,9 +52,12 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
     const params = new URLSearchParams({ limit: requestedFilters.limit });
     if (requestedFilters.q) {
       params.set("q", requestedFilters.q);
-    } else if (target.beforeID > 0) {
-      params.set("before_id", String(target.beforeID));
-      params.set("before_active_us", String(target.beforeActiveUS));
+    } else {
+      if (requestedFilters.guest) params.set("guest", "1");
+      if (target.beforeID > 0) {
+        params.set("before_id", String(target.beforeID));
+        params.set("before_active_us", String(target.beforeActiveUS));
+      }
     }
     try {
       const result = await api.accounts(params);
@@ -69,7 +75,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
   }
 
   async function search() {
-    const requestedFilters = { q: q.trim(), limit };
+    const requestedFilters = { q: q.trim(), limit, guest: guestOnly };
     await loadPage(firstAccountPage, requestedFilters, true);
   }
 
@@ -86,7 +92,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
   }
 
   useEffect(() => {
-    void loadPage(firstAccountPage, { q: "", limit: "50" }, true);
+    void loadPage(firstAccountPage, { q: "", limit: "50", guest: false }, true);
   }, []);
 
   const metrics = accountMetrics(data?.rows ?? []);
@@ -115,7 +121,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
       {createOpen && (
         <CreateAccountModal
           onClose={() => setCreateOpen(false)}
-          onCreated={() => void loadPage(firstAccountPage, { q: "", limit: filters.limit }, true)}
+          onCreated={() => void loadPage(firstAccountPage, { q: "", limit: filters.limit, guest: filters.guest }, true)}
         />
       )}
       {error && <Alert>{error}</Alert>}
@@ -134,6 +140,10 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
           <label className="field-inline">
             <span>{t("common.limit")}</span>
             <input className="small-input" value={limit} onChange={(event) => setLimit(event.target.value)} type="number" min="1" max="100" />
+          </label>
+          <label className="field-inline" title={t("account.guestOnlyHint")}>
+            <input type="checkbox" checked={guestOnly} onChange={(event) => setGuestOnly(event.target.checked)} />
+            <span>{t("account.guestOnly")}</span>
           </label>
           <button className="btn primary icon-text" type="submit" disabled={busy}>
             {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {t("common.search")}
@@ -181,7 +191,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
                     {copiedID === row.ID ? <Check size={12} /> : <Copy size={12} />}
                   </button>
                 </td>
-                <td>{displayPhone(row.Phone)}</td>
+                <td>{displayPhone(row.Phone)}{row.Guest && <> <Badge>{t("account.guest")}</Badge></>}</td>
                 <td><UsernameCell username={row.Username} collectibles={row.Collectibles} /></td>
                 <td><span className="table-identity"><Avatar id={row.ID} label={displayName(row)} />{displayName(row)}</span></td>
                 <td>{row.DeviceCount}</td>

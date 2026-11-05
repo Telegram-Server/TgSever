@@ -43,6 +43,7 @@ func (r *Router) registerTelesrv(d *tlprofile.Dispatcher) {
 		return r.onTelesrvSignInWithPassword(ctx, req)
 	})
 	r.registerTelesrvLoginPasswordManage(d)
+	r.registerTelesrvGuest(d)
 }
 
 // onTelesrvGetLoginPassword 处理 telesrv.getLoginPassword（未登录可调用）。

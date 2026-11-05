@@ -41,7 +41,8 @@ SELECT u.id, u.phone, u.first_name, u.last_name, u.created_at, u.updated_at,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint AS premium_until,
 	COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS last_active_at,
 	COALESCE(a.device_count, 0)::int AS device_count,
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '')::text AS display_username, u.is_bot
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '')::text AS display_username, u.is_bot,
+	EXISTS (SELECT 1 FROM guest_accounts g WHERE g.user_id = u.id)::boolean AS is_guest
 FROM matched m
 JOIN users u ON u.id = m.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
@@ -77,6 +78,7 @@ type AdminSearchAccountsRow struct {
 	DeviceCount     int32
 	DisplayUsername string
 	IsBot           bool
+	IsGuest         bool
 }
 
 // 管理面板（cmd/telesrv-admin）的账号只读投影：账号搜索与发送白名单成员（#160）。
@@ -117,6 +119,7 @@ func (q *Queries) AdminSearchAccounts(ctx context.Context, arg AdminSearchAccoun
 			&i.DeviceCount,
 			&i.DisplayUsername,
 			&i.IsBot,
+			&i.IsGuest,
 		); err != nil {
 			return nil, err
 		}

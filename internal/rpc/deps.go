@@ -1161,7 +1161,9 @@ type Deps struct {
 	Auth AuthService
 	// LoginPassword 是手机号 + 密码登录（telesrv.* 扩展）。为 nil 时这些方法一律
 	// 返回 PASSWORD_LOGIN_DISABLED，与总开关关闭相同。
-	LoginPassword       LoginPasswordService
+	LoginPassword LoginPasswordService
+	// GuestSignUp 是游客注册（telesrv.signUpAsGuest）。为 nil 时该方法返回 GUEST_LOGIN_DISABLED。
+	GuestSignUp         GuestSignUpService
 	AuthDeliveryReports AuthDeliveryReportService
 	ClientTelemetry     ClientTelemetryService
 	// AuthKeySessionLayers is the protocol-only durable ordering boundary for

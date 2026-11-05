@@ -46,6 +46,10 @@ func (s *serverSettingsCaptureService) SetCodeLoginEnabled(_ context.Context, re
 	return s.record(req, req.CommandMeta, admin.ActionSetCodeLoginEnabled)
 }
 
+func (s *serverSettingsCaptureService) SetGuestLogin(_ context.Context, req admin.SetGuestLoginRequest) (admin.CommandResult, error) {
+	return s.record(req, req.CommandMeta, admin.ActionSetGuestLogin)
+}
+
 func (s *serverSettingsCaptureService) UploadServerIcon(_ context.Context, req admin.UploadServerIconRequest) (admin.CommandResult, error) {
 	return s.record(req, req.CommandMeta, admin.ActionUploadServerIcon)
 }
@@ -104,6 +108,10 @@ func TestAdminAPIServerSettingsRoutes(t *testing.T) {
 			return httptest.NewRequest(http.MethodPost, "/v1/server-settings/set-code-login-enabled",
 				strings.NewReader(`{`+metaJSON+`,"mode":"follow_env"}`))
 		}, admin.ActionSetCodeLoginEnabled, admin.SetCodeLoginEnabledRequest{CommandMeta: meta, Mode: "follow_env"}},
+		{"set guest login", func(*testing.T) *http.Request {
+			return httptest.NewRequest(http.MethodPost, "/v1/server-settings/set-guest-login",
+				strings.NewReader(`{`+metaJSON+`,"mode":"on","ip_bind_days":14}`))
+		}, admin.ActionSetGuestLogin, admin.SetGuestLoginRequest{CommandMeta: meta, Mode: "on", IPBindDays: 14}},
 		{"upload icon", func(t *testing.T) *http.Request {
 			return iconUploadRequest(t, `{`+metaJSON+`}`, "logo.png", icon)
 		}, admin.ActionUploadServerIcon, admin.UploadServerIconRequest{CommandMeta: meta, FileName: "logo.png", Data: icon}},

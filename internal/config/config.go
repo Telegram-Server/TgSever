@@ -324,6 +324,14 @@ type Config struct {
 	// 密码登录、扫码、passkey、bot 与会话内验证码流程不受影响。防锁死：PasswordLoginEnabled
 	// 为 false 时不允许关闭，Load 直接报错。
 	CodeLoginEnabled bool
+	// GuestLoginEnabled 是游客登录（telesrv.signUpAsGuest）开关的环境变量默认值
+	// （TELESRV_GUEST_LOGIN_ENABLED），默认 false。开启后客户端可以不带手机号注册，服务端分配
+	// +1 虚构号段的号码；游客注册不受注册开关限制。help.getAppConfig 在开启时下发
+	// telesrv_guest_login_enabled: true。管理后台的实时覆盖值优先于它。
+	GuestLoginEnabled bool
+	// GuestIPBindDays 是游客 IP 绑定天数的环境变量默认值（TELESRV_GUEST_IP_BIND_DAYS），默认 7，
+	// 取值 1–365：同一 IP 在这么多天内再次游客注册得到同一个账号。管理后台的覆盖值优先于它。
+	GuestIPBindDays int
 	// PasswordLoginEnabled 是手机号 + 密码登录（telesrv 扩展协议）的总开关，默认关闭。
 	// 打开后不经验证码即可用任意号码注册，号码不做归属验证，风险由运营者承担。
 	// 关闭时 telesrv. 密码登录方法一律返回 PASSWORD_LOGIN_DISABLED，app config 不下发该能力。
@@ -1206,6 +1214,8 @@ func Load() (Config, error) {
 		LoginEmailCodeLength:              envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
 		SignUpEnabled:                     envBoolOr("TELESRV_SIGN_UP_ENABLED", true),
 		CodeLoginEnabled:                  envBoolOr("TELESRV_CODE_LOGIN_ENABLED", true),
+		GuestLoginEnabled:                 envBoolOr("TELESRV_GUEST_LOGIN_ENABLED", false),
+		GuestIPBindDays:                   envIntOr("TELESRV_GUEST_IP_BIND_DAYS", 7),
 		PasswordLoginEnabled:              envBoolOr("TELESRV_PASSWORD_LOGIN_ENABLED", false),
 		PasswordLoginUserRateLimit:        envIntOr("TELESRV_PASSWORD_LOGIN_USER_RATE_LIMIT", 10),
 		PasswordLoginUserRateWindow:       envDurationOr("TELESRV_PASSWORD_LOGIN_USER_RATE_WINDOW", time.Hour),
@@ -2296,6 +2306,10 @@ func validateLoginEmailConfig(cfg Config) error {
 	// 一个已登录的设备），因此拒绝启动。
 	if !cfg.CodeLoginEnabled && !cfg.PasswordLoginEnabled {
 		return fmt.Errorf("TELESRV_CODE_LOGIN_ENABLED=false requires TELESRV_PASSWORD_LOGIN_ENABLED=true: with both code login and password login disabled nobody could log in")
+	}
+	// 范围与 domain.GuestIPBindDaysMin/Max 相同（config 不依赖 domain）。
+	if cfg.GuestIPBindDays < 1 || cfg.GuestIPBindDays > 365 {
+		return fmt.Errorf("TELESRV_GUEST_IP_BIND_DAYS must be between 1 and 365")
 	}
 	if cfg.AuthCodeTTL <= 0 {
 		return fmt.Errorf("TELESRV_AUTH_CODE_TTL must be positive")

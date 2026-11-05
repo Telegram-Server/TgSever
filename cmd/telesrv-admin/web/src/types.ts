@@ -26,6 +26,8 @@ export type AccountRow = {
   PremiumUntil: number;
   LastActiveAt: string;
   DeviceCount: number;
+  // Registered through guest sign-up (telesrv.signUpAsGuest); never cleared.
+  Guest: boolean;
 };
 
 export type RestrictionRow = {
@@ -1505,6 +1507,17 @@ export type ServerIdentity = {
   code_login_source: "env" | "override";
   password_login_enabled: boolean;
   code_login_override_ignored?: boolean;
+  // Guest login switch and its IP-binding window (days), same shape: the raw
+  // overrides (absent = follow the environment), the env defaults, and what
+  // they resolve to.
+  guest_login_enabled?: boolean;
+  default_guest_login_enabled: boolean;
+  guest_login_enabled_effective: boolean;
+  guest_login_source: "env" | "override";
+  guest_ip_bind_days?: number;
+  default_guest_ip_bind_days: number;
+  guest_ip_bind_days_effective: number;
+  guest_ip_bind_days_source: "env" | "override";
 };
 
 export type EnvField = {

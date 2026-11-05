@@ -56,6 +56,10 @@ switch is checked first ([code-login-switch.md](code-login-switch.md)).
 Existing accounts are never affected: login code, 2FA, QR login, passkey login
 and password login all behave as before, and bots are not affected either.
 
+Guest sign-up (`telesrv.signUpAsGuest`) is not covered by this switch: while
+guest login is on it creates accounts even when sign-up is closed. See
+[guest-login.md](guest-login.md).
+
 ## Recommended client behaviour
 
 - Read `telesrv_sign_up_disabled` from the app config on the login screen. When

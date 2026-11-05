@@ -29,7 +29,10 @@ func newServerIdentityService(t *testing.T, signUpDefault bool) (*Service, *memo
 		// 验证码登录跟随环境默认开启、密码登录总开关打开，关闭验证码登录不会触发防锁死。
 		CodeLoginEnabledDefault: func() bool { return true },
 		PasswordLoginEnabled:    func() bool { return true },
-		Now:                     fixedNow,
+		// 游客登录跟随环境默认关闭、绑定 7 天。
+		GuestLoginEnabledDefault: func() bool { return false },
+		GuestIPBindDaysDefault:   func() int { return 7 },
+		Now:                      fixedNow,
 	})
 	return svc, repo, store, dir
 }
@@ -125,6 +128,20 @@ func serverIdentityCases() []serverIdentityCase {
 				}
 			},
 			details: map[string]any{"mode": "off", "code_login_enabled_effective": false, "code_login_source": "override"},
+		},
+		{
+			action: ActionSetGuestLogin,
+			run: func(svc *Service, meta CommandMeta) (CommandResult, error) {
+				return svc.SetGuestLogin(ctx, SetGuestLoginRequest{CommandMeta: meta, Mode: "on", IPBindDays: 30})
+			},
+			check: func(t *testing.T, store *identity.Store) {
+				info, err := store.Get()
+				if err != nil || info.GuestLoginEnabled == nil || !*info.GuestLoginEnabled || info.GuestIPBindDays == nil || *info.GuestIPBindDays != 30 {
+					t.Fatalf("identity = %+v err=%v, want guest login on, 30 days", info, err)
+				}
+			},
+			details: map[string]any{"mode": "on", "guest_login_enabled_effective": true, "guest_login_source": "override",
+				"guest_ip_bind_days_effective": float64(30), "guest_ip_bind_days_source": "override"},
 		},
 		{
 			action: ActionUploadServerIcon,
@@ -273,6 +290,15 @@ func TestServerIdentityCommandsRejectInvalidInput(t *testing.T) {
 		{"code login mode unknown", func(meta CommandMeta) (CommandResult, error) {
 			return svc.SetCodeLoginEnabled(ctx, SetCodeLoginEnabledRequest{CommandMeta: meta, Mode: "maybe"})
 		}},
+		{"guest login mode missing", func(meta CommandMeta) (CommandResult, error) {
+			return svc.SetGuestLogin(ctx, SetGuestLoginRequest{CommandMeta: meta, IPBindDays: 7})
+		}},
+		{"guest login days too large", func(meta CommandMeta) (CommandResult, error) {
+			return svc.SetGuestLogin(ctx, SetGuestLoginRequest{CommandMeta: meta, Mode: "on", IPBindDays: 366})
+		}},
+		{"guest login days negative", func(meta CommandMeta) (CommandResult, error) {
+			return svc.SetGuestLogin(ctx, SetGuestLoginRequest{CommandMeta: meta, Mode: "on", IPBindDays: -1})
+		}},
 		{"icon extension", func(meta CommandMeta) (CommandResult, error) {
 			return svc.UploadServerIcon(ctx, UploadServerIconRequest{CommandMeta: meta, FileName: "logo.bmp", Data: pngIcon})
 		}},
@@ -341,6 +367,36 @@ func TestSetSignUpEnabledModesAndEffectiveState(t *testing.T) {
 		if details["mode"] != tc.mode || details["sign_up_enabled_effective"] != tc.effective || details["sign_up_source"] != tc.source {
 			t.Fatalf("mode %s: audit details = %+v", tc.mode, details)
 		}
+	}
+}
+
+// follow_env 与天数 0 清除各自的覆盖，实际状态回到服务端的环境变量（这里为关闭、7 天）；
+// 没接上环境默认值时拒绝，也不写入。
+func TestSetGuestLoginFollowEnvAndDefaults(t *testing.T) {
+	ctx := context.Background()
+	svc, repo, store, _ := newServerIdentityService(t, true)
+	if _, err := svc.SetGuestLogin(ctx, SetGuestLoginRequest{CommandMeta: serverIdentityMeta("guest-on", false), Mode: "on", IPBindDays: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetGuestLogin(ctx, SetGuestLoginRequest{CommandMeta: serverIdentityMeta("guest-env", false), Mode: " follow_env "}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := store.Get()
+	if err != nil || info.GuestLoginEnabled != nil || info.GuestIPBindDays != nil {
+		t.Fatalf("identity = %+v err=%v, want both guest overrides cleared", info, err)
+	}
+	details := storedDetails(t, repo, "guest-env")
+	if details["guest_login_enabled_effective"] != false || details["guest_login_source"] != "env" ||
+		details["guest_ip_bind_days_effective"] != float64(7) || details["guest_ip_bind_days_source"] != "env" {
+		t.Fatalf("audit details = %+v", details)
+	}
+
+	noDefault := NewService(Dependencies{Commands: newMemoryCommandRepo(), ServerIdentity: store, Now: fixedNow})
+	if _, err := noDefault.SetGuestLogin(ctx, SetGuestLoginRequest{CommandMeta: serverIdentityMeta("guest-no-default", false), Mode: "on"}); err == nil {
+		t.Fatal("guest login change without the env defaults succeeded")
+	}
+	if info, _ := store.Get(); info.GuestLoginEnabled != nil {
+		t.Fatalf("rejected guest login change wrote %v", *info.GuestLoginEnabled)
 	}
 }
 
@@ -430,6 +486,7 @@ func (failingIdentityStore) SetWelcomeMessageTemplates(string, string) error {
 func (failingIdentityStore) SetLoginCodeMessageTemplate(string) error { return errReadOnlyIdentity }
 func (failingIdentityStore) SetSignUpOverride(*bool) error            { return errReadOnlyIdentity }
 func (failingIdentityStore) SetCodeLoginOverride(*bool) error         { return errReadOnlyIdentity }
+func (failingIdentityStore) SetGuestLoginOverride(*bool, *int) error  { return errReadOnlyIdentity }
 func (failingIdentityStore) SetIcon([]byte, string) error             { return errReadOnlyIdentity }
 func (failingIdentityStore) RemoveIcon() error                        { return errReadOnlyIdentity }
 

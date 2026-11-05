@@ -568,6 +568,11 @@ type Dependencies struct {
 	// （TELESRV_PASSWORD_LOGIN_ENABLED），供 server.set_code_login_enabled 防锁死。
 	CodeLoginEnabledDefault func() bool
 	PasswordLoginEnabled    func() bool
+	// GuestLoginEnabledDefault / GuestIPBindDaysDefault 返回服务端的
+	// TELESRV_GUEST_LOGIN_ENABLED / TELESRV_GUEST_IP_BIND_DAYS，用来在
+	// server.set_guest_login 的结果里报告游客登录的实际状态。
+	GuestLoginEnabledDefault func() bool
+	GuestIPBindDaysDefault   func() int
 	// LoginPasswords 是后台设置登录密码用的登录密码服务（见 loginpassword.go）。
 	// LoginPasswordFingerprintKey 是幂等指纹的 HMAC 子密钥，由 DeriveLoginPasswordFingerprintKey
 	// 从服务端密钥派生；为空时 account.set_login_password 拒绝执行。
@@ -635,6 +640,8 @@ type Service struct {
 	signUpEnabledDefault    func() bool
 	codeLoginEnabledDefault func() bool
 	passwordLoginEnabled    func() bool
+	guestLoginDefault       func() bool
+	guestIPBindDaysDefault  func() int
 	loginPasswords          LoginPasswordSetter
 	// loginPasswordFingerprintKey 见 Dependencies.LoginPasswordFingerprintKey。
 	loginPasswordFingerprintKey []byte
@@ -792,6 +799,12 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.PasswordLoginEnabled != nil {
 		s.passwordLoginEnabled = deps.PasswordLoginEnabled
+	}
+	if deps.GuestLoginEnabledDefault != nil {
+		s.guestLoginDefault = deps.GuestLoginEnabledDefault
+	}
+	if deps.GuestIPBindDaysDefault != nil {
+		s.guestIPBindDaysDefault = deps.GuestIPBindDaysDefault
 	}
 	if deps.LoginPasswords != nil {
 		s.loginPasswords = deps.LoginPasswords

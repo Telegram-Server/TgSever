@@ -58,6 +58,12 @@ type Info struct {
 	// TELESRV_CODE_LOGIN_ENABLED 环境变量；true/false 表示以面板为准。与 SignUpEnabled
 	// 同构，主服务器每次判断都现读（见 auth.IdentityCodeLoginAllowed）。
 	CodeLoginEnabled *bool `json:"code_login_enabled,omitempty"`
+	// GuestLoginEnabled 是管理面板对游客登录开关的三态覆盖：nil 表示「未设置」，跟随
+	// TELESRV_GUEST_LOGIN_ENABLED 环境变量。主服务器每次判断都现读（见 auth.IdentityGuestLogin）。
+	GuestLoginEnabled *bool `json:"guest_login_enabled,omitempty"`
+	// GuestIPBindDays 是管理面板对游客 IP 绑定天数的覆盖：nil 表示跟随
+	// TELESRV_GUEST_IP_BIND_DAYS。范围校验由调用方负责（domain.ValidGuestIPBindDays）。
+	GuestIPBindDays *int `json:"guest_ip_bind_days,omitempty"`
 }
 
 // Store 在指定目录（通常为 Config.IdentityDir）下读写 Info 与图标文件。所有方法均可
@@ -151,6 +157,24 @@ func (s *Store) SetCodeLoginOverride(enabled *bool) error {
 		} else {
 			v := *enabled
 			info.CodeLoginEnabled = &v
+		}
+		return nil
+	})
+}
+
+// SetGuestLoginOverride 一次写入游客登录的两项覆盖，保留其余身份字段。enabled 为 nil 清除
+// 开关覆盖，days 为 nil 清除天数覆盖；两者在同一次读-改-写里落盘。天数范围由调用方校验。
+func (s *Store) SetGuestLoginOverride(enabled *bool, days *int) error {
+	return s.update(func(info *Info) error {
+		info.GuestLoginEnabled = nil
+		if enabled != nil {
+			v := *enabled
+			info.GuestLoginEnabled = &v
+		}
+		info.GuestIPBindDays = nil
+		if days != nil {
+			v := *days
+			info.GuestIPBindDays = &v
 		}
 		return nil
 	})

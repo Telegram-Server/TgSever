@@ -100,11 +100,13 @@ func ResolveCodeLoginEnabled(panelOverride *bool, envDefault, passwordLoginEnabl
 	return ResolveOverride(panelOverride, envDefault)
 }
 
-// LoginSwitches 是一次读取得出的注册开关与验证码登录开关的实际状态（已按各自的
-// fail-closed 规则与上面的不变量处理过），help.getAppConfig 据此下发两个状态 key。
+// LoginSwitches 是一次读取得出的注册开关、验证码登录开关与游客登录开关的实际状态（已按各自的
+// fail-closed 规则与上面的不变量处理过），help.getAppConfig 据此下发三个状态 key。
 type LoginSwitches struct {
 	SignUpAllowed    bool
 	CodeLoginAllowed bool
+	// GuestLoginAllowed 默认关闭：零值与读失败都表示不允许游客登录。
+	GuestLoginAllowed bool
 }
 
 type AuthCodeDeliveryKind string

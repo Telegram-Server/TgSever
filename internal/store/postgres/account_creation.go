@@ -51,6 +51,11 @@ func (s *AccountCreationStore) CreateAccount(ctx context.Context, u domain.User,
 				return accountPermissionsWriteErr("create account permissions", err)
 			}
 		}
+		if extras.Guest != nil {
+			if err := writeGuestAccountTx(ctx, qtx, created, *extras.Guest); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {

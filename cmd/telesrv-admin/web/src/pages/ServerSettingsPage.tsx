@@ -68,6 +68,7 @@ export function ServerSettingsPage({ search, navigate }: { search?: URLSearchPar
           <LoginNotificationsSection />
           <SignUpSection />
           <CodeLoginSection />
+          <GuestLoginSection />
           <EnvSection />
         </div>
       ) : (
@@ -493,6 +494,119 @@ function CodeLoginSection() {
               path="/api/actions/set-code-login-enabled"
               payload={() => ({ mode: "follow_env" })}
               disabled={override === undefined || override === null}
+              onDone={notifyIdentityChanged}
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// GuestLoginSection mirrors the two switches above for guest login
+// (telesrv.signUpAsGuest), plus the IP-binding window: within that many days
+// the same client IP gets the same guest account back. Both travel in one
+// command (handleSetGuestLoginAPI), so every button sends the switch mode and
+// the days together; an empty days field means "follow the environment".
+function GuestLoginSection() {
+  const { t } = useI18n();
+  const [identity, setIdentity] = useState<ServerIdentity | null>(null);
+  const [error, setError] = useState("");
+  const [days, setDays] = useState("");
+
+  async function load() {
+    setError("");
+    try {
+      const next = await api.serverIdentity();
+      setIdentity(next);
+      setDays(next.guest_ip_bind_days ? String(next.guest_ip_bind_days) : "");
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  useEffect(() => {
+    const reload = () => { void load(); };
+    reload();
+    window.addEventListener(identityChangedEvent, reload);
+    return () => window.removeEventListener(identityChangedEvent, reload);
+  }, []);
+
+  const onWord = (on: boolean) => (on ? t("serverSettings.guestLoginOn") : t("serverSettings.guestLoginOff"));
+  const override = identity?.guest_login_enabled;
+  const trimmedDays = days.trim();
+  const parsedDays = trimmedDays === "" ? 0 : Number(trimmedDays);
+  const daysValid = trimmedDays === "" || (Number.isInteger(parsedDays) && parsedDays >= 1 && parsedDays <= 365);
+  const currentMode = override === true ? "on" : override === false ? "off" : "follow_env";
+  const savedDays = identity?.guest_ip_bind_days ?? 0;
+
+  return (
+    <section id="serversettings-guestlogin" className="section-block scroll-anchor">
+      <SectionHead title={t("serverSettings.guestLoginTitle")} />
+      {error && <Alert>{error}</Alert>}
+      {!identity ? (
+        <LoadingSurface label={t("serverSettings.loadingGuestLogin")} />
+      ) : (
+        <div className="card-body">
+          <p className="muted-lead">{t("serverSettings.guestLoginDesc")}</p>
+          <p>
+            <span className={`badge ${identity.guest_login_enabled_effective ? "good" : "danger"}`}>{onWord(identity.guest_login_enabled_effective)}</span>
+            {" "}
+            <span className="badge">
+              {identity.guest_login_source === "override" ? t("serverSettings.guestLoginSourceOverride") : t("serverSettings.guestLoginSourceEnv")}
+            </span>
+          </p>
+          <p className="muted-lead">{t("serverSettings.guestLoginEnvDefault", { value: onWord(identity.default_guest_login_enabled) })}</p>
+          <p className="muted-lead">
+            {t("serverSettings.guestIPBindDaysEffective", {
+              days: identity.guest_ip_bind_days_effective,
+              source: identity.guest_ip_bind_days_source === "override" ? t("serverSettings.guestLoginSourceOverride") : t("serverSettings.guestIPBindDaysSourceEnv"),
+            })}
+          </p>
+          <label className="form-field">
+            <span>{t("serverSettings.guestIPBindDaysLabel")}</span>
+            <input
+              type="number"
+              min={1}
+              max={365}
+              step={1}
+              value={days}
+              placeholder={t("serverSettings.guestIPBindDaysPlaceholder", { days: identity.default_guest_ip_bind_days })}
+              onChange={(event) => setDays(event.target.value)}
+            />
+          </label>
+          {!daysValid && <Alert>{t("serverSettings.guestIPBindDaysInvalid")}</Alert>}
+          <div className="gift-table-actions identity-save-row">
+            <ActionButton
+              tone="neutral"
+              label={t("serverSettings.guestLoginSetOn")}
+              path="/api/actions/set-guest-login"
+              payload={() => ({ mode: "on", ip_bind_days: parsedDays })}
+              disabled={!daysValid || (override === true && parsedDays === savedDays)}
+              onDone={notifyIdentityChanged}
+            />
+            <ActionButton
+              tone="danger"
+              label={t("serverSettings.guestLoginSetOff")}
+              path="/api/actions/set-guest-login"
+              payload={() => ({ mode: "off", ip_bind_days: parsedDays })}
+              disabled={!daysValid || (override === false && parsedDays === savedDays)}
+              onDone={notifyIdentityChanged}
+            />
+            <ActionButton
+              tone="neutral"
+              label={t("serverSettings.guestIPBindDaysSave")}
+              path="/api/actions/set-guest-login"
+              payload={() => ({ mode: currentMode, ip_bind_days: parsedDays })}
+              disabled={!daysValid || parsedDays === savedDays}
+              onDone={notifyIdentityChanged}
+            />
+            <ActionButton
+              tone="neutral"
+              label={t("serverSettings.guestLoginFollowEnv")}
+              path="/api/actions/set-guest-login"
+              payload={() => ({ mode: "follow_env", ip_bind_days: 0 })}
+              disabled={(override === undefined || override === null) && !identity.guest_ip_bind_days}
               onDone={notifyIdentityChanged}
             />
           </div>
