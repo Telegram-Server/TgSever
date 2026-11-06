@@ -1,5 +1,5 @@
 // 本服务自有文案（客户端自加的 Telesrv* 键），叠加进各平台同语言的官方语言包。
-// 由客户端 strings.xml 的英文生成；改动内容时把文件名里的版本号 +1。
+// 英文取自 Android strings.xml 与 Web A fallback.strings；改动内容时把文件名里的版本号 +1。
 "TelesrvCodeLoginDisabled" = "此伺服器已關閉驗證碼登入，請使用密碼登入。";
 "TelesrvForgotPasswordNoCode" = "此伺服器已關閉驗證碼登入。請聯絡管理員重設登入密碼。";
 "TelesrvForgotPasswordText" = "請先使用驗證碼登入，之後可以在設定中重設登入密碼。";
@@ -56,3 +56,11 @@
 "TelesrvSignUpText" = "%1$s 還沒有帳號。請輸入您的名字並設定登入密碼。";
 "TelesrvSignUpTitle" = "建立帳號";
 "TelesrvUseCode" = "使用驗證碼";
+"AuthLoginPasswordDesc" = "請輸入此帳號的登入密碼。";
+"AuthPasswordLoginDesc" = "輸入手機號碼，使用密碼登入或註冊。";
+"AuthPasswordSignInDesc" = "輸入手機號碼，使用密碼登入。";
+"ErrorDeviceIdRequired" = "此帳號需要使用新版本的應用程式。請重新整理頁面。";
+"ErrorDeviceLimitReached" = "此帳號綁定的裝置數量已達上限。請聯絡管理員解除綁定裝置。";
+"ErrorSignupPasswordOccupied" = "此號碼剛剛已被註冊。請返回並登入。";
+"ErrorSignupPasswordsDiffer" = "兩次輸入的密碼不一致";
+"TelesrvLoginPasswordFailedError" = "無法更新登入密碼，請稍後重試。\n\n{error}";

@@ -2350,11 +2350,11 @@
           "plural_code": "zh",
           "official": true,
           "strings_count": 4279,
-          "translated_count": 2217,
+          "translated_count": 4279,
           "translations_url": "https://translations.telegram.org/zh-hans/",
-          "version": 382407,
-          "file": "weba/weba_zh-hans_v382407.strings",
-          "sha256": "1b98c75832fa0bb85b16bf29573dd4ca583d0922241204adb17236b7dd443039"
+          "version": 382408,
+          "file": "weba/weba_zh-hans_v382408.strings",
+          "sha256": "88e67bac91f740c92947b949840cbb22beee8bdc689694b6cb2a412550bf2be8"
         },
         {
           "lang_code": "zh-hant",

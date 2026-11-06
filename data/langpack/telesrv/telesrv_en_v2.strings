@@ -1,5 +1,5 @@
 // 本服务自有文案（客户端自加的 Telesrv* 键），叠加进各平台同语言的官方语言包。
-// 由客户端 strings.xml 的英文生成；改动内容时把文件名里的版本号 +1。
+// 英文取自 Android strings.xml 与 Web A fallback.strings；改动内容时把文件名里的版本号 +1。
 "TelesrvCodeLoginDisabled" = "Login codes are turned off on this server. Sign in with your password.";
 "TelesrvForgotPasswordNoCode" = "Login codes are turned off on this server. Please contact the administrator to reset your login password.";
 "TelesrvForgotPasswordText" = "Sign in with a login code first. You can then reset your login password in Settings.";
@@ -56,3 +56,11 @@
 "TelesrvSignUpText" = "%1$s has no account yet. Enter your name and choose a login password.";
 "TelesrvSignUpTitle" = "Create your account";
 "TelesrvUseCode" = "Use code";
+"AuthLoginPasswordDesc" = "Please enter the login password of this account.";
+"AuthPasswordLoginDesc" = "Enter your phone number to log in or sign up with a password.";
+"AuthPasswordSignInDesc" = "Enter your phone number to log in with a password.";
+"ErrorDeviceIdRequired" = "This account requires a newer version of the app. Please reload the page.";
+"ErrorDeviceLimitReached" = "This account has reached its limit of linked devices. Please contact the administrator to unlink a device.";
+"ErrorSignupPasswordOccupied" = "This number has just been registered. Go back and log in.";
+"ErrorSignupPasswordsDiffer" = "Passwords do not match";
+"TelesrvLoginPasswordFailedError" = "Couldn't update the login password. Please try again later.\n\n{error}";
