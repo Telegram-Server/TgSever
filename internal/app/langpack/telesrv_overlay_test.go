@@ -79,4 +79,21 @@ func TestTelesrvOverlayMergesIntoPlatformPacks(t *testing.T) {
 	if de.Version != 50 || len(de.Strings) != 1 {
 		t.Fatalf("de = v%d %d strings, want untouched v50 with 1 string", de.Version, len(de.Strings))
 	}
+
+	// 版本偏移：改品牌后 +1，缓存在旧版本（103）的客户端拿到全量，已在新版本的拿到空增量。
+	bumped := NewService(packs, WithVersionOffset(1))
+	stale, err := bumped.GetDifference(ctx, "android", "zh-hans", 103)
+	if err != nil {
+		t.Fatalf("offset difference: %v", err)
+	}
+	if stale.Version != 104 || stringValue(stale.Strings, "TelesrvGuestContinue") == "" {
+		t.Fatalf("offset difference = v%d (%d strings), want v104 full pack", stale.Version, len(stale.Strings))
+	}
+	current, err := bumped.GetDifference(ctx, "android", "zh-hans", 104)
+	if err != nil {
+		t.Fatalf("offset up-to-date difference: %v", err)
+	}
+	if len(current.Strings) != 0 {
+		t.Fatalf("offset up-to-date difference has %d strings, want 0", len(current.Strings))
+	}
 }

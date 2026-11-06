@@ -1162,7 +1162,10 @@ func run(logger *zap.Logger) error {
 		cfg.UploadPartGCInterval,
 		cfg.UploadPartGCBatch,
 	).Run(ctx)
-	langPackService := langpack.NewService(langPackStore, langpack.WithPublicBaseURL(cfg.PublicBaseURL))
+	langPackService := langpack.NewService(langPackStore,
+		langpack.WithPublicBaseURL(cfg.PublicBaseURL),
+		langpack.WithVersionOffset(cfg.LangPackVersionOffset),
+	)
 	// 对话存储供“已有私聊”豁免：收件人开了仅会员/付费消息时，已与其有私聊的人仍可发。
 	privacyService := privacyapp.NewService(privacyStore, contactStore).ConfigurePrivateDialogs(dialogStore)
 	contactsService := contacts.NewService(contactStore, userStore).Configure(

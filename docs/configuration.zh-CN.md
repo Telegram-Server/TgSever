@@ -354,6 +354,7 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_REDIS_PASSWORD` | secret string / 空 | Redis 密码。 |
 | `TELESRV_REDIS_DB` | int / `0` | Redis 逻辑库编号。 |
 | `TELESRV_LANGPACK_SEED_DIR` | path / `data/langpack` | TDesktop `.strings` 语言包 seed 目录。 |
+| `TELESRV_LANGPACK_VERSION_OFFSET` | int / `0` | 加到返回给客户端的每个语言包版本上（0–1000000）。产品名与公开链接是返回时才替换的，不改变语言包文件版本；改了 `TELESRV_BRAND_*` 或公开地址后把它 +1，已缓存语言包的客户端才会重新拉取。只增不减。 |
 | `TELESRV_OFFICIAL_GIFTS_DIR` | path / `data/official-gifts` | `cmd/giftfetch` 生成的只读官方礼物快照；供管理后台选择、验哈希并显式导入。 |
 | `TELESRV_BLOB_BACKEND` | enum / `localfs` | 唯一永久媒体后端：`localfs` 或 `s3`。不会跨后端回退、双读或双写；库内已有另一 backend 的 `file_blobs` 时启动失败。 |
 | `TELESRV_BLOB_DIR` | path / `data/blobs` | `localfs` 永久媒体与临时上传分片根目录；`s3` 模式不会从此目录回退读取。 |

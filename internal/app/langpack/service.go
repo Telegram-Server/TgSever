@@ -20,6 +20,8 @@ type Service struct {
 	packLoads     singleflight.Group
 	languageLoads singleflight.Group
 	publicBaseURL string
+	// versionOffset 加到返回给客户端的每个语言包版本上，见 WithVersionOffset。
+	versionOffset int
 }
 
 // Option configures user-visible language-pack projection.
@@ -31,6 +33,17 @@ func WithPublicBaseURL(value string) Option {
 	return func(s *Service) {
 		if strings.TrimSpace(value) != "" {
 			s.publicBaseURL = value
+		}
+	}
+}
+
+// WithVersionOffset 把 offset 加到返回给客户端的每个语言包版本上（全量与增量一致）。
+// 产品名、公开链接的替换在返回时才做，语言包文件版本不变；部署改了这些之后把 offset
+// +1，已缓存的客户端看到更高的版本才会重新拉取。offset 只增不减。
+func WithVersionOffset(offset int) Option {
+	return func(s *Service) {
+		if offset > 0 {
+			s.versionOffset = offset
 		}
 	}
 }
@@ -79,6 +92,7 @@ func (s *Service) GetDifference(ctx context.Context, langPack, langCode string, 
 	if err != nil {
 		return domain.LangPack{}, err
 	}
+	pack.Version += s.versionOffset
 	pack.FromVersion = fromVersion
 	if pack.Version <= fromVersion {
 		pack.Strings = nil

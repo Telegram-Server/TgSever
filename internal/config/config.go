@@ -402,6 +402,10 @@ type Config struct {
 	WebPagePreviewRatePerMin int
 	// LangPackSeedDir 是 TDesktop 语言包 .strings 种子目录。
 	LangPackSeedDir string
+	// LangPackVersionOffset（TELESRV_LANGPACK_VERSION_OFFSET，默认 0）加到每个语言包返回给
+	// 客户端的版本号上。产品名、公开链接等替换是返回时才做的，不改变语言包文件的版本；
+	// 改了 TELESRV_BRAND_* 或公开地址后把它 +1，已缓存语言包的客户端才会重新拉取。只增不减。
+	LangPackVersionOffset int
 	// OfficialGiftsDir 是 cmd/giftfetch 生成的只读官方礼物快照目录。
 	OfficialGiftsDir string
 	// StarGiftTONStartingGrant 是 telesrv 内部 TON 账本首次访问时授予的 nanoton。
@@ -1239,6 +1243,7 @@ func Load() (Config, error) {
 		SMTPTLSMode:                       strings.ToLower(strings.TrimSpace(envOr("TELESRV_SMTP_TLS", "starttls"))),
 		SMTPTimeout:                       envDurationOr("TELESRV_SMTP_TIMEOUT", 10*time.Second),
 		LangPackSeedDir:                   envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),
+		LangPackVersionOffset:             envIntOr("TELESRV_LANGPACK_VERSION_OFFSET", 0),
 		OfficialGiftsDir:                  envOr("TELESRV_OFFICIAL_GIFTS_DIR", "data/official-gifts"),
 		StarGiftTONStartingGrant:          envInt64Or("TELESRV_STARGIFT_TON_STARTING_GRANT", 10_000_000_000),
 		BlobBackendKind:                   strings.ToLower(strings.TrimSpace(envOr("TELESRV_BLOB_BACKEND", "localfs"))),
@@ -1543,6 +1548,10 @@ func Load() (Config, error) {
 	}
 	if err := validateBlobStorageConfig(cfg); err != nil {
 		return Config{}, err
+	}
+	// 官方语言包版本已到 6×10^7 量级，偏移再大会逼近 int32 上限（客户端协议字段是 int）。
+	if cfg.LangPackVersionOffset < 0 || cfg.LangPackVersionOffset > 1_000_000 {
+		return Config{}, fmt.Errorf("TELESRV_LANGPACK_VERSION_OFFSET must be between 0 and 1000000")
 	}
 	if cfg.DC <= 0 || int64(cfg.DC) > int64(1<<31-1) {
 		return Config{}, fmt.Errorf("TELESRV_DC must be a positive TL int32")
