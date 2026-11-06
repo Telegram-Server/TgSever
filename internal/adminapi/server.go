@@ -68,6 +68,8 @@ type Service interface {
 	AccountPermissions(ctx context.Context, userID int64) (admin.AccountPermissionsResult, error)
 	SetPermissionDefaults(ctx context.Context, req admin.SetPermissionDefaultsRequest) (admin.CommandResult, error)
 	PermissionDefaults(ctx context.Context) (admin.PermissionDefaultsResult, error)
+	SetOnboardingDefaults(ctx context.Context, req admin.SetOnboardingDefaultsRequest) (admin.CommandResult, error)
+	OnboardingDefaults(ctx context.Context) (admin.OnboardingDefaultsResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	MessagePhoto(ctx context.Context, photoID int64, full bool) ([]byte, string, bool, error)
@@ -305,6 +307,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/accounts/{id}/permissions", s.authenticated(s.handleAccountPermissions))
 	mux.HandleFunc("POST /v1/permission-defaults/set", s.authenticated(s.handleSetPermissionDefaults))
 	mux.HandleFunc("GET /v1/permission-defaults", s.authenticated(s.handlePermissionDefaults))
+	mux.HandleFunc("POST /v1/onboarding-defaults/set", s.authenticated(s.handleSetOnboardingDefaults))
+	mux.HandleFunc("GET /v1/onboarding-defaults", s.authenticated(s.handleOnboardingDefaults))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
@@ -854,6 +858,26 @@ func (s *Server) handleSetPermissionDefaults(w http.ResponseWriter, r *http.Requ
 	}
 	result, err := s.svc.SetPermissionDefaults(r.Context(), req)
 	writeCommandResult(w, result, err)
+}
+
+// handleSetOnboardingDefaults 设置新账号入驻模板（onboarding_defaults.set）：两份名单整体替换。
+func (s *Server) handleSetOnboardingDefaults(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetOnboardingDefaultsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetOnboardingDefaults(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// handleOnboardingDefaults 读取新账号入驻模板；没有模板时返回 found=false 与空名单。
+func (s *Server) handleOnboardingDefaults(w http.ResponseWriter, r *http.Request) {
+	result, err := s.svc.OnboardingDefaults(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handlePermissionDefaults 读取默认权限模板；没有模板时返回 found=false 与不受控制的默认值。

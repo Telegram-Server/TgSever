@@ -59,6 +59,35 @@ type AccountFreezeNotification struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type AccountOnboardingDefault struct {
+	Singleton bool
+	UpdatedAt pgtype.Timestamptz
+	CommandID string
+}
+
+type AccountOnboardingDefaultChannel struct {
+	ChannelID int64
+	Position  int32
+}
+
+type AccountOnboardingDefaultContact struct {
+	ContactUserID int64
+	Position      int32
+	Mutual        bool
+}
+
+type AccountOnboardingJob struct {
+	UserID         int64
+	ContactUserIds []int64
+	ContactMutual  []bool
+	ChannelIds     []int64
+	Status         string
+	Attempts       int32
+	LastError      string
+	AvailableAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
 type AccountPassword struct {
 	UserID                  int64
 	HasRecovery             bool

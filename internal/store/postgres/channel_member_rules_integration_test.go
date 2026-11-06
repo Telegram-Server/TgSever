@@ -50,6 +50,12 @@ func TestChannelAdminProtectionPostgres(t *testing.T) {
 	storetest.ChannelAdminProtection(t, NewChannelStore(pool), [4]int64{ids[0], ids[1], ids[2], ids[3]})
 }
 
+func TestChannelAdmitSkipsJoinRequestPostgres(t *testing.T) {
+	pool := testPool(t)
+	ids := memberRulesUsers(t, pool, 3)
+	storetest.ChannelAdmitSkipsJoinRequest(t, NewChannelStore(pool), [3]int64{ids[0], ids[1], ids[2]})
+}
+
 func TestChannelHideAllJoinRequestsExcludePostgres(t *testing.T) {
 	pool := testPool(t)
 	ids := memberRulesUsers(t, pool, 3)

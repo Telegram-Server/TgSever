@@ -127,7 +127,7 @@ func (s *ChannelStore) FutureCreatorAfterLeave(_ context.Context, channelID, use
 	return s.futureCreatorAfterLeaveLocked(channelID, userID)
 }
 
-func (s *ChannelStore) joinChannel(channelID, userID int64, date int) (domain.CreateChannelResult, error) {
+func (s *ChannelStore) joinChannel(channelID, userID int64, date int, honorJoinRequest bool) (domain.CreateChannelResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	channel, ok := s.channels[channelID]
@@ -146,7 +146,7 @@ func (s *ChannelStore) joinChannel(channelID, userID int64, date int) (domain.Cr
 			return domain.CreateChannelResult{}, domain.ErrChannelUserBanned
 		}
 	}
-	if channel.JoinRequest {
+	if channel.JoinRequest && honorJoinRequest {
 		if err := s.recordPublicJoinRequestLocked(channel, userID, date); err != nil {
 			return domain.CreateChannelResult{}, err
 		}

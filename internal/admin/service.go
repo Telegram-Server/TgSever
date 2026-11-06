@@ -586,6 +586,8 @@ type Dependencies struct {
 	PermissionsNotifier AccountPermissionsNotifier
 	// PermissionDefaults 是默认权限模板的业务模块（见 permission_defaults.go）。
 	PermissionDefaults PermissionDefaultsService
+	// OnboardingDefaults 是新账号入驻模板的业务模块（见 onboarding_defaults.go）。
+	OnboardingDefaults OnboardingDefaultsService
 	// AccountCreation 是原子建号操作：account.create 不带登录密码但要写权限时，用它在同一个
 	// 事务里建号并写入权限（见 create_account_permissions.go）。
 	AccountCreation store.AccountCreationStore
@@ -649,6 +651,7 @@ type Service struct {
 	permissions                 AccountPermissionsService
 	permissionsNotifier         AccountPermissionsNotifier
 	permissionDefaults          PermissionDefaultsService
+	onboardingDefaults          OnboardingDefaultsService
 	accountCreation             store.AccountCreationStore
 	now                         func() time.Time
 }
@@ -823,6 +826,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.PermissionDefaults != nil {
 		s.permissionDefaults = deps.PermissionDefaults
+	}
+	if deps.OnboardingDefaults != nil {
+		s.onboardingDefaults = deps.OnboardingDefaults
 	}
 	if deps.AccountCreation != nil {
 		s.accountCreation = deps.AccountCreation
@@ -2594,7 +2600,8 @@ func (s *Service) CreateAccount(ctx context.Context, req CreateAccountRequest) (
 			if err != nil {
 				return CommandResult{}, setLoginPasswordError(err)
 			}
-		} else if perms != nil {
+		} else if perms != nil || s.accountCreation != nil {
+			// 配了原子建号操作就总经它建号：建号事务里还要按入驻模板写入入驻任务。
 			if create, err = s.permissionsAccountCreator(perms); err != nil {
 				return CommandResult{}, err
 			}

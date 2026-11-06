@@ -12,6 +12,15 @@ import (
 )
 
 func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error) {
+	return s.joinChannel(ctx, channelID, userID, date, true)
+}
+
+// AdmitToChannel 是不走入群审批的 JoinChannel（新账号默认入驻）。
+func (s *ChannelStore) AdmitToChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error) {
+	return s.joinChannel(ctx, channelID, userID, date, false)
+}
+
+func (s *ChannelStore) joinChannel(ctx context.Context, channelID, userID int64, date int, honorJoinRequest bool) (domain.CreateChannelResult, error) {
 	if channelID == 0 || userID == 0 {
 		return domain.CreateChannelResult{}, domain.ErrChannelInvalid
 	}
@@ -49,7 +58,7 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	if date == 0 {
 		date = nowUnix()
 	}
-	if channel.JoinRequest {
+	if channel.JoinRequest && honorJoinRequest {
 		if err := s.recordPublicJoinRequestTx(ctx, tx, channel, userID, date); err != nil {
 			return domain.CreateChannelResult{}, err
 		}

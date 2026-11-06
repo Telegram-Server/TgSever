@@ -34,10 +34,19 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 }
 
 // JoinChannel joins a user and records the qts update when the user is a bot.
-func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error) {
+func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error) {
+	return s.join(ctx, channelID, userID, date, true)
+}
+
+// AdmitToChannel 是不走入群审批的 JoinChannel（新账号默认入驻）。
+func (s *ChannelStore) AdmitToChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error) {
+	return s.join(ctx, channelID, userID, date, false)
+}
+
+func (s *ChannelStore) join(_ context.Context, channelID, userID int64, date int, honorJoinRequest bool) (domain.CreateChannelResult, error) {
 	s.botUpdateMu.Lock()
 	defer s.botUpdateMu.Unlock()
-	res, err := s.joinChannel(channelID, userID, date)
+	res, err := s.joinChannel(channelID, userID, date, honorJoinRequest)
 	if err != nil {
 		return res, err
 	}

@@ -13,7 +13,8 @@ import (
 
 // AccountCreationStore 是 store.AccountCreationStore 的 postgres 实现（#159）：建号（createUserTx）、
 // 写登录密码（upsertLoginPassword）、写权限与白名单（writeAccountPermissionsTx，同一事务里 bump
-// read model account_permissions，提交后 NOTIFY）在一个事务里完成，任何一步失败整体回滚。
+// read model account_permissions，提交后 NOTIFY）、按当时的入驻模板写入入驻任务
+// （enqueueOnboardingJobTx）在一个事务里完成，任何一步失败整体回滚。
 type AccountCreationStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
@@ -56,7 +57,7 @@ func (s *AccountCreationStore) CreateAccount(ctx context.Context, u domain.User,
 				return err
 			}
 		}
-		return nil
+		return enqueueOnboardingJobTx(ctx, qtx, created.ID)
 	})
 	if err != nil {
 		return domain.User{}, err

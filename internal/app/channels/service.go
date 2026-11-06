@@ -388,6 +388,21 @@ func (s *Service) JoinChannel(ctx context.Context, userID, channelID int64, date
 	return res, err
 }
 
+// AdmitToChannel 是系统动作（新账号默认入驻）的直接加入：开启了入群审批的群也直接加入。
+// 缓存失效与 JoinChannel 相同。
+func (s *Service) AdmitToChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error) {
+	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
+		return domain.CreateChannelResult{}, domain.ErrChannelInvalid
+	}
+	res, err := s.channels.AdmitToChannel(ctx, channelID, userID, date)
+	if err == nil {
+		s.invalidateActiveChannelIDs(userID)
+		s.participantCache.invalidateChannel(channelID)
+		s.invalidateActiveBotMemberIDs(channelID)
+	}
+	return res, err
+}
+
 // LeaveChannel leaves current user from a channel/supergroup.
 func (s *Service) LeaveChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {

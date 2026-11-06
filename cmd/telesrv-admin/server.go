@@ -96,6 +96,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/accounts/{id}/device-bindings", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleDeviceBindingsAPI)))
 	mux.Handle("GET /api/accounts/{id}/permissions", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountPermissionsAPI)))
 	mux.Handle("GET /api/permission-defaults", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handlePermissionDefaultsAPI)))
+	mux.Handle("GET /api/onboarding-defaults", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleOnboardingDefaultsAPI)))
 	mux.Handle("GET /api/channels", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelDetailAPI)))
 	mux.Handle("GET /api/channels/{id}/avatar", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelAvatarAPI)))
@@ -172,6 +173,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-device-limit", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetDeviceLimitAPI)))
 	mux.Handle("POST /api/actions/set-permissions", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPermissionsAPI)))
 	mux.Handle("POST /api/actions/set-permission-defaults", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPermissionDefaultsAPI)))
+	mux.Handle("POST /api/actions/set-onboarding-defaults", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetOnboardingDefaultsAPI)))
 	mux.Handle("POST /api/actions/unbind-device", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleUnbindDeviceAPI)))
 	mux.Handle("POST /api/actions/set-push-device-enabled", s.scopedRoute(permissionPushManage, http.HandlerFunc(s.handleSetPushDeviceEnabledAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
@@ -1377,6 +1379,81 @@ func (s *server) handleSetPermissionDefaultsAPI(w http.ResponseWriter, r *http.R
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/permission-defaults/set", req)
 	writeCommandResultAPI(w, result, err)
+}
+
+type setOnboardingDefaultsAPIRequest struct {
+	CommandID  string                           `json:"command_id"`
+	Reason     string                           `json:"reason"`
+	Confirm    bool                             `json:"confirm"`
+	Contacts   []admin.OnboardingContactSetting `json:"contacts"`
+	ChannelIDs []int64                          `json:"channel_ids"`
+}
+
+// handleSetOnboardingDefaultsAPI 设置新账号入驻模板，转发给服务端 POST /v1/onboarding-defaults/set。
+// 两份名单整体替换；只影响之后新建的账号。
+func (s *server) handleSetOnboardingDefaultsAPI(w http.ResponseWriter, r *http.Request) {
+	var body setOnboardingDefaultsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetOnboardingDefaultsRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-onboarding-defaults"),
+		Contacts:    body.Contacts,
+		ChannelIDs:  body.ChannelIDs,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/onboarding-defaults/set", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+// handleOnboardingDefaultsAPI 代理新账号入驻模板，补上 contact_members（顺序同 contacts）与
+// channels（顺序同 channel_ids）的展示信息，不缓存。
+func (s *server) handleOnboardingDefaultsAPI(w http.ResponseWriter, r *http.Request) {
+	raw, ok := s.getAdminJSON(w, r, "/v1/onboarding-defaults", 1<<20)
+	if !ok {
+		return
+	}
+	var setting map[string]json.RawMessage
+	var lists struct {
+		Contacts   []admin.OnboardingContactSetting `json:"contacts"`
+		ChannelIDs []int64                          `json:"channel_ids"`
+	}
+	if json.Unmarshal(raw, &setting) != nil || json.Unmarshal(raw, &lists) != nil {
+		writeAPIError(w, http.StatusBadGateway, "invalid admin api response")
+		return
+	}
+	userIDs := make([]int64, len(lists.Contacts))
+	for i, c := range lists.Contacts {
+		userIDs[i] = c.UserID
+	}
+	members, channels := []WhitelistMember{}, []ChannelSummary{}
+	if len(userIDs)+len(lists.ChannelIDs) > 0 {
+		if s.read == nil {
+			writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+			return
+		}
+		var err error
+		if members, err = s.read.WhitelistMembers(r.Context(), userIDs); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if channels, err = s.read.ChannelSummaries(r.Context(), lists.ChannelIDs); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	var err error
+	if setting["contact_members"], err = json.Marshal(members); err == nil {
+		setting["channels"], err = json.Marshal(channels)
+	}
+	var out []byte
+	if err == nil {
+		out, err = json.Marshal(setting)
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeRawJSON(w, out, "no-store")
 }
 
 type unbindDeviceAPIRequest struct {

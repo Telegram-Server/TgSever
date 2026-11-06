@@ -96,7 +96,9 @@ export const navSections: NavSection[] = [
       { path: "/accounts/shared-devices", labelKey: "layout.sharedDevices", permission: permissionAccountsRead },
       // Saving the template needs accounts.manage, which widens this tab rather
       // than gating a route of its own.
-      { path: "/accounts/permission-defaults", labelKey: "layout.permissionDefaults", permission: permissionAccountsRead }
+      { path: "/accounts/permission-defaults", labelKey: "layout.permissionDefaults", permission: permissionAccountsRead },
+      // Same as above: saving the onboarding template needs accounts.manage.
+      { path: "/accounts/onboarding", labelKey: "layout.onboardingDefaults", permission: permissionAccountsRead }
     ]
   },
   {

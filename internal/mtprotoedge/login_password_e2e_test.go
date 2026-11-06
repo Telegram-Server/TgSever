@@ -28,12 +28,14 @@ import (
 
 	"telesrv/internal/app/account"
 	"telesrv/internal/app/auth"
+	channelsapp "telesrv/internal/app/channels"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/dialogs"
 	guestsignupapp "telesrv/internal/app/guestsignup"
 	"telesrv/internal/app/help"
 	loginpasswordapp "telesrv/internal/app/loginpassword"
 	messageapp "telesrv/internal/app/messages"
+	onboardingapp "telesrv/internal/app/onboarding"
 	permissionsapp "telesrv/internal/app/permissions"
 	"telesrv/internal/app/updates"
 	"telesrv/internal/app/users"
@@ -126,6 +128,10 @@ type loginPasswordServer struct {
 	permissions *permissionsapp.Service
 	// accountPermissions 是权限模块底下的内存 store，也存默认权限模板，供测试直接写入模板（#163）。
 	accountPermissions *memory.AccountPermissionsStore
+	// onboarding 是新账号入驻的内存 store（模板与任务），所有建号路径都经它写入入驻任务；
+	// channels 是服务端的频道 store。供入驻端到端测试直接写模板、建群、确认入群。
+	onboarding *memory.OnboardingStore
+	channels   *memory.ChannelStore
 }
 
 // tombstoningUserStore 在内存 UserStore 外面加一层"已注销"标记。内存 store 没有账号
@@ -190,18 +196,26 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 	authorizations := memory.NewAuthorizationStore()
 	// 员工权限与默认权限模板共用一个内存 store；验证码注册经原子建号操作套用模板（#163）。
 	accountPermissions := memory.NewAccountPermissionsStore(baseUsers)
+	// 所有建号操作都接上入驻 store：建号时按模板写入入驻任务，由入驻调度器执行（与生产相同）。
+	onboardingStore := memory.NewOnboardingStore()
+	channelStore := memory.NewChannelStore()
+	channelService := channelsapp.NewService(channelStore)
+	contactService := contacts.NewService(memory.NewContactStore(), userStore)
+	newAccountCreation := func(passwords *memory.LoginPasswordStore) *memory.AccountCreationStore {
+		return memory.NewAccountCreationStore(baseUsers, passwords, accountPermissions).WithOnboarding(onboardingStore)
+	}
 	authService := auth.NewService(userStore, authorizations, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), loginPasswordTestCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore)),
 		auth.WithPasswords(cloudPasswords),
 		auth.WithSignUpAllowed(auth.StaticSignUpAllowed(!opts.signUpDisabled)),
 		auth.WithCodeLoginAllowed(auth.StaticCodeLoginAllowed(!opts.codeLoginDisabled)),
-		auth.WithAccountCreation(memory.NewAccountCreationStore(baseUsers, nil, accountPermissions)),
+		auth.WithAccountCreation(newAccountCreation(nil)),
 		auth.WithSelfSignUpPermissionDefaults(accountPermissions))
 	limiter := newCountingRateLimiter()
 	loginPasswordStore := memory.NewLoginPasswordStore(baseUsers)
 	loginPasswords := loginpasswordapp.NewService(userStore, loginPasswordStore,
-		memory.NewAccountCreationStore(baseUsers, loginPasswordStore, accountPermissions),
+		newAccountCreation(loginPasswordStore),
 		memory.NewLoginPasswordChallengeStore(nil, opts.challengeLimits...), authService,
 		loginpasswordapp.WithEnabled(opts.enabled), opts.rateLimits.userRateLimit(limiter),
 		loginpasswordapp.WithResetWindow(opts.resetWindow),
@@ -217,7 +231,7 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		Settings:       guestLogin,
 		Users:          userStore,
 		Guests:         guestAccounts,
-		Accounts:       memory.NewAccountCreationStore(baseUsers, loginPasswordStore, accountPermissions).WithGuests(guestAccounts),
+		Accounts:       newAccountCreation(loginPasswordStore).WithGuests(guestAccounts),
 		LoginPasswords: loginPasswordStore,
 		Passwords:      cloudPasswords,
 		Flows:          authService,
@@ -238,9 +252,11 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 			})),
 		Users:    users.NewService(userStore),
 		Updates:  updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
-		Contacts: contacts.NewService(memory.NewContactStore()),
-		Dialogs:  dialogs.NewService(dialogStore),
-		Messages: messageapp.NewService(messageStore, dialogStore),
+		Contacts:   contactService,
+		Channels:   channelService,
+		Onboarding: onboardingapp.NewService(onboardingStore, userStore, contactService, channelService),
+		Dialogs:    dialogs.NewService(dialogStore),
+		Messages:   messageapp.NewService(messageStore, dialogStore),
 	}
 	rpcCfg := rpc.Config{DC: loginPasswordTestDC, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}
 	opts.rateLimits.apply(&rpcCfg, &deps, limiter)
@@ -257,6 +273,11 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		rpc.NewOutboxDispatcher(updateEventStore, memory.NewDispatchOutboxStore(updateEventStore), activeSessions, zaptest.NewLogger(t).Named("outbox"),
 			rpc.WithOutboxInterval(10*time.Millisecond), rpc.WithOutboxUpdateBuilder(router.BuildOutboxUpdates)).Run(ctx)
 	}()
+	onboardingDone := make(chan struct{})
+	go func() {
+		defer close(onboardingDone)
+		rpc.NewOnboardingDispatcher(router, zaptest.NewLogger(t).Named("onboarding")).Run(ctx)
+	}()
 	// 子测试是并行的，会在顶层测试函数返回之后才运行；用 Cleanup 而不是 defer，
 	// 保证服务端在所有子测试结束后才关闭。
 	t.Cleanup(func() {
@@ -265,8 +286,9 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 			t.Errorf("serve: %v", err)
 		}
 		<-outboxDone
+		<-onboardingDone
 	})
-	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords, authorizations: authorizations, authKeys: authKeyStore, router: router, permissions: permissionsService, accountPermissions: accountPermissions}
+	return &loginPasswordServer{rsaKey: rsaKey, addr: tcpAddr, ctx: ctx, users: userStore, loginPasswords: loginPasswordStore, auth: authService, loginPasswordService: loginPasswords, authorizations: authorizations, authKeys: authKeyStore, router: router, permissions: permissionsService, accountPermissions: accountPermissions, onboarding: onboardingStore, channels: channelStore}
 }
 
 // run 用一个全新的 auth key 连上服务端执行 fn。fn 里的断言失败要 return error，

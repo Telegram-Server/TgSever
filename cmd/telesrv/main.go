@@ -53,6 +53,7 @@ import (
 	"telesrv/internal/app/maintenance"
 	messageapp "telesrv/internal/app/messages"
 	moderationapp "telesrv/internal/app/moderation"
+	onboardingapp "telesrv/internal/app/onboarding"
 	passkeyapp "telesrv/internal/app/passkey"
 	permissionsapp "telesrv/internal/app/permissions"
 	phoneapp "telesrv/internal/app/phone"
@@ -1729,7 +1730,10 @@ func run(logger *zap.Logger) error {
 		dialogStore,
 		newTranslationOptions(cfg, rateLimiter, logger)...,
 	)
+	// 原子建号操作在建号事务里按入驻模板写入入驻任务；入驻服务读写模板、执行任务（由
+	// rpc.OnboardingDispatcher 调度并推送）。
 	accountCreationStore := postgres.NewAccountCreationStore(pool)
+	onboardingService := onboardingapp.NewService(postgres.NewOnboardingStore(pool), userStore, contactsService, channelsService)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyGetBatchStore, tempAuthKeyStore, cfg.DevAuthCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(messageStore),
@@ -2116,6 +2120,7 @@ func run(logger *zap.Logger) error {
 		TelegramLogin:                telegramLoginRPCDependency(telegramLoginService),
 		Updates:                      updatesService,
 		BootstrapUpdates:             bootstrapUpdateStore,
+		Onboarding:                   onboardingService,
 		BotUpdates:                   botUpdateStore,
 		BotCallbacks:                 botCallbackStore,
 		PushDevices:                  pushDeviceStore,
@@ -2240,6 +2245,8 @@ func run(logger *zap.Logger) error {
 	adminService.Configure(adminapp.Dependencies{Permissions: permissionsService, PermissionsNotifier: router})
 	// 后台设置默认权限模板（permission_defaults.set，#161）：只影响之后新建的账号。
 	adminService.Configure(adminapp.Dependencies{PermissionDefaults: permissionDefaultsService})
+	// 后台设置新账号入驻模板（onboarding_defaults.set）：只影响之后新建的账号。
+	adminService.Configure(adminapp.Dependencies{OnboardingDefaults: onboardingService})
 	// 后台建号（account.create，#162）：给出的权限或模板快照与账号在同一个事务里写入。
 	adminService.Configure(adminapp.Dependencies{AccountCreation: accountCreationStore})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
@@ -2379,6 +2386,8 @@ func run(logger *zap.Logger) error {
 		rpc.WithOutboxDeliveryObserver(pushObserver),
 	).Run(ctx)
 	go rpc.NewBootstrapUpdateDispatcher(router, logger.Named("rpc").Named("bootstrap")).Run(ctx)
+	// 新账号默认入驻：执行建号时写入的入驻任务（加默认联系人、加入默认的群和频道）并推送。
+	go rpc.NewOnboardingDispatcher(router, logger.Named("rpc").Named("onboarding")).Run(ctx)
 	go rpc.NewWelcomeDeliveryDispatcher(router, welcomeMessageStore, logger.Named("rpc").Named("welcome-delivery")).Run(ctx)
 	go rpc.NewScheduledDispatcher(router, logger.Named("rpc").Named("scheduled")).Run(ctx)
 	go rpc.NewSuggestedPostDispatcher(router, logger.Named("rpc").Named("suggested-post")).Run(ctx)

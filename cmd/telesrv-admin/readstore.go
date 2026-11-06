@@ -334,6 +334,42 @@ func (s *readStore) WhitelistMembers(ctx context.Context, ids []int64) ([]Whitel
 	return out, nil
 }
 
+// ChannelSummary 是群或频道的展示信息（入驻模板页用）。Found=false 表示没有这个 id。
+type ChannelSummary struct {
+	ID        int64  `json:"id"`
+	Found     bool   `json:"found"`
+	Title     string `json:"title"`
+	Username  string `json:"username"`
+	Broadcast bool   `json:"broadcast"`
+	Megagroup bool   `json:"megagroup"`
+	Deleted   bool   `json:"deleted"`
+}
+
+// ChannelSummaries 一次查询读出一组群和频道的展示信息，按 ids 的顺序返回，每个 id 一项。
+func (s *readStore) ChannelSummaries(ctx context.Context, ids []int64) ([]ChannelSummary, error) {
+	out := make([]ChannelSummary, len(ids))
+	for i, id := range ids {
+		out[i] = ChannelSummary{ID: id}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := sqlcgen.New(s.pool).AdminChannelSummaries(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("channel summaries: %w", err)
+	}
+	found := make(map[int64]ChannelSummary, len(rows))
+	for _, r := range rows {
+		found[r.ID] = ChannelSummary{ID: r.ID, Found: true, Title: r.Title, Username: r.DisplayUsername, Broadcast: r.Broadcast, Megagroup: r.Megagroup, Deleted: r.Deleted}
+	}
+	for i, id := range ids {
+		if c, ok := found[id]; ok {
+			out[i] = c
+		}
+	}
+	return out, nil
+}
+
 // AccountUsername is one collectible (Fragment-style) username a peer holds.
 //
 // Active mirrors the username#b4073647 flag: an inactive collectible is still

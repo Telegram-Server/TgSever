@@ -29,6 +29,9 @@ type ChannelStore interface {
 	FutureCreatorAfterLeave(ctx context.Context, channelID, userID int64) (domain.ChannelMember, error)
 	InviteToChannel(ctx context.Context, channelID, inviterUserID int64, userIDs []int64, date int) (domain.CreateChannelResult, error)
 	JoinChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error)
+	// AdmitToChannel 与 JoinChannel 相同，只是开启了入群审批的群也直接加入、不留入群申请。
+	// 供系统动作（新账号默认入驻）使用，不经过任何用户请求。
+	AdmitToChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error)
 	LeaveChannel(ctx context.Context, channelID, userID int64, date int) (domain.CreateChannelResult, error)
 	EditChannelTitle(ctx context.Context, req domain.EditChannelTitleRequest) (domain.EditChannelTitleResult, error)
 	SetChannelWallpaper(ctx context.Context, req domain.SetChannelWallpaperRequest) (domain.SetChannelWallpaperResult, error)

@@ -1196,6 +1196,8 @@ type Deps struct {
 	TelegramLogin                TelegramLoginService
 	Updates                      UpdatesService
 	BootstrapUpdates             store.BootstrapUpdateJobStore
+	// Onboarding 执行新账号默认入驻任务（OnboardingDispatcher 用）；为 nil 时调度器不运行。
+	Onboarding OnboardingService
 	// BotUpdates 是 bot qts 序列（#145）：bot 账号 getState/getDifference 的 qts 来源。
 	BotUpdates   BotUpdatesService
 	BotCallbacks store.BotCallbackRegistryStore

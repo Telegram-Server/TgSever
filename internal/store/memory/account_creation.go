@@ -12,7 +12,7 @@ import (
 // AccountCreationStore 是 store.AccountCreationStore 的内存实现（#159）。passwords 与
 // permissions 必须和 users 共享同一份账号数据，可以为 nil（此时对应的附加项被拒绝）。
 //
-// 加锁顺序固定为 users.mu → passwords.mu → permissions.mu，与注销（users.mu → loginPasswords.mu，
+// 加锁顺序固定为 users.mu → passwords.mu → permissions.mu（→ guests.mu → onboarding.mu），与注销（users.mu → loginPasswords.mu，
 // 放开后再拿 permissions.mu）和各 store 自己的路径都不反向嵌套。所有校验在改动任何状态之前
 // 完成，之后的写入本身不会失败，所以不会留下只建了一半的账号。
 type AccountCreationStore struct {
@@ -20,6 +20,7 @@ type AccountCreationStore struct {
 	passwords   *LoginPasswordStore
 	permissions *AccountPermissionsStore
 	guests      *GuestAccountStore
+	onboarding  *OnboardingStore
 }
 
 var _ store.AccountCreationStore = (*AccountCreationStore)(nil)
@@ -33,6 +34,13 @@ func NewAccountCreationStore(users *UserStore, passwords *LoginPasswordStore, pe
 // permissions.mu 之后。
 func (s *AccountCreationStore) WithGuests(guests *GuestAccountStore) *AccountCreationStore {
 	s.guests = guests
+	return s
+}
+
+// WithOnboarding 接上入驻 store，之后建号时按当时的模板写入入驻任务。onboarding.mu 排在
+// guests.mu 之后。
+func (s *AccountCreationStore) WithOnboarding(onboarding *OnboardingStore) *AccountCreationStore {
+	s.onboarding = onboarding
 	return s
 }
 
@@ -84,6 +92,10 @@ func (s *AccountCreationStore) CreateAccount(_ context.Context, u domain.User, e
 			return domain.User{}, err
 		}
 	}
+	if s.onboarding != nil {
+		s.onboarding.mu.Lock()
+		defer s.onboarding.mu.Unlock()
+	}
 
 	created, err := s.users.createLocked(u)
 	if err != nil {
@@ -98,6 +110,9 @@ func (s *AccountCreationStore) CreateAccount(_ context.Context, u domain.User, e
 	if extras.Permissions != nil {
 		perms.UserID = created.ID
 		s.permissions.writeLocked(perms)
+	}
+	if s.onboarding != nil {
+		s.onboarding.enqueueLocked(created.ID, time.Now().UTC())
 	}
 	return created, nil
 }

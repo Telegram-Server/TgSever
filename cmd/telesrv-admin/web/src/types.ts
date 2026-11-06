@@ -110,6 +110,34 @@ export type PermissionDefaults = Omit<AccountPermissions, "user_id"> & {
   apply_to_self_signup: boolean;
 };
 
+// OnboardingContactSetting is one default contact of the onboarding template;
+// mutual adds the new account to the contact's address book as well.
+export type OnboardingContactSetting = { user_id: number; mutual: boolean };
+
+// ChannelSummary mirrors the panel's ChannelSummary: how one default group or
+// channel is shown. found=false means the id no longer exists.
+export type ChannelSummary = {
+  id: number;
+  found: boolean;
+  title: string;
+  username: string;
+  broadcast: boolean;
+  megagroup: boolean;
+  deleted: boolean;
+};
+
+// OnboardingDefaults mirrors admin.OnboardingDefaultsResult plus the panel's
+// display lists: contact_members follows contacts, channels follows channel_ids.
+export type OnboardingDefaults = {
+  found: boolean;
+  contacts: OnboardingContactSetting[];
+  channel_ids: number[];
+  contact_members: WhitelistMember[];
+  channels: ChannelSummary[];
+  updated_at?: string;
+  command_id?: string;
+};
+
 // WhitelistMember mirrors the panel's WhitelistMember: how one send-whitelist
 // entry is shown. found=false means the account no longer exists; only id is set.
 export type WhitelistMember = {

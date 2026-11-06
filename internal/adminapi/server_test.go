@@ -882,6 +882,14 @@ func (fakeService) SetPermissionDefaults(_ context.Context, req admin.SetPermiss
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) SetOnboardingDefaults(_ context.Context, req admin.SetOnboardingDefaultsRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed"}, nil
+}
+
+func (fakeService) OnboardingDefaults(context.Context) (admin.OnboardingDefaultsResult, error) {
+	return admin.OnboardingDefaultsResult{}, nil
+}
+
 func (fakeService) PermissionDefaults(context.Context) (admin.PermissionDefaultsResult, error) {
 	return admin.PermissionDefaultsResult{}, nil
 }
