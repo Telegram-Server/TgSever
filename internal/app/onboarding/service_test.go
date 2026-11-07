@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"telesrv/internal/app/account"
 	"telesrv/internal/app/channels"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/onboarding"
@@ -21,6 +22,9 @@ type fixture struct {
 	contacts *contacts.Service
 	channels *memory.ChannelStore
 	store    *memory.OnboardingStore
+	messages *memory.MessageStore
+	dialogs  *memory.DialogStore
+	account  *account.Service
 	phones   atomic.Int64
 }
 
@@ -30,10 +34,43 @@ func newFixture(t *testing.T) *fixture {
 		users:    memory.NewUserStore(),
 		channels: memory.NewChannelStore(),
 		store:    memory.NewOnboardingStore(),
+		dialogs:  memory.NewDialogStore(),
 	}
+	f.messages = memory.NewMessageStore(f.dialogs)
+	f.messages.AttachUpdateEventStore(memory.NewUpdateEventStore())
+	passwords := memory.NewPasswordStore()
+	f.account = account.NewService(passwords, account.WithAccountSettings(passwords))
 	f.contacts = contacts.NewService(memory.NewContactStore(), f.users)
-	f.svc = onboarding.NewService(f.store, f.users, f.contacts, channels.NewService(f.channels))
+	f.svc = onboarding.NewService(f.store, f.users, f.contacts, channels.NewService(f.channels)).
+		WithContactSignUpNotices(memory.NewContactSignUpNoticeStore(f.messages, f.users), f.account)
 	return f
+}
+
+// signUpNotice 返回 owner 与 peer 的会话和它的最后一条消息；没有会话时 found=false。
+func (f *fixture) signUpNotice(t *testing.T, owner, peer int64) (domain.Dialog, domain.Message, bool) {
+	t.Helper()
+	ctx := context.Background()
+	list, err := f.dialogs.ListByUser(ctx, owner, domain.DialogFilter{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range list.Dialogs {
+		if d.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: peer}) {
+			continue
+		}
+		msgs, err := f.messages.GetByIDs(ctx, owner, []int{d.TopMessage})
+		if err != nil || len(msgs.Messages) != 1 {
+			t.Fatalf("top message of %d/%d = %+v err=%v", owner, peer, msgs.Messages, err)
+		}
+		return d, msgs.Messages[0], true
+	}
+	return domain.Dialog{}, domain.Message{}, false
+}
+
+func isContactSignUpFrom(msg domain.Message, from int64) bool {
+	return msg.Media != nil && msg.Media.ServiceAction != nil &&
+		msg.Media.ServiceAction.Kind == domain.MessageServiceActionContactSignUp &&
+		msg.From == domain.Peer{Type: domain.PeerTypeUser, ID: from} && !msg.Out
 }
 
 func (f *fixture) nextPhone() string {

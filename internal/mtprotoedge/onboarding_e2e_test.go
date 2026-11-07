@@ -48,7 +48,7 @@ func TestOnboardingEndToEnd(t *testing.T) {
 				return fmt.Errorf("get contacts: %w", err)
 			}
 			if list, ok := res.(*tg.ContactsContacts); ok && len(list.Contacts) == 1 && list.Contacts[0].UserID == support.ID {
-				return nil
+				return assertSignUpNoticeDialog(ctx, raw, support.ID)
 			}
 			if time.Now().After(deadline) {
 				return fmt.Errorf("contacts = %+v, want the default contact %d", res, support.ID)
@@ -60,4 +60,42 @@ func TestOnboardingEndToEnd(t *testing.T) {
 	if err != nil || member.Status != domain.ChannelMemberActive {
 		t.Fatalf("newcomer in the default group = %+v err=%v, want an active member", member, err)
 	}
+}
+
+// assertSignUpNoticeDialog 要求 messages.getDialogs 里有和 contactID 的私聊，最后一条是由它发出的
+// messageActionContactSignUp，且计 1 条未读。
+func assertSignUpNoticeDialog(ctx context.Context, raw *tg.Client, contactID int64) error {
+	res, err := raw.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{OffsetPeer: &tg.InputPeerEmpty{}, Limit: 50})
+	if err != nil {
+		return fmt.Errorf("get dialogs: %w", err)
+	}
+	modified, ok := res.AsModified()
+	if !ok {
+		return fmt.Errorf("get dialogs = %T, want a dialog list", res)
+	}
+	for _, d := range modified.GetDialogs() {
+		dialog, ok := d.(*tg.Dialog)
+		if !ok {
+			continue
+		}
+		if peer, ok := dialog.Peer.(*tg.PeerUser); !ok || peer.UserID != contactID {
+			continue
+		}
+		if dialog.UnreadCount != 1 {
+			return fmt.Errorf("dialog with %d unread = %d, want 1", contactID, dialog.UnreadCount)
+		}
+		for _, m := range modified.GetMessages() {
+			service, ok := m.(*tg.MessageService)
+			if !ok || service.ID != dialog.TopMessage {
+				continue
+			}
+			from, ok := service.FromID.(*tg.PeerUser)
+			if _, isSignUp := service.Action.(*tg.MessageActionContactSignUp); !isSignUp || !ok || from.UserID != contactID || service.Out {
+				return fmt.Errorf("top message = %+v, want an incoming contact sign-up from %d", service, contactID)
+			}
+			return nil
+		}
+		return fmt.Errorf("top message %d of the dialog with %d is not a service message", dialog.TopMessage, contactID)
+	}
+	return fmt.Errorf("get dialogs has no chat with the default contact %d", contactID)
 }

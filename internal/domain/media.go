@@ -639,6 +639,9 @@ const (
 	// MessageServiceActionPayment is messageActionPaymentSentMe: a payer settled
 	// an invoice of ours.
 	MessageServiceActionPayment MessageServiceActionKind = "payment_sent_me"
+	// MessageServiceActionContactSignUp 映射 messageActionContactSignUp（"XX 加入了 …"）：
+	// 新账号默认入驻在私聊里写给一方的系统提示，没有载荷。
+	MessageServiceActionContactSignUp MessageServiceActionKind = "contact_sign_up"
 )
 
 // MessagePhoneCallAction 是 messageActionPhoneCall 的协议中立载荷。

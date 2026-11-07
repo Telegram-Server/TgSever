@@ -41,6 +41,9 @@ type Service struct {
 	now      func() time.Time
 	// retryBackoff 见 WithRetryBackoff。
 	retryBackoff time.Duration
+	// notices 与 accountSettings 见 WithContactSignUpNotices；nil 时不写服务消息。
+	notices         store.ContactSignUpNoticeStore
+	accountSettings AccountSettings
 }
 
 // NewService 创建入驻服务。
@@ -100,12 +103,25 @@ func (s *Service) Execute(ctx context.Context, job domain.OnboardingJob) (Result
 			return res, err
 		}
 		res.Contacts = append(res.Contacts, added)
+		// 机器人只进通讯录：它的会话有自己的"开始"流程，不写"加入了"。
+		if !target.Bot {
+			if err := s.signUpNotice(ctx, newcomer.ID, target.ID, false); err != nil {
+				return res, err
+			}
+		}
 		if c.Mutual {
 			back, err := s.addContact(ctx, target.ID, newcomer)
 			if err != nil {
 				return res, err
 			}
 			res.Contacts = append(res.Contacts, back)
+			silent, err := s.contactSignUpSilent(ctx, target.ID)
+			if err != nil {
+				return res, err
+			}
+			if err := s.signUpNotice(ctx, target.ID, newcomer.ID, silent); err != nil {
+				return res, err
+			}
 		}
 	}
 	for _, channelID := range job.ChannelIDs {

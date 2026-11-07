@@ -1733,7 +1733,10 @@ func run(logger *zap.Logger) error {
 	// 原子建号操作在建号事务里按入驻模板写入入驻任务；入驻服务读写模板、执行任务（由
 	// rpc.OnboardingDispatcher 调度并推送）。
 	accountCreationStore := postgres.NewAccountCreationStore(pool)
-	onboardingService := onboardingapp.NewService(postgres.NewOnboardingStore(pool), userStore, contactsService, channelsService)
+	// 入驻时给每个非 bot 默认联系人写 messageActionContactSignUp（"XX 加入了 …"），让它出现在
+	// 新账号的聊天列表里；双向联系人那边按其"联系人加入时通知"设置决定是否静音。
+	onboardingService := onboardingapp.NewService(postgres.NewOnboardingStore(pool), userStore, contactsService, channelsService).
+		WithContactSignUpNotices(messageStore, accountService)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyGetBatchStore, tempAuthKeyStore, cfg.DevAuthCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(messageStore),

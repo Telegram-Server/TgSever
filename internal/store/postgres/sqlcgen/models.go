@@ -1418,6 +1418,13 @@ type ContactBlock struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ContactSignUpNotice struct {
+	OwnerUserID int64
+	FromUserID  int64
+	BoxID       int32
+	CreatedAt   pgtype.Timestamptz
+}
+
 type Country struct {
 	Iso2        string
 	DefaultName string

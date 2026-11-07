@@ -237,13 +237,14 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 		Flows:          authService,
 	})
 	permissionsService := permissionsapp.NewService(accountPermissions, userStore)
+	accountService := account.NewService(cloudPasswords, account.WithUsers(userStore), account.WithAccountLifecycle(lifecycle), account.WithAccountSettings(cloudPasswords))
 	deps := rpc.Deps{
 		Permissions:   permissionsService,
 		Auth:          authService,
 		LoginPassword: loginPasswords,
 		GuestSignUp:   guestSignUp,
 		Sessions:      activeSessions,
-		Account:       account.NewService(cloudPasswords, account.WithUsers(userStore), account.WithAccountLifecycle(lifecycle)),
+		Account:       accountService,
 		Help: help.NewService(helpStore, helpStore, help.WithPasswordLogin(opts.enabled), help.WithSignUpAllowed(authService.SignUpAllowed),
 			help.WithCodeLoginAllowed(authService.CodeLoginAllowed), help.WithAccountPermissionsProvider(permissionsService),
 			help.WithGuestLoginAllowed(func(ctx context.Context) (bool, error) {
@@ -252,11 +253,12 @@ func startLoginPasswordServer(t *testing.T, opts loginPasswordServerOptions) *lo
 			})),
 		Users:    users.NewService(userStore),
 		Updates:  updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
-		Contacts:   contactService,
-		Channels:   channelService,
-		Onboarding: onboardingapp.NewService(onboardingStore, userStore, contactService, channelService),
-		Dialogs:    dialogs.NewService(dialogStore),
-		Messages:   messageapp.NewService(messageStore, dialogStore),
+		Contacts: contactService,
+		Channels: channelService,
+		Onboarding: onboardingapp.NewService(onboardingStore, userStore, contactService, channelService).
+			WithContactSignUpNotices(memory.NewContactSignUpNoticeStore(messageStore, baseUsers), accountService),
+		Dialogs:  dialogs.NewService(dialogStore),
+		Messages: messageapp.NewService(messageStore, dialogStore),
 	}
 	rpcCfg := rpc.Config{DC: loginPasswordTestDC, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}
 	opts.rateLimits.apply(&rpcCfg, &deps, limiter)

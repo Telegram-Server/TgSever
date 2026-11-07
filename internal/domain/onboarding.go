@@ -58,6 +58,16 @@ func (d OnboardingDefaults) Clone() OnboardingDefaults {
 	return d
 }
 
+// ContactSignUpNotice 是写给 OwnerUserID 一方的 messageActionContactSignUp 服务消息：在
+// Owner 与 From 的私聊里，以 From 为发送者，显示为"From 加入了 …"。只写 Owner 一侧，From
+// 那边什么都不出现。Silent=true 时客户端不弹通知（Owner 关了"联系人加入时通知"）。
+type ContactSignUpNotice struct {
+	OwnerUserID int64
+	FromUserID  int64
+	Silent      bool
+	Date        int
+}
+
 // OnboardingJob 是一个新账号的入驻任务：建号时从模板复制的名单，以及执行情况。
 type OnboardingJob struct {
 	UserID     int64

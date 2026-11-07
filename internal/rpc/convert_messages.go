@@ -222,6 +222,8 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 			}
 		}
 		return action
+	case domain.MessageServiceActionContactSignUp:
+		return &tg.MessageActionContactSignUp{}
 	case domain.MessageServiceActionBotAllowed:
 		allowed := m.ServiceAction.BotAllowed
 		if allowed == nil {
