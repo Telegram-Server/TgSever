@@ -588,6 +588,8 @@ type Dependencies struct {
 	PermissionDefaults PermissionDefaultsService
 	// OnboardingDefaults 是新账号入驻模板的业务模块（见 onboarding_defaults.go）。
 	OnboardingDefaults OnboardingDefaultsService
+	// ChannelImports 是频道导入的业务模块（见 channel_import.go）。
+	ChannelImports ChannelImportService
 	// AccountCreation 是原子建号操作：account.create 不带登录密码但要写权限时，用它在同一个
 	// 事务里建号并写入权限（见 create_account_permissions.go）。
 	AccountCreation store.AccountCreationStore
@@ -652,6 +654,7 @@ type Service struct {
 	permissionsNotifier         AccountPermissionsNotifier
 	permissionDefaults          PermissionDefaultsService
 	onboardingDefaults          OnboardingDefaultsService
+	channelImports              ChannelImportService
 	accountCreation             store.AccountCreationStore
 	now                         func() time.Time
 }
@@ -829,6 +832,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.OnboardingDefaults != nil {
 		s.onboardingDefaults = deps.OnboardingDefaults
+	}
+	if deps.ChannelImports != nil {
+		s.channelImports = deps.ChannelImports
 	}
 	if deps.AccountCreation != nil {
 		s.accountCreation = deps.AccountCreation

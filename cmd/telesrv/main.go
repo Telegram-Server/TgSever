@@ -34,6 +34,7 @@ import (
 	botsapp "telesrv/internal/app/bots"
 	botverificationapp "telesrv/internal/app/botverification"
 	broadcastapp "telesrv/internal/app/broadcast"
+	channelimportapp "telesrv/internal/app/channelimport"
 	channelapp "telesrv/internal/app/channels"
 	chatlistsapp "telesrv/internal/app/chatlists"
 	clienttelemetryapp "telesrv/internal/app/clienttelemetry"
@@ -2250,6 +2251,11 @@ func run(logger *zap.Logger) error {
 	adminService.Configure(adminapp.Dependencies{PermissionDefaults: permissionDefaultsService})
 	// 后台设置新账号入驻模板（onboarding_defaults.set）：只影响之后新建的账号。
 	adminService.Configure(adminapp.Dependencies{OnboardingDefaults: onboardingService})
+	// 频道导入（/v1/channel-imports，权限 channels.import）：仓库之外的克隆程序把来源频道的
+	// 历史和后续更新写进本地广播频道。实时下发经 router，与普通发送共用 fan-out。
+	adminService.Configure(adminapp.Dependencies{
+		ChannelImports: channelimportapp.NewService(channelStore, channelsService, filesService, userStore, router),
+	})
 	// 后台建号（account.create，#162）：给出的权限或模板快照与账号在同一个事务里写入。
 	adminService.Configure(adminapp.Dependencies{AccountCreation: accountCreationStore})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS

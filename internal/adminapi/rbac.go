@@ -87,6 +87,15 @@ const (
 	// PermissionBotTokenRead is intentionally narrower than unrestricted admin
 	// access because it reveals a live credential.
 	PermissionBotTokenRead = "bots.token.read"
+	// PermissionChannelsImport guards the whole channel-import surface: creating
+	// an import (and with it a broadcast channel owned by a named account),
+	// uploading its media, writing, editing and deleting its messages, and
+	// publishing it under a username.
+	//
+	// It is one right because a cloner needs all of it and nothing else; it is not
+	// implied by anything but the wildcard, because it writes posts with arbitrary
+	// dates and view counts into a channel on behalf of its owner.
+	PermissionChannelsImport = "channels.import"
 )
 
 // CodeForbidden is the stable code for a permission failure, so the panel can

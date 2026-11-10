@@ -80,7 +80,7 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | `TELESRV_ADMIN_UI_TOKEN` | secret string / 空 | Admin UI 替代登录凭证；管理写调用仍使用独立的 `TELESRV_ADMIN_API_TOKEN`。 |
 | `TELESRV_ADMIN_SESSION_KEY` | secret string / 空 | 加密/签名 Admin UI session cookie；生产至少使用 32 字节随机值，修改会使已有会话失效。 |
 | `TELESRV_ADMIN_UI_PERMISSIONS` | comma-separated list / `*` | 使用 `TELESRV_ADMIN_UI_PASSWORD` / `_TOKEN` 登录的 Admin UI 会话权限集合。`*` 表示全部权限且是默认值。读取托管 bot token 需要显式 `bots.token.read` 权限；token 只在命令响应中返回，不会持久化到审计结果。权限名只允许字母、数字和 `._:-`，最多 64 字符，可用 `namespace.*` 授权整个命名空间。空列表或无法解析的权限名会让启动失败。 |
-| `TELESRV_ADMIN_SCOPED_TOKENS` | 用 `;` 分隔的 `name:token:perm1,perm2` 条目 / 空 | 额外的 Admin API bearer token，每个 token 只携带指定权限，供集成服务按最小权限访问，避免使用无限制的 `TELESRV_ADMIN_API_TOKEN`。token 不能包含 `:` 或空白字符，每个条目必须至少列出一个权限，name/token 必须唯一，且禁止复用 `TELESRV_ADMIN_API_TOKEN`，否则会把受限 token 静默放大成全权限。任何格式错误都会让启动失败。 |
+| `TELESRV_ADMIN_SCOPED_TOKENS` | 用 `;` 分隔的 `name:token:perm1,perm2` 条目 / 空 | 额外的 Admin API bearer token，每个 token 只携带指定权限，供集成服务按最小权限访问，避免使用无限制的 `TELESRV_ADMIN_API_TOKEN`。token 不能包含 `:` 或空白字符，每个条目必须至少列出一个权限，name/token 必须唯一，且禁止复用 `TELESRV_ADMIN_API_TOKEN`，否则会把受限 token 静默放大成全权限。任何格式错误都会让启动失败。频道克隆程序使用只带 `channels.import` 的 token，见 [channel-import.md](channel-import.md)。 |
 | `TELESRV_PUBLIC_BASE_URL` | HTTP(S) URL / `https://telesrv.net` | 客户端可见的公开链接根地址；允许 path，禁止 credentials、query、fragment。本地例：`http://127.0.0.1:2401`。 |
 | `TELESRV_BRAND_PRODUCT_NAME` | string / `Telesrv` | 母品牌显示名；系统账号、登录通知、邀请、WebAuthn、内置 bot 与上游可见文案替换共用。trim 后非空、无控制字符、最多 64 个 Unicode 字符。 |
 | `TELESRV_BRAND_PRODUCT_USERNAME` | username / `telesrv` | 777000 系统账号的公开 username；trim、去掉可选 `@` 后规范成小写，必须为 5–32 位 ASCII username 且首字符为字母。 |
