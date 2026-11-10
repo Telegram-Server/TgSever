@@ -148,3 +148,12 @@ SET read_inbox_max_id = GREATEST(read_inbox_max_id, @max_id::integer),
     unread_mark = false,
     updated_at = now()
 WHERE channel_id = @channel_id AND status = 'active';
+
+-- name: SetChannelImportMeta :execrows
+-- 镜像来源的标题和简介：不写服务消息、不推进 pts。来源改标题时它自己的服务消息会作为
+-- 历史被导入，本地不能再生成第二条。
+UPDATE channels
+SET title = CASE WHEN @set_title::boolean THEN @title::text ELSE title END,
+    about = CASE WHEN @set_about::boolean THEN @about::text ELSE about END,
+    updated_at = now()
+WHERE id = @channel_id AND NOT deleted;

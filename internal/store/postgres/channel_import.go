@@ -550,6 +550,33 @@ func (s *ChannelStore) RewriteChannelCreateMessage(ctx context.Context, req doma
 	return nil
 }
 
+func (s *ChannelStore) SetChannelImportMeta(ctx context.Context, channelID int64, title, about *string) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	params := sqlcgen.SetChannelImportMetaParams{ChannelID: channelID}
+	if title != nil {
+		if !domain.ValidChannelTitle(*title) {
+			return domain.Channel{}, domain.ErrChannelTitleInvalid
+		}
+		params.SetTitle, params.Title = true, *title
+	}
+	if about != nil {
+		params.SetAbout, params.About = true, *about
+	}
+	rows, err := sqlcgen.New(s.db).SetChannelImportMeta(ctx, params)
+	if err != nil {
+		return domain.Channel{}, fmt.Errorf("set channel import meta: %w", err)
+	}
+	if rows == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if s.rowCache != nil {
+		s.rowCache.delete(channelID)
+	}
+	return getChannelByID(ctx, s.db, channelID)
+}
+
 func (s *ChannelStore) MarkChannelImportRead(ctx context.Context, channelID int64) error {
 	q := sqlcgen.New(s.db)
 	maxID, err := q.MaxChannelMessageID(ctx, channelID)

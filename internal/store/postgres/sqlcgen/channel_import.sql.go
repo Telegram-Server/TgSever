@@ -434,6 +434,38 @@ func (q *Queries) SetChannelCreatedDate(ctx context.Context, arg SetChannelCreat
 	return err
 }
 
+const setChannelImportMeta = `-- name: SetChannelImportMeta :execrows
+UPDATE channels
+SET title = CASE WHEN $1::boolean THEN $2::text ELSE title END,
+    about = CASE WHEN $3::boolean THEN $4::text ELSE about END,
+    updated_at = now()
+WHERE id = $5 AND NOT deleted
+`
+
+type SetChannelImportMetaParams struct {
+	SetTitle  bool
+	Title     string
+	SetAbout  bool
+	About     string
+	ChannelID int64
+}
+
+// 镜像来源的标题和简介：不写服务消息、不推进 pts。来源改标题时它自己的服务消息会作为
+// 历史被导入，本地不能再生成第二条。
+func (q *Queries) SetChannelImportMeta(ctx context.Context, arg SetChannelImportMetaParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setChannelImportMeta,
+		arg.SetTitle,
+		arg.Title,
+		arg.SetAbout,
+		arg.About,
+		arg.ChannelID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setChannelImportState = `-- name: SetChannelImportState :one
 UPDATE channel_imports
 SET state = $1,

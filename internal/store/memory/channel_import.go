@@ -378,6 +378,26 @@ func (s *ChannelStore) ResolveChannelImportMessageIDs(_ context.Context, importI
 	return out, nil
 }
 
+func (s *ChannelStore) SetChannelImportMeta(_ context.Context, channelID int64, title, about *string) (domain.Channel, error) {
+	if title != nil && !domain.ValidChannelTitle(*title) {
+		return domain.Channel{}, domain.ErrChannelTitleInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	channel, ok := s.channels[channelID]
+	if !ok || channel.Deleted {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if title != nil {
+		channel.Title = *title
+	}
+	if about != nil {
+		channel.About = *about
+	}
+	s.channels[channelID] = channel
+	return channel, nil
+}
+
 func (s *ChannelStore) RewriteChannelCreateMessage(_ context.Context, req domain.RewriteChannelCreateRequest) error {
 	if req.ChannelID == 0 || req.Date <= 0 || req.Title == "" {
 		return domain.ErrChannelInvalid

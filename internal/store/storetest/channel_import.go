@@ -396,6 +396,24 @@ func ChannelImport(t *testing.T, newFixture func(t *testing.T) ChannelImportFixt
 			t.Fatalf("channel = date %d title %q, want the source date and the current title", stored.Date, stored.Title)
 		}
 
+		// 镜像来源的标题和简介：不产生服务消息，也不推进 pts。
+		title, about := "Renamed at source", "about text"
+		renamed, err := f.Imports.SetChannelImportMeta(ctx, channel.ID, &title, &about)
+		if err != nil {
+			t.Fatalf("SetChannelImportMeta: %v", err)
+		}
+		if renamed.Title != title || renamed.About != about || renamed.Pts != stored.Pts || renamed.TopMessageID != stored.TopMessageID {
+			t.Fatalf("meta update = title %q about %q pts %d top %d, want the new text with pts %d and top %d untouched",
+				renamed.Title, renamed.About, renamed.Pts, renamed.TopMessageID, stored.Pts, stored.TopMessageID)
+		}
+		if kept, err := f.Imports.SetChannelImportMeta(ctx, channel.ID, nil, nil); err != nil || kept.Title != title || kept.About != about {
+			t.Fatalf("no-op meta update = %+v err %v, want nothing changed", kept, err)
+		}
+		empty := ""
+		if _, err := f.Imports.SetChannelImportMeta(ctx, channel.ID, &empty, nil); !errors.Is(err, domain.ErrChannelTitleInvalid) {
+			t.Fatalf("empty title err = %v, want ErrChannelTitleInvalid", err)
+		}
+
 		importBatch(t, f, imp, text(2, "a"), text(3, "b"), text(4, "c"))
 		view, err := f.Channels.GetChannel(ctx, f.Reader, channel.ID)
 		if err != nil {

@@ -114,9 +114,11 @@ type DocumentSpec struct {
 	// NosoundVideo 对应 inputMediaUploadedDocument.nosound_video。真实 GIF 仍会
 	// 转成 MP4，但该标志存在时按普通无声视频落库，不附 animated 属性（album 路径）。
 	NosoundVideo bool
+	// Date 是文档的创建时间；0 取当前时间。频道导入用它保留来源文件的日期。
+	Date int
 }
 
-// FileDownloadRequest 是 upload.getFile 解析后的下载请求；
+// FileDownloadRequest是 upload.getFile 解析后的下载请求；
 // LocationKey 由 rpc 层从 tg.InputFileLocation 推导（doc:<id> / photo:<id>:<type> 等）。
 type FileDownloadRequest struct {
 	LocationKey string

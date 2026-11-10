@@ -93,6 +93,23 @@ func (s *Service) CreatePhotoFromBytes(ctx context.Context, data []byte) (domain
 	return s.createPhoto(ctx, data, photoSizeSpecsForMessage(data))
 }
 
+// CreatePhotoFromBytesAt 与 CreatePhotoFromBytes 相同，但照片日期取 date 而不是当前时间
+// （date 为 0 时仍取当前时间）。频道导入用它保留来源照片的日期。
+func (s *Service) CreatePhotoFromBytesAt(ctx context.Context, data []byte, date int) (domain.Photo, error) {
+	if len(data) == 0 {
+		return domain.Photo{}, domain.ErrPhotoInvalid
+	}
+	return s.createPhotoAt(ctx, data, photoSizeSpecsForMessage(data), date)
+}
+
+// documentSpecDate 返回文档的创建时间：spec 指定了就用它，否则取当前时间。
+func documentSpecDate(spec domain.DocumentSpec) int {
+	if spec.Date > 0 {
+		return spec.Date
+	}
+	return int(time.Now().Unix())
+}
+
 // GetPhoto 按 id 返回已存储照片。
 func (s *Service) GetPhoto(ctx context.Context, id int64) (domain.Photo, bool, error) {
 	return s.media.GetPhoto(ctx, id)
@@ -581,7 +598,7 @@ func (s *Service) CreateDocumentFromBytes(ctx context.Context, data []byte, spec
 		ID:            docID,
 		AccessHash:    randomID(),
 		FileReference: randomFileReference(),
-		Date:          int(time.Now().Unix()),
+		Date:          documentSpecDate(spec),
 		MimeType:      spec.MimeType,
 		Size:          size,
 		DCID:          s.dc,
@@ -601,6 +618,17 @@ func (s *Service) CreateDocumentFromBytes(ctx context.Context, data []byte, spec
 // 错误（例如校验和不符）会让整次写入失败，不留下 file_blobs 与 documents 行。blob 按内容
 // 寻址，失败时可能留下一个未被引用的 blob 对象，与上传失败时相同。
 func (s *Service) CreateDocumentFromReader(ctx context.Context, r io.Reader, spec domain.DocumentSpec, wantSize int64) (domain.Document, error) {
+	return s.createDocumentFromReader(ctx, r, spec, wantSize, false)
+}
+
+// CreateDocumentFromReaderWithThumb 与 CreateDocumentFromReader 一样流式落盘，另外给视频生成
+// 兜底缩略图（超过缩略图输入上限的视频没有缩略图）。频道导入用它存来源的文档：文件可能很大，
+// 不能整个读进内存；来源的 GIF 已经是 MP4，不需要转码。
+func (s *Service) CreateDocumentFromReaderWithThumb(ctx context.Context, r io.Reader, spec domain.DocumentSpec) (domain.Document, error) {
+	return s.createDocumentFromReader(ctx, r, spec, 0, true)
+}
+
+func (s *Service) createDocumentFromReader(ctx context.Context, r io.Reader, spec domain.DocumentSpec, wantSize int64, withThumb bool) (domain.Document, error) {
 	if r == nil {
 		return domain.Document{}, domain.ErrDocumentInvalid
 	}
@@ -629,11 +657,16 @@ func (s *Service) CreateDocumentFromReader(ctx context.Context, r io.Reader, spe
 		ID:            docID,
 		AccessHash:    randomID(),
 		FileReference: randomFileReference(),
-		Date:          int(time.Now().Unix()),
+		Date:          documentSpecDate(spec),
 		MimeType:      spec.MimeType,
 		Size:          size,
 		DCID:          s.dc,
 		Attributes:    spec.Attributes,
+	}
+	if withThumb {
+		if thumb, ok := s.generateVideoThumbFallbackFromBlob(ctx, docID, objectKey, size, spec); ok {
+			doc.Thumbs = []domain.PhotoSize{thumb}
+		}
 	}
 	if err := s.media.PutDocument(ctx, doc); err != nil {
 		return domain.Document{}, err
@@ -716,6 +749,14 @@ func (s *Service) DeleteProfilePhotosKind(ctx context.Context, ownerType domain.
 
 // createPhoto 把字节落 blob（每个尺寸一个 location_key，指向同一内容）并写 photos 表。
 func (s *Service) createPhoto(ctx context.Context, data []byte, specs []photoSizeSpec) (domain.Photo, error) {
+	return s.createPhotoAt(ctx, data, specs, 0)
+}
+
+// createPhotoAt 是 createPhoto 的带日期版本；date 为 0 时取当前时间。
+func (s *Service) createPhotoAt(ctx context.Context, data []byte, specs []photoSizeSpec, date int) (domain.Photo, error) {
+	if date <= 0 {
+		date = int(time.Now().Unix())
+	}
 	photoID := randomID()
 	sizes, err := s.putPhotoStaticSizes(ctx, photoID, data, specs)
 	if err != nil {
@@ -725,7 +766,7 @@ func (s *Service) createPhoto(ctx context.Context, data []byte, specs []photoSiz
 		ID:            photoID,
 		AccessHash:    randomID(),
 		FileReference: randomFileReference(),
-		Date:          int(time.Now().Unix()),
+		Date:          date,
 		DCID:          s.dc,
 		Sizes:         sizes,
 	}

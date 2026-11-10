@@ -35,6 +35,8 @@ type ChannelImportStore interface {
 
 	// RewriteChannelCreateMessage 把目标频道的“频道已创建”服务消息和频道创建日期改成来源的。
 	RewriteChannelCreateMessage(ctx context.Context, req domain.RewriteChannelCreateRequest) error
+	// SetChannelImportMeta 镜像来源的标题和简介（nil 表示不改）：不写服务消息、不推进 pts。
+	SetChannelImportMeta(ctx context.Context, channelID int64, title, about *string) (domain.Channel, error)
 	// MarkChannelImportRead 把频道现有成员的已读位置推到最新一条消息。
 	MarkChannelImportRead(ctx context.Context, channelID int64) error
 	// ReserveChannelMessageIDs 让频道之后分配的消息 id 都大于 through（来源末尾被删掉的号段）。
