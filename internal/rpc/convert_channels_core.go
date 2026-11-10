@@ -254,6 +254,8 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 		return &tg.MessageActionChatDeletePhoto{}
 	case domain.ChannelActionEditTitle:
 		return &tg.MessageActionChatEditTitle{Title: action.Title}
+	case domain.ChannelActionPinMessage:
+		return &tg.MessageActionPinMessage{}
 	case domain.ChannelActionTopicCreate:
 		return &tg.MessageActionTopicCreate{
 			TitleMissing: action.TitleMissing,

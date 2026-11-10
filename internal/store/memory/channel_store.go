@@ -129,6 +129,8 @@ type ChannelStore struct {
 	// 对应的 qts 分配串成一个临界区，保证同一 bot 的 qts 顺序与变动顺序一致。
 	botUpdates  *BotUpdateStore
 	botUpdateMu sync.Mutex
+	// imports 是频道导入的任务、消息 id 映射与媒体映射；首次使用时建表。
+	imports *channelImportState
 }
 
 // AttachDeletionStore 注入删除记录（与 MessageStore 共用同一实例）。

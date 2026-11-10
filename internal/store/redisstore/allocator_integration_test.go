@@ -286,3 +286,50 @@ func TestRedisRateLimiterWindow(t *testing.T) {
 		t.Fatalf("healed counter TTL=%v err=%v, want (0,5s]", ttl, err)
 	}
 }
+
+// 频道导入沿用来源消息 id 时在计数器上占号：占到的号之后才是普通发送分配的号，
+// 已经被分配或越过的号占不到。
+func TestRedisChannelMessageIDClaim(t *testing.T) {
+	addr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("set TELESRV_TEST_REDIS_ADDR to run redis integration test")
+	}
+	ctx := context.Background()
+	c, err := Open(ctx, addr, "", 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	channelID := time.Now().UnixNano()
+	t.Cleanup(func() { _ = c.Del(ctx, channelMessageIDKey(channelID)).Err() })
+
+	// 冷 key：先从持久层恢复到 7，再判断能不能占号。
+	ids := NewChannelMessageIDAllocator(c, staticCounterSource{value: 7})
+	for _, id := range []int{5, 7} {
+		claimed, err := ids.ClaimChannelMessageID(ctx, channelID, id)
+		if err != nil {
+			t.Fatalf("ClaimChannelMessageID(%d): %v", id, err)
+		}
+		if claimed {
+			t.Fatalf("claimed id %d although the channel already reached 7", id)
+		}
+	}
+	claimed, err := ids.ClaimChannelMessageID(ctx, channelID, 40)
+	if err != nil || !claimed {
+		t.Fatalf("ClaimChannelMessageID(40) = %v, %v; want claimed", claimed, err)
+	}
+	if again, err := ids.ClaimChannelMessageID(ctx, channelID, 40); err != nil || again {
+		t.Fatalf("second ClaimChannelMessageID(40) = %v, %v; want not claimed", again, err)
+	}
+	next, err := ids.NextChannelMessageID(ctx, channelID)
+	if err != nil {
+		t.Fatalf("NextChannelMessageID: %v", err)
+	}
+	if next != 41 {
+		t.Fatalf("next id after claiming 40 = %d, want 41", next)
+	}
+	if claimed, err := ids.ClaimChannelMessageID(ctx, channelID, 41); err != nil || claimed {
+		t.Fatalf("ClaimChannelMessageID(41) after it was allocated = %v, %v; want not claimed", claimed, err)
+	}
+}

@@ -637,8 +637,11 @@ const (
 	// 渲染为 "X joined the group via invite link"。
 	ChannelActionChatJoinedByLink ChannelMessageActionType = "chat_joined_by_link"
 	ChannelActionEditTitle        ChannelMessageActionType = "chat_edit_title"
-	ChannelActionTopicCreate      ChannelMessageActionType = "topic_create"
-	ChannelActionTopicEdit        ChannelMessageActionType = "topic_edit"
+	// ChannelActionPinMessage 映射 messageActionPinMessage：被置顶的消息在 reply_to 里。
+	// 本地置顶不写服务消息，这个类型只出现在导入的频道历史里（见 ImportedChannelMessage）。
+	ChannelActionPinMessage  ChannelMessageActionType = "pin_message"
+	ChannelActionTopicCreate ChannelMessageActionType = "topic_create"
+	ChannelActionTopicEdit   ChannelMessageActionType = "topic_edit"
 	// ChannelActionTodoCompletions / ChannelActionTodoAppendTasks 映射
 	// messageActionTodoCompletions / messageActionTodoAppendTasks：超级群
 	// checklist 协作生成的服务消息，经 reply_to 指向原 checklist 消息。

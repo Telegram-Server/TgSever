@@ -266,6 +266,34 @@ func (a *ChannelMessageIDAllocator) CurrentChannelMessageID(ctx context.Context,
 	return int(v), err
 }
 
+var _ store.ChannelMessageIDClaimer = (*ChannelMessageIDAllocator)(nil)
+
+// counterClaimScript 在计数器小于 ARGV[1] 时把它推进到 ARGV[1] 并返回 1，否则返回 0。
+// 与 INCR 在同一个脚本里比较和写入，所以一个 id 不会既被占号又被并发的分配发出去。
+var counterClaimScript = redis.NewScript(`
+local current = redis.call("GET", KEYS[1])
+if (not current) or tonumber(current) < tonumber(ARGV[1]) then
+  redis.call("SET", KEYS[1], ARGV[1])
+  return 1
+end
+return 0
+`)
+
+// ClaimChannelMessageID 把频道的消息 id 计数器推进到 id（频道导入沿用来源消息 id 时占号）。
+// 计数器已经到达或越过 id 时返回 false：这个 id 已被分配或跳过，调用方改用 NextChannelMessageID。
+func (a *ChannelMessageIDAllocator) ClaimChannelMessageID(ctx context.Context, channelID int64, id int) (bool, error) {
+	// 先让缺失的 key 从 PostgreSQL 恢复：否则脚本会把一个冷 key 直接写成 id，
+	// 而表里的最大 id 可能更大。
+	if _, err := a.counter.current(ctx, channelID); err != nil {
+		return false, err
+	}
+	claimed, err := counterClaimScript.Run(ctx, a.counter.c, []string{channelMessageIDKey(channelID)}, id).Int64()
+	if err != nil {
+		return false, fmt.Errorf("redis claim channel_msg_id counter: %w", err)
+	}
+	return claimed == 1, nil
+}
+
 func (a counterAllocator) next(ctx context.Context, userID int64) (int64, error) {
 	key, err := a.validatedKey(userID)
 	if err != nil {

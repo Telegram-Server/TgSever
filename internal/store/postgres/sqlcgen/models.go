@@ -926,6 +926,32 @@ type ChannelForumTopic struct {
 	UpdatedAt            pgtype.Timestamptz
 }
 
+type ChannelImport struct {
+	ID              int64
+	ChannelID       int64
+	State           string
+	SourceChannelID int64
+	SourceUsername  string
+	SenderUserID    int64
+	MaxSourceID     int32
+	CreatedAt       pgtype.Timestamptz
+	FinalizedAt     pgtype.Timestamptz
+}
+
+type ChannelImportMedium struct {
+	ImportID  int64
+	SourceKey string
+	Kind      string
+	MediaID   int64
+}
+
+type ChannelImportMessageMap struct {
+	ChannelID   int64
+	SourceID    int32
+	LocalID     int32
+	ContentHash []byte
+}
+
 type ChannelInvite struct {
 	ChannelID      int64
 	InviteID       int64

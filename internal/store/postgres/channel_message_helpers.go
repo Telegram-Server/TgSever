@@ -185,6 +185,16 @@ func (a pgChannelMessageIDAllocator) NextChannelMessageID(ctx context.Context, c
 	return current + 1, nil
 }
 
+// ClaimChannelMessageID：这个分配器没有计数器，下一个 id 永远是 MAX(id)+1，所以一个大于
+// 当前最大值的 id 可以直接使用，写入之后自然成为新的起点。
+func (a pgChannelMessageIDAllocator) ClaimChannelMessageID(ctx context.Context, channelID int64, id int) (bool, error) {
+	current, err := a.CurrentChannelMessageID(ctx, channelID)
+	if err != nil {
+		return false, err
+	}
+	return id > current, nil
+}
+
 func (a pgChannelMessageIDAllocator) CurrentChannelMessageID(ctx context.Context, channelID int64) (int, error) {
 	var id int
 	err := counterDB(ctx, a.db).QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM channel_messages WHERE channel_id = $1`, channelID).Scan(&id)
