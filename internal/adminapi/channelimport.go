@@ -37,14 +37,16 @@ const (
 // 错误码：克隆程序据此区分“改请求再试”“换个顺序再试”和“任务已经结束”。
 const (
 	codeChannelImportNotFound = "channel_import_not_found"
-	codeChannelImportState    = "channel_import_state"
-	codeChannelImportOrder    = "channel_import_order"
-	codeChannelImportTarget   = "channel_import_target"
-	codeChannelImportExists   = "channel_import_exists"
-	codeChannelImportOwner    = "channel_import_owner"
-	codeChannelImportMedia    = "channel_import_media"
-	codeChannelImportUsername = "channel_import_username"
-	codeChannelImportInvalid  = "channel_import_invalid"
+	// codeChannelImportChannelNotFound：只读查询指定的本地频道不存在。
+	codeChannelImportChannelNotFound = "channel_not_found"
+	codeChannelImportState           = "channel_import_state"
+	codeChannelImportOrder           = "channel_import_order"
+	codeChannelImportTarget          = "channel_import_target"
+	codeChannelImportExists          = "channel_import_exists"
+	codeChannelImportOwner           = "channel_import_owner"
+	codeChannelImportMedia           = "channel_import_media"
+	codeChannelImportUsername        = "channel_import_username"
+	codeChannelImportInvalid         = "channel_import_invalid"
 )
 
 func (s *Server) channelImports(w http.ResponseWriter) (admin.ChannelImportService, bool) {
@@ -76,6 +78,8 @@ func writeChannelImportError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrChannelImportNotFound):
 		writeCodedError(w, http.StatusNotFound, codeChannelImportNotFound, err.Error())
+	case errors.Is(err, channelimport.ErrChannelNotFound):
+		writeCodedError(w, http.StatusNotFound, codeChannelImportChannelNotFound, err.Error())
 	case errors.Is(err, domain.ErrChannelImportState):
 		writeCodedError(w, http.StatusConflict, codeChannelImportState, err.Error())
 	case errors.Is(err, domain.ErrChannelImportOrder):

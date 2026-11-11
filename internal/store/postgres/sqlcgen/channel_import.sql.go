@@ -49,6 +49,56 @@ func (q *Queries) BumpChannelImportMaxSourceID(ctx context.Context, arg BumpChan
 	return err
 }
 
+const channelImportChannelStats = `-- name: ChannelImportChannelStats :many
+SELECT c.id AS channel_id,
+       COALESCE(last.id, 0)::integer AS last_message_id,
+       COALESCE(last.message_date, 0)::integer AS last_message_date,
+       COALESCE((SELECT MAX(m.id) FROM channel_messages m WHERE m.channel_id = c.id), 0)::integer AS max_message_id
+FROM channels c
+LEFT JOIN LATERAL (
+    SELECT m.id, m.message_date
+    FROM channel_messages m
+    WHERE m.channel_id = c.id AND NOT m.deleted
+    ORDER BY m.id DESC
+    LIMIT 1
+) last ON true
+WHERE c.id = ANY($1::bigint[])
+`
+
+type ChannelImportChannelStatsRow struct {
+	ChannelID       int64
+	LastMessageID   int32
+	LastMessageDate int32
+	MaxMessageID    int32
+}
+
+// 一组频道的消息概况：未删除消息里 id 最大的一条的 id 与日期，以及任何消息（含已删除）的
+// 最大 id（导入目标要求它不超过“频道已创建”那一条）。
+func (q *Queries) ChannelImportChannelStats(ctx context.Context, channelIds []int64) ([]ChannelImportChannelStatsRow, error) {
+	rows, err := q.db.Query(ctx, channelImportChannelStats, channelIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChannelImportChannelStatsRow
+	for rows.Next() {
+		var i ChannelImportChannelStatsRow
+		if err := rows.Scan(
+			&i.ChannelID,
+			&i.LastMessageID,
+			&i.LastMessageDate,
+			&i.MaxMessageID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countChannelImportMedia = `-- name: CountChannelImportMedia :one
 SELECT count(*)::bigint FROM channel_import_media WHERE import_id = $1
 `
@@ -66,6 +116,17 @@ SELECT count(*)::bigint FROM channel_import_message_map WHERE channel_id = $1
 
 func (q *Queries) CountChannelImportMessages(ctx context.Context, channelID int64) (int64, error) {
 	row := q.db.QueryRow(ctx, countChannelImportMessages, channelID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countChannelVisibleMessages = `-- name: CountChannelVisibleMessages :one
+SELECT count(*)::bigint FROM channel_messages WHERE channel_id = $1 AND NOT deleted
+`
+
+func (q *Queries) CountChannelVisibleMessages(ctx context.Context, channelID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countChannelVisibleMessages, channelID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -310,6 +371,165 @@ func (q *Queries) ListChannelImportMessageMap(ctx context.Context, arg ListChann
 	return items, nil
 }
 
+const listChannelImports = `-- name: ListChannelImports :many
+SELECT id, channel_id, state, source_channel_id, source_username, sender_user_id, max_source_id,
+       EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
+       COALESCE(EXTRACT(EPOCH FROM finalized_at), 0)::bigint AS finalized_at
+FROM channel_imports
+WHERE ($1::text = '' OR state = $1::text)
+  AND ($2::bigint = 0 OR source_channel_id = $2::bigint)
+ORDER BY id DESC
+LIMIT $4::integer OFFSET $3::integer
+`
+
+type ListChannelImportsParams struct {
+	State           string
+	SourceChannelID int64
+	RowOffset       int32
+	RowLimit        int32
+}
+
+type ListChannelImportsRow struct {
+	ID              int64
+	ChannelID       int64
+	State           string
+	SourceChannelID int64
+	SourceUsername  string
+	SenderUserID    int64
+	MaxSourceID     int32
+	CreatedAt       int64
+	FinalizedAt     int64
+}
+
+// 任务列表，新的在前。state 为空串不过滤；source_channel_id 为 0 不过滤。
+func (q *Queries) ListChannelImports(ctx context.Context, arg ListChannelImportsParams) ([]ListChannelImportsRow, error) {
+	rows, err := q.db.Query(ctx, listChannelImports,
+		arg.State,
+		arg.SourceChannelID,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelImportsRow
+	for rows.Next() {
+		var i ListChannelImportsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.State,
+			&i.SourceChannelID,
+			&i.SourceUsername,
+			&i.SenderUserID,
+			&i.MaxSourceID,
+			&i.CreatedAt,
+			&i.FinalizedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChannelImportsByChannels = `-- name: ListChannelImportsByChannels :many
+SELECT id, channel_id, state, source_channel_id, source_username, sender_user_id, max_source_id,
+       EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
+       COALESCE(EXTRACT(EPOCH FROM finalized_at), 0)::bigint AS finalized_at
+FROM channel_imports
+WHERE channel_id = ANY($1::bigint[])
+`
+
+type ListChannelImportsByChannelsRow struct {
+	ID              int64
+	ChannelID       int64
+	State           string
+	SourceChannelID int64
+	SourceUsername  string
+	SenderUserID    int64
+	MaxSourceID     int32
+	CreatedAt       int64
+	FinalizedAt     int64
+}
+
+func (q *Queries) ListChannelImportsByChannels(ctx context.Context, channelIds []int64) ([]ListChannelImportsByChannelsRow, error) {
+	rows, err := q.db.Query(ctx, listChannelImportsByChannels, channelIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelImportsByChannelsRow
+	for rows.Next() {
+		var i ListChannelImportsByChannelsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.State,
+			&i.SourceChannelID,
+			&i.SourceUsername,
+			&i.SenderUserID,
+			&i.MaxSourceID,
+			&i.CreatedAt,
+			&i.FinalizedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChannelMessageIDsForImport = `-- name: ListChannelMessageIDsForImport :many
+SELECT m.id, COALESCE(mm.source_id, 0)::integer AS source_id
+FROM channel_messages m
+LEFT JOIN channel_import_message_map mm ON mm.channel_id = m.channel_id AND mm.local_id = m.id
+WHERE m.channel_id = $1
+  AND NOT m.deleted
+  AND ($2::integer = 0 OR m.id < $2::integer)
+ORDER BY m.id DESC
+LIMIT $3::integer
+`
+
+type ListChannelMessageIDsForImportParams struct {
+	ChannelID int64
+	BeforeID  int32
+	RowLimit  int32
+}
+
+type ListChannelMessageIDsForImportRow struct {
+	ID       int32
+	SourceID int32
+}
+
+// 频道里未删除的消息 id，从新到旧，连同它在来源的 id（本地发的帖子没有，为 0）。
+func (q *Queries) ListChannelMessageIDsForImport(ctx context.Context, arg ListChannelMessageIDsForImportParams) ([]ListChannelMessageIDsForImportRow, error) {
+	rows, err := q.db.Query(ctx, listChannelMessageIDsForImport, arg.ChannelID, arg.BeforeID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelMessageIDsForImportRow
+	for rows.Next() {
+		var i ListChannelMessageIDsForImportRow
+		if err := rows.Scan(&i.ID, &i.SourceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markChannelReadForAllMembers = `-- name: MarkChannelReadForAllMembers :exec
 UPDATE channel_members
 SET read_inbox_max_id = GREATEST(read_inbox_max_id, $1::integer),
@@ -335,6 +555,17 @@ SELECT COALESCE(MAX(id), 0)::integer FROM channel_messages WHERE channel_id = $1
 
 func (q *Queries) MaxChannelMessageID(ctx context.Context, channelID int64) (int32, error) {
 	row := q.db.QueryRow(ctx, maxChannelMessageID, channelID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const pingChannelImportStore = `-- name: PingChannelImportStore :one
+SELECT 1::integer
+`
+
+func (q *Queries) PingChannelImportStore(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, pingChannelImportStore)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -418,6 +649,63 @@ func (q *Queries) RewriteChannelCreateMessage(ctx context.Context, arg RewriteCh
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const searchChannelsForImport = `-- name: SearchChannelsForImport :many
+SELECT c.id
+FROM channels c
+LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id
+LEFT JOIN LATERAL (
+    SELECT m.message_date
+    FROM channel_messages m
+    WHERE m.channel_id = c.id AND NOT m.deleted
+    ORDER BY m.id DESC
+    LIMIT 1
+) last ON true
+WHERE ($1::boolean OR NOT c.deleted)
+  AND (
+      ($2::text <> '' AND lower(c.title) LIKE $2::text)
+      OR ($3::text <> '' AND (lower(COALESCE(c.username, '')) = $3::text OR p.username_lower = $3::text))
+  )
+ORDER BY COALESCE(last.message_date, c.date) DESC, c.id DESC
+LIMIT $5::integer OFFSET $4::integer
+`
+
+type SearchChannelsForImportParams struct {
+	IncludeDeleted bool
+	TitlePattern   string
+	Username       string
+	RowOffset      int32
+	RowLimit       int32
+}
+
+// 按标题（不区分大小写的包含匹配）或用户名查频道，最近有消息的在前。title_pattern 是已经
+// 转义并加好 % 的 LIKE 模式，空串表示不按标题匹配；username 是小写的精确用户名，空串表示
+// 不按用户名匹配。
+func (q *Queries) SearchChannelsForImport(ctx context.Context, arg SearchChannelsForImportParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, searchChannelsForImport,
+		arg.IncludeDeleted,
+		arg.TitlePattern,
+		arg.Username,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setChannelCreatedDate = `-- name: SetChannelCreatedDate :exec

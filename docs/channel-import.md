@@ -74,6 +74,7 @@ Failures carry `{"error": "...", "code": "..."}`.
 | 401 | — | unknown token |
 | 403 | `FORBIDDEN` | the token lacks `channels.import` |
 | 404 | `channel_import_not_found` | no such import |
+| 404 | `channel_not_found` | a read route named a channel that does not exist |
 | 409 | `channel_import_state` | the import is detached |
 | 409 | `channel_import_order` | ids are not ascending, or a never-written id is below `max_source_id` |
 | 409 | `channel_import_target` | the target is not an empty broadcast channel |
@@ -328,8 +329,160 @@ batch as history.
 
 No body. The import stops accepting writes; the channel and its history stay.
 
+## Read routes
+
+These change nothing. They exist so a cloner can check its connection, find its
+imports again, and show the local channels in a UI.
+
+### `GET /v1/channel-imports/ping` — connection check
+
+One call answers three questions: the server is reachable, the token is valid
+and carries `channels.import` (otherwise 401 or 403), and the server's database
+answers.
+
+```json
+{
+  "ok": true,
+  "token_name": "cloner",
+  "permissions": ["channels.import"],
+  "server_time": 1794001234,
+  "version": "4cae8c3141d799fc4f954be72c49f48e5df97dc5",
+  "database": "ok"
+}
+```
+
+`token_name` is the name the token was configured under; it is empty for the
+unrestricted master token, whose `permissions` is `["*"]`. `server_time` lets
+the cloner notice a clock that is far off. `version` is the commit the server
+was built from, or `unknown`.
+
+If the database does not answer, the status is 503 and the body has
+`"ok": false, "database": "unavailable"` with the other fields unchanged.
+
+`GET /healthz` on the same listener needs no token and only says the process is
+up.
+
+### `GET /v1/channel-imports` — list imports
+
+Query parameters, all optional: `state` (`importing`, `mirroring`, `detached`),
+`source_channel_id`, `limit` (at most 100, the default), `offset`. Newest first.
+
+```json
+{"imports": [
+  {
+    "import_id": 7, "channel_id": 4001, "state": "mirroring",
+    "source_channel_id": 1234567890, "source_username": "durov",
+    "sender_user_id": 10001, "max_source_id": 5120,
+    "created_at": 1794000000, "finalized_at": 1794003600,
+    "channel": {"title": "…", "about": "…", "username": "durov_mirror", "owner_user_id": 10001, "date": 1420070400, "top_message_id": 5120}
+  }
+]}
+```
+
+A cloner that lost its state finds the import for a source with
+`?source_channel_id=…`; add `&state=mirroring` or look at `state` to skip
+detached ones.
+
+### `GET /v1/channel-imports/channels?q=…` — find channels by name
+
+Returns every local channel that matches, so namesakes can be told apart by
+owner and dates. Most recently active first.
+
+- `q` (required) matches the title, case-insensitively, anywhere in it. A `q`
+  without spaces also matches a channel whose username is exactly `q`. A `q`
+  that starts with `@` matches the username only, exactly.
+- `include_deleted=true` also returns deleted channels.
+- `limit` (at most 100, the default) and `offset`.
+
+```json
+{"channels": [
+  {
+    "channel_id": 4001,
+    "title": "Daily News", "about": "…", "username": "daily_news",
+    "broadcast": true, "megagroup": false, "deleted": false,
+    "owner": {"user_id": 10001, "first_name": "Olga", "last_name": "K", "username": "olga", "found": true},
+    "created_date": 1420070400,
+    "participants_count": 128,
+    "pts": 5300,
+    "top_message_id": 5120,
+    "last_message_date": 1794001234,
+    "pinned_message_id": 3,
+    "has_photo": true,
+    "importable": false,
+    "import": {"import_id": 7, "state": "mirroring", "source_channel_id": 1234567890, "source_username": "durov", "max_source_id": 5120}
+  }
+]}
+```
+
+- `top_message_id` and `last_message_date` describe the newest message that is
+  not deleted. `last_message_date` is the message's own date, so for a mirrored
+  post it is the date at the source. Both are 0 for a channel with no messages.
+- `pts` is the channel's update sequence number.
+- `importable` is true for a channel that can be passed as `target_channel_id`:
+  a broadcast channel that is not deleted, holds nothing but its "channel
+  created" message, and has no import.
+- `import` is `null` for a channel that has none.
+- `owner.found` is false when the creator's account no longer exists.
+
+### `GET /v1/channel-imports/channels/{channel_id}` — one channel
+
+The same object, plus `"message_count"`: the number of messages that are not
+deleted. The channel does not need to have an import.
+
+### `GET /v1/channel-imports/channels/{channel_id}/messages` — read messages
+
+Newest first. `limit` is at most 100 (the default); `before_id` returns only
+messages with a smaller id.
+
+```json
+{
+  "messages": [
+    {"id": 5121, "source_id": null, "date": 1794001234, "text": "posted locally", "views": 3, "forwards": 0},
+    {
+      "id": 5120, "source_id": 5120, "date": 1793990000, "edit_date": 1793990500,
+      "text": "Hello", "entities": [{"type": "bold", "offset": 0, "length": 5}],
+      "media": {"kind": "document", "media_id": "5870402113990211841", "mime_type": "video/mp4", "size": 1048576, "file_name": "clip.mp4", "width": 1280, "height": 720, "duration": 12.5, "video": true},
+      "grouped_id": "13000000000000001",
+      "reply_to_msg_id": 5100,
+      "fwd_from": {"from_name": "Some Channel", "date": 1419990000},
+      "post_author": "Editor", "views": 12345, "forwards": 67, "pinned": true,
+      "buttons": [[{"text": "Open", "url": "https://example.com"}]]
+    }
+  ],
+  "next_before_id": 5120
+}
+```
+
+- Every id here is a **local** id, including `reply_to_msg_id` and
+  `fwd_from.channel_post`. `source_id` is the message's id at the source, or
+  `null` for a post made locally.
+- `next_before_id` is 0 on the last page; otherwise pass it as `before_id`.
+- `media` is a summary; the file is not served here. `kind` is `photo`,
+  `document`, or the name of another media type for local posts (`poll`,
+  `geo`, `web_page`, …).
+- `fwd_from.from_channel_id` is set when the forward points at a local channel.
+- `action.type` uses the names from the write format for the six types that can
+  be imported, and the server's own name otherwise (`channel_create`, …).
+
+### `POST /v1/channel-imports/{id}/message-ids` — translate source ids
+
+```json
+{"source_ids": [2, 41, 99]}
+```
+
+At most 1000 ids.
+
+```json
+{"local_ids": {"2": 2, "41": 42}, "unknown_ids": [99]}
+```
+
+Use it to rewrite `t.me/<source>/<id>` links in message text so they point at
+the copy.
+
 ## A cloner in outline
 
+0. `GET /v1/channel-imports/ping`. On a restart, `GET /v1/channel-imports` to
+   find the imports that already exist.
 1. Read the source channel and its message 1. `POST /v1/channel-imports`.
 2. Walk the source history upward from `max_source_id + 1`. For each page:
    upload the files, then send the messages. Back off on the source's flood

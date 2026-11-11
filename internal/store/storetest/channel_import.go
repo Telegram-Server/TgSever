@@ -3,6 +3,8 @@ package storetest
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -363,6 +365,125 @@ func ChannelImport(t *testing.T, newFixture func(t *testing.T) ChannelImportFixt
 		stats, err := f.Imports.ChannelImportStats(ctx, imp.ID)
 		if err != nil || stats.Media != 1 {
 			t.Fatalf("stats = %+v err %v, want one media", stats, err)
+		}
+	})
+
+	t.Run("read queries for the cloner ui", func(t *testing.T) {
+		f := newFixture(t)
+		if err := f.Imports.PingChannelImportStore(ctx); err != nil {
+			t.Fatalf("PingChannelImportStore: %v", err)
+		}
+		// 同一份库里还有别的子测试的频道和任务：标题和来源 id 都带上本 fixture 的 owner id。
+		tag := fmt.Sprintf("Lookup%d", f.Owner)
+		source := 6_000_000_000 + f.Owner
+		mirrored := createChannel(t, f, domain.CreateChannelRequest{Title: tag + " 100%_Mirror", Date: past})
+		empty := createChannel(t, f, domain.CreateChannelRequest{Title: "prefix " + strings.ToLower(tag) + " empty", Date: past + 10})
+		group := createChannel(t, f, domain.CreateChannelRequest{Title: tag + " group", Megagroup: true, Date: past + 20})
+		imp, err := f.Imports.CreateChannelImport(ctx, domain.ChannelImport{ChannelID: mirrored.ID, SenderUserID: f.Owner, SourceChannelID: source})
+		if err != nil {
+			t.Fatalf("CreateChannelImport: %v", err)
+		}
+		viewed := text(3, "three")
+		viewed.Views = 77
+		importBatch(t, f, imp, text(2, "two"), viewed, text(9, "nine"))
+		if _, err := f.Imports.SetChannelImportState(ctx, imp.ID, domain.ChannelImportMirroring); err != nil {
+			t.Fatalf("SetChannelImportState: %v", err)
+		}
+		local, err := f.Channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{UserID: f.Owner, ChannelID: mirrored.ID, RandomID: 93, Message: "local", Date: now})
+		if err != nil {
+			t.Fatalf("SendChannelMessage: %v", err)
+		}
+		if _, err := f.Channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{UserID: f.Owner, ChannelID: mirrored.ID, IDs: []int{2}, Date: now}); err != nil {
+			t.Fatalf("DeleteChannelMessages: %v", err)
+		}
+
+		// 概况：按给定顺序返回，不存在的 id 被略过。
+		summaries, err := f.Imports.ChannelImportChannelSummaries(ctx, []int64{empty.ID, 1 << 40, mirrored.ID, group.ID, empty.ID})
+		if err != nil {
+			t.Fatalf("ChannelImportChannelSummaries: %v", err)
+		}
+		if len(summaries) != 3 || summaries[0].Channel.ID != empty.ID || summaries[1].Channel.ID != mirrored.ID || summaries[2].Channel.ID != group.ID {
+			t.Fatalf("summaries = %+v, want empty, mirrored, group in request order", summaries)
+		}
+		if s := summaries[0]; !s.Importable() || s.Import != nil || s.LastMessageID != 1 || s.MaxMessageID != 1 || s.LastMessageDate != past+10 {
+			t.Fatalf("empty channel summary = %+v, want an importable channel holding only its create message", s)
+		}
+		if s := summaries[1]; s.Importable() || s.Import == nil || s.Import.ID != imp.ID || s.Import.State != domain.ChannelImportMirroring ||
+			s.LastMessageID != local.Message.ID || s.LastMessageDate != now || s.MaxMessageID != local.Message.ID || s.Channel.Pts != local.Channel.Pts+1 {
+			t.Fatalf("mirrored channel summary = %+v (import %+v), want its import and the local post as the last message", s, s.Import)
+		}
+		if s := summaries[2]; s.Importable() {
+			t.Fatalf("megagroup summary is importable: %+v", s)
+		}
+
+		// 搜索：标题不区分大小写地包含匹配，最近有消息的在前；LIKE 通配符按字面匹配。
+		found, err := f.Imports.SearchChannelImportChannels(ctx, domain.ChannelImportChannelQuery{Title: strings.ToUpper(tag)})
+		if err != nil {
+			t.Fatalf("SearchChannelImportChannels: %v", err)
+		}
+		if len(found) != 3 || found[0].Channel.ID != mirrored.ID || found[1].Channel.ID != group.ID || found[2].Channel.ID != empty.ID {
+			t.Fatalf("search = %+v, want mirrored (latest message), group, empty", found)
+		}
+		if found[0].Import == nil || found[0].Import.ID != imp.ID {
+			t.Fatalf("search result carries no import: %+v", found[0])
+		}
+		for query, want := range map[string]int{tag + " 100%_M": 1, tag + " 1__": 0, tag + "%": 0, tag + " nothing": 0} {
+			got, err := f.Imports.SearchChannelImportChannels(ctx, domain.ChannelImportChannelQuery{Title: query})
+			if err != nil || len(got) != want {
+				t.Fatalf("search %q = %d results err %v, want %d", query, len(got), err, want)
+			}
+		}
+		paged, err := f.Imports.SearchChannelImportChannels(ctx, domain.ChannelImportChannelQuery{Title: tag, Limit: 1, Offset: 1})
+		if err != nil || len(paged) != 1 || paged[0].Channel.ID != group.ID {
+			t.Fatalf("paged search = %+v err %v, want the second result", paged, err)
+		}
+		if got, err := f.Imports.SearchChannelImportChannels(ctx, domain.ChannelImportChannelQuery{}); err != nil || len(got) != 0 {
+			t.Fatalf("empty search = %d results err %v, want none", len(got), err)
+		}
+		username := fmt.Sprintf("lookup_%d", f.Owner)
+		if _, err := f.Channels.SetChannelUsernameAdmin(ctx, empty.ID, username); err != nil {
+			t.Fatalf("SetChannelUsernameAdmin: %v", err)
+		}
+		byName, err := f.Imports.SearchChannelImportChannels(ctx, domain.ChannelImportChannelQuery{Username: "@" + strings.ToUpper(username)})
+		if err != nil || len(byName) != 1 || byName[0].Channel.ID != empty.ID {
+			t.Fatalf("username search = %+v err %v, want the channel holding the username", byName, err)
+		}
+		if got, err := f.Imports.SearchChannelImportChannels(ctx, domain.ChannelImportChannelQuery{Username: username[:len(username)-1]}); err != nil || len(got) != 0 {
+			t.Fatalf("username prefix search = %d results err %v, want an exact match only", len(got), err)
+		}
+
+		// 消息：从新到旧，不含已删除的，带来源 id；本地帖子的来源 id 为 0。
+		if count, err := f.Imports.CountChannelImportChannelMessages(ctx, mirrored.ID); err != nil || count != 4 {
+			t.Fatalf("message count = %d err %v, want 4 (create, 3, 9, local)", count, err)
+		}
+		page, err := f.Imports.ListChannelImportChannelMessages(ctx, mirrored.ID, 0, 3)
+		if err != nil {
+			t.Fatalf("ListChannelImportChannelMessages: %v", err)
+		}
+		if len(page) != 3 || page[0].Message.ID != local.Message.ID || page[0].SourceID != 0 || page[0].Message.Body != "local" ||
+			page[1].Message.ID != 9 || page[1].SourceID != 9 || page[2].Message.ID != 3 || page[2].SourceID != 3 || page[2].Message.ViewsCount != 77 {
+			t.Fatalf("first page = %+v, want the local post, then source 9 and 3", page)
+		}
+		rest, err := f.Imports.ListChannelImportChannelMessages(ctx, mirrored.ID, 3, 50)
+		if err != nil || len(rest) != 1 || rest[0].Message.ID != 1 || rest[0].Message.Action == nil {
+			t.Fatalf("second page = %+v err %v, want only the create message (2 is deleted)", rest, err)
+		}
+
+		// 任务列表：按来源和阶段过滤。
+		listed, err := f.Imports.ListChannelImports(ctx, domain.ChannelImportFilter{SourceChannelID: source})
+		if err != nil || len(listed) != 1 || listed[0].ID != imp.ID || listed[0].MaxSourceID != 9 {
+			t.Fatalf("imports by source = %+v err %v, want the one import", listed, err)
+		}
+		if got, err := f.Imports.ListChannelImports(ctx, domain.ChannelImportFilter{SourceChannelID: source, State: domain.ChannelImportImporting}); err != nil || len(got) != 0 {
+			t.Fatalf("imports by source in importing = %d err %v, want none", len(got), err)
+		}
+		second, err := f.Imports.CreateChannelImport(ctx, domain.ChannelImport{ChannelID: empty.ID, SenderUserID: f.Owner})
+		if err != nil {
+			t.Fatalf("CreateChannelImport: %v", err)
+		}
+		all, err := f.Imports.ListChannelImports(ctx, domain.ChannelImportFilter{Limit: 1})
+		if err != nil || len(all) != 1 || all[0].ID != second.ID {
+			t.Fatalf("latest import = %+v err %v, want the newest first", all, err)
 		}
 	})
 

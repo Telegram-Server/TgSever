@@ -2492,6 +2492,7 @@ func run(logger *zap.Logger) error {
 		Addr:         cfg.AdminAPIAddr,
 		Token:        cfg.AdminAPIToken,
 		ScopedTokens: adminScopedTokens,
+		Version:      buildMeta.Commit,
 	}, adminService, logger.Named("adminapi")); err != nil {
 		return fmt.Errorf("start admin api: %w", err)
 	}

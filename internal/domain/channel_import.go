@@ -122,6 +122,52 @@ type ChannelImportStats struct {
 	Media    int
 }
 
+// MaxChannelImportPage 是频道导入只读接口单页的条数上限（任务、频道、消息）。
+const MaxChannelImportPage = 100
+
+// ChannelImportFilter 过滤任务列表；零值字段不过滤。
+type ChannelImportFilter struct {
+	State           ChannelImportState
+	SourceChannelID int64
+	Limit           int
+	Offset          int
+}
+
+// ChannelImportChannelQuery 按标题或用户名查频道。Title 是不区分大小写的包含匹配，Username
+// 是精确匹配（不带 @）；两者都给时满足任一即可，都为空时没有结果。
+type ChannelImportChannelQuery struct {
+	Title          string
+	Username       string
+	IncludeDeleted bool
+	Limit          int
+	Offset         int
+}
+
+// ChannelImportChannelSummary 是一个本地频道连同它的消息概况与导入任务，供克隆程序的界面
+// 展示和挑选导入目标。
+type ChannelImportChannelSummary struct {
+	Channel Channel
+	// LastMessageID / LastMessageDate 是未删除消息里 id 最大的一条；频道没有可见消息时为 0。
+	LastMessageID   int
+	LastMessageDate int
+	// MaxMessageID 是任何消息（含已删除）的最大 id：不超过 1 的广播频道才能作为导入目标。
+	MaxMessageID int
+	// Import 是这个频道的导入任务；没有时为 nil。
+	Import *ChannelImport
+}
+
+// Importable 报告这个频道能否作为新导入任务的目标：未删除的广播频道，除“频道已创建”之外
+// 没有消息，也还没有任务。
+func (s ChannelImportChannelSummary) Importable() bool {
+	return s.Channel.Broadcast && !s.Channel.Deleted && s.MaxMessageID <= 1 && s.Import == nil
+}
+
+// ChannelImportStoredMessage 是频道里的一条消息连同它在来源的 id；本地发的帖子 SourceID 为 0。
+type ChannelImportStoredMessage struct {
+	Message  ChannelMessage
+	SourceID int
+}
+
 // RewriteChannelCreateRequest 把目标频道的“频道已创建”服务消息与频道创建日期改成来源的。
 type RewriteChannelCreateRequest struct {
 	ChannelID int64

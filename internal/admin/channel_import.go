@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"telesrv/internal/app/channelimport"
+	"telesrv/internal/domain"
 )
 
 // ChannelImportService 是频道导入的业务入口（生产里是 app/channelimport.Service）。
@@ -20,6 +21,14 @@ type ChannelImportService interface {
 	DeleteMessages(ctx context.Context, importID int64, sourceIDs []int, actor string) (channelimport.DeleteResult, error)
 	SetMeta(ctx context.Context, importID int64, meta channelimport.Meta) (channelimport.Status, error)
 	Detach(ctx context.Context, importID int64) (channelimport.Status, error)
+
+	// 只读查询，供克隆程序的界面使用。
+	Ping(ctx context.Context) error
+	List(ctx context.Context, filter domain.ChannelImportFilter) ([]channelimport.ListedImport, error)
+	Channel(ctx context.Context, channelID int64) (channelimport.ChannelInfo, error)
+	SearchChannels(ctx context.Context, search channelimport.ChannelSearch) ([]channelimport.ChannelInfo, error)
+	ChannelMessages(ctx context.Context, channelID int64, beforeID, limit int) ([]channelimport.MessageView, error)
+	ResolveMessageIDs(ctx context.Context, importID int64, sourceIDs []int) (map[int]int, error)
 }
 
 // ChannelImport 返回频道导入的业务入口；没有接入时第二个返回值为 false。

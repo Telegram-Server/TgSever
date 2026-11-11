@@ -42,6 +42,23 @@ type ChannelImportStore interface {
 	// ReserveChannelMessageIDs 让频道之后分配的消息 id 都大于 through（来源末尾被删掉的号段）。
 	ReserveChannelMessageIDs(ctx context.Context, channelID int64, through int) error
 
+	// 以下是只读查询，供克隆程序的界面使用；都不做 viewer 校验（调用方是持 channels.import
+	// 权限的后台令牌）。
+
+	// PingChannelImportStore 做一次最小的存储往返，确认后端可用。
+	PingChannelImportStore(ctx context.Context) error
+	// ListChannelImports 列出任务，新的在前。Limit 超出 (0, MaxChannelImportPage] 时取上限。
+	ListChannelImports(ctx context.Context, filter domain.ChannelImportFilter) ([]domain.ChannelImport, error)
+	// ChannelImportChannelSummaries 按给定顺序返回这些频道的概况；不存在的 id 被略过。
+	ChannelImportChannelSummaries(ctx context.Context, channelIDs []int64) ([]domain.ChannelImportChannelSummary, error)
+	// SearchChannelImportChannels 按标题或用户名查频道，最近有消息的在前。
+	SearchChannelImportChannels(ctx context.Context, query domain.ChannelImportChannelQuery) ([]domain.ChannelImportChannelSummary, error)
+	// CountChannelImportChannelMessages 返回频道里未删除的消息数。
+	CountChannelImportChannelMessages(ctx context.Context, channelID int64) (int, error)
+	// ListChannelImportChannelMessages 从新到旧返回频道里未删除的消息；beforeID 非零时只返回
+	// id 小于它的。
+	ListChannelImportChannelMessages(ctx context.Context, channelID int64, beforeID, limit int) ([]domain.ChannelImportStoredMessage, error)
+
 	GetChannelImportMedia(ctx context.Context, importID int64, sourceKey string) (domain.ChannelImportMedia, bool, error)
 	// PutChannelImportMedia 记下来源文件对应的本地媒体；同一个 sourceKey 已有映射时返回已有的。
 	PutChannelImportMedia(ctx context.Context, importID int64, sourceKey string, media domain.ChannelImportMedia) (domain.ChannelImportMedia, error)
@@ -66,6 +83,14 @@ func ChannelImportContentHash(msg domain.ImportedChannelMessage) ([]byte, error)
 	}
 	sum := sha256.Sum256(raw)
 	return sum[:], nil
+}
+
+// ChannelImportPageLimit 把只读接口的单页条数规整到 (0, MaxChannelImportPage]。
+func ChannelImportPageLimit(limit int) int {
+	if limit <= 0 || limit > domain.MaxChannelImportPage {
+		return domain.MaxChannelImportPage
+	}
+	return limit
 }
 
 // ValidateChannelImportBatch 检查一批来源消息的形状：非空、不超过上限、来源 id 为正且严格

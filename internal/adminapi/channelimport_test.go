@@ -32,6 +32,13 @@ type captureChannelImportService struct {
 	metas     []channelimport.Meta
 	detached  []int64
 	existing  bool
+
+	// 只读方法（见 channelimport_read_test.go）。
+	pingErr      error
+	filters      []domain.ChannelImportFilter
+	searches     []channelimport.ChannelSearch
+	messagePages [][3]int
+	resolved     [][]int
 }
 
 func (s *captureChannelImportService) ChannelImport() (admin.ChannelImportService, bool) {

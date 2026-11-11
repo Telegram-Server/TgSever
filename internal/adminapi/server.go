@@ -23,6 +23,9 @@ import (
 type Config struct {
 	Addr  string
 	Token string
+	// Version is the server build's commit, reported by the channel-import ping so
+	// an integration can tell which build it is talking to. Empty reads "unknown".
+	Version string
 	// ScopedTokens are additional bearer tokens with a bounded permission set
 	// each. Token stays the unrestricted master token, so a deployment that
 	// configures no scoped token behaves exactly as it did before.
@@ -252,15 +255,20 @@ func NewHandler(cfg Config, svc Service, log *zap.Logger) http.Handler {
 	if log == nil {
 		log = zap.NewNop()
 	}
-	server := &Server{token: cfg.Token, scoped: cfg.ScopedTokens, svc: svc, log: log}
+	version := strings.TrimSpace(cfg.Version)
+	if version == "" {
+		version = "unknown"
+	}
+	server := &Server{token: cfg.Token, scoped: cfg.ScopedTokens, svc: svc, log: log, version: version}
 	return server.routes()
 }
 
 type Server struct {
-	token  string
-	scoped []ScopedToken
-	svc    Service
-	log    *zap.Logger
+	token   string
+	scoped  []ScopedToken
+	svc     Service
+	log     *zap.Logger
+	version string
 }
 
 func (s *Server) routes() http.Handler {
@@ -324,6 +332,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/channels/set-avatar", s.authenticated(s.handleSetChannelAvatar))
 	mux.HandleFunc("POST /v1/channels/create-group", s.authenticated(s.handleCreateGroup))
 	mux.HandleFunc("POST /v1/channel-imports", s.authorized(PermissionChannelsImport, s.handleCreateChannelImport))
+	mux.HandleFunc("GET /v1/channel-imports", s.authorized(PermissionChannelsImport, s.handleListChannelImports))
+	mux.HandleFunc("GET /v1/channel-imports/ping", s.authorized(PermissionChannelsImport, s.handleChannelImportPing))
+	mux.HandleFunc("GET /v1/channel-imports/channels", s.authorized(PermissionChannelsImport, s.handleSearchChannelImportChannels))
+	mux.HandleFunc("GET /v1/channel-imports/channels/{channel_id}", s.authorized(PermissionChannelsImport, s.handleChannelImportChannel))
+	mux.HandleFunc("GET /v1/channel-imports/channels/{channel_id}/messages", s.authorized(PermissionChannelsImport, s.handleChannelImportChannelMessages))
+	mux.HandleFunc("POST /v1/channel-imports/{id}/message-ids", s.authorized(PermissionChannelsImport, s.handleResolveChannelImportMessageIDs))
 	mux.HandleFunc("GET /v1/channel-imports/{id}", s.authorized(PermissionChannelsImport, s.handleChannelImport))
 	mux.HandleFunc("POST /v1/channel-imports/{id}/media", s.authorized(PermissionChannelsImport, s.handleUploadChannelImportMedia))
 	mux.HandleFunc("POST /v1/channel-imports/{id}/messages", s.authorized(PermissionChannelsImport, s.handleImportChannelMessages))
